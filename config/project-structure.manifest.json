@@ -38,6 +38,13 @@
       "release": "include"
     },
     {
+      "path": "src/onboarding/",
+      "area": "dev_runtime",
+      "role": "Loopback-only first-run configuration wizard source.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "include"
+    },
+    {
       "path": "src/strategy_trees/",
       "area": "dev_runtime",
       "role": "Unified strategy-tree declarations, shadow consistency checks, and governance/cache policy manifests.",
@@ -259,6 +266,8 @@
     "scripts/plan_profile_migration.py",
     "scripts/setup_accounts.bat",
     "scripts/setup_agent.bat",
+    "scripts/setup_wizard.bat",
+    "scripts/start_setup_wizard.py",
     "scripts/generate_structure_docs.py",
     "scripts/generate_docs_index.py",
     "scripts/generate_script_lifecycle_inventory.py",

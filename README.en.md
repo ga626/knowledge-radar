@@ -7,8 +7,8 @@ KnowledgeRadar is an MCP server that gives agents a single search and perception
 ## Quick Start
 
 1. Install Python 3.12 or use the bundled `.python312` runtime.
-2. Copy `.env.example` to `.env` and fill only the providers you want to use.
-3. Run `scripts\install.bat`.
+2. Run `scripts\install.bat`. Optionally run `scripts\setup_wizard.bat` for a loopback-only browser form that writes your local `.env`.
+3. Start the service with `start.cmd`.
 4. Run `start.cmd`.
 5. Register `http://127.0.0.1:18765/mcp` in your agent, or use `config\mcp-config-template.json`.
 
@@ -27,6 +27,7 @@ All startup modes read only the repository-root `.env` file. It is private local
 
 - `docs\INSTALL.md`: installation and first run.
 - `docs\API_KEYS.md`: provider keys and validation.
+- `docs\SETUP_WIZARD.md`: loopback-only configuration wizard.
 - `docs\MCP_SETUP.md`: Agent configuration examples.
 - `docs\ACCOUNT_SETUP.md`: interactive browser login/profile setup.
 - `docs\FAQ.md`: common validation states and troubleshooting.

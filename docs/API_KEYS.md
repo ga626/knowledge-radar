@@ -1,19 +1,17 @@
-# API Keys
+# API 与服务商配置
 
-KnowledgeRadar never needs every provider key at once. Configure the providers you actually use.
-The single supported product entrypoint is the repository-root `.env` file.
-Legacy aliases and secret-file fallbacks are intentionally not loaded.
+KnowledgeRadar 不需要一次配置所有服务商；只填写你实际要使用的项目即可。唯一受支持的产品配置入口是仓库根目录 `.env`，不会读取旧别名或其他秘密文件作为兜底。
 
-| Key | Required | Purpose |
+| 配置项 | 是否必填 | 用途 |
 | --- | --- | --- |
-| `TAVILY_API_KEY` | Optional | General web search |
-| `ANYSEARCH_API_KEY` | Optional | General web search fallback |
-| `BRAVE_SEARCH_API_KEY` | Optional | General web search fallback |
-| `EXA_API_KEY` | Optional | General web search fallback |
-| `SEARXNG_BASE_URL` | Optional | Local/private web search endpoint |
-| `YOUTUBE_API_KEY` | Optional | YouTube Data API |
-| `OPENALEX_API_KEY` | Optional | OpenAlex academic metadata quota |
-| `SEMANTIC_SCHOLAR_API_KEY` | Optional | Higher quota academic metadata |
+| `TAVILY_API_KEY` | 可选 | 通用网页搜索 |
+| `ANYSEARCH_API_KEY` | 可选 | 通用网页搜索备用服务 |
+| `BRAVE_SEARCH_API_KEY` | 可选 | Brave Search |
+| `EXA_API_KEY` | 可选 | Exa Search |
+| `SEARXNG_BASE_URL` | 可选 | 本地或私有 SearXNG 地址 |
+| `YOUTUBE_API_KEY` | 可选 | YouTube Data API |
+| `OPENALEX_API_KEY` | 可选 | OpenAlex 学术元数据额度 |
+| `SEMANTIC_SCHOLAR_API_KEY` | 可选 | Semantic Scholar 学术元数据额度 |
 | `BAIDU_QIANFAN_BEARER_TOKEN` | Optional | Baidu Qianfan Scholar API |
 | `SERPAPI_API_KEY` | Optional | SerpAPI Google Scholar metadata |
 | `KR_CORE_API_KEY` | Optional | CORE academic metadata |
@@ -24,13 +22,13 @@ Legacy aliases and secret-file fallbacks are intentionally not loaded.
 | `API147_KEY` | Optional | API147 comment-filter model fallback at `https://147ai.com/v1/chat/completions`; only used when `KR_COMMENT_FILTER_MODELS` selects `api147:<model>`. Defaults do not require it. |
 | `TIKHUB_API_KEY` | Optional | Explicit Xiaohongshu fallback experiments |
 
-Put secrets only in the repository-root `.env`. Never commit real keys.
+请只将密钥保存到仓库根目录 `.env`，绝不提交真实 Key。可运行 `scripts\setup_wizard.bat` 使用只监听本机的配置页面；它不会显示或上传密钥。
 
 The runtime loader ignores empty values. If a provider key is absent or blank,
 the related feature reports `not_configured`/`EXPECTED_DEGRADED` instead of
 borrowing a value from OpenClaw JSON, `local\secrets`, or `config\runtime.env`.
 
-Validate configuration without printing secrets:
+可在不打印密钥的情况下检查配置：
 
 ```bat
 python scripts\verify_api_keys.py

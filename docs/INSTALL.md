@@ -29,7 +29,13 @@ scripts\install.bat
 
 ## 配置服务商
 
-如果安装脚本尚未创建 `.env`，请从 `.env.example` 复制一份。只填写你实际要用的服务商 Key。
+安装脚本会在缺少时从 `.env.example` 创建 `.env`。推荐随后运行本地配置向导，只填写你实际要用的服务商：
+
+```bat
+scripts\setup_wizard.bat
+```
+
+向导只监听 `127.0.0.1`，不会上传或回显 Key；你也可以继续手动编辑 `.env`。详见 [本地配置向导](SETUP_WIZARD.md)。
 
 ```bat
 python scripts\verify_api_keys.py

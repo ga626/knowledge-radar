@@ -240,7 +240,9 @@ echo.
 echo [阶段 7/8] API Key 配置检查
 echo ------------------------------------------------------------
 echo API Key 配置说明：docs\API_KEYS.md
-echo 请按需编辑 .env。缺少某项配置不会阻止服务器启动，但对应能力需要补齐配置后重新验证。
+echo 推荐运行本地配置向导：scripts\setup_wizard.bat
+echo 向导只监听 127.0.0.1，只会写入当前项目的 .env，不会上传或回显 Key。
+echo 你也可以继续手动编辑 .env。缺少某项配置不会阻止服务器启动，但对应能力需要补齐配置后重新验证。
 if /I not "%KR_INSTALL_NO_OPEN%"=="1" (
   start "" "%CD%\docs\API_KEYS.md"
   if exist "%CD%\.env" start "" notepad "%CD%\.env"
