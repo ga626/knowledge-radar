@@ -1,0 +1,32 @@
+{
+  "boss": [
+    {
+      "title": "AI 产品经理",
+      "company": "Example AI",
+      "city": "杭州",
+      "salary": "20-30K",
+      "url": "https://example.com/job/1?utm_source=x",
+      "strategy": "stealth_cdp_page",
+      "published_at": "2026-06-18"
+    }
+  ],
+  "liepin": [
+    {
+      "title": "AI 产品经理",
+      "company": "Example AI",
+      "city": "杭州",
+      "salary": "20-30K",
+      "url": "https://example.com/job/1",
+      "strategy": "chrome_cdp_page",
+      "updated_at": "今天"
+    }
+  ],
+  "maimai": [
+    {
+      "title": "AI 职场讨论",
+      "url": "https://maimai.cn/article/1",
+      "snippet": "脉脉公开网页回退候选",
+      "source": "web_search_fallback"
+    }
+  ]
+}

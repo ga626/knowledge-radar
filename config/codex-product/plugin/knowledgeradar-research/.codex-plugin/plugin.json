@@ -1,0 +1,20 @@
+{
+  "name": "knowledgeradar-research",
+  "version": "0.1.0+codex.20260809",
+  "description": "KnowledgeRadar research perception for Codex.",
+  "author": {"name": "KnowledgeRadar"},
+  "license": "Proprietary",
+  "keywords": ["research", "mcp", "fact-checking", "knowledgeradar"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "KnowledgeRadar Research",
+    "shortDescription": "Research perception and evidence search for Codex",
+    "longDescription": "Use KnowledgeRadar as Codex's perception layer for external research and evidence-backed reports.",
+    "developerName": "KnowledgeRadar",
+    "category": "Productivity",
+    "capabilities": ["Read", "Interactive"],
+    "defaultPrompt": ["Research this with KnowledgeRadar and return an evidence-backed conclusion"],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

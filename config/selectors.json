@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "updated": "2026-05-31",
+  "platforms": {
+    "boss": {
+      "card_selector": ".job-card-box",
+      "card_selectors": [".job-card-box", ".job-card-wrapper", ".job-primary", "li[class*='job-card']", "div[class*='job-card']"],
+      "fields": {
+        "title": ".job-name",
+        "salary": ".job-salary",
+        "company": ".boss-name",
+        "area": ".company-location",
+        "tags": ".tag-list li",
+        "link": ".job-name"
+      },
+      "blocked_patterns": ["安全验证", "滑动验证", "captcha", "verify"],
+      "login_patterns": ["登录", "扫码"]
+    },
+    "zhilian": {
+      "card_selector": ".joblist-box__item",
+      "card_selectors": [".joblist-box__item", "[class*='joblist'] [class*='item']", "[class*='job-card']"],
+      "fields": {
+        "title": ".jobinfo__name",
+        "salary": ".jobinfo__salary",
+        "company": "[class*='companyinfo__name']",
+        "area": ".jobinfo__other-info-item:first-child",
+        "link": ".jobinfo__name"
+      }
+    },
+    "liepin": {
+      "card_selector": ".job-card-pc-container",
+      "card_selectors": [".job-card-pc-container", "[class*='job-card']"],
+      "fields": {
+        "title": ".job-title-box",
+        "salary": ".job-salary",
+        "company": ".company-name",
+        "area": ".job-dq"
+      }
+    }
+  }
+}

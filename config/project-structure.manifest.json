@@ -1,0 +1,337 @@
+{
+  "schema": "knowledgeradar-project-structure/v1",
+  "updated_at": "2026-08-11",
+  "single_source_of_truth": "D:/Projects/KnowledgeRadar",
+  "generated_marker": "KR-GENERATED",
+  "areas": [
+    {
+      "id": "dev_runtime",
+      "title": "Development runtime area",
+      "description": "The editable source tree used by Codex and local development.",
+      "rule": "Source files, scripts, configs, docs, and manifests are edited here first."
+    },
+    {
+      "id": "package_output",
+      "title": "Clean package output area",
+      "description": "Generated release/package directories such as dist/ or release/.",
+      "rule": "Never edit generated output directly. Regenerate from source and manifests."
+    },
+    {
+      "id": "local_state",
+      "title": "Local runtime and private state area",
+      "description": "Host-local logs, reports, browser state, profiles, caches, secrets, and downloaded media.",
+      "rule": "Never publish or commit local state. Keep only placeholders or README files when explicitly allowed."
+    },
+    {
+      "id": "history_backup",
+      "title": "Sanitized historical backup area",
+      "description": "User-confirmed sanitized migration records and evidence packs.",
+      "rule": "Archive only sanitized artifacts. Raw profiles, cookies, secrets, and logs are forbidden."
+    }
+  ],
+  "directories": [
+    {
+      "path": "src/",
+      "area": "dev_runtime",
+      "role": "Python package source.",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": "src/strategy_trees/",
+      "area": "dev_runtime",
+      "role": "Unified strategy-tree declarations, shadow consistency checks, and governance/cache policy manifests.",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": "scripts/",
+      "area": "dev_runtime",
+      "role": "Install, setup, validation, generation, and maintenance scripts.",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": ".codex/",
+      "area": "dev_runtime",
+      "role": "Codex project hook adapter and local worktree container; never a product input.",
+      "codex_edit": "allowed_with_trust_review",
+      "release": "exclude"
+    },
+    {
+      "path": ".githooks/",
+      "area": "dev_runtime",
+      "role": "Repository-local Git hooks that call the unified quality gate.",
+      "codex_edit": "allowed",
+      "release": "exclude"
+    },
+    {
+      "path": "tools/",
+      "area": "dev_runtime",
+      "role": "Local maintenance and guard utilities.",
+      "codex_edit": "allowed",
+      "release": "exclude"
+    },
+    {
+      "path": "config/",
+      "area": "dev_runtime",
+      "role": "Templates, package manifest, selectors, MCP templates, and structure manifest.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "partial_include"
+    },
+    {
+      "path": "config/codex-product/",
+      "area": "dev_runtime",
+      "role": "Versioned Codex plugin source and deployment contract templates.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "partial_include"
+    },
+    {
+      "path": "docs/",
+      "area": "dev_runtime",
+      "role": "User documentation, validation reports, and productization planning.",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": "project_status/",
+      "area": "dev_runtime",
+      "role": "Sanitized project state packets, open issue registers, and validation semantics for AI handoff.",
+      "codex_edit": "allowed",
+      "release": "exclude"
+    },
+    {
+      "path": "bridge/",
+      "area": "dev_runtime",
+      "role": "Node bridge and MCP integration helpers.",
+      "codex_edit": "allowed",
+      "release": "include_without_node_modules"
+    },
+    {
+      "path": "runtime/",
+      "area": "local_state",
+      "role": "Logs, reports, task state, generated media placeholders, and local runtime data.",
+      "codex_edit": "readme_and_placeholders_only",
+      "release": "readme_and_placeholders_only"
+    },
+    {
+      "path": "local/",
+      "area": "local_state",
+      "role": "Machine-local profiles, user-specific config, and migration scratch state.",
+      "codex_edit": "local_only",
+      "release": "exclude"
+    },
+    {
+      "path": "browser_data/",
+      "area": "local_state",
+      "role": "Browser automation data, CDP/session state, and platform profile working data.",
+      "codex_edit": "local_only",
+      "release": "exclude"
+    },
+    {
+      "path": "data/",
+      "area": "local_state",
+      "role": "Legacy or runtime data; keep out of product packages unless explicitly migrated.",
+      "codex_edit": "avoid_new_writes",
+      "release": "exclude"
+    },
+    {
+      "path": "archive/",
+      "area": "history_backup",
+      "role": "Sanitized archive index, evidence packs, and user-confirmed migration records.",
+      "codex_edit": "sanitized_only",
+      "release": "exclude"
+    },
+    {
+      "path": "dist/",
+      "area": "package_output",
+      "role": "Generated package/build output.",
+      "codex_edit": "generated_only",
+      "release": "generated_output"
+    },
+    {
+      "path": "release/",
+      "area": "package_output",
+      "role": "Optional generated release staging area.",
+      "codex_edit": "generated_only",
+      "release": "generated_output"
+    },
+    {
+      "path": ".python312/",
+      "area": "local_state",
+      "role": "Optional bundled/local Python runtime.",
+      "codex_edit": "do_not_edit",
+      "release": "exclude_from_git_optional_in_distribution"
+    }
+  ],
+  "forbidden_release_patterns": [
+    ".env",
+    ".codex/**",
+    ".githooks/**",
+    "AGENTS.md",
+    "config/runtime.env",
+    "config/mcp-approvals.json",
+    "config/profile_registry.json",
+    "local/**",
+    "project_status/**",
+    "tools/**",
+    "archive/**",
+    "browser_data/**",
+    "archive/local/**",
+    "archive/**/*.sqlite",
+    "archive/**/*.sqlite-*",
+    "archive/**/cookies*",
+    "archive/**/Cookies*",
+    "archive/**/key4.db",
+    "archive/**/Login Data*",
+    "archive/**/Local State",
+    "archive/**/Singleton*",
+    "runtime/logs/**",
+    "runtime/reports/**",
+    "runtime/tasks/**",
+    "runtime/cache/**",
+    "runtime/media_cache/**",
+    "runtime/*.json",
+    "runtime/*.jsonl",
+    "runtime/*.sqlite3",
+    "runtime/*.sqlite",
+    "runtime/*.sqlite-*",
+    "runtime/*.db",
+    "data/**",
+    "src/data/**",
+    "**/*.log",
+    "**/*.m4a",
+    "**/*.mp4",
+    "**/*.part",
+    "**/*.inprogress",
+    "**/node_modules/**",
+    ".git/**"
+  ],
+  "package_manifest": "config/package-manifest.product-lite.json",
+  "generated_docs": [
+    "STRUCTURE.md",
+    "docs/AI_WORKING_GUIDE.md",
+    "docs/文档索引.md",
+    "docs/脚本生命周期清单.md",
+    "runtime/README.md",
+    "archive/INDEX.md",
+    "release/README.md",
+    "docs/过程文档索引.md"
+  ],
+  "local_generated_docs": [
+    "local/README.md",
+    "browser_data/README.md"
+  ],
+  "watch_paths": [
+    ".npmrc",
+    ".gitignore",
+    "AGENTS.md",
+    "STRUCTURE.md",
+    "bridge/.npmrc",
+    ".codex/hooks.json",
+    ".codex/hooks/quality_gate_hook.py",
+    ".githooks/pre-commit",
+    ".githooks/pre-push",
+    "config/package-manifest.product-lite.json",
+    "config/public-source-manifest.json",
+    "config/quality-gates.manifest.json",
+    "config/mcp-approvals.json",
+    "config/mcp-config-template.json",
+    "config/mcp.json",
+    "config/delivery-profile.json",
+    "config/profile_registry.example.json",
+    "config/project-structure.manifest.json",
+    "config/selectors.json",
+    "scripts/generate-mcp-config.py",
+    "scripts/setup_codex_product.py",
+    "scripts/verify_codex_productization.py",
+    "scripts/probe_mcp_http.py",
+    "scripts/verify_runtime_concurrency.py",
+    "scripts/install.bat",
+    "scripts/migrate-local.bat",
+    "scripts/plan_profile_migration.py",
+    "scripts/setup_accounts.bat",
+    "scripts/setup_agent.bat",
+    "scripts/generate_structure_docs.py",
+    "scripts/generate_docs_index.py",
+    "scripts/generate_script_lifecycle_inventory.py",
+    "scripts/install_quality_hooks.py",
+    "scripts/install_campaign_patrol_tasks.ps1",
+    "scripts/kr_campaign_notification_probe.py",
+    "scripts/kr_campaign_patrol.py",
+    "scripts/kr_quality_gate.py",
+    "scripts/kr_delivery_profile.py",
+    "scripts/kr_local_closeout.py",
+    "scripts/kr_browser_session_maintenance.py",
+    "scripts/check_structure_docs.py",
+    "scripts/check_doc_drift.py",
+    "scripts/check_docs_governance.py",
+    "scripts/check_docs_verification_attachments.py",
+    "scripts/build_agent_tool_trace.py",
+    "scripts/build_product_lite_package.py",
+    "scripts/build_public_source_projection.py",
+    "scripts/verify_package_integrity.py",
+    "scripts/verify_all_tools.py",
+    "scripts/verify_all_capabilities.py",
+    "scripts/verify_api_keys.py",
+    "scripts/verify_chinese_academic_fulltext_providers.py",
+    "scripts/verify_research_repair_loop.py",
+    "scripts/verify_research_mechanisms.py",
+    "scripts/verify_pubscholar_pdf_text_batch.py",
+    "scripts/verify_sciengine_pdf_text_batch.py",
+    "start.cmd",
+    "start-knowledgeradar-server.cmd",
+    "start-knowledgeradar-server-detached.py",
+    "start-knowledgeradar-server-hidden.ps1",
+    "pyproject.toml",
+    "scripts/generate_process_docs_index.py"
+  ],
+  "watch_path_globs": [
+    ".npmrc",
+    "bridge/.npmrc",
+    ".codex/hooks*.json",
+    ".codex/hooks/*.py",
+    ".githooks/*",
+    "config/mcp*.json",
+    "config/delivery-profile.json",
+    "config/package-manifest*.json",
+    "config/public-source-manifest.json",
+    "config/quality-gates.manifest.json",
+    "config/project-structure.manifest.json",
+    "scripts/*package*.py",
+    "scripts/build_public_source_projection.py",
+    "scripts/check_*docs*.py",
+    "scripts/check_docs_governance.py",
+    "scripts/build_agent_tool_trace.py",
+    "scripts/generate_docs_index.py",
+    "scripts/generate_script_lifecycle_inventory.py",
+    "scripts/generate-mcp-config.py",
+    "scripts/generate_structure_docs.py",
+    "scripts/install_campaign_patrol_tasks.ps1",
+    "scripts/kr_campaign_notification_probe.py",
+    "scripts/install_quality_hooks.py",
+    "scripts/kr_campaign_patrol.py",
+    "scripts/kr_quality_gate.py",
+    "scripts/kr_delivery_profile.py",
+    "scripts/kr_local_closeout.py",
+    "scripts/kr_browser_session_maintenance.py",
+    "scripts/setup_*.bat",
+    "scripts/verify_*.py",
+    "start*.cmd",
+    "start-knowledgeradar-server*",
+    "scripts/generate_process_docs_index.py"
+  ],
+  "forbidden_local_state_paths": [
+    "archive/local"
+  ],
+  "codex_closeout": [
+    "Update config/project-structure.manifest.json before structural, packaging, installer, profile, or runtime-boundary changes.",
+    "Run python scripts/generate_structure_docs.py.",
+    "Run python scripts/check_structure_docs.py.",
+    "Run python scripts/check_doc_drift.py.",
+    "Run python scripts/build_product_lite_package.py --dry-run.",
+    "Run python scripts/verify_package_integrity.py.",
+    "Do not hand-edit KR-GENERATED blocks."
+  ],
+  "release_sync_rule": "One-way only: development source -> generated package. Never synchronize package output back into source automatically."
+}

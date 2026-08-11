@@ -1,0 +1,9 @@
+## KnowledgeRadar Perception
+
+KnowledgeRadar is the default perception/search layer for substantial external research. The user-level `config.toml` is the only `knowledgeradar` MCP registration source; the plugin and Skill do not register a second server.
+
+Start with the native `mcp__knowledgeradar.*` tool surface. If it is absent, use Codex tool discovery for `knowledgeradar mcp health_check kr_research get_capabilities`. If discovery still cannot expose native cards, report a Codex host-surface failure. After a real native `Transport closed`, first use the configured protocol probe to separate backend health from the current Desktop MCP session; never restart shared KR merely to refresh a thread. If the host exposes `config/mcpServer/reload`, request it and accept recovery only after the next user turn has real native `health_check(summary)` and `get_capabilities(summary=true)` success. If it does not, a user may fully quit and relaunch Codex Desktop, then run those two native checks; this is an optional host recovery, not automatic reconnect. Only when the task must continue before that may the versioned `scripts\\kr_mcp_continuity.py call` path run with reason, task receipt and handoff; label every result `access_path=continuity_fallback` and never call it native recovery. Do not invent a client, invoke an unversioned fallback script, start a second app-server, or claim that a separately started app-server refreshed Desktop.
+
+For substantial work, use `health_check(mode="summary")` and `get_capabilities(summary=true)`, then let the Agent choose source ecologies, tools, rounds, and stopping. Built-in web/search is `host_internal_web_wave` inside KnowledgeRadar's `web_search.provider_wave` tree.
+
+For serious reports, record access path, tool, source URL/path, extracted fact, inference, strength, and gap. A local runtime or HTTP probe does not substitute for observing native Codex tool cards.

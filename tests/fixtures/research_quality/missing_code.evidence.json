@@ -1,0 +1,39 @@
+{
+  "schema": "knowledgeradar-research-evidence/v1",
+  "artifact": {
+    "report_path": "tests/fixtures/research_quality/minimal_report.md",
+    "task_prompt_hash": "sha256:missing-code",
+    "created_at": "2026-06-14T00:00:00Z"
+  },
+  "budget": {
+    "selected_profile": "balanced",
+    "selected_by": "agent",
+    "reason": "Fixture intentionally misses required local code.",
+    "remaining_repair_rounds": 1
+  },
+  "tool_calls": [],
+  "evidence_items": [
+    {
+      "id": "E001",
+      "type": "web",
+      "title": "External doc",
+      "url": "https://example.com",
+      "summary": "Only web evidence.",
+      "strength": "weak"
+    }
+  ],
+  "claims": [
+    {
+      "id": "C001",
+      "text": "The existing implementation supports quality checks.",
+      "importance": "critical",
+      "supporting_evidence_ids": ["E001"]
+    }
+  ],
+  "coverage": {
+    "required_surfaces": ["local_code"],
+    "covered_surfaces": ["web"],
+    "missing_surfaces": ["local_code"],
+    "skipped_surfaces": []
+  }
+}

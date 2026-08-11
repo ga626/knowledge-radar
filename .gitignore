@@ -1,0 +1,138 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+release/
+
+# Virtual environments and bundled runtimes
+.python312/
+.venv/
+venv/
+
+# User configuration and secrets
+.env
+config/runtime.env
+config/profile_registry.json
+local/
+archive/local/
+
+# Runtime state
+backup/
+runtime/*
+!runtime/README.md
+!runtime/data/
+runtime/data/*
+!runtime/data/.gitkeep
+!runtime/data/media/
+runtime/data/media/*
+!runtime/data/media/.gitkeep
+!runtime/media_cache/
+runtime/media_cache/*
+!runtime/media_cache/.gitkeep
+browser_data/
+/data/
+src/data/
+*.bak
+*.backup
+*.py.*_backup
+*.sqlite3
+*.db
+.coverage
+coverage.xml
+htmlcov/
+!project_status/Quality-Gate-State.json
+
+# Node.js
+node_modules/
+bridge/node_modules/
+
+# IDE
+.vscode/
+.idea/
+
+# Codex host-local probes and execution plans
+.codex/tmp/
+.codex/worktrees/
+.codex-praetor/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+_temp_*
+_debug_*
+_extracted_*
+_simulation/
+_sandbox_validation/
+
+# Development process documents are workspace artifacts, not product inputs.
+design_docs/
+docs/research/
+docs/verification/
+docs/*报告*.md
+docs/**/*报告*.md
+docs/*计划*.md
+docs/**/*计划*.md
+docs/*方案*.md
+docs/**/*方案*.md
+docs/*调研*.md
+docs/**/*调研*.md
+docs/*路线图*.md
+docs/**/*路线图*.md
+docs/*评估*.md
+docs/**/*评估*.md
+docs/*验收*.md
+docs/**/*验收*.md
+docs/*执行*.md
+docs/**/*执行*.md
+docs/*复盘*.md
+docs/**/*复盘*.md
+docs/*审计*.md
+docs/**/*审计*.md
+docs/*-20*.md
+docs/*202*.md
+docs/reference/*Report*.md
+docs/reference/*Plan*.md
+docs/reference/*Research*.md
+docs/reference/*Investigation*.md
+docs/reference/*Review*.md
+docs/reference/*Audit*.md
+docs/reference/*Assessment*.md
+docs/reference/*Execution*.md
+docs/reference/*-20*.md
+docs/reference/*202*.md
+# Dated report evidence is a local research artifact paired with the ignored
+# report body. Stable undated sidecars remain trackable by default.
+docs/reference/*-20*.evidence.json
+docs/reference/*-20*.preflight.json
+docs/reference/*202*.evidence.json
+docs/reference/*202*.preflight.json
+docs/**/*Report*.md
+docs/**/*Plan*.md
+docs/**/*Research*.md
+docs/**/*Investigation*.md
+docs/**/*Review*.md
+docs/**/*Audit*.md
+docs/**/*Assessment*.md
+docs/**/*Execution*.md
+docs/**/*-20*.md
+docs/**/*202*.md
+docs/**/*-20*.evidence.json
+docs/**/*202*.evidence.json
+docs/**/*-20*.preflight.json
+docs/**/*202*.preflight.json
+# Stable implementation record for the versioned MCP continuity contract.
+!docs/reference/MCP连续性兜底与安全重启实施说明-2026-08-09.md
+!docs/reference/MCP连续性兜底与安全重启实施说明-2026-08-09.evidence.json
+**/*-Report-20*.md
+**/*-Plan-20*.md
+**/*-Research-20*.md
+**/*-Investigation-20*.md
+**/*-Review-20*.md
+**/*-Audit-20*.md
+**/*-Assessment-20*.md
+**/*-Execution-20*.md

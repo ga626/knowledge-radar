@@ -1,0 +1,105 @@
+{
+  "schema": "knowledgeradar-natural-calling-eval/v1",
+  "policy": {
+    "lightweight": "validate_case_contract",
+    "full": "score_model_tool_trace_before_release"
+  },
+  "cases": [
+    {
+      "id": "simple_current_web",
+      "tier": "light",
+      "prompt": "帮我查一下 Model Context Protocol 最近的官方更新，给出来源链接和日期。",
+      "expected_tools_any": ["kr_research", "kr_web_search"],
+      "expected_tools_optional": ["extract_web_page"],
+      "forbidden_tools": ["expand_keywords", "plan_research"],
+      "quality_contract": {
+        "expected_process_quality": ["host_internal_web_wave"]
+      }
+    },
+    {
+      "id": "simple_repository_search",
+      "tier": "light",
+      "prompt": "找一下 spring-ai-alibaba deep research 相关的 GitHub 仓库，说明仓库活跃度和入口链接。",
+      "expected_tools_any": ["search_github_repositories"],
+      "expected_tools_optional": ["kr_web_search", "extract_web_page"],
+      "forbidden_tools": ["expand_keywords", "plan_research"]
+    },
+    {
+      "id": "multi_platform_research",
+      "tier": "full",
+      "prompt": "我想判断一个开源 AI 调研 Agent 方案是否值得采用。请从官网/文档、GitHub 仓库、英文视频、中文社区讨论和学术资料里各找证据，最后给出取舍建议。",
+      "expected_tools_any": ["kr_research", "kr_web_search", "search_github_repositories"],
+      "expected_tools_at_least": ["search_youtube", "search_bilibili", "search_zhihu", "search_academic"],
+      "expected_tools_optional": ["search_xiaohongshu", "extract_web_page", "get_content_detail", "get_task_status"],
+      "forbidden_tools": ["expand_keywords", "plan_research"]
+    },
+    {
+      "id": "platform_boundary_health",
+      "tier": "full",
+      "prompt": "排查为什么中文内容平台搜索偶尔失败。请先看系统当前健康状况，再挑一两个平台做低频验证，最后说清楚哪些失败属于平台或登录态边界。",
+      "expected_tools_any": ["health_check", "analyze_decision_logs"],
+      "expected_tools_at_least": ["search_zhihu", "search_xiaohongshu"],
+      "expected_tools_optional": ["get_capabilities", "get_task_status"],
+      "forbidden_tools": ["expand_keywords", "plan_research"]
+    },
+    {
+      "id": "research_quality_framework_diagnosis",
+      "tier": "full",
+      "prompt": "我想知道我们这个调研系统为什么有时候能写出很像样的报告，有时候又会漏掉关键证据。你帮我认真查一下原因，看看现有设计哪里支撑得住、哪里只是看起来有，最后给我一个接下来怎么改的方案。",
+      "expected_tools_any": ["kr_research", "get_capabilities", "health_check"],
+      "expected_tools_at_least": ["analyze_decision_logs"],
+      "expected_tools_optional": ["kr_web_search", "extract_web_page", "get_task_status"],
+      "forbidden_tools": ["expand_keywords", "plan_research"],
+      "quality_contract": {
+        "expected_evidence_surfaces": ["local_code", "prior_report", "runtime_probe"],
+        "expected_output_artifacts": ["evidence_register", "quality_check", "roadmap", "known_issues", "decision_register", "claim_evidence_chains"],
+        "expected_repair_loop": true,
+        "expected_process_quality": ["capability_handshake", "local_archaeology", "questioner_checkpoints", "known_issues", "decision_register", "source_ecology_plan", "validation_ladder", "validation_profile", "presentation"]
+      }
+    },
+    {
+      "id": "p8_agentic_search_governance",
+      "tier": "full",
+      "prompt": "请评估 P8 模型自决搜索方案是否真正落实了证据 ledger、边际收益、停止准则和不要预算信封的原则。",
+      "expected_tools_any": ["kr_research", "get_capabilities", "health_check"],
+      "expected_tools_at_least": ["analyze_decision_logs"],
+      "expected_tools_optional": ["kr_web_search", "extract_web_page", "search_academic"],
+      "forbidden_tools": ["expand_keywords", "plan_research"],
+      "quality_contract": {
+        "expected_evidence_surfaces": ["local_code", "prior_report", "runtime_probe", "web"],
+        "expected_output_artifacts": ["evidence_register", "quality_check", "roadmap", "agentic_search_governance"],
+        "expected_repair_loop": true,
+        "expected_process_quality": ["capability_handshake", "local_archaeology", "questioner_checkpoints", "agentic_search_governance", "source_ecology_plan"]
+      }
+    },
+    {
+      "id": "media_detail_evidence_repair",
+      "tier": "full",
+      "prompt": "我想判断一个网上流传的演示方案到底是不是真的跑通了，最后说清楚依据和不确定的地方。",
+      "expected_tools_any": ["search_youtube", "search_bilibili"],
+      "expected_tools_optional": ["get_content_detail", "get_task_status", "kr_web_search"],
+      "forbidden_tools": ["expand_keywords", "plan_research"],
+      "quality_contract": {
+        "expected_evidence_surfaces": ["media_detail", "source_ecology"],
+        "expected_source_ecologies": ["bilibili_video_ecology"],
+        "expected_output_artifacts": ["evidence_register", "quality_check"],
+        "expected_repair_loop": true,
+        "expected_process_quality": ["detail_depth", "skip_reasons"]
+      }
+    },
+    {
+      "id": "public_discourse_source_ecology",
+      "tier": "full",
+      "prompt": "我想研究一个公共议题在中文互联网上是怎么被解释和传播的。请找出不同类型来源中的代表性材料，区分事实证据、观点材料和传播线索。",
+      "expected_tools_any": ["kr_web_search", "search_wechat_articles", "search_zhihu", "search_bilibili"],
+      "expected_tools_optional": ["search_xiaohongshu", "extract_web_page", "get_content_detail", "get_task_status"],
+      "forbidden_tools": ["expand_keywords", "plan_research"],
+      "quality_contract": {
+        "expected_evidence_surfaces": ["source_ecology"],
+        "expected_source_ecologies": ["wechat_public_article_ecology", "zhihu_discussion_ecology"],
+        "expected_output_artifacts": ["evidence_register"],
+        "expected_process_quality": ["skip_reasons"]
+      }
+    }
+  ]
+}

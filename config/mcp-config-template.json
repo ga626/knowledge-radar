@@ -1,0 +1,18 @@
+{
+  "schema": "knowledgeradar-mcp-config-template/v1",
+  "description": "Do not copy this file verbatim. Generate current-path snippets with scripts/generate-mcp-config.py.",
+  "commands": {
+    "openclaw_http": "python scripts/generate-mcp-config.py --agent openclaw",
+    "codex_stdio": "python scripts/generate-mcp-config.py --agent codex",
+    "workbuddy_stdio": "python scripts/generate-mcp-config.py --agent workbuddy",
+    "claude_stdio": "python scripts/generate-mcp-config.py --agent claude",
+    "cursor_stdio": "python scripts/generate-mcp-config.py --agent cursor"
+  },
+  "default_http_endpoint": "http://127.0.0.1:18765/mcp",
+  "notes": [
+    "Run start.cmd before using the OpenClaw HTTP configuration.",
+    "Codex launches src/server.py directly over stdio with KR_MCP_TRANSPORT=stdio; it does not depend on a shared HTTP service or wrapper host.",
+    "Other stdio configs use the same direct src/server.py contract and do not require the HTTP server to be pre-started.",
+    "Generated snippets use the current checkout path and avoid hard-coded developer paths."
+  ]
+}

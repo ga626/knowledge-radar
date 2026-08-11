@@ -1,0 +1,92 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "knowledgeradar"
+version = "0.1.0"
+description = "KnowledgeRadar MCP perception and search server."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+  { name = "KnowledgeRadar Contributors" },
+]
+keywords = [
+  "mcp",
+  "search",
+  "knowledge",
+  "bilibili",
+  "xiaohongshu",
+  "zhihu",
+  "academic-search",
+]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: Microsoft :: Windows",
+  "Topic :: Internet :: WWW/HTTP :: Indexing/Search",
+]
+dependencies = [
+  "mcp>=1.9",
+  "httpx>=0.27",
+  "pydantic>=2",
+  "playwright>=1.44",
+  "beautifulsoup4>=4.12",
+  "lxml>=5",
+  "trafilatura>=1.12",
+  "readability-lxml>=0.8",
+  "pypdf>=6.13",
+  "websocket-client>=1.8",
+  "aiofiles>=23",
+  "aiomysql>=0.2",
+  "redis>=5",
+  "yt-dlp>=2024.8.6",
+  "youtube-transcript-api>=0.6",
+  "Pillow>=10",
+  "numpy>=1.26",
+  "pandas>=2.2",
+]
+
+[project.urls]
+Homepage = "https://github.com/knowledge-radar/knowledgeradar"
+Documentation = "https://github.com/knowledge-radar/knowledgeradar#readme"
+
+[project.scripts]
+knowledgeradar = "server:main"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = [
+  "async_db",
+  "capabilities",
+  "db",
+  "expand_keywords",
+  "filter_comments",
+  "research_planner",
+  "server",
+  "transcribe_bilibili",
+  "video_processor",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+extend-exclude = [
+  ".python312",
+  "archive",
+  "browser_data",
+  "data",
+  "local",
+  "bridge/node_modules",
+]

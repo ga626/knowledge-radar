@@ -1,0 +1,45 @@
+{
+  "schema_version": "knowledgeradar-academic-strategy-samples/v1",
+  "samples": [
+    {
+      "id": "zh_stem_ai_geoscience",
+      "query": "GoldMiner-AI 大数据 人工智能找矿",
+      "language": "zh",
+      "discipline": "stem",
+      "expected_wave_a": ["pubscholar", "openalex", "semanticscholar"],
+      "expected_fulltext_candidates": ["pubscholar", "sciengine", "vip_oa"]
+    },
+    {
+      "id": "zh_social_science",
+      "query": "人工智能 教育治理 社会科学",
+      "language": "zh",
+      "discipline": "social_science",
+      "expected_wave_a": ["nssd", "pubscholar"],
+      "expected_fulltext_candidates": ["nssd", "vip_oa"]
+    },
+    {
+      "id": "en_stem_preprint",
+      "query": "retrieval augmented generation evaluation arxiv",
+      "language": "en",
+      "discipline": "cs",
+      "expected_wave_a": ["openalex", "semanticscholar", "arxiv"],
+      "expected_fulltext_candidates": ["arxiv"]
+    },
+    {
+      "id": "biomed_doi_metadata",
+      "query": "machine learning clinical decision support DOI",
+      "language": "en",
+      "discipline": "biomed",
+      "expected_wave_a": ["openalex", "semanticscholar", "crossref"],
+      "expected_fulltext_candidates": []
+    },
+    {
+      "id": "socolar_abstract_discovery",
+      "query": "gesture recognition smart home disabilities",
+      "language": "en",
+      "discipline": "general",
+      "expected_wave_a": ["socolar"],
+      "expected_fulltext_candidates": []
+    }
+  ]
+}
