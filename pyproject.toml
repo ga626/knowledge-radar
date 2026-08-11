@@ -52,8 +52,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/knowledge-radar/knowledgeradar"
-Documentation = "https://github.com/knowledge-radar/knowledgeradar#readme"
+Homepage = "https://github.com/ga626/knowledge-radar"
+Documentation = "https://github.com/ga626/knowledge-radar#readme"
+Issues = "https://github.com/ga626/knowledge-radar/issues"
 
 [project.scripts]
 knowledgeradar = "server:main"

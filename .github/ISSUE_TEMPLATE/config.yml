@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全与隐私问题
+    url: https://github.com/ga626/knowledge-radar/security/advisories/new
+    about: 请勿公开披露漏洞、密钥、Token、Cookie、账号或个人数据。

@@ -66,6 +66,13 @@
       "release": "exclude"
     },
     {
+      "path": ".github/",
+      "area": "dev_runtime",
+      "role": "Public GitHub automation, issue intake, and pull-request templates.",
+      "codex_edit": "allowed_with_review",
+      "release": "public_source_only"
+    },
+    {
       "path": "tools/",
       "area": "dev_runtime",
       "role": "Local maintenance and guard utilities.",
