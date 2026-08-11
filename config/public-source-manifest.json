@@ -3,6 +3,9 @@
   "description": "Tracked, reviewable files allowed to form the future public GitHub repository.",
   "include": [
     "README.md",
+    "README.en.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
     "LICENSE",
     ".gitignore",
     ".env.example",
@@ -41,6 +44,7 @@
     "docs/AI_WORKING_GUIDE.md",
     "docs/文档索引.md",
     "docs/reference/PLATFORM_TEMPLATE.md",
+    ".github/**",
     "bridge/package.json",
     "bridge/package-lock.json",
     "bridge/.npmrc",

@@ -1,0 +1,29 @@
+name: 缺陷报告
+description: 报告可以复现的功能、安装或 MCP 接入问题。
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "请先移除 API Key、Token、Cookie、账号、profile、日志原文和本机路径。安全问题请按 SECURITY.md 私下报告。"
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述
+      description: 发生了什么？预期应当是什么？
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 最小复现步骤
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: KnowledgeRadar 版本或提交
+  - type: textarea
+    id: environment
+    attributes:
+      label: 环境与脱敏输出
+      description: 仅填写必要的系统、Python、MCP 客户端和脱敏错误摘要。
