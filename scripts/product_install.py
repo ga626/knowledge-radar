@@ -77,7 +77,7 @@ def ensure_runtime(program_root: Path, install_root: Path, version: str, base_py
         run_runtime_check([str(base_python), "-m", "venv", str(staging)], cwd=program_root, action="creating the product runtime")
         staged_python = runtime_python(staging)
         run_runtime_check(
-            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-cache-dir", str(program_root)],
+            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", str(program_root)],
             cwd=program_root,
             action="installing product dependencies",
         )
