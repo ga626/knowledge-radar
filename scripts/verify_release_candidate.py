@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import queue
@@ -29,6 +30,16 @@ REQUIRED = {
     "SBOM.json",
 }
 EXPECTED_TOOLS = {"health_check", "get_capabilities", "kr_research", "finalize_research_task"}
+
+
+def package_content_issues(package_root: Path) -> list[str]:
+    script = ROOT / "scripts" / "verify_package_integrity.py"
+    spec = importlib.util.spec_from_file_location("knowledgeradar_package_integrity", script)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load package-integrity verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.check_package_content(package_root)
 
 
 def sha256_file(path: Path) -> str:
@@ -113,8 +124,7 @@ def verify(candidate_dir: Path) -> dict[str, object]:
         provenance = json.loads((package_root / "package-provenance.json").read_text(encoding="utf-8"))
         if provenance.get("source_dirty") is not False or "source_root" in provenance:
             raise RuntimeError("candidate provenance exposes source state or local path")
-        from scripts.verify_package_integrity import check_package_content
-        issues = check_package_content(package_root)
+        issues = package_content_issues(package_root)
         if issues:
             raise RuntimeError("candidate contains private-content patterns: " + "; ".join(issues))
         tools = stdio_probe(package_root)
@@ -131,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         result = verify(Path(args.candidate_dir).resolve())
-    except (OSError, RuntimeError, KeyError, TypeError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
+    except (ImportError, OSError, RuntimeError, KeyError, TypeError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         result = {"status": "FAIL", "error": str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "PASS" else 1
