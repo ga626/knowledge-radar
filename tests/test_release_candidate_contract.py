@@ -26,6 +26,14 @@ def test_product_manifest_only_references_public_files() -> None:
     assert missing == []
 
 
+def test_product_manifest_includes_runtime_and_plugin() -> None:
+    manifest = json.loads((ROOT / "config" / "package-manifest.product-lite.json").read_text(encoding="utf-8"))
+    files, _, _ = builder.collect_files(manifest)
+    paths = {item.relative_to(ROOT).as_posix() for item in files}
+    assert "src/server.py" in paths
+    assert "config/codex-product/plugin/knowledgeradar-research/.codex-plugin/plugin.json" in paths
+
+
 def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path) -> None:
     output = tmp_path / "package"
     output.mkdir()

@@ -66,6 +66,9 @@ def tracked_paths() -> set[str]:
 
 def expand_include(pattern: str) -> list[Path]:
     base = ROOT / pattern
+    if pattern.endswith("/**"):
+        directory = ROOT / pattern[:-3]
+        return [path for path in directory.rglob("*") if path.is_file()] if directory.is_dir() else []
     if any(char in pattern for char in "*?[]"):
         return [path for path in ROOT.glob(pattern) if path.is_file()]
     if base.is_file():
