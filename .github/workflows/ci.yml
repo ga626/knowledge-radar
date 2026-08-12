@@ -41,11 +41,11 @@ jobs:
         run: python scripts/build_product_lite_package.py --candidate
 
       - name: Verify the generated candidate
-        run: python scripts/verify_release_candidate.py --candidate-dir release/candidates/v0.1.0-${{ github.sha }}
+        run: python scripts/verify_release_candidate.py --candidate-dir (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
 
       - name: Upload verified candidate
         uses: actions/upload-artifact@v4
         with:
           name: knowledgeradar-candidate-${{ github.sha }}
-          path: release/candidates/v0.1.0-${{ github.sha }}
+          path: release/candidates/v*-${{ github.sha }}
           if-no-files-found: error
