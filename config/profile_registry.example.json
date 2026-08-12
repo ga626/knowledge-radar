@@ -1,0 +1,23 @@
+{
+  "version": "example",
+  "schema": "knowledgeradar-profile-registry/v3",
+  "description": "Example only. Do not store cookies, raw account IDs, phone numbers, nicknames, or tokens.",
+  "policy": {"default_mode": "safe_auto", "automation_mode": "autonomous_readonly", "readonly_route_order": []},
+  "accounts": [],
+  "profiles": [
+    {"platform": "xiaohongshu", "profile_id": "xhs_account_a", "profile_dir": "local/profiles/xiaohongshu/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["user must complete interactive login"]},
+    {"platform": "zhihu", "profile_id": "zhihu_account_a", "profile_dir": "local/profiles/zhihu/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["user must complete interactive login"]},
+    {"platform": "boss", "profile_id": "boss_account_a", "profile_dir": "local/profiles/boss/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["platform may require security verification"]},
+    {"platform": "liepin", "profile_id": "liepin_account_a", "profile_dir": "local/profiles/liepin/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["platform may require security verification"]},
+    {"platform": "maimai", "profile_id": "maimai_account_a", "profile_dir": "local/profiles/maimai/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["platform may require security verification"]},
+    {"platform": "cnki", "profile_id": "cnki_account_a", "profile_dir": "local/profiles/cnki/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "vip_oa", "profile_id": "vip_oa_account_a", "profile_dir": "local/profiles/vip_oa/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "coaj", "profile_id": "coaj_account_a", "profile_dir": "local/profiles/coaj/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "ucdrs", "profile_id": "ucdrs_account_a", "profile_dir": "local/profiles/ucdrs/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "calis_thesis", "profile_id": "calis_thesis_account_a", "profile_dir": "local/profiles/calis_thesis/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "nstrs", "profile_id": "nstrs_account_a", "profile_dir": "local/profiles/nstrs/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "pubscholar", "profile_id": "pubscholar_account_a", "profile_dir": "local/profiles/pubscholar/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]},
+    {"platform": "socolar", "profile_id": "socolar_account_a", "profile_dir": "local/profiles/socolar/account_a", "launch_policy": "explicit_probe_only", "auto_switch": "disabled", "main_chain_allowed": false, "notes": ["authorized browser only"]}
+  ],
+  "bindings": []
+}

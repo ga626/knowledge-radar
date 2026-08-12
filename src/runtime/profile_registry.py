@@ -43,7 +43,13 @@ PLATFORM_ALIASES = {
 
 
 def registry_path() -> str:
-    return os.environ.get("KR_PROFILE_REGISTRY_PATH", "").strip() or DEFAULT_REGISTRY_PATH
+    configured = os.environ.get("KR_PROFILE_REGISTRY_PATH", "").strip()
+    if configured:
+        return configured
+    data_root = os.environ.get("KR_DATA_ROOT", "").strip()
+    if data_root:
+        return os.path.join(data_root, "config", "profile_registry.json")
+    return DEFAULT_REGISTRY_PATH
 
 
 def profile_state_path() -> str:
@@ -543,7 +549,8 @@ def _resolve_profile_dir(profile_dir: str) -> str:
     expanded = os.path.expandvars(os.path.expanduser(profile_dir))
     if os.path.isabs(expanded):
         return os.path.abspath(expanded)
-    return os.path.abspath(os.path.join(REPO_ROOT, expanded))
+    data_root = os.environ.get("KR_DATA_ROOT", "").strip()
+    return os.path.abspath(os.path.join(data_root or REPO_ROOT, expanded))
 
 
 def _account_hash(row: Dict[str, Any]) -> str:

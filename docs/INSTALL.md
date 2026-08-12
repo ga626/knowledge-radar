@@ -1,5 +1,7 @@
 # KnowledgeRadar 安装指南
 
+> 从 GitHub Release 安装请先阅读 [产品安装与更新](PRODUCT_INSTALL.md)。本页的 `install.bat` 是源码 checkout 的兼容开发入口，仍会在当前 checkout 建立本地运行目录。
+
 ## 环境要求
 
 - Windows 10/11。

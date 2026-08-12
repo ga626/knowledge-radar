@@ -43,8 +43,13 @@ def _read_values(path: Path) -> dict[str, str]:
     return values
 
 
-def public_snapshot(path: Path = ENV_PATH) -> dict[str, Any]:
+def runtime_env_path() -> Path:
+    return Path(__import__("os").environ.get("KR_RUNTIME_ENV_PATH", str(ENV_PATH))).expanduser()
+
+
+def public_snapshot(path: Path | None = None) -> dict[str, Any]:
     """Return configuration presence only; values never leave the process."""
+    path = path or runtime_env_path()
     values = _read_values(path)
     fields = [
         {**field, "configured": bool(values.get(field["key"], "").strip())}
@@ -71,8 +76,9 @@ def _validated_updates(payload: Any) -> dict[str, str]:
     return updates
 
 
-def apply_updates(payload: Any, path: Path = ENV_PATH) -> list[str]:
+def apply_updates(payload: Any, path: Path | None = None) -> list[str]:
     """Merge intentionally supplied nonempty values while preserving all other lines."""
+    path = path or runtime_env_path()
     updates = _validated_updates(payload)
     if not updates:
         return []
