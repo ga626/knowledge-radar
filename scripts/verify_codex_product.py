@@ -55,6 +55,22 @@ def _request(process: subprocess.Popen[str], lines: queue.Queue[str], request_id
     raise RuntimeError(f"timed out waiting for {method}")
 
 
+def _stop_process(process: subprocess.Popen[str], reader: threading.Thread | None) -> None:
+    """Release all stdio handles before Windows removes temporary probe state."""
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    for handle in (process.stdin, process.stdout, process.stderr):
+        if handle is not None:
+            handle.close()
+    if reader is not None:
+        reader.join(timeout=2)
+
+
 def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
     root = root.resolve()
     src = root / "src"
@@ -86,9 +102,11 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             encoding="utf-8",
         )
         lines: queue.Queue[str] = queue.Queue()
+        reader: threading.Thread | None = None
         try:
             assert process.stdout is not None
-            threading.Thread(target=_reader, args=(process.stdout, lines), daemon=True).start()
+            reader = threading.Thread(target=_reader, args=(process.stdout, lines), daemon=True)
+            reader.start()
             _request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "knowledgeradar-public-verifier", "version": "1"}})
             response = _request(process, lines, 2, "tools/list", {})
             names = sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
@@ -97,12 +115,7 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             return {"status": "FAIL", "error": str(exc)}
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+            _stop_process(process, reader)
 
 
 def main(argv: list[str] | None = None) -> int:

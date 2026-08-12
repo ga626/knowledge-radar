@@ -85,6 +85,22 @@ def request(process: subprocess.Popen[str], lines: queue.Queue[str], request_id:
     raise RuntimeError(f"timed out waiting for {method}")
 
 
+def stop_process(process: subprocess.Popen[str], readers: list[threading.Thread]) -> None:
+    """Release all child stdio handles before Windows cleans candidate state."""
+    if process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=5)
+    for handle in (process.stdin, process.stdout, process.stderr):
+        if handle is not None:
+            handle.close()
+    for reader in readers:
+        reader.join(timeout=2)
+
+
 def stdio_probe(package_root: Path) -> list[str]:
     env = dict(os.environ)
     with tempfile.TemporaryDirectory(prefix="knowledgeradar-candidate-state-") as state:
@@ -96,11 +112,16 @@ def stdio_probe(package_root: Path) -> list[str]:
         process = subprocess.Popen([sys.executable, "-X", "utf8", str(package_root / "src" / "server.py")], cwd=package_root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         lines: queue.Queue[str] = queue.Queue()
         errors: queue.Queue[str] = queue.Queue()
+        readers: list[threading.Thread] = []
         try:
             assert process.stdout is not None
-            threading.Thread(target=lambda: [lines.put(line) for line in iter(process.stdout.readline, "")], daemon=True).start()
+            stdout_reader = threading.Thread(target=lambda: [lines.put(line) for line in iter(process.stdout.readline, "")], daemon=True)
+            stdout_reader.start()
+            readers.append(stdout_reader)
             assert process.stderr is not None
-            threading.Thread(target=lambda: [errors.put(line) for line in iter(process.stderr.readline, "")], daemon=True).start()
+            stderr_reader = threading.Thread(target=lambda: [errors.put(line) for line in iter(process.stderr.readline, "")], daemon=True)
+            stderr_reader.start()
+            readers.append(stderr_reader)
             request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "kr-release-candidate-verifier", "version": "1"}})
             response = request(process, lines, 2, "tools/list", {})
             return sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
@@ -111,12 +132,7 @@ def stdio_probe(package_root: Path) -> list[str]:
             detail = " ".join(item for item in tail[-8:] if item)
             raise RuntimeError(f"{exc}; stderr: {detail[:1200]}") from exc
         finally:
-            if process.poll() is None:
-                process.terminate()
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    process.kill()
+            stop_process(process, readers)
 
 
 def verify(candidate_dir: Path) -> dict[str, object]:
