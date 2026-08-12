@@ -6,7 +6,7 @@
 
 KnowledgeRadar 是一个 Windows 优先的本地 MCP 服务。它让 Codex 等 Agent 通过一组统一工具完成网页搜索与提取、学术元数据检索、Bilibili、小红书、知乎、招聘信息与运行状态检查；所有 API Key、登录态、浏览器资料、任务数据库和日志都只保留在你的电脑上。
 
-> 当前为 `0.1.0` beta。各平台登录、验证码、额度和第三方 API 的可用性由你的本地账号与服务商决定；KnowledgeRadar 会报告需要人工操作或预期降级的边界，不会伪装成已成功。
+> 当前发布通道为 Alpha。各平台登录、验证码、额度和第三方 API 的可用性由你的本地账号与服务商决定；KnowledgeRadar 会报告需要人工操作或预期降级的边界，不会伪装成已成功。
 
 ## 适合谁
 
@@ -18,18 +18,31 @@ KnowledgeRadar 是一个 Windows 优先的本地 MCP 服务。它让 Codex 等 A
 
 ## 最快开始
 
-1. 安装 Python 3.12，或使用本地已有的 `.python312` 运行时。
-2. 双击 `scripts\\install.bat`。如需图形化配置，运行 `scripts\\setup_wizard.bat`；它只在本机浏览器中写入 `.env`。
-3. 再运行 `start.cmd`。
-4. 在 Agent 中注册 `http://127.0.0.1:18765/mcp`，或参考 `config\\mcp-config-template.json`。
-5. 执行安全验证：
+1. 从 [GitHub Releases](https://github.com/ga626/knowledge-radar/releases) 下载最新 Alpha 的 `KnowledgeRadar.zip`、`SHA256SUMS.txt` 与 `candidate-receipt.json`。
+2. 用 `SHA256SUMS.txt` 核对 ZIP；安装 Python 3.12 后，从解压目录运行：
+
+   ```bat
+   python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
+   ```
+
+3. 重启或按 Codex 支持的方式刷新，让它加载唯一的 KnowledgeRadar MCP 配置。
+4. 运行 `scripts\\setup_wizard.bat`，只填写你准备启用的能力；页面只在本机 `127.0.0.1` 运行。
+5. 在 Codex 中调用 `health_check` 和 `get_capabilities`，确认本机工具面与配置状态。
+
+源码 checkout 的 `scripts\\install.bat`、`start.cmd` 和 HTTP 配置模板仍保留给维护者/开发者兼容使用，不是普通用户的 Release 安装路径。完整步骤、升级和回滚见 [产品安装与更新](docs/PRODUCT_INSTALL.md)。
+
+## 能力包与健康
+
+先配置一个网页搜索来源即可开始核心研究；学术、视频/多模态、登录平台与招聘能力都可随后按需启用。页面会显示脱敏的就绪状态和本机空间分类，并且只能清理已过期媒体缓存，不会删除密钥或浏览器资料。详见 [能力包与本地健康台](docs/CAPABILITY_PACKS.md)。
+
+开发者源码验证可使用：
 
    ```bat
    .python312\\python.exe scripts\\verify_api_keys.py
    .python312\\python.exe scripts\\verify_all_capabilities.py --safe
    ```
 
-详细步骤见 [安装与首用](docs/INSTALL.md)、[本地配置向导](docs/SETUP_WIZARD.md)、[API 与配置](docs/API_KEYS.md) 和 [MCP 接入](docs/MCP_SETUP.md)。
+开发细节见 [安装与首用](docs/INSTALL.md)、[本地配置向导](docs/SETUP_WIZARD.md)、[API 与配置](docs/API_KEYS.md) 和 [MCP 接入](docs/MCP_SETUP.md)。
 
 ## 能力与边界
 
