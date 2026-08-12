@@ -85,3 +85,71 @@ def test_wizard_rejects_unauthenticated_posts_and_never_echoes_values(monkeypatc
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+
+
+def test_wizard_status_is_sanitized_and_cleanup_requires_local_session(monkeypatch):
+    monkeypatch.setattr(
+        "onboarding.setup_wizard.capability_packs",
+        lambda snapshot: [{"id": "core_web", "status": "ready", "configured_field_count": 1}],
+    )
+    monkeypatch.setattr(
+        "onboarding.setup_wizard.storage_summary",
+        lambda: {"available": True, "categories": [{"label": "媒体缓存", "bytes": 12}], "total_bytes": 12},
+    )
+    calls = []
+    monkeypatch.setattr(
+        "onboarding.setup_wizard.expired_media_cleanup",
+        lambda *, apply: calls.append(apply) or {"status": "APPLIED", "expired_file_count": 1},
+    )
+    server = WizardServer(("127.0.0.1", 0))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        port = server.server_port
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/api/status")
+        response = connection.getresponse()
+        payload = response.read().decode("utf-8")
+        assert response.status == 200
+        assert "private-value" not in payload
+        assert "媒体缓存" in payload
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("POST", "/api/media-cleanup", body=json.dumps({"apply": True}), headers={"Content-Type": "application/json"})
+        assert connection.getresponse().status == 403
+        assert calls == []
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/media-cleanup",
+            body=json.dumps({"apply": True}),
+            headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}", "X-KR-Setup-Token": server.setup_token},
+        )
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read().decode("utf-8"))["expired_file_count"] == 1
+        assert calls == [True]
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+def test_wizard_page_uses_its_nonce_for_interactive_script() -> None:
+    server = WizardServer(("127.0.0.1", 0))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("GET", "/")
+        response = connection.getresponse()
+        page = response.read().decode("utf-8")
+        policy = response.getheader("Content-Security-Policy")
+        assert response.status == 200
+        assert f'nonce="{server.setup_token}"' in page
+        assert f"'nonce-{server.setup_token}'" in policy
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
