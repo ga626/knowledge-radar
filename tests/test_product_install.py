@@ -26,6 +26,17 @@ def _load():
 installer = _load()
 
 
+@pytest.fixture(autouse=True)
+def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
+        executable = installer.runtime_python(install_root / "runtime" / version)
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_text("fixture", encoding="utf-8")
+        return executable
+
+    monkeypatch.setattr(installer, "ensure_runtime", fake_runtime)
+
+
 def package_fixture(tmp_path: Path, version: str) -> Path:
     package = tmp_path / f"package-{version}"
     (package / "src").mkdir(parents=True)
@@ -73,6 +84,7 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     assert env_path.read_text(encoding="utf-8") == "TAVILY_API_KEY=private-value\n"
     assert config_text.count("[mcp_servers.knowledgeradar]") == 1
     assert config["cwd"].startswith(str(install_root))
+    assert config["command"].endswith("runtime\\0.2.0\\Scripts\\python.exe") or config["command"].endswith("runtime/0.2.0/Scripts/python.exe")
     assert config["env"]["KR_DATA_ROOT"] == str(data_root)
     assert str(first) not in config_text and str(second) not in config_text
     assert (codex_home / "plugins" / "knowledgeradar-research" / ".codex-plugin" / "plugin.json").is_file()
