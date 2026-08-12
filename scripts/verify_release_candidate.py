@@ -25,6 +25,8 @@ REQUIRED = {
     "pyproject.toml",
     "src/server.py",
     "scripts/setup_codex_product.py",
+    "scripts/setup_product_wizard.py",
+    "scripts/verify_codex_product.py",
     "config/codex-product/plugin/knowledgeradar-research/.codex-plugin/plugin.json",
     "package-provenance.json",
     "SBOM.json",

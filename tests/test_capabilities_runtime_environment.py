@@ -100,6 +100,25 @@ def test_verify_all_capabilities_wait_for_task_accepts_single_task_response() ->
     assert task["result"]["available"] is True
 
 
+def test_product_verifier_uses_data_root_for_reports(monkeypatch, tmp_path) -> None:
+    data_root = tmp_path / "data"
+    monkeypatch.setenv("KR_DATA_ROOT", str(data_root))
+    monkeypatch.delenv("KR_STATE_DIR", raising=False)
+    monkeypatch.delenv("KR_LOG_DIR", raising=False)
+    spec = importlib.util.spec_from_file_location("verify_all_capabilities_product_data", _VERIFY_ALL_CAPABILITIES)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+
+    assert module.REPORT_DIR == data_root / "state" / "reports"
+    assert module.os.environ["KR_STATE_DIR"] == str(data_root / "state")
+    assert module.os.environ["KR_LOG_DIR"] == str(data_root / "logs")
+
+
 def test_runtime_environment_manifest_declares_productization_boundaries(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
     monkeypatch.setenv("KR_LOG_DIR", str(tmp_path / "runtime" / "logs"))

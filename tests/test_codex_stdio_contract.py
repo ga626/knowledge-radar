@@ -22,9 +22,8 @@ generate_mcp_config_main = _load_script("generate_mcp_config", "generate-mcp-con
 _setup_codex_product = _load_script("setup_codex_product")
 _marketplace_path = _setup_codex_product._marketplace_path
 _update_marketplace = _setup_codex_product._update_marketplace
-_stdio_probe = _load_script("verify_codex_productization")._stdio_probe
-_cache_plugin_check = _load_script("verify_codex_productization")._cache_plugin_check
-_probe_http = _load_script("probe_mcp_http")
+_public_product = _load_script("verify_codex_product")
+_stdio_probe = _public_product.stdio_probe
 
 
 def test_direct_stdio_probe_exposes_research_surface() -> None:
@@ -64,23 +63,6 @@ def test_marketplace_update_keeps_one_local_entry(tmp_path: Path) -> None:
     assert any(item.get("name") == "codex-praetor" for item in payload["plugins"])
 
 
-def test_plugin_cache_check_requires_host_materialization(tmp_path: Path) -> None:
-    plugin = tmp_path / "plugins" / "knowledgeradar-research"
-    (plugin / ".codex-plugin").mkdir(parents=True)
-    (plugin / "skills" / "research").mkdir(parents=True)
-    (plugin / ".codex-plugin" / "plugin.json").write_text('{"name":"knowledgeradar-research","version":"0.1.0+codex.test"}', encoding="utf-8")
-    (plugin / "skills" / "research" / "SKILL.md").write_text("new skill", encoding="utf-8")
-    cache_root = tmp_path / "cache"
-
-    missing = _cache_plugin_check(plugin, cache_root)
-    assert missing["status"] == "HOST_RELOAD_REQUIRED"
-
-    cached_skill = cache_root / "knowledgeradar-research" / "0.1.0+codex.test" / "skills" / "research" / "SKILL.md"
-    cached_skill.parent.mkdir(parents=True)
-    cached_skill.write_text("new skill", encoding="utf-8")
-    assert _cache_plugin_check(plugin, cache_root)["status"] == "PASS"
-
-
 def test_codex_config_generator_uses_src_server_directly(monkeypatch, capsys, tmp_path: Path) -> None:
     monkeypatch.setattr(
         sys,
@@ -96,8 +78,3 @@ def test_codex_config_generator_uses_src_server_directly(monkeypatch, capsys, tm
     assert config["args"][-1] == str(tmp_path / "src" / "server.py")
     assert config["env"]["KR_MCP_TRANSPORT"] == "stdio"
     assert "kr_stdio_host.py" not in json.dumps(payload)
-
-
-def test_diagnostic_bridge_arguments_accept_json_and_scalar_values() -> None:
-    assert _probe_http._parse_arguments([], '{"summary": true}') == {"summary": True}
-    assert _probe_http._parse_arguments(["mode=summary", "limit=3"], "") == {"mode": "summary", "limit": 3}

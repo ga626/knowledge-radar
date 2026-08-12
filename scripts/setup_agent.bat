@@ -21,7 +21,7 @@ echo [2] Codex stdio
 echo [3] WorkBuddy stdio
 echo [4] Claude Desktop stdio
 echo [5] Cursor stdio
-echo [6] CodeX 产品化检查/安装
+echo [6] Codex 产品安装说明
 echo [7] 打印全部配置片段
 echo.
 if defined KR_AGENT_CHOICE (
@@ -55,7 +55,7 @@ if "%CHOICE%"=="3" "%PYTHON_EXE%" scripts\generate-mcp-config.py --agent workbud
 if "%CHOICE%"=="4" "%PYTHON_EXE%" scripts\generate-mcp-config.py --agent claude & goto after_choice
 if "%CHOICE%"=="5" "%PYTHON_EXE%" scripts\generate-mcp-config.py --agent cursor & goto after_choice
 if "%CHOICE%"=="6" (
-  "%PYTHON_EXE%" scripts\verify_codex_productization.py --json
+  "%PYTHON_EXE%" scripts\verify_codex_product.py --json
   echo.
   echo 如需写入 CodeX 全局配置，请运行：
   echo "%PYTHON_EXE%" scripts\setup_codex_product.py --apply --json

@@ -1,5 +1,7 @@
 # FAQ
 
+Release 用户先看 [首次成功](FIRST_SUCCESS.md)；下列 `scripts\…` 命令属于源码开发者路径，普通 Release 用户不需要运行。
+
 ## `/mcp` returns 406 in a browser
 
 That is normal for streamable HTTP MCP. Use an MCP client or Agent, not a normal browser page.

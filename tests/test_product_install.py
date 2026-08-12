@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
+import types
 import tomllib
 
 import pytest
@@ -46,6 +48,8 @@ def package_fixture(tmp_path: Path, version: str) -> Path:
     registry = package / "config" / "profile_registry.example.json"
     registry.parent.mkdir(parents=True)
     registry.write_text('{"profiles": []}\n', encoding="utf-8")
+    (package / "scripts").mkdir()
+    shutil.copyfile(ROOT / "scripts" / "setup_product_wizard.py", package / "scripts" / "setup_product_wizard.py")
     source_plugin = ROOT / "config" / "codex-product" / "plugin" / "knowledgeradar-research"
     shutil.copytree(source_plugin, package / "config" / "codex-product" / "plugin" / "knowledgeradar-research")
     (package / "package-provenance.json").write_text(json.dumps({"source_commit": "a" * 40, "source_dirty": False}), encoding="utf-8")
@@ -88,6 +92,12 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     assert config["env"]["KR_DATA_ROOT"] == str(data_root)
     assert str(first) not in config_text and str(second) not in config_text
     assert (codex_home / "plugins" / "knowledgeradar-research" / ".codex-plugin" / "plugin.json").is_file()
+    launcher = install_root / "configure.cmd"
+    assert launcher.is_file()
+    launcher_text = launcher.read_text(encoding="utf-8")
+    assert "configure_product.py" in launcher_text
+    assert str(data_root) not in launcher_text
+    assert (install_root / "configure_product.py").is_file()
 
 
 def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -107,6 +117,65 @@ def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path,
     assert result["status"] == "ROLLED_BACK"
     assert installer.load_active(install_root)["version"] == "0.1.0"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "EXA_API_KEY=private\n"
+    assert "configure_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
+
+
+def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    first = package_fixture(tmp_path, "0.1.0")
+    second = package_fixture(tmp_path, "0.2.0")
+    first_archive, first_receipt = artifact_fixture(tmp_path, first)
+    second_archive, second_receipt = artifact_fixture(tmp_path, second)
+    installer.apply_install(first, install_root, data_root, Path(sys.executable), channel="stable", archive=first_archive, receipt_path=first_receipt)
+    installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
+    active_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
+    assert "configure_product.py" in active_launcher
+    installer.rollback(install_root, Path(sys.executable))
+    rollback_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
+    assert "configure_product.py" in rollback_launcher
+
+
+def test_version_neutral_launcher_supports_legacy_active_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+
+    helper = (install_root / "configure_product.py").read_text(encoding="utf-8")
+    assert "active.json" in helper
+    assert "setup_wizard.py" in helper
+    assert (install_root / "configure.cmd").is_file()
+
+
+def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    script = install_root / "app" / "0.1.0" / "scripts" / "setup_product_wizard.py"
+    spec = importlib.util.spec_from_file_location("setup_product_wizard_fixture", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    previous_path = list(sys.path)
+    try:
+        spec.loader.exec_module(module)
+        captured: dict[str, object] = {}
+        wizard = types.ModuleType("onboarding.setup_wizard")
+        wizard.run_wizard = lambda **kwargs: captured.update(kwargs)
+        monkeypatch.setitem(sys.modules, "onboarding.setup_wizard", wizard)
+        assert module.main(["--install-root", str(install_root), "--no-open"]) == 0
+        assert captured == {"port": 0, "open_browser": False}
+        assert Path(os.environ["KR_RUNTIME_ENV_PATH"]) == data_root / "config" / "runtime.env"
+        assert Path(os.environ["KR_DATA_ROOT"]) == data_root
+    finally:
+        sys.path[:] = previous_path
 
 
 def test_source_checkout_cannot_be_activated(tmp_path: Path) -> None:
