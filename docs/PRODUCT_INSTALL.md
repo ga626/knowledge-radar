@@ -24,3 +24,5 @@ python scripts\product_install.py migrate-apply --legacy-root D:\Projects\Knowle
 ```
 
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。
+
+首次填写配置、查看能力包状态或清理过期媒体缓存，请运行 `scripts\setup_wizard.bat`，并阅读 [能力包与本地健康台](CAPABILITY_PACKS.md)。
