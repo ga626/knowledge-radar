@@ -34,6 +34,11 @@ def test_product_manifest_includes_runtime_and_plugin() -> None:
     assert "config/codex-product/plugin/knowledgeradar-research/.codex-plugin/plugin.json" in paths
 
 
+def test_product_manifest_excludes_generated_egg_metadata() -> None:
+    manifest = json.loads((ROOT / "config" / "package-manifest.product-lite.json").read_text(encoding="utf-8"))
+    assert builder.is_excluded("src/knowledgeradar.egg-info/PKG-INFO", manifest["exclude"])
+
+
 def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path) -> None:
     output = tmp_path / "package"
     output.mkdir()
