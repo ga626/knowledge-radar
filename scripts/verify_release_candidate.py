@@ -93,12 +93,21 @@ def stdio_probe(package_root: Path) -> list[str]:
         })
         process = subprocess.Popen([sys.executable, "-X", "utf8", str(package_root / "src" / "server.py")], cwd=package_root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         lines: queue.Queue[str] = queue.Queue()
+        errors: queue.Queue[str] = queue.Queue()
         try:
             assert process.stdout is not None
             threading.Thread(target=lambda: [lines.put(line) for line in iter(process.stdout.readline, "")], daemon=True).start()
+            assert process.stderr is not None
+            threading.Thread(target=lambda: [errors.put(line) for line in iter(process.stderr.readline, "")], daemon=True).start()
             request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "kr-release-candidate-verifier", "version": "1"}})
             response = request(process, lines, 2, "tools/list", {})
             return sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
+        except RuntimeError as exc:
+            tail: list[str] = []
+            while not errors.empty():
+                tail.append(errors.get_nowait().strip())
+            detail = " ".join(item for item in tail[-8:] if item)
+            raise RuntimeError(f"{exc}; stderr: {detail[:1200]}") from exc
         finally:
             if process.poll() is None:
                 process.terminate()
