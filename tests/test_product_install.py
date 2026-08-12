@@ -111,3 +111,32 @@ def test_apply_rejects_archive_with_a_mismatched_receipt(tmp_path: Path, monkeyp
     receipt.write_text(json.dumps({"source_commit": "a" * 40, "archive_sha256": "0" * 64}), encoding="utf-8")
     with pytest.raises(RuntimeError, match="SHA-256"):
         installer.apply_install(package, tmp_path / "install", tmp_path / "data", Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+
+
+def test_apply_never_uses_the_real_codex_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    isolated_home = tmp_path / "isolated-codex"
+    monkeypatch.setenv("CODEX_HOME", str(isolated_home))
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, tmp_path / "install", tmp_path / "data", Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    assert (isolated_home / "config.toml").is_file()
+    assert not (tmp_path / ".codex" / "config.toml").exists()
+
+
+def test_migration_is_copy_only_and_never_overwrites_existing_data(tmp_path: Path) -> None:
+    legacy = tmp_path / "legacy"
+    (legacy / "browser_data").mkdir(parents=True)
+    (legacy / ".env").write_text("TAVILY_API_KEY=private\n", encoding="utf-8")
+    (legacy / "browser_data" / "cookie.txt").write_text("private-cookie", encoding="utf-8")
+    data_root = tmp_path / "data"
+    plan = installer.migration_plan(legacy, data_root)
+    result = installer.migrate_apply(legacy, data_root)
+
+    assert plan["does_not_modify_legacy_source"] is True
+    assert result["status"] == "APPLIED"
+    assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "TAVILY_API_KEY=private\n"
+    assert (data_root / "browser_data" / "cookie.txt").read_text(encoding="utf-8") == "private-cookie"
+    (data_root / "config" / "runtime.env").write_text("TAVILY_API_KEY=existing\n", encoding="utf-8")
+    retry = installer.migrate_apply(legacy, data_root)
+    assert retry["status"] == "NEEDS_REVIEW"
+    assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "TAVILY_API_KEY=existing\n"

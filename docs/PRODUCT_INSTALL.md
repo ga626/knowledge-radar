@@ -16,4 +16,11 @@ python scripts\product_install.py status
 python scripts\product_install.py rollback
 ```
 
+维护者首次转移旧开发根中的既有本机配置时，先查看不含路径明文的迁移计划，再明确 Apply。迁移只复制、绝不删除或覆盖旧开发根；目标已有不同文件会保留并标记 `NEEDS_REVIEW`：
+
+```bat
+python scripts\product_install.py migrate-plan --legacy-root D:\Projects\KnowledgeRadar
+python scripts\product_install.py migrate-apply --legacy-root D:\Projects\KnowledgeRadar
+```
+
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。

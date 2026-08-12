@@ -17,6 +17,7 @@ import sys
 import tempfile
 import tomllib
 from typing import Any
+from uuid import uuid4
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -161,6 +162,81 @@ def initialize_data(data_root: Path, package_root: Path) -> None:
         shutil.copyfile(template, registry)
 
 
+def tree_summary(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"exists": False, "files": 0, "bytes": 0, "path_hash": path_hash(path)}
+    files = [item for item in path.rglob("*") if item.is_file()] if path.is_dir() else [path]
+    return {"exists": True, "files": len(files), "bytes": sum(item.stat().st_size for item in files), "path_hash": path_hash(path)}
+
+
+def migration_plan(legacy_root: Path, data_root: Path) -> dict[str, Any]:
+    legacy_root = legacy_root.resolve()
+    data_root = data_root.resolve()
+    if legacy_root == data_root or legacy_root in data_root.parents:
+        raise RuntimeError("legacy source must stay outside the product data root")
+    mappings = [
+        (legacy_root / ".env", data_root / "config" / "runtime.env", "runtime_config"),
+        (legacy_root / "config" / "profile_registry.json", data_root / "config" / "profile_registry.json", "profile_registry"),
+        (legacy_root / "browser_data", data_root / "browser_data", "browser_data"),
+        (legacy_root / "local", data_root / "local", "local_profiles"),
+        (legacy_root / "runtime", data_root / "state" / "legacy-runtime", "runtime_state"),
+    ]
+    return {
+        "schema": "knowledgeradar-legacy-migration-plan/v1",
+        "legacy_root_hash": path_hash(legacy_root),
+        "data_root_hash": path_hash(data_root),
+        "mappings": [
+            {"category": category, "source": tree_summary(source), "destination": tree_summary(destination)}
+            for source, destination, category in mappings
+        ],
+        "copy_only": True,
+        "does_not_modify_legacy_source": True,
+        "conflicts_require_manual_review": True,
+    }
+
+
+def copy_without_overwrite(source: Path, destination: Path) -> tuple[int, int, list[str]]:
+    if not source.exists():
+        return 0, 0, []
+    copied = 0
+    skipped = 0
+    conflicts: list[str] = []
+    sources = [source] if source.is_file() else [item for item in source.rglob("*") if item.is_file()]
+    for item in sources:
+        relative = Path(item.name) if source.is_file() else item.relative_to(source)
+        target = destination if source.is_file() else destination / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            skipped += 1
+            if sha256_file(item) != sha256_file(target):
+                conflicts.append(relative.as_posix())
+            continue
+        shutil.copy2(item, target)
+        copied += 1
+    return copied, skipped, conflicts
+
+
+def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
+    plan = migration_plan(legacy_root, data_root)
+    legacy_root = legacy_root.resolve()
+    data_root = data_root.resolve()
+    migration_id = uuid4().hex
+    receipt: dict[str, Any] = {"schema": "knowledgeradar-legacy-migration-receipt/v1", "migration_id": migration_id, "status": "APPLIED", "plan": plan, "copied": []}
+    mapping_paths = [
+        (legacy_root / ".env", data_root / "config" / "runtime.env", "runtime_config"),
+        (legacy_root / "config" / "profile_registry.json", data_root / "config" / "profile_registry.json", "profile_registry"),
+        (legacy_root / "browser_data", data_root / "browser_data", "browser_data"),
+        (legacy_root / "local", data_root / "local", "local_profiles"),
+        (legacy_root / "runtime", data_root / "state" / "legacy-runtime", "runtime_state"),
+    ]
+    for source, destination, category in mapping_paths:
+        copied, skipped, conflicts = copy_without_overwrite(source, destination)
+        receipt["copied"].append({"category": category, "copied_files": copied, "skipped_files": skipped, "conflict_relative_paths": conflicts[:50]})
+    receipt["status"] = "NEEDS_REVIEW" if any(item["conflict_relative_paths"] for item in receipt["copied"]) else "APPLIED"
+    write_json_atomic(data_root / "receipts" / f"migration-{migration_id}.json", receipt)
+    return receipt
+
+
 def build_plan(package_root: Path, install_root: Path, data_root: Path, python_exe: Path) -> dict[str, Any]:
     version = version_for(package_root)
     program_root = install_root / "app" / version
@@ -276,7 +352,7 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
-    parser.add_argument("command", choices=("plan", "apply", "status", "rollback"))
+    parser.add_argument("command", choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply"))
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
     parser.add_argument("--data-root", default="")
@@ -284,13 +360,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--channel", choices=("stable", "maintainer-main"), default="stable")
     parser.add_argument("--archive", default="", help="downloaded candidate/release ZIP")
     parser.add_argument("--receipt", default="", help="candidate/release receipt JSON matching --archive")
+    parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
         install_root = Path(args.install_root).resolve()
         data_root = Path(args.data_root).resolve() if args.data_root else install_root / "data"
         python_exe = Path(args.python).resolve()
-        if args.command == "plan":
+        if args.command == "migrate-plan":
+            if not args.legacy_root:
+                raise RuntimeError("migrate-plan requires --legacy-root")
+            result = migration_plan(Path(args.legacy_root), data_root)
+        elif args.command == "migrate-apply":
+            if not args.legacy_root:
+                raise RuntimeError("migrate-apply requires --legacy-root")
+            result = migrate_apply(Path(args.legacy_root), data_root)
+        elif args.command == "plan":
             result = build_plan(package_root, install_root, data_root, python_exe)
         elif args.command == "apply":
             result = apply_install(package_root, install_root, data_root, python_exe, channel=args.channel, archive=Path(args.archive).resolve() if args.archive else None, receipt_path=Path(args.receipt).resolve() if args.receipt else None)
