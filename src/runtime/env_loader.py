@@ -11,7 +11,9 @@ REPO_ROOT = os.path.dirname(SRC_ROOT)
 
 def load_runtime_env() -> str:
     """Load the single product runtime .env file, returning its path or empty string."""
-    candidates = [os.path.join(REPO_ROOT, ".env")]
+    configured = os.environ.get("KR_RUNTIME_ENV_PATH", "").strip()
+    candidates = [configured] if configured else []
+    candidates.append(os.path.join(REPO_ROOT, ".env"))
     loaded: list[str] = []
     seen: set[str] = set()
     for env_path in candidates:
