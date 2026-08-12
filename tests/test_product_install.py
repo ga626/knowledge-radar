@@ -134,7 +134,7 @@ def test_migration_is_copy_only_and_never_overwrites_existing_data(tmp_path: Pat
 
     assert plan["does_not_modify_legacy_source"] is True
     assert result["status"] == "APPLIED"
-    assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "TAVILY_API_KEY=private\n"
+    assert "TAVILY_API_KEY=private" in (data_root / "config" / "runtime.env").read_text(encoding="utf-8")
     assert (data_root / "browser_data" / "cookie.txt").read_text(encoding="utf-8") == "private-cookie"
     (data_root / "config" / "runtime.env").write_text("TAVILY_API_KEY=existing\n", encoding="utf-8")
     retry = installer.migrate_apply(legacy, data_root)

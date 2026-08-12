@@ -216,6 +216,58 @@ def copy_without_overwrite(source: Path, destination: Path) -> tuple[int, int, l
     return copied, skipped, conflicts
 
 
+def env_values(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        if key.strip():
+            values[key.strip()] = value.strip()
+    return values
+
+
+def merge_runtime_env(source: Path, destination: Path) -> tuple[int, int, list[str]]:
+    source_values = env_values(source)
+    if not source_values:
+        return 0, 0, []
+    existing = destination.read_text(encoding="utf-8-sig") if destination.is_file() else ""
+    destination_values = env_values(destination)
+    additions = {key: value for key, value in source_values.items() if value and not destination_values.get(key)}
+    conflicts = sorted(key for key, value in source_values.items() if value and destination_values.get(key) and destination_values[key] != value)
+    if additions:
+        lines = existing.splitlines()
+        for index, line in enumerate(lines):
+            key = line.split("=", 1)[0].strip() if "=" in line else ""
+            if key in additions:
+                lines[index] = f"{key}={additions.pop(key)}"
+        if additions:
+            lines.extend(["", "# Migrated local configuration"])
+            lines.extend(f"{key}={value}" for key, value in sorted(additions.items()))
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
+    return len([value for value in source_values.values() if value]), 0, conflicts
+
+
+def migrate_profile_registry(source: Path, destination: Path) -> tuple[int, int, list[str]]:
+    if not source.is_file():
+        return 0, 0, []
+    if not destination.exists():
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return 1, 0, []
+    try:
+        current = json.loads(destination.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return 0, 1, ["profile_registry.json"]
+    if isinstance(current, dict) and current.get("version") == "example":
+        shutil.copy2(source, destination)
+        return 1, 0, []
+    return 0, 1, [] if sha256_file(source) == sha256_file(destination) else ["profile_registry.json"]
+
+
 def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
     plan = migration_plan(legacy_root, data_root)
     legacy_root = legacy_root.resolve()
@@ -230,7 +282,12 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
         (legacy_root / "runtime", data_root / "state" / "legacy-runtime", "runtime_state"),
     ]
     for source, destination, category in mapping_paths:
-        copied, skipped, conflicts = copy_without_overwrite(source, destination)
+        if category == "runtime_config":
+            copied, skipped, conflicts = merge_runtime_env(source, destination)
+        elif category == "profile_registry":
+            copied, skipped, conflicts = migrate_profile_registry(source, destination)
+        else:
+            copied, skipped, conflicts = copy_without_overwrite(source, destination)
         receipt["copied"].append({"category": category, "copied_files": copied, "skipped_files": skipped, "conflict_relative_paths": conflicts[:50]})
     receipt["status"] = "NEEDS_REVIEW" if any(item["conflict_relative_paths"] for item in receipt["copied"]) else "APPLIED"
     write_json_atomic(data_root / "receipts" / f"migration-{migration_id}.json", receipt)
