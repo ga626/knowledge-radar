@@ -50,6 +50,8 @@ def require_python_312(python_exe: Path) -> None:
     result = subprocess.run(
         [str(python_exe), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
         text=True,
+        encoding="utf-8",
+        errors="replace",
         capture_output=True,
         check=False,
     )
@@ -58,7 +60,7 @@ def require_python_312(python_exe: Path) -> None:
 
 
 def run_runtime_check(command: list[str], *, cwd: Path, action: str, env: dict[str, str] | None = None) -> None:
-    result = subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, check=False)
+    result = subprocess.run(command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         suffix = f": {detail[-1][:240]}" if detail else ""
