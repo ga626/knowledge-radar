@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import subprocess
 import sys
 import tempfile
 import tomllib
@@ -39,6 +40,54 @@ def path_hash(path: Path) -> str:
 
 def default_install_root() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "KnowledgeRadar"
+
+
+def runtime_python(runtime_root: Path) -> Path:
+    return runtime_root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def require_python_312(python_exe: Path) -> None:
+    result = subprocess.run(
+        [str(python_exe), "-c", "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode or result.stdout.strip() != "3.12":
+        raise RuntimeError("KnowledgeRadar requires an available Python 3.12 interpreter")
+
+
+def run_runtime_check(command: list[str], *, cwd: Path, action: str) -> None:
+    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+    if result.returncode:
+        raise RuntimeError(f"runtime bootstrap failed while {action}")
+
+
+def ensure_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
+    require_python_312(base_python)
+    runtime_root = install_root / "runtime" / version
+    executable = runtime_python(runtime_root)
+    if executable.is_file():
+        run_runtime_check([str(executable), "-c", "import mcp; import server"], cwd=program_root, action="checking the existing runtime")
+        return executable
+    runtime_parent = runtime_root.parent
+    runtime_parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".runtime-staging-", dir=runtime_parent))
+    try:
+        run_runtime_check([str(base_python), "-m", "venv", str(staging)], cwd=program_root, action="creating the product runtime")
+        staged_python = runtime_python(staging)
+        run_runtime_check(
+            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-cache-dir", str(program_root)],
+            cwd=program_root,
+            action="installing product dependencies",
+        )
+        run_runtime_check([str(staged_python), "-c", "import mcp; import server"], cwd=program_root, action="checking the product runtime")
+        if runtime_root.exists():
+            raise RuntimeError("existing product runtime is incomplete; remove it explicitly before retrying")
+        staging.replace(runtime_root)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    return executable
 
 
 def version_for(package_root: Path) -> str:
@@ -297,12 +346,15 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
 def build_plan(package_root: Path, install_root: Path, data_root: Path, python_exe: Path) -> dict[str, Any]:
     version = version_for(package_root)
     program_root = install_root / "app" / version
+    runtime_root = install_root / "runtime" / version
     total_bytes = sum(path.stat().st_size for path in package_root.rglob("*") if path.is_file())
     return {
         "schema": "knowledgeradar-product-install-plan/v1",
         "package_root": str(package_root.resolve()),
         "version": version,
         "program_root": str(program_root.resolve()),
+        "runtime_root": str(runtime_root.resolve()),
+        "runtime_python": str(runtime_python(runtime_root).resolve()),
         "data_root": str(data_root.resolve()),
         "python": str(python_exe.resolve()),
         "package_bytes": total_bytes,
@@ -356,7 +408,6 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
         raise RuntimeError("data root must not be inside the immutable app directory")
     program_root = Path(plan["program_root"])
     app_root.mkdir(parents=True, exist_ok=True)
-    initialize_data(data_root, package_root)
     if not program_root.exists():
         staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=app_root))
         try:
@@ -364,6 +415,8 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
             (staging / "payload").replace(program_root)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+    product_python = ensure_runtime(program_root, install_root, plan["version"], python_exe)
+    initialize_data(data_root, package_root)
     active = {
         "schema": ACTIVE_SCHEMA,
         "channel": channel,
@@ -387,7 +440,7 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
     if config.is_file():
         shutil.copyfile(config, backup)
     plugin = copy_plugin(program_root, codex_home)
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, python_exe)), encoding="utf-8")
+    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)), encoding="utf-8")
     write_json_atomic(active_path, active)
     receipt = {"schema": "knowledgeradar-activation-receipt/v1", "status": "APPLIED", "active": active, "plugin": plugin}
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
@@ -403,7 +456,10 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     write_json_atomic(install_root / "active.json", previous)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, python_exe)), encoding="utf-8")
+    previous_runtime = runtime_python(install_root / "runtime" / str(previous.get("version") or ""))
+    if not previous_runtime.is_file():
+        raise RuntimeError("previous product runtime is unavailable")
+    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime)), encoding="utf-8")
     return {"status": "ROLLED_BACK", "active": previous}
 
 

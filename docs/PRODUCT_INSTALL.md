@@ -8,7 +8,7 @@ python scripts\product_install.py apply --channel stable --archive KnowledgeRada
 python scripts\product_install.py status
 ```
 
-默认程序根为 `%LOCALAPPDATA%\KnowledgeRadar\app\<version>`，数据根为 `%LOCALAPPDATA%\KnowledgeRadar\data`。可通过 `--install-root` 和 `--data-root` 指向其他本地可写盘。`plan` 只显示路径和空间估计；`apply` 必须同时提供下载的 ZIP 与匹配回执，核验 SHA-256 和源码身份后才复制公开程序、创建缺失的数据模板、写入单个 Codex MCP block 并部署插件。已有数据文件从不覆盖。
+默认程序根为 `%LOCALAPPDATA%\KnowledgeRadar\app\<version>`，独立 Python 运行时为 `%LOCALAPPDATA%\KnowledgeRadar\runtime\<version>`，数据根为 `%LOCALAPPDATA%\KnowledgeRadar\data`。可通过 `--install-root` 和 `--data-root` 指向其他本地可写盘。`apply` 需要本机可用的 Python 3.12：先核验 ZIP/回执、复制公开程序、创建版本化运行时并安装依赖、启动预检；全部成功后才创建缺失的数据模板、写入单个 Codex MCP block 并部署插件。运行时准备失败不会切换已有 active 或覆盖用户数据。
 
 维护者只能为已验证的 `maintainer-main` 制品执行 `apply --channel maintainer-main`；普通用户使用 stable Release。两者任一时刻只会由 `active.json` 指向一个运行版本。若新版本无法工作，`rollback` 恢复先前 active 指针和 MCP block，不删除数据：
 
