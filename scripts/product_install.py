@@ -57,18 +57,22 @@ def require_python_312(python_exe: Path) -> None:
         raise RuntimeError("KnowledgeRadar requires an available Python 3.12 interpreter")
 
 
-def run_runtime_check(command: list[str], *, cwd: Path, action: str) -> None:
-    result = subprocess.run(command, cwd=cwd, text=True, capture_output=True, check=False)
+def run_runtime_check(command: list[str], *, cwd: Path, action: str, env: dict[str, str] | None = None) -> None:
+    result = subprocess.run(command, cwd=cwd, env=env, text=True, capture_output=True, check=False)
     if result.returncode:
-        raise RuntimeError(f"runtime bootstrap failed while {action}")
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[-1][:240]}" if detail else ""
+        raise RuntimeError(f"runtime bootstrap failed while {action}{suffix}")
 
 
 def ensure_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
     require_python_312(base_python)
     runtime_root = install_root / "runtime" / version
     executable = runtime_python(runtime_root)
+    runtime_env = dict(os.environ)
+    runtime_env["PYTHONPATH"] = str(program_root / "src")
     if executable.is_file():
-        run_runtime_check([str(executable), "-c", "import mcp; import server"], cwd=program_root, action="checking the existing runtime")
+        run_runtime_check([str(executable), "-c", "import mcp; import server"], cwd=program_root, action="checking the existing runtime", env=runtime_env)
         return executable
     runtime_parent = runtime_root.parent
     runtime_parent.mkdir(parents=True, exist_ok=True)
@@ -81,7 +85,7 @@ def ensure_runtime(program_root: Path, install_root: Path, version: str, base_py
             cwd=program_root,
             action="installing product dependencies",
         )
-        run_runtime_check([str(staged_python), "-c", "import mcp; import server"], cwd=program_root, action="checking the product runtime")
+        run_runtime_check([str(staged_python), "-c", "import mcp; import server"], cwd=program_root, action="checking the product runtime", env=runtime_env)
         if runtime_root.exists():
             raise RuntimeError("existing product runtime is incomplete; remove it explicitly before retrying")
         staging.replace(runtime_root)
