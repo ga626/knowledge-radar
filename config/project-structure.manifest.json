@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-08-11",
+  "updated_at": "2026-08-12",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -285,6 +285,7 @@
     "scripts/check_docs_verification_attachments.py",
     "scripts/build_agent_tool_trace.py",
     "scripts/build_product_lite_package.py",
+    "scripts/verify_release_candidate.py",
     "scripts/build_public_source_projection.py",
     "scripts/verify_package_integrity.py",
     "scripts/verify_all_tools.py",
@@ -315,6 +316,7 @@
     "config/quality-gates.manifest.json",
     "config/project-structure.manifest.json",
     "scripts/*package*.py",
+    "scripts/verify_release_candidate.py",
     "scripts/build_public_source_projection.py",
     "scripts/check_*docs*.py",
     "scripts/check_docs_governance.py",
@@ -346,8 +348,9 @@
     "Run python scripts/check_structure_docs.py.",
     "Run python scripts/check_doc_drift.py.",
     "Run python scripts/build_product_lite_package.py --dry-run.",
+    "Run python scripts/verify_release_candidate.py --candidate-dir <candidate-dir> after building a release candidate.",
     "Run python scripts/verify_package_integrity.py.",
     "Do not hand-edit KR-GENERATED blocks."
   ],
-  "release_sync_rule": "One-way only: development source -> generated package. Never synchronize package output back into source automatically."
+  "release_sync_rule": "One-way only: public source -> generated package -> verified candidate -> same Release ZIP. Never synchronize package output back into source automatically."
 }

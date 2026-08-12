@@ -1,0 +1,51 @@
+from __future__ import annotations
+
+import importlib.util
+import json
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _load(name: str):
+    spec = importlib.util.spec_from_file_location(name, ROOT / "scripts" / f"{name}.py")
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+builder = _load("build_product_lite_package")
+verifier = _load("verify_release_candidate")
+
+
+def test_product_manifest_only_references_public_files() -> None:
+    manifest = json.loads((ROOT / "config" / "package-manifest.product-lite.json").read_text(encoding="utf-8"))
+    _, missing, _ = builder.collect_files(manifest)
+    assert missing == []
+
+
+def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path) -> None:
+    output = tmp_path / "package"
+    output.mkdir()
+    manifest = ROOT / "config" / "package-manifest.product-lite.json"
+    builder.write_metadata(output, manifest, [], "a" * 40)
+    provenance = json.loads((output / "package-provenance.json").read_text(encoding="utf-8"))
+    assert provenance["source_dirty"] is False
+    assert "source_root" not in provenance
+    assert all("Users" not in str(value) for value in provenance.values())
+    assert (output / "SBOM.json").is_file()
+
+
+def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
+    archive = tmp_path / "bad.zip"
+    import zipfile
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("KnowledgeRadar/../outside.txt", "no")
+    try:
+        verifier.safe_extract(archive, tmp_path / "extract")
+    except RuntimeError as exc:
+        assert "unsafe" in str(exc)
+    else:
+        raise AssertionError("unsafe archive was accepted")

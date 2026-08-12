@@ -66,6 +66,20 @@ def check_package(path: Path, forbidden_patterns: List[str]) -> List[str]:
     public_source = path / "PUBLIC_SOURCE_MANIFEST.json"
     if not provenance.exists() and not generated_from.exists() and not public_source.exists():
         issues.append(f"{path.name}: missing package provenance marker")
+    if provenance.exists():
+        try:
+            payload = load_json(provenance)
+        except (OSError, json.JSONDecodeError) as exc:
+            issues.append(f"{path.name}: invalid package provenance: {exc}")
+        else:
+            if payload.get("source_dirty") is not False:
+                issues.append(f"{path.name}: package provenance is not clean-source")
+            required = {"source_commit", "manifest_sha256", "files"}
+            missing = sorted(required - set(payload))
+            if missing:
+                issues.append(f"{path.name}: package provenance missing {', '.join(missing)}")
+            if not (path / "SBOM.json").is_file():
+                issues.append(f"{path.name}: missing SBOM.json")
     return issues
 
 
