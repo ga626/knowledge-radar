@@ -95,8 +95,9 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     launcher = install_root / "configure.cmd"
     assert launcher.is_file()
     launcher_text = launcher.read_text(encoding="utf-8")
-    assert "setup_product_wizard.py" in launcher_text
+    assert "configure_product.py" in launcher_text
     assert str(data_root) not in launcher_text
+    assert (install_root / "configure_product.py").is_file()
 
 
 def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -116,7 +117,7 @@ def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path,
     assert result["status"] == "ROLLED_BACK"
     assert installer.load_active(install_root)["version"] == "0.1.0"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "EXA_API_KEY=private\n"
-    assert "app" in (install_root / "configure.cmd").read_text(encoding="utf-8")
+    assert "configure_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
 
 
 def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -130,10 +131,25 @@ def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, mo
     installer.apply_install(first, install_root, data_root, Path(sys.executable), channel="stable", archive=first_archive, receipt_path=first_receipt)
     installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
     active_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
-    assert "app\\0.2.0" in active_launcher or "app/0.2.0" in active_launcher
+    assert "configure_product.py" in active_launcher
     installer.rollback(install_root, Path(sys.executable))
     rollback_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
-    assert "app\\0.1.0" in rollback_launcher or "app/0.1.0" in rollback_launcher
+    assert "configure_product.py" in rollback_launcher
+
+
+def test_version_neutral_launcher_supports_legacy_active_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+
+    helper = (install_root / "configure_product.py").read_text(encoding="utf-8")
+    assert "active.json" in helper
+    assert "setup_wizard.py" in helper
+    assert (install_root / "configure.cmd").is_file()
 
 
 def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

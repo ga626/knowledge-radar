@@ -206,19 +206,52 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
 
 
 def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> Path:
-    """Write the sole Release-user setup entry point beside active.json."""
+    """Write a version-neutral Release setup entry point beside ``active.json``.
+
+    The helper belongs to the installation root, rather than an app version, so
+    a rollback can still configure a pre-wizard product version.  It resolves
+    the active program and data roots at launch time; no user value is embedded
+    in either generated file.
+    """
     program = Path(str(active["program_root"])).resolve()
     install_root = program.parents[1]
-    script = program / "scripts" / "setup_product_wizard.py"
-    if not script.is_file():
-        raise RuntimeError("product setup wizard entry point is missing")
+    helper = install_root / "configure_product.py"
+    helper.write_text(
+        "from __future__ import annotations\n"
+        "import argparse\n"
+        "import json\n"
+        "import os\n"
+        "from pathlib import Path\n"
+        "import sys\n\n"
+        "ROOT = Path(__file__).resolve().parent\n\n"
+        "def main() -> int:\n"
+        "    parser = argparse.ArgumentParser(description='Start the active local KnowledgeRadar setup wizard.')\n"
+        "    parser.add_argument('--port', type=int, default=0)\n"
+        "    parser.add_argument('--no-open', action='store_true')\n"
+        "    args = parser.parse_args()\n"
+        "    if not 0 <= args.port <= 65535:\n"
+        "        parser.error('--port must be between 0 and 65535')\n"
+        "    active = json.loads((ROOT / 'active.json').read_text(encoding='utf-8'))\n"
+        "    program = Path(str(active.get('program_root') or '')).resolve()\n"
+        "    data = Path(str(active.get('data_root') or '')).resolve()\n"
+        "    if active.get('schema') != 'knowledgeradar-active-install/v1' or not (program / 'src' / 'onboarding' / 'setup_wizard.py').is_file() or not data.is_dir():\n"
+        "        raise RuntimeError('active KnowledgeRadar installation is unavailable')\n"
+        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs')})\n"
+        "    sys.path.insert(0, str(program / 'src'))\n"
+        "    from onboarding.setup_wizard import run_wizard\n"
+        "    run_wizard(port=args.port, open_browser=not args.no_open)\n"
+        "    return 0\n\n"
+        "if __name__ == '__main__':\n"
+        "    raise SystemExit(main())\n",
+        encoding="utf-8",
+    )
     launcher = install_root / "configure.cmd"
     launcher.write_text(
         "@echo off\r\n"
         "setlocal\r\n"
         "set \"PYTHONUTF8=1\"\r\n"
         "set \"PYTHONIOENCODING=utf-8\"\r\n"
-        f"\"{python_exe}\" \"{script}\" --install-root \"{install_root}\" %*\r\n",
+        f"\"{python_exe}\" \"{helper}\" %*\r\n",
         encoding="utf-8",
     )
     return launcher
