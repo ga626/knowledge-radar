@@ -1,9 +1,9 @@
 {
   "schema": "knowledgeradar-public-source-projection/v1",
-  "source_commit": "b5c7b99f66dda80f33e2e58fedbc2530d463cbd1",
+  "source_commit": "4e0a2e4f73f9bcd0a82f1305c53dc7e4d3811da6",
   "manifest_path": "config/public-source-manifest.json",
-  "manifest_sha256": "79a71d413fdb88e1d93d48aa651038e029a18a6c4e8aba4a0af5a888dcb8783e",
-  "file_count": 484,
+  "manifest_sha256": "9030c17e6801c3cdf47eb4ac189316204a137d882df23d4dd815fdd6a3541705",
+  "file_count": 491,
   "files": [
     {
       "path": ".env.example",
@@ -12,33 +12,33 @@
     },
     {
       "path": ".github/ISSUE_TEMPLATE/bug_report.yml",
-      "sha256": "ffe0b58db206f01c88c114a022ec7c49d2c450808a6ddf4e591893260a12e266",
-      "size": 869
+      "sha256": "d4eff0003e150fc4d292776100ba0f7adf18424a6a869af120c9bf580e8a0e92",
+      "size": 898
     },
     {
       "path": ".github/ISSUE_TEMPLATE/config.yml",
-      "sha256": "d7b1f37de7345304a136ea0fb4ce1e273d32e2bf53edc6cd1a98500aa5ccad28",
-      "size": 238
+      "sha256": "f009dbce65cc043b3bb347f0f49c348cba6a5feb4e9a81575ab3cf1d0f3927fe",
+      "size": 243
     },
     {
       "path": ".github/ISSUE_TEMPLATE/feature_request.yml",
-      "sha256": "3c5327c512a216ee6aebadab1e872add4fc2498861790c36d79d7cf63b4bfbf9",
-      "size": 588
+      "sha256": "56d6731efd8da3c85ece631ee7afd121923be4447368d4f44b3e864cef12a1ea",
+      "size": 608
     },
     {
       "path": ".github/dependabot.yml",
-      "sha256": "6f409c7eb1720adce645ef906344afa8b333abb1e6f9f5b3de826da4ec314842",
-      "size": 195
+      "sha256": "91972644e73d3876d6ab63b4dc9e34d8eeebfe287614967d828e5cb0b3b34359",
+      "size": 205
     },
     {
       "path": ".github/pull_request_template.md",
-      "sha256": "094e090c93c9219692208dc7b3d1fc219014de92ccb0c44a72e3b3d7b6ed007b",
-      "size": 478
+      "sha256": "af67f97de06d8548ee07ea31b533f920b75d2bb0b7654d47b32b3f36d4fd2693",
+      "size": 491
     },
     {
       "path": ".github/workflows/ci.yml",
-      "sha256": "a83b7d6a90a04f2c6c7f4998a74a55910787f1b46d458481bd342d386bb1efa5",
-      "size": 850
+      "sha256": "9a2c9f536ffe2a9fceada2d82e08e991f1bf73ddbae1bd86728e7789ddf3e4a0",
+      "size": 888
     },
     {
       "path": ".gitignore",
@@ -47,8 +47,8 @@
     },
     {
       "path": "CONTRIBUTING.md",
-      "sha256": "229694366b6f7b668965077efdef3ee0536f7698b6788b781400367b5030ee9b",
-      "size": 1368
+      "sha256": "2cff2c9e3bfcf7d63b516181edc7ad0279b3d13adb0ccd40b1b4db949423c052",
+      "size": 1396
     },
     {
       "path": "LICENSE",
@@ -57,18 +57,18 @@
     },
     {
       "path": "README.en.md",
-      "sha256": "1e2aea704780db2f5521ccfe7b8e67b22fcde7e8fca79816535d8275700ac10f",
-      "size": 3806
+      "sha256": "d53c3042dbae761aea7ee4a0cc4cc7b91cff2de4f75851b7bf81218eae677e81",
+      "size": 3935
     },
     {
       "path": "README.md",
-      "sha256": "0d176f617b41e63453abbeb25b92c078d27b398342235ff2959cb08ce1531b4d",
-      "size": 3571
+      "sha256": "dbf7cc2028e23ae3b90f2cdeeef18f9a0514f2dbef701ff1fb1f2ffdb3c3bd8c",
+      "size": 3681
     },
     {
       "path": "SECURITY.md",
-      "sha256": "498b42c73780c388e977532ae1c73a9d4579085b5f51f0a03309fc65cb7a8538",
-      "size": 930
+      "sha256": "a4e6a161ef5cd2b3866bc04215fc9be8a74f42561495bb7899f26c2b66ad7f2d",
+      "size": 945
     },
     {
       "path": "bridge/.npmrc",
@@ -122,8 +122,8 @@
     },
     {
       "path": "config/package-manifest.product-lite.json",
-      "sha256": "0162131cdc71247092d035d52b36a5f657589e4b4e25b52185fe2dbecdbdbb89",
-      "size": 5446
+      "sha256": "3ce7a5de61112d880c7f0fc00570cd18460dde40830c821b70ed44ca7f337af1",
+      "size": 5541
     },
     {
       "path": "config/package.env.example",
@@ -132,13 +132,13 @@
     },
     {
       "path": "config/project-structure.manifest.json",
-      "sha256": "86bf30692c1a6e5bd362cf065a3054888974eca9fd4009c9556780991d0e621e",
-      "size": 11769
+      "sha256": "8b75c5b66291a14fe7498967b84476555a7bf008a3e6bd685219e0c3513c5cf3",
+      "size": 12063
     },
     {
       "path": "config/public-source-manifest.json",
-      "sha256": "79a71d413fdb88e1d93d48aa651038e029a18a6c4e8aba4a0af5a888dcb8783e",
-      "size": 1944
+      "sha256": "9030c17e6801c3cdf47eb4ac189316204a137d882df23d4dd815fdd6a3541705",
+      "size": 2046
     },
     {
       "path": "config/runtime.env.example",
@@ -162,8 +162,8 @@
     },
     {
       "path": "docs/API_KEYS.md",
-      "sha256": "8c0ab9c4fdf8bac5e45b51326e1a8c8d941e34bd6b7e682d9cf6e4d2bc7b21d0",
-      "size": 2168
+      "sha256": "e0776338ebc83e40cca9708e0d6b8ff42e72809b01e0daa2e6f9ed8d4a5acd36",
+      "size": 2222
     },
     {
       "path": "docs/FAQ.md",
@@ -172,8 +172,8 @@
     },
     {
       "path": "docs/INSTALL.md",
-      "sha256": "d707e1100d9396bb5f70aa48905339e10629c9a6e3ba65fa7dcf4349593642e9",
-      "size": 2141
+      "sha256": "910362de3345d2fa2e8228935ede910d001e277c5767a9f62d0e99df3af53079",
+      "size": 2344
     },
     {
       "path": "docs/MCP_SETUP.md",
@@ -191,19 +191,24 @@
       "size": 435
     },
     {
+      "path": "docs/SETUP_WIZARD.md",
+      "sha256": "9e5d450abd31a7d08ed293c2a1acefa0228dacd1e226bb4a317325a88fe2cb41",
+      "size": 1108
+    },
+    {
       "path": "docs/reference/PLATFORM_TEMPLATE.md",
       "sha256": "e7174fef423b1808fcf41067a8903e12e1d408223195eec2a1d9e8e68c810d0c",
       "size": 564
     },
     {
       "path": "docs/文档索引.md",
-      "sha256": "829b8de69e8c7416ed226085d3308e39136a6af23705ddc8d3eb1dd113a70fce",
-      "size": 4128
+      "sha256": "49ebc85f42559b1de85f9cd430fa5977bf7db009600f8c18b43d06ff10ce919e",
+      "size": 4207
     },
     {
       "path": "pyproject.toml",
-      "sha256": "5878463c84787f4185039d839c20194bde1d7b5f5824938890d192f8cb6006d4",
-      "size": 1971
+      "sha256": "20451dba4c205d2a5923afec4e1a858adb1c695d199a7dd5c64d6373d4734aff",
+      "size": 1975
     },
     {
       "path": "scripts/build_product_lite_package.py",
@@ -222,8 +227,8 @@
     },
     {
       "path": "scripts/install.bat",
-      "sha256": "7efcf0db84776cd8ce76094df8e8fe39c7142c146ed7c94a273bfd34dba6e0e2",
-      "size": 15211
+      "sha256": "d2fb060ee478526b2da2ebd99dbbc037238d93c7eaf372d1e3e39525d769f3bd",
+      "size": 15382
     },
     {
       "path": "scripts/open_academic_login_profiles.py",
@@ -244,6 +249,16 @@
       "path": "scripts/setup_codex_product.py",
       "sha256": "fced888d3cdf4d253ae3ce33bf66bc795ed7014f1fb67d60624378bbf6597695",
       "size": 12417
+    },
+    {
+      "path": "scripts/setup_wizard.bat",
+      "sha256": "f720534f53b1a0284bf8c35404fd93c43f009c867bba8fe14d3be7f4acb862aa",
+      "size": 264
+    },
+    {
+      "path": "scripts/start_setup_wizard.py",
+      "sha256": "f5fc98d0ac948a6b55f21b2e279b3ce63a77c72def5bb53caedb3ff0d7154dd3",
+      "size": 937
     },
     {
       "path": "scripts/verify_all_capabilities.py",
@@ -994,6 +1009,21 @@
       "path": "src/multimodal/router.py",
       "sha256": "af8698c56bc47f7c32d71d2f664822ec255fe0a19f5ae23cd32ecfbd62e744ba",
       "size": 100
+    },
+    {
+      "path": "src/onboarding/__init__.py",
+      "sha256": "a72fbf6a21085c21af5446288222ec40e827862391f69020e996f7195a05b24f",
+      "size": 53
+    },
+    {
+      "path": "src/onboarding/configuration.py",
+      "sha256": "43dccef48710142f61462843754dac82816d1d3830214cb14444c7e8958be909",
+      "size": 4170
+    },
+    {
+      "path": "src/onboarding/setup_wizard.py",
+      "sha256": "3470461252ac0fd8b4d31eb27228849d975e142ab56e70092e63673e98483348",
+      "size": 6667
     },
     {
       "path": "src/platform_adapters/__init__.py",
@@ -2344,6 +2374,11 @@
       "path": "tests/test_search_quota.py",
       "sha256": "3835a3c2796705c3c76de33cb7ded45f9c9646b2608d11312164f253385d3301",
       "size": 1539
+    },
+    {
+      "path": "tests/test_setup_wizard.py",
+      "sha256": "bd7063aef20a684d7e1da25c5d7c0af978d3eda834cf19f228dc428e6331fb12",
+      "size": 3408
     },
     {
       "path": "tests/test_siliconflow_direct_media.py",

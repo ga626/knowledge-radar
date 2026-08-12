@@ -19,8 +19,8 @@ KnowledgeRadar 是一个 Windows 优先的本地 MCP 服务。它让 Codex 等 A
 ## 最快开始
 
 1. 安装 Python 3.12，或使用本地已有的 `.python312` 运行时。
-2. 将 `.env.example` 复制为仓库根目录的 `.env`，只填写你准备启用的 provider。
-3. 双击 `scripts\\install.bat`，再运行 `start.cmd`。
+2. 双击 `scripts\\install.bat`。如需图形化配置，运行 `scripts\\setup_wizard.bat`；它只在本机浏览器中写入 `.env`。
+3. 再运行 `start.cmd`。
 4. 在 Agent 中注册 `http://127.0.0.1:18765/mcp`，或参考 `config\\mcp-config-template.json`。
 5. 执行安全验证：
 
@@ -29,7 +29,7 @@ KnowledgeRadar 是一个 Windows 优先的本地 MCP 服务。它让 Codex 等 A
    .python312\\python.exe scripts\\verify_all_capabilities.py --safe
    ```
 
-详细步骤见 [安装与首用](docs/INSTALL.md)、[API 与配置](docs/API_KEYS.md) 和 [MCP 接入](docs/MCP_SETUP.md)。
+详细步骤见 [安装与首用](docs/INSTALL.md)、[本地配置向导](docs/SETUP_WIZARD.md)、[API 与配置](docs/API_KEYS.md) 和 [MCP 接入](docs/MCP_SETUP.md)。
 
 ## 能力与边界
 
