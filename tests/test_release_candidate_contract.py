@@ -39,6 +39,11 @@ def test_product_manifest_excludes_generated_egg_metadata() -> None:
     assert builder.is_excluded("src/knowledgeradar.egg-info/PKG-INFO", manifest["exclude"])
 
 
+def test_mcp_dependency_stays_on_the_fastmcp_compatibility_line() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"mcp>=1.9,<2.0"' in pyproject
+
+
 def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path) -> None:
     output = tmp_path / "package"
     output.mkdir()
