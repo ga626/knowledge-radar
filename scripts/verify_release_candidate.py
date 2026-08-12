@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 import queue
-import shutil
 import subprocess
 import sys
 import tempfile
