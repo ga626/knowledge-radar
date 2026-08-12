@@ -4,6 +4,7 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+- Repair Windows stdio verifier cleanup so it waits for the child process and closes all stdio handles before removing its temporary state.
 - Repair the Release first-use contract: one stable `configure.cmd`, public stdio verification, data-root diagnostics, and separated user/developer documentation.
 - Improve the repository entry points, support guidance, contributor conduct, and bilingual README accuracy.
 
