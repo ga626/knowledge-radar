@@ -205,6 +205,25 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
     return {"plugin_version": str(payload["version"]), "plugin_skill_sha256": sha256_file(skill), "plugin_manifest_sha256": sha256_file(manifest)}
 
 
+def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> Path:
+    """Write the sole Release-user setup entry point beside active.json."""
+    program = Path(str(active["program_root"])).resolve()
+    install_root = program.parents[1]
+    script = program / "scripts" / "setup_product_wizard.py"
+    if not script.is_file():
+        raise RuntimeError("product setup wizard entry point is missing")
+    launcher = install_root / "configure.cmd"
+    launcher.write_text(
+        "@echo off\r\n"
+        "setlocal\r\n"
+        "set \"PYTHONUTF8=1\"\r\n"
+        "set \"PYTHONIOENCODING=utf-8\"\r\n"
+        f"\"{python_exe}\" \"{script}\" --install-root \"{install_root}\" %*\r\n",
+        encoding="utf-8",
+    )
+    return launcher
+
+
 def initialize_data(data_root: Path, package_root: Path) -> None:
     for relative in ("config", "browser_data", "state", "logs", "cache", "media", "models", "playwright", "receipts"):
         (data_root / relative).mkdir(parents=True, exist_ok=True)
@@ -448,7 +467,8 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
     plugin = copy_plugin(program_root, codex_home)
     config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)), encoding="utf-8")
     write_json_atomic(active_path, active)
-    receipt = {"schema": "knowledgeradar-activation-receipt/v1", "status": "APPLIED", "active": active, "plugin": plugin}
+    wizard_launcher = write_product_wizard_launcher(active, product_python)
+    receipt = {"schema": "knowledgeradar-activation-receipt/v1", "status": "APPLIED", "active": active, "plugin": plugin, "wizard_launcher": str(wizard_launcher)}
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt
 
@@ -466,7 +486,8 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     if not previous_runtime.is_file():
         raise RuntimeError("previous product runtime is unavailable")
     config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime)), encoding="utf-8")
-    return {"status": "ROLLED_BACK", "active": previous}
+    wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
+    return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,72 +1,82 @@
 # KnowledgeRadar
 
-[简体中文](README.md) | [English](README.en.md)
+[English](README.en.md) · [Release](https://github.com/ga626/knowledge-radar/releases) · [首次成功](docs/FIRST_SUCCESS.md) · [支持](SUPPORT.md)
 
-**把网页、学术资料、视频与中文平台搜索能力统一接入本地 Agent 的 MCP 感知层。**
+![Windows](https://img.shields.io/badge/platform-Windows-0078D4?logo=windows&logoColor=white) ![License](https://img.shields.io/badge/license-MIT-0b7f3f) ![MCP](https://img.shields.io/badge/protocol-MCP-5b4bdb)
 
-KnowledgeRadar 是一个 Windows 优先的本地 MCP 服务。它让 Codex 等 Agent 通过一组统一工具完成网页搜索与提取、学术元数据检索、Bilibili、小红书、知乎、招聘信息与运行状态检查；所有 API Key、登录态、浏览器资料、任务数据库和日志都只保留在你的电脑上。
+**让 Codex 和其他本地 Agent 通过一个 MCP 服务使用网页、学术资料、中文内容平台与招聘信息。**
 
-> 当前发布通道为 Alpha。各平台登录、验证码、额度和第三方 API 的可用性由你的本地账号与服务商决定；KnowledgeRadar 会报告需要人工操作或预期降级的边界，不会伪装成已成功。
+KnowledgeRadar 是 Windows 优先、local-first 的 MCP 产品：代码从 GitHub 下载，API Key、登录态、浏览器 Profile、缓存、任务数据和日志始终保留在你的电脑。它不是云服务，也不会代替你绕过验证码、付费墙或第三方账号限制。
 
-## 适合谁
+> Alpha 阶段：核心网页研究可以先用；平台登录、额度和部分可选能力会明确显示“需要人工操作”或“预期降级”，不会伪装为成功。
 
-- 你在 Windows 上使用 Codex、其他 MCP 客户端或本地 Agent，需要一层可审计的搜索与感知能力。
-- 你希望自己填写 API Key、完成必要的平台登录，并让资料留在本机。
-- 你需要把一般网页、学术、中文内容平台和招聘来源放到同一 MCP 工作流中。
+## 它适合什么
 
-不适合：你需要云端托管服务、绕过验证码/付费墙，或希望项目代替你管理第三方账号与额度。
+- 在 Windows 上使用 Codex 或其他 MCP 客户端，希望统一调用搜索、网页提取、研究路线和本机健康检查。
+- 希望按需启用学术、视频、多模态、中文平台或招聘能力，而不是一次性配置全部服务。
+- 希望自己的 Key、Cookie、浏览器资料和结果不离开本机。
 
-## 最快开始
+不适合：需要托管 SaaS、自动管理第三方账户，或要求绕过网站安全/访问限制的场景。
 
-1. 从 [GitHub Releases](https://github.com/ga626/knowledge-radar/releases) 下载最新 Alpha 的 `KnowledgeRadar.zip`、`SHA256SUMS.txt` 与 `candidate-receipt.json`。
-2. 用 `SHA256SUMS.txt` 核对 ZIP；安装 Python 3.12 后，从解压目录运行：
+## 第一次使用：四步
+
+1. 从 [Release](https://github.com/ga626/knowledge-radar/releases) 下载同一版本的 `KnowledgeRadar.zip`、`KnowledgeRadar-…-SHA256SUMS.txt` 和 `candidate-receipt.json`，先核对 ZIP SHA-256。
+2. 安装 Python 3.12，在解压目录运行：
 
    ```bat
    python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
    ```
 
-3. 重启或按 Codex 支持的方式刷新，让它加载唯一的 KnowledgeRadar MCP 配置。
-4. 运行 `scripts\\setup_wizard.bat`，只填写你准备启用的能力；页面只在本机 `127.0.0.1` 运行。
-5. 在 Codex 中调用 `health_check` 和 `get_capabilities`，确认本机工具面与配置状态。
+3. 运行安装器生成的 `configure.cmd`。它只启动 `127.0.0.1` 页面，并只写入稳定产品的数据根；已填项目不会回显，留空不会清除已有配置。
+4. 按 Codex 的方式重启/刷新后，在 Codex 调用 `health_check`，再调用 `get_capabilities`。预期能看到本机状态和当前工具面；未配置的可选能力会说明下一步，而不是泄露配置值。
 
-源码 checkout 的 `scripts\\install.bat`、`start.cmd` 和 HTTP 配置模板仍保留给维护者/开发者兼容使用，不是普通用户的 Release 安装路径。完整步骤、升级和回滚见 [产品安装与更新](docs/PRODUCT_INSTALL.md)。
+完整的首次成功、升级和回滚说明见 [首次成功](docs/FIRST_SUCCESS.md) 与 [产品安装与更新](docs/PRODUCT_INSTALL.md)。
 
-## 能力包与健康
+```mermaid
+flowchart LR
+  R["Release ZIP"] --> I["本地安装"]
+  I --> A["唯一 active.json"]
+  A --> C["configure.cmd"]
+  C --> D["本机 data 根"]
+  D --> M["Codex MCP"]
+```
 
-先配置一个网页搜索来源即可开始核心研究；学术、视频/多模态、登录平台与招聘能力都可随后按需启用。页面会显示脱敏的就绪状态和本机空间分类，并且只能清理已过期媒体缓存，不会删除密钥或浏览器资料。详见 [能力包与本地健康台](docs/CAPABILITY_PACKS.md)。
+## 会改变什么，不会碰什么
 
-开发者源码验证可使用：
+| 项目 | 行为 |
+| --- | --- |
+| Codex 配置 | 仅维护一个 `mcp_servers.knowledgeradar` block，并在写入前备份原配置。 |
+| 程序更新 | 新版本安装在版本化 app/runtime 目录；`active.json` 永远只指向一个稳定版本。 |
+| 你的数据 | Key、Profile、缓存、日志和任务状态放在独立 data 根；升级不覆盖，rollback 不删除。 |
+| 外部服务 | 只有你填写并实际调用的 Provider 才会被使用；不会自动发起付费调用或登录。 |
+| 发布内容 | 不含真实 Key、Cookie、账户、浏览器 Profile、数据库、日志、媒体缓存或个人路径。 |
 
-   ```bat
-   .python312\\python.exe scripts\\verify_api_keys.py
-   .python312\\python.exe scripts\\verify_all_capabilities.py --safe
-   ```
+## 能力包与边界
 
-开发细节见 [安装与首用](docs/INSTALL.md)、[本地配置向导](docs/SETUP_WIZARD.md)、[API 与配置](docs/API_KEYS.md) 和 [MCP 接入](docs/MCP_SETUP.md)。
-
-## 能力与边界
-
-| 方向 | 提供的能力 | 重要边界 |
+| 能力 | 先决条件 | 失败时的产品行为 |
 | --- | --- | --- |
-| 网页与研究 | 搜索、网页提取、研究路线、任务状态与健康检查 | 搜索结果不是事实结论；重要结论需要回到来源核验。 |
-| 中文内容平台 | Bilibili、小红书、知乎及招聘信息的搜索/详情能力 | 登录、验证码、反爬和平台策略会要求人工操作或触发降级。 |
-| 学术资料 | 多来源学术元数据与开放获取线索 | 授权、额度和机构访问权仍由使用者负责。 |
-| 本地运行 | HTTP / stdio MCP、可读状态摘要与验证脚本 | 不上传你的 `.env`、Cookie、浏览器 profile、数据库或日志。 |
+| 核心网页研究 | 配置任一网页搜索来源即可增强；未配也会如实报告 | 不把缺 Provider 说成搜索成功 |
+| 学术与公开视频 | 按需配置 Provider | 显示额度、网络或开放访问边界 |
+| 中文内容平台 / 招聘 | 可能需要登录或人工验证 | 报告 `NEEDS_INTERACTION` / 降级，不绕过验证 |
+| 多模态 | 由你配置模型与预算 | 不会默认产生付费模型调用 |
 
-完整公开工具面以 `src/server.py` 中的 `@mcp.tool()` 注册为准；`get_capabilities` 与 `health_check` 会返回当前机器实际可用情况。
+页面中的能力包和健康摘要均为脱敏状态；它只能清理已过期媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
 
-## 隐私：会提交什么，不会提交什么
+## 三种入口，避免走错路径
 
-会提交：源码、测试、公开配置模板、安装脚本和公开文档。
+| 你是谁 | 应从哪里开始 |
+| --- | --- |
+| 普通 Release 用户 | 本页的四步与 [首次成功](docs/FIRST_SUCCESS.md)；不要运行 `install.bat`、`start.cmd` 或 pytest。 |
+| 源码开发者 | [开发者指南](docs/DEVELOPER.md)；可使用 `.env`、源码向导、HTTP 调试和测试。 |
+| 维护者 | [Release Candidate](docs/RELEASE_CANDIDATE.md)；必须从干净 public checkout 的同一候选 artifact 发布。 |
 
-绝不会提交：真实 API Key、Token、Cookie、账户/浏览器 profile、SQLite 数据库、运行日志、任务记录、媒体缓存和本机路径。请只在仓库根目录 `.env` 中保存私有值；它已被 Git 忽略。详见 [隐私与本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
+## 获取帮助与参与
 
-## 参与和安全
-
-- 想提交改进：阅读 [贡献指南](CONTRIBUTING.md)。
+- 遇到安装、配置或运行问题：先看 [支持](SUPPORT.md) 和 [FAQ](docs/FAQ.md)，再用对应 Issue 模板提交**脱敏**信息。
+- 希望贡献：阅读 [贡献指南](CONTRIBUTING.md) 与 [行为准则](CODE_OF_CONDUCT.md)。
 - 发现安全或隐私问题：不要公开 Issue，按 [安全政策](SECURITY.md) 私下报告。
-- 使用问题和功能建议将通过 GitHub Issue 模板收集。
+- 版本变化：查看 [CHANGELOG](CHANGELOG.md)。
 
-## 开源许可
+## 许可
 
-本项目采用 [MIT License](LICENSE)。使用任何第三方平台能力前，请同时遵守该平台的条款、robots 规则及适用法律。
+[MIT License](LICENSE)。使用第三方平台能力时，请同时遵守其条款、robots 规则和适用法律。

@@ -13,7 +13,7 @@ KnowledgeRadar 不会要求你在第一次安装时配置所有服务。核心�
 
 ## 本地健康台
 
-运行 `scripts\setup_wizard.bat` 后，浏览器中的本地页面会显示：
+Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\configure.cmd` 后，浏览器中的本地页面会显示：
 
 - 哪些能力包已具备最小配置；
 - 产品数据根的分类空间摘要；

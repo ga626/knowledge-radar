@@ -1,84 +1,33 @@
 # KnowledgeRadar
 
-[简体中文](README.md) | [English](README.en.md)
+[简体中文](README.md) · [Release](https://github.com/ga626/knowledge-radar/releases) · [First success](docs/FIRST_SUCCESS.md) · [Support](SUPPORT.md)
 
-KnowledgeRadar is an MCP server that gives agents a single search and perception layer across general web search, Bilibili, Xiaohongshu, Zhihu, YouTube-via-web, academic metadata, recruitment sites, webpage extraction, research planning, health checks, and runtime task status.
+**A Windows-first, local-first MCP service for web research, academic metadata, Chinese content platforms, and recruitment sources.**
 
-## Quick Start
+KnowledgeRadar lets Codex and other MCP clients use one local tool surface. Credentials, browser profiles, caches, task data, and logs stay on your computer. It is not a hosted service and does not bypass CAPTCHA, paywalls, or third-party account restrictions.
 
-1. Install Python 3.12 or use the bundled `.python312` runtime.
-2. Run `scripts\install.bat`. Optionally run `scripts\setup_wizard.bat` for a loopback-only browser form that writes your local `.env`.
-3. Start the service with `start.cmd`.
-4. Run `start.cmd`.
-5. Register `http://127.0.0.1:18765/mcp` in your agent, or use `config\mcp-config-template.json`.
+> Alpha: optional providers, platform login, quotas, and anti-bot boundaries are reported honestly as manual-action or degraded states.
 
-## Startup Modes
+## Release user quick start
 
-| Mode | Command | Use case |
-| --- | --- | --- |
-| Foreground HTTP | `start.cmd` | Local debugging; keeps logs visible in the terminal |
-| Detached HTTP | `start-knowledgeradar-server.cmd` | Normal Windows startup from Explorer or scripts |
-| Hidden HTTP | `powershell -ExecutionPolicy Bypass -File start-knowledgeradar-server-hidden.ps1` | Background startup without a visible console window |
-| Stdio | `set KR_MCP_TRANSPORT=stdio && python -X utf8 src\server.py` | Agents that launch MCP servers directly |
+1. Download the matching `KnowledgeRadar.zip`, checksum file, and `candidate-receipt.json` from [Releases](https://github.com/ga626/knowledge-radar/releases). Verify the ZIP SHA-256.
+2. Install Python 3.12 and run this inside the extracted release:
 
-All startup modes read only the repository-root `.env` file. It is private local state and is never a source, package, or GitHub input. Logs default to `runtime\logs` when launched through the included scripts.
+   ```bat
+   python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
+   ```
 
-## User Docs
+3. Run the generated `configure.cmd`. It opens a loopback-only setup page and writes only the active product data root.
+4. Restart or refresh Codex, then call `health_check` and `get_capabilities`.
 
-- `docs\INSTALL.md`: installation and first run.
-- `docs\API_KEYS.md`: provider keys and validation.
-- `docs\SETUP_WIZARD.md`: loopback-only configuration wizard.
-- `docs\MCP_SETUP.md`: Agent configuration examples.
-- `docs\ACCOUNT_SETUP.md`: interactive browser login/profile setup.
-- `docs\FAQ.md`: common validation states and troubleshooting.
-- `docs\SEARXNG.md`: optional local SearXNG setup.
-- `docs\PRIVACY_AND_LOCAL_STATE.md`: what remains local and how public artifacts are checked.
+Read [First success](docs/FIRST_SUCCESS.md) and [product installation](docs/PRODUCT_INSTALL.md) before upgrading or rolling back.
 
-## Important Paths
+## Keep the paths separate
 
-| Path | Purpose | Commit |
-| --- | --- | --- |
-| `src/` | MCP server and collectors | Yes |
-| `config/*.example` | Publishable templates | Yes |
-| `config/profile_registry.json` | Local account/profile state | No |
-| `.env` | API keys and private runtime settings | No |
-| `local/profiles/` | Browser profile links | No |
-| `runtime/` | Logs, task DBs, decision traces | No |
-| `.python312/` | Optional bundled Python runtime | No |
+| Audience | Start here |
+| --- | --- |
+| Release user | This quick start and `configure.cmd`; do not use `install.bat`, `start.cmd`, or pytest. |
+| Source developer | [Developer guide](docs/DEVELOPER.md); source checkout and HTTP debugging remain supported there. |
+| Maintainer | [Release candidate guide](docs/RELEASE_CANDIDATE.md); publish only the already-verified immutable artifact. |
 
-## MCP Tools
-
-The source of truth is `src/server.py` `@mcp.tool()` registrations. Current tools include:
-
-- `expand_keywords`
-- `plan_research`
-- `analyze_decision_logs`
-- `get_task_status`
-- `kr_web_search`
-- `search_academic`
-- `extract_web_page`
-- `extract_dynamic_page`
-- `search_bilibili`
-- `search_xiaohongshu`
-- `search_zhihu`
-- `search_recruitment`
-- `get_content_detail`
-- `get_capabilities`
-- `health_check`
-
-YouTube and GitHub search are exposed through `kr_web_search` provider modes rather than separate public tools.
-
-## Verification
-
-After setup, verify the installed product surface without printing secrets:
-
-```bat
-.python312\python.exe scripts\verify_api_keys.py
-.python312\python.exe scripts\verify_all_capabilities.py --safe
-```
-
-`health_check` separates main production chains from optional candidates and diagnostic paths. A configured environment should have zero required main-chain `FAIL` and zero required main-chain `NEEDS_INTERACTION` in `verify_all_capabilities.py --safe`; declared optional providers, quota exhaustion, and designed fallback paths may be reported as `EXPECTED_DEGRADED` without failing the run. Login, QR-code, CAPTCHA, and similar human steps should be reported as `NEEDS_INTERACTION` until the user completes them.
-
-## Secrets
-
-Never commit real API keys, tokens, cookies, browser profiles, SQLite files, or runtime logs. Put private values only in the repository-root `.env`.
+The installer maintains one `mcp_servers.knowledgeradar` configuration block, one active version, and a separate user data root. Updates and rollback do not overwrite user configuration. See [privacy and local state](docs/PRIVACY_AND_LOCAL_STATE.md), [support](SUPPORT.md), [contributing](CONTRIBUTING.md), and [security](SECURITY.md).

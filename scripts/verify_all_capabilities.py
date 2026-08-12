@@ -29,12 +29,20 @@ from typing import Any, Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-REPORT_DIR = ROOT / "runtime" / "reports"
+
+
+def _product_data_root() -> Path | None:
+    configured = os.environ.get("KR_DATA_ROOT", "").strip()
+    return Path(configured).expanduser().resolve() if configured else None
+
+
+DATA_ROOT = _product_data_root()
+REPORT_DIR = (DATA_ROOT / "state" / "reports") if DATA_ROOT else (ROOT / "runtime" / "reports")
 
 os.environ.setdefault("PYTHONUTF8", "1")
 os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-os.environ.setdefault("KR_LOG_DIR", str(ROOT / "runtime" / "logs"))
-os.environ.setdefault("KR_STATE_DIR", str(ROOT / "runtime"))
+os.environ.setdefault("KR_LOG_DIR", str(DATA_ROOT / "logs") if DATA_ROOT else str(ROOT / "runtime" / "logs"))
+os.environ.setdefault("KR_STATE_DIR", str(DATA_ROOT / "state") if DATA_ROOT else str(ROOT / "runtime"))
 os.environ.setdefault("KR_CHROME_PREWARM", "0")
 os.environ.setdefault("KR_XHS_TIKHUB_BREAK_GLASS_AUTO", "1")
 os.environ.setdefault("KR_XHS_TIKHUB_BREAK_GLASS_DRY_RUN", "0")
