@@ -4,6 +4,9 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+- Add explicit local maintenance plans to the control console: path-free data-root migration plans, copyable diagnostic exports, and protected retention guidance.
+- Make Playwright Chromium and the Xiaohongshu diagnostic bridge opt-in capability downloads.  Each requires a fresh plan and a second confirmation; neither logs in, calls paid APIs, or silently enables a production fallback.
+- Keep optional browser/Node dependencies under the active data root and preserve the single active MCP identity after an explicit capability installation.
 - Make the local configuration console fast on large data roots: first open now reads only sanitized installation/capability state, and category storage scanning is user-initiated.
 - Keep the redistributable ZIP focused on product operation: retain the product installer, plugin, local console, runtime, and user help; exclude source-only installers, launchers, test/verification utilities, and development setup scripts.
 - Clarify the Windows/Codex support boundary, optional-provider cost/login behavior, and safe data-root migration in Chinese-first user guidance.

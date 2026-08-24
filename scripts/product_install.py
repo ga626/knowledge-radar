@@ -25,6 +25,8 @@ from uuid import uuid4
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAME = "knowledgeradar-research"
 ACTIVE_SCHEMA = "knowledgeradar-active-install/v1"
+CAPABILITY_STATE_SCHEMA = "knowledgeradar-capability-state/v1"
+CAPABILITY_IDS = ("browser", "xhs_bridge")
 
 
 def sha256_file(path: Path) -> str:
@@ -173,6 +175,9 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
         "KR_MEDIA_CACHE_DIR": str(data / "state" / "media_cache"),
         "PLAYWRIGHT_BROWSERS_PATH": str(data / "playwright"),
     }
+    xhs_bridge = data / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs"
+    if xhs_bridge.is_file() and _capability_enabled(data, "xhs_bridge"):
+        fields["XHS_BRIDGE_PATH"] = str(xhs_bridge)
     lines = [
         "[mcp_servers.knowledgeradar]",
         f"command = {json.dumps(str(python_exe), ensure_ascii=False)}",
@@ -261,7 +266,7 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
 
 
 def initialize_data(data_root: Path, package_root: Path) -> None:
-    for relative in ("config", "browser_data", "state", "logs", "cache", "media", "models", "playwright", "receipts"):
+    for relative in ("config", "browser_data", "state", "logs", "cache", "media", "models", "playwright", "capabilities", "receipts"):
         (data_root / relative).mkdir(parents=True, exist_ok=True)
     runtime_env = data_root / "config" / "runtime.env"
     if not runtime_env.exists():
@@ -270,6 +275,170 @@ def initialize_data(data_root: Path, package_root: Path) -> None:
     template = package_root / "config" / "profile_registry.example.json"
     if not registry.exists() and template.is_file():
         shutil.copyfile(template, registry)
+
+
+def capability_state_path(data_root: Path) -> Path:
+    return data_root / "state" / "capabilities.json"
+
+
+def load_capability_state(data_root: Path) -> dict[str, Any]:
+    path = capability_state_path(data_root)
+    if not path.is_file():
+        return {"schema": CAPABILITY_STATE_SCHEMA, "capabilities": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"schema": CAPABILITY_STATE_SCHEMA, "capabilities": {}}
+    if payload.get("schema") != CAPABILITY_STATE_SCHEMA or not isinstance(payload.get("capabilities"), dict):
+        return {"schema": CAPABILITY_STATE_SCHEMA, "capabilities": {}}
+    return payload
+
+
+def _capability_enabled(data_root: Path, capability: str) -> bool:
+    row = load_capability_state(data_root).get("capabilities", {}).get(capability, {})
+    return isinstance(row, dict) and row.get("status") == "APPLIED"
+
+
+def _capability_token(active: dict[str, Any], capability: str, source: Path) -> str:
+    package_lock = source / "package-lock.json"
+    payload = {
+        "capability": capability,
+        "version": str(active.get("version") or ""),
+        "data_root": str(Path(str(active["data_root"])).resolve()),
+        "source_hash": sha256_file(package_lock) if package_lock.is_file() else path_hash(source),
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+
+
+def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
+    """Describe an optional download without changing a product installation."""
+    if capability not in CAPABILITY_IDS:
+        raise RuntimeError("unsupported optional capability")
+    active = load_active(install_root.resolve())
+    program = Path(str(active["program_root"])).resolve()
+    data_root = Path(str(active["data_root"])).resolve()
+    if not data_root.is_dir():
+        raise RuntimeError("active data root is unavailable")
+    if capability == "browser":
+        target = data_root / "playwright"
+        source = program
+        command = ["python", "-m", "playwright", "install", "chromium"]
+        summary = {
+            "label": "Playwright Chromium 浏览器",
+            "network_download": True,
+            "login_required": False,
+            "may_use_paid_api": False,
+            "restart_required": False,
+            "target": tree_summary(target),
+            "command": command,
+        }
+    else:
+        source = program / "bridge"
+        if not (source / "package.json").is_file() or not (source / "package-lock.json").is_file():
+            raise RuntimeError("xhs bridge package metadata is unavailable")
+        target = data_root / "capabilities" / "xhs-bridge"
+        summary = {
+            "label": "小红书诊断 bridge 依赖",
+            "network_download": True,
+            "login_required": True,
+            "may_use_paid_api": False,
+            "restart_required": True,
+            "target": tree_summary(target),
+            "command": ["npm", "ci", "--omit=dev", "--ignore-scripts"],
+            "boundary": "只安装本地 bridge 依赖；不会登录、绕过验证码或把 bridge 自动提升为生产兜底。",
+        }
+    return {
+        "schema": "knowledgeradar-capability-plan/v1",
+        "status": "PLAN",
+        "capability": capability,
+        "version": str(active.get("version") or "unknown"),
+        "data_root_hash": path_hash(data_root),
+        "details": summary,
+        "confirmation_token": _capability_token(active, capability, source),
+        "apply_is_explicit": True,
+    }
+
+
+def _run_optional_download(command: list[str], *, cwd: Path, env: dict[str, str], action: str) -> None:
+    result = subprocess.run(command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        suffix = f": {detail[-1][:240]}" if detail else ""
+        raise RuntimeError(f"optional capability failed while {action}{suffix}")
+
+
+def _record_capability(data_root: Path, capability: str, plan: dict[str, Any]) -> None:
+    state = load_capability_state(data_root)
+    capabilities = state.setdefault("capabilities", {})
+    capabilities[capability] = {
+        "status": "APPLIED",
+        "version": plan["version"],
+        "applied_at": int(time.time()),
+        "plan_token": plan["confirmation_token"],
+    }
+    write_json_atomic(capability_state_path(data_root), state)
+    receipt = {
+        "schema": "knowledgeradar-capability-receipt/v1",
+        "status": "APPLIED",
+        "capability": capability,
+        "version": plan["version"],
+        "data_root_hash": plan["data_root_hash"],
+        "network_download": plan["details"]["network_download"],
+    }
+    write_json_atomic(data_root / "receipts" / f"capability-{capability}-{int(time.time())}.json", receipt)
+
+
+def _refresh_active_mcp_block(install_root: Path, active: dict[str, Any]) -> None:
+    runtime = _active_runtime(install_root, active)
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(
+        replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)),
+        encoding="utf-8",
+    )
+
+
+def capability_apply(install_root: Path, capability: str, confirmation: str) -> dict[str, Any]:
+    """Install an optional local capability only after a fresh matching plan."""
+    plan = capability_plan(install_root, capability)
+    if confirmation != plan["confirmation_token"]:
+        raise RuntimeError("confirmation token does not match the current optional capability plan")
+    active = load_active(install_root.resolve())
+    program = Path(str(active["program_root"])).resolve()
+    data_root = Path(str(active["data_root"])).resolve()
+    if capability == "browser":
+        env = dict(os.environ)
+        env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
+        _run_optional_download([str(_active_runtime(install_root, active)), "-m", "playwright", "install", "chromium"], cwd=program, env=env, action="installing Playwright Chromium")
+    else:
+        npm = shutil.which("npm")
+        if not npm:
+            raise RuntimeError("xhs bridge requires Node.js and npm; install them before applying this capability")
+        source = program / "bridge"
+        target = data_root / "capabilities" / "xhs-bridge"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".xhs-bridge-staging-", dir=target.parent))
+        try:
+            for name in ("package.json", "package-lock.json", ".npmrc", "README.md"):
+                candidate = source / name
+                if candidate.is_file():
+                    shutil.copy2(candidate, staging / name)
+            for candidate in source.glob("*.cjs"):
+                shutil.copy2(candidate, staging / candidate.name)
+            for candidate in source.glob("*.mjs"):
+                shutil.copy2(candidate, staging / candidate.name)
+            _run_optional_download([npm, "ci", "--omit=dev", "--ignore-scripts"], cwd=staging, env=dict(os.environ), action="installing xhs bridge dependencies")
+            if not (staging / "xhs_mcp_bridge.cjs").is_file():
+                raise RuntimeError("xhs bridge source is incomplete")
+            if target.exists():
+                target.replace(target.parent / f"xhs-bridge.previous-{int(time.time())}")
+            staging.replace(target)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    _record_capability(data_root, capability, plan)
+    _refresh_active_mcp_block(install_root, active)
+    return {"schema": "knowledgeradar-capability-apply/v1", "status": "APPLIED", "capability": capability, "restart_required": plan["details"]["restart_required"]}
 
 
 def tree_summary(path: Path) -> dict[str, Any]:
@@ -664,7 +833,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
     parser.add_argument(
         "command",
-        choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback"),
+        choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply"),
     )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
@@ -675,13 +844,22 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--receipt", default="", help="candidate/release receipt JSON matching --archive")
     parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
+    parser.add_argument("--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install")
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
         install_root = Path(args.install_root).resolve()
         data_root = Path(args.data_root).resolve() if args.data_root else install_root / "data"
         python_exe = Path(args.python).resolve()
-        if args.command == "migrate-plan":
+        if args.command == "capability-plan":
+            if not args.capability:
+                raise RuntimeError("capability-plan requires --capability")
+            result = capability_plan(install_root, args.capability)
+        elif args.command == "capability-apply":
+            if not args.capability or not args.confirmation:
+                raise RuntimeError("capability-apply requires --capability and --confirmation")
+            result = capability_apply(install_root, args.capability, args.confirmation)
+        elif args.command == "migrate-plan":
             if not args.legacy_root:
                 raise RuntimeError("migrate-plan requires --legacy-root")
             result = migration_plan(Path(args.legacy_root), data_root)
