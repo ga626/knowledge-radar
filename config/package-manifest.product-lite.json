@@ -1,13 +1,12 @@
 {
   "schema": "knowledgeradar-package-manifest/v2",
   "name": "product-lite",
-  "description": "Redistributable public runtime and Codex plugin source; no local data or development governance.",
+  "description": "Redistributable Codex product runtime, local configuration console, and user help; no development entry points or governance.",
   "include": [
-    "README.md", "README.en.md", "LICENSE", ".env.example", "start.cmd",
-    "pyproject.toml", "src/**", "bridge/package.json", "bridge/package-lock.json", "bridge/*.cjs", "bridge/*.mjs", "bridge/README.md",
-    "scripts/build_product_lite_package.py", "scripts/verify_package_integrity.py", "scripts/verify_release_candidate.py", "scripts/product_install.py", "scripts/generate-mcp-config.py", "scripts/setup_codex_product.py", "scripts/install.bat", "scripts/setup_agent.bat", "scripts/setup_wizard.bat", "scripts/start_setup_wizard.py", "scripts/setup_product_wizard.py", "scripts/verify_codex_product.py", "scripts/verify_api_keys.py", "scripts/verify_all_capabilities.py",
-    "config/*.example", "config/profile_registry.example.json", "config/mcp*.json", "config/codex-product/**", "config/package-manifest.product-lite.json", "config/project-structure.manifest.json", "config/storage-ownership.manifest.json", "config/selectors.json",
-    "docs/ACCOUNT_SETUP.md", "docs/API_KEYS.md", "docs/CAPABILITY_PACKS.md", "docs/FAQ.md", "docs/FIRST_SUCCESS.md", "docs/DEVELOPER.md", "docs/INSTALL.md", "docs/MCP_SETUP.md", "docs/PRIVACY_AND_LOCAL_STATE.md", "docs/PRODUCT_INSTALL.md", "docs/RELEASE_CANDIDATE.md", "docs/SEARXNG.md", "docs/SETUP_WIZARD.md", "CHANGELOG.md", "SUPPORT.md", "CODE_OF_CONDUCT.md"
+    "README.md", "README.en.md", "LICENSE", ".env.example", "pyproject.toml", "src/**",
+    "scripts/product_install.py",
+    "config/profile_registry.example.json", "config/codex-product/**", "config/storage-ownership.manifest.json",
+    "docs/ACCOUNT_SETUP.md", "docs/API_KEYS.md", "docs/CAPABILITY_PACKS.md", "docs/FAQ.md", "docs/FIRST_SUCCESS.md", "docs/PRIVACY_AND_LOCAL_STATE.md", "docs/PRODUCT_INSTALL.md", "CHANGELOG.md", "SUPPORT.md", "CODE_OF_CONDUCT.md"
   ],
   "exclude": [".git/**", ".codex/**", ".githooks/**", "AGENTS.md", ".env", ".python312/**", "dist/**", "release/**", "backups/**", "browser_data/**", "data/**", "src/data/**", "src/*.egg-info/**", "config/profile_registry.json", "local/**", "project_status/**", "tools/**", "archive/**", "runtime/logs/**", "runtime/reports/**", "runtime/tasks/**", "runtime/cache/**", "runtime/media_cache/**", "runtime/*.json", "runtime/*.jsonl", "runtime/*.sqlite*", "runtime/*.db", "bridge/node_modules/**", "**/__pycache__/**", "**/*.pyc", "**/*.log", "**/*.sqlite*", "**/node_modules/**"],
   "user_must_configure": ["API keys and provider credentials", "proxy settings", "browser profile registry", "optional Python runtime"]

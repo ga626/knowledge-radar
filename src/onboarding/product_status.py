@@ -50,6 +50,41 @@ CAPABILITY_PACKS = (
 )
 
 
+def installation_summary() -> dict[str, Any]:
+    """Return the active product identity without revealing a local path.
+
+    The loopback console is also usable from a source checkout, so the
+    installation root is opt-in.  A Release launcher supplies it and receives
+    only version/channel/path hashes, never a configuration value or a path.
+    """
+    install_root_raw = os.environ.get("KR_INSTALL_ROOT", "").strip()
+    if not install_root_raw:
+        return {
+            "available": False,
+            "message": "源码兼容模式：安装身份会在已安装产品中显示。",
+        }
+    try:
+        install_root = Path(install_root_raw).expanduser().resolve()
+        active = json.loads((install_root / "active.json").read_text(encoding="utf-8"))
+        if active.get("schema") != "knowledgeradar-active-install/v1":
+            raise ValueError("unsupported active record")
+        data_root = Path(str(active.get("data_root") or "")).resolve()
+        return {
+            "available": True,
+            "version": str(active.get("version") or "unknown"),
+            "channel": str(active.get("channel") or "unknown"),
+            "data_root_hash": str(active.get("data_root_hash") or ""),
+            "data_root_present": data_root.is_dir(),
+            "rollback_available": (install_root / "backup" / "active.previous.json").is_file(),
+            "message": "当前产品身份已加载；更新不会覆盖数据根。",
+        }
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return {
+            "available": False,
+            "message": "无法读取安装身份；请在安装器状态页检查后重试。",
+        }
+
+
 def _configured_keys(snapshot: dict[str, Any]) -> set[str]:
     return {str(field.get("key")) for field in snapshot.get("fields", []) if field.get("configured")}
 

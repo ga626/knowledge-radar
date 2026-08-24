@@ -10,6 +10,14 @@ KnowledgeRadar 是 Windows 优先、local-first 的 MCP 产品：代码从 GitHu
 
 > Alpha 阶段：核心网页研究可以先用；平台登录、额度和部分可选能力会明确显示“需要人工操作”或“预期降级”，不会伪装为成功。
 
+| 环境 / 能力 | 当前支持 | 你需要做什么 |
+| --- | --- | --- |
+| Windows + Codex | 支持，唯一 stdio MCP 配置 | 安装后按 Codex 支持的方式重启或刷新。 |
+| 基础网页研究 | 按需配置一个搜索来源 | 在本地配置台填写自己的 Key 或本地地址。 |
+| 学术、视频与多模态 | 可选 | 仅在需要时配置对应 Provider；可能产生费用。 |
+| 登录平台与招聘 | 受平台策略限制 | 在自己的浏览器 Profile 中完成登录/验证码；不能自动绕过。 |
+| macOS / Linux | 当前未作为 Release 验收目标 | 可关注 Issue，不建议按 Windows 步骤直接安装。 |
+
 ## 它适合什么
 
 - 在 Windows 上使用 Codex 或其他 MCP 客户端，希望统一调用搜索、网页提取、研究路线和本机健康检查。
@@ -60,7 +68,7 @@ flowchart LR
 | 中文内容平台 / 招聘 | 可能需要登录或人工验证 | 报告 `NEEDS_INTERACTION` / 降级，不绕过验证 |
 | 多模态 | 由你配置模型与预算 | 不会默认产生付费模型调用 |
 
-页面中的能力包和健康摘要均为脱敏状态；它只会隔离 manifest 已登记且过期的媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
+页面中的能力包和健康摘要均为脱敏状态；首屏不会递归扫描大数据根，空间扫描由用户主动发起。它只会隔离 manifest 已登记且过期的媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
 
 ## 三种入口，避免走错路径
 

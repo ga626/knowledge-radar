@@ -163,6 +163,7 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
         "KR_MCP_TRANSPORT": "stdio",
         "KR_PROJECT_ROOT": str(program),
         "KR_SOURCE_ROOT": str(program / "src"),
+        "KR_INSTALL_ROOT": str(program.parents[1]),
         "KR_DATA_ROOT": str(data),
         "KR_RUNTIME_ENV_PATH": str(data / "config" / "runtime.env"),
         "KR_PROFILE_REGISTRY_PATH": str(data / "config" / "profile_registry.json"),
@@ -238,7 +239,7 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
         "    data = Path(str(active.get('data_root') or '')).resolve()\n"
         "    if active.get('schema') != 'knowledgeradar-active-install/v1' or not (program / 'src' / 'onboarding' / 'setup_wizard.py').is_file() or not data.is_dir():\n"
         "        raise RuntimeError('active KnowledgeRadar installation is unavailable')\n"
-        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_PROFILE_REGISTRY_PATH': str(data / 'config' / 'profile_registry.json'), 'KR_BROWSER_DATA_DIR': str(data / 'browser_data'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs'), 'KR_MEDIA_CACHE_DIR': str(data / 'state' / 'media_cache')})\n"
+        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_INSTALL_ROOT': str(ROOT), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_PROFILE_REGISTRY_PATH': str(data / 'config' / 'profile_registry.json'), 'KR_BROWSER_DATA_DIR': str(data / 'browser_data'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs'), 'KR_MEDIA_CACHE_DIR': str(data / 'state' / 'media_cache')})\n"
         "    sys.path.insert(0, str(program / 'src'))\n"
         "    from onboarding.setup_wizard import run_wizard\n"
         "    run_wizard(port=args.port, open_browser=not args.no_open)\n"
