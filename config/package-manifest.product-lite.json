@@ -3,7 +3,7 @@
   "name": "product-lite",
   "description": "Redistributable Codex product runtime, local configuration console, and user help; no development entry points or governance.",
   "include": [
-    "README.md", "README.en.md", "LICENSE", ".env.example", "pyproject.toml", "src/**",
+    "README.md", "README.en.md", "LICENSE", ".env.example", "pyproject.toml", "src/**", "bridge/package.json", "bridge/package-lock.json", "bridge/.npmrc", "bridge/*.cjs", "bridge/*.mjs", "bridge/README.md",
     "scripts/product_install.py",
     "config/profile_registry.example.json", "config/codex-product/**", "config/storage-ownership.manifest.json",
     "docs/ACCOUNT_SETUP.md", "docs/API_KEYS.md", "docs/CAPABILITY_PACKS.md", "docs/FAQ.md", "docs/FIRST_SUCCESS.md", "docs/PRIVACY_AND_LOCAL_STATE.md", "docs/PRODUCT_INSTALL.md", "CHANGELOG.md", "SUPPORT.md", "CODE_OF_CONDUCT.md"

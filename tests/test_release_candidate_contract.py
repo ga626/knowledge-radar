@@ -32,6 +32,7 @@ def test_product_manifest_includes_runtime_and_plugin() -> None:
     paths = {item.relative_to(ROOT).as_posix() for item in files}
     assert "src/server.py" in paths
     assert "scripts/product_install.py" in paths
+    assert "bridge/xhs_mcp_bridge.cjs" in paths
     assert "config/codex-product/plugin/knowledgeradar-research/.codex-plugin/plugin.json" in paths
     assert "scripts/install.bat" not in paths
     assert "scripts/setup_codex_product.py" not in paths
