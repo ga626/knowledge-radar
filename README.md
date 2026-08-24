@@ -60,7 +60,7 @@ flowchart LR
 | 中文内容平台 / 招聘 | 可能需要登录或人工验证 | 报告 `NEEDS_INTERACTION` / 降级，不绕过验证 |
 | 多模态 | 由你配置模型与预算 | 不会默认产生付费模型调用 |
 
-页面中的能力包和健康摘要均为脱敏状态；它只能清理已过期媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
+页面中的能力包和健康摘要均为脱敏状态；它只会隔离 manifest 已登记且过期的媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
 
 ## 三种入口，避免走错路径
 

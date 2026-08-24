@@ -33,6 +33,7 @@ from .browser_sessions import (
     upsert_browser_session,
 )
 from .leases import default_owner, get_runtime_lease_coordinator
+from .paths import browser_data_dir, project_root
 
 SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(SRC_ROOT)
@@ -47,11 +48,11 @@ XHS_CHROME_DEBUG_PORT = os.environ.get("KR_XHS_CHROME_DEBUG_PORT") or os.environ
 ZHIHU_CHROME_DEBUG_PORT = os.environ.get("KR_ZHIHU_CHROME_DEBUG_PORT", "12734")
 CHROME_DEBUG_PORT = XHS_CHROME_DEBUG_PORT
 CHROME_DEBUG_URL = f"http://127.0.0.1:{CHROME_DEBUG_PORT}"
-BROWSER_DATA_ROOT = os.path.join(REPO_ROOT, "browser_data", "browser_data")
+BROWSER_DATA_ROOT = os.path.join(str(browser_data_dir()), "browser_data")
 XHS_USER_DATA_DIR = os.path.join(BROWSER_DATA_ROOT, "xhs_user_data_dir")
 ZHIHU_USER_DATA_DIR = os.environ.get(
     "KR_ZHIHU_USER_DATA_DIR",
-    os.path.join(REPO_ROOT, "browser_data", "profiles", "zhihu", "account_a"),
+    os.path.join(str(browser_data_dir()), "profiles", "zhihu", "account_a"),
 )
 MANAGED_CHROME_USER_DATA_DIR = os.environ.get("KR_CHROME_USER_DATA_DIR", "")
 XHS_CHROME_USER_DATA_DIR = os.environ.get("KR_XHS_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_XHS", "")
@@ -308,7 +309,7 @@ def _resolve_registry_profile_dir(profile_dir: str) -> str:
     expanded = os.path.expandvars(os.path.expanduser(str(profile_dir)))
     if os.path.isabs(expanded):
         return os.path.abspath(expanded)
-    return os.path.abspath(os.path.join(REPO_ROOT, expanded))
+    return os.path.abspath(os.path.join(str(project_root()), expanded))
 
 
 def _manual_profile_row_for_platform(platform: str) -> Dict:
@@ -503,7 +504,7 @@ def _managed_chrome_profile_dir(platform: str = "xhs", *, target_profile_id: str
         if profile_dir:
             return profile_dir
     if platform in MANUAL_BROWSER_DEFAULT_PORTS:
-        return os.path.join(REPO_ROOT, "browser_data", "profiles", platform, "account_a")
+        return os.path.join(str(browser_data_dir()), "profiles", platform, "account_a")
     return XHS_USER_DATA_DIR
 
 
@@ -2218,7 +2219,7 @@ def _xhs_safe_profile_switch_allowed(actual_profile: str, expected_profile: str)
     if not actual_profile or not expected_profile:
         return False
     try:
-        xhs_root = os.path.abspath(os.path.join(REPO_ROOT, "browser_data", "profiles", "xiaohongshu"))
+        xhs_root = os.path.abspath(os.path.join(str(browser_data_dir()), "profiles", "xiaohongshu"))
         actual = os.path.abspath(actual_profile)
         expected = os.path.abspath(expected_profile)
         return (

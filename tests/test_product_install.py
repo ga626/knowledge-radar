@@ -48,6 +48,7 @@ def package_fixture(tmp_path: Path, version: str) -> Path:
     registry = package / "config" / "profile_registry.example.json"
     registry.parent.mkdir(parents=True)
     registry.write_text('{"profiles": []}\n', encoding="utf-8")
+    shutil.copyfile(ROOT / "config" / "storage-ownership.manifest.json", package / "config" / "storage-ownership.manifest.json")
     (package / "scripts").mkdir()
     shutil.copyfile(ROOT / "scripts" / "setup_product_wizard.py", package / "scripts" / "setup_product_wizard.py")
     source_plugin = ROOT / "config" / "codex-product" / "plugin" / "knowledgeradar-research"
@@ -221,3 +222,47 @@ def test_migration_is_copy_only_and_never_overwrites_existing_data(tmp_path: Pat
     retry = installer.migrate_apply(legacy, data_root)
     assert retry["status"] == "NEEDS_REVIEW"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "TAVILY_API_KEY=existing\n"
+
+
+def test_data_root_move_copies_verifies_switches_and_keeps_source_for_rollback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    source_data = tmp_path / "c-data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, source_data, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    (source_data / "browser_data").mkdir(exist_ok=True)
+    (source_data / "browser_data" / "profile-state.bin").write_bytes(b"private-profile-state")
+    target_data = tmp_path / "d-data"
+
+    plan = installer.data_root_move_plan(install_root, target_data)
+    applied = installer.data_root_move_apply(install_root, target_data, str(plan["confirmation_token"]))
+
+    assert applied["status"] == "APPLIED"
+    assert source_data.is_dir()
+    assert (target_data / "browser_data" / "profile-state.bin").read_bytes() == b"private-profile-state"
+    assert Path(installer.load_active(install_root)["data_root"]) == target_data
+    config = tomllib.loads((tmp_path / "codex" / "config.toml").read_text(encoding="utf-8"))
+    assert config["mcp_servers"]["knowledgeradar"]["env"]["KR_DATA_ROOT"] == str(target_data)
+
+    restored = installer.data_root_move_rollback(install_root)
+    assert restored["status"] == "ROLLED_BACK"
+    assert Path(installer.load_active(install_root)["data_root"]) == source_data
+
+
+def test_data_root_move_refuses_wrong_confirmation_or_live_browser_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    source_data = tmp_path / "c-data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, source_data, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    target_data = tmp_path / "d-data"
+    plan = installer.data_root_move_plan(install_root, target_data)
+    with pytest.raises(RuntimeError, match="confirmation"):
+        installer.data_root_move_apply(install_root, target_data, "not-the-plan")
+    lock = source_data / "browser_data" / "SingletonLock"
+    lock.parent.mkdir(exist_ok=True)
+    lock.write_text("locked", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="close managed browsers"):
+        installer.data_root_move_apply(install_root, target_data, str(plan["confirmation_token"]))
