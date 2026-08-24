@@ -23,6 +23,7 @@ from .xhs_candidates import (
 )
 from .xhs_page_state import classify_xhs_page_state, js_classifier_body_expression
 from .xhs_route_events import record_xhs_route_event
+from .paths import browser_data_dir, project_root
 
 
 SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -64,7 +65,7 @@ def _camoufox_exe() -> str:
 
 
 def _profile_dir() -> str:
-    return os.environ.get("KR_CAMOUFOX_PROFILE_DIR", "").strip() or os.path.join(REPO_ROOT, "browser_data", "xhs_camoufox_profile_v2")
+    return os.environ.get("KR_CAMOUFOX_PROFILE_DIR", "").strip() or os.path.join(str(browser_data_dir()), "xhs_camoufox_profile_v2")
 
 
 def _truthy_env(name: str, default: str = "0") -> bool:
@@ -82,7 +83,7 @@ def _chrome_exe() -> str:
 
 def _playwright_chromium_profile_dir() -> str:
     return os.environ.get("KR_PLAYWRIGHT_CHROMIUM_XHS_PROFILE_DIR", "").strip() or os.path.join(
-        REPO_ROOT, "browser_data", "profiles", "xiaohongshu", "playwright_chromium_xhs_p7_login"
+        str(browser_data_dir()), "profiles", "xiaohongshu", "playwright_chromium_xhs_p7_login"
     )
 
 
@@ -92,7 +93,7 @@ def _playwright_bundled_chromium_summary() -> Dict[str, Any]:
     if configured:
         roots.append(configured)
     roots.append(os.path.join(os.path.expanduser("~"), "AppData", "Local", "ms-playwright"))
-    roots.append(os.path.join(REPO_ROOT, "ms-playwright"))
+    roots.append(os.path.join(str(project_root()), "ms-playwright"))
     seen = set()
     candidates = []
     for root in roots:
@@ -348,7 +349,7 @@ def _profile_from_registry(profile_id: str) -> Dict[str, Any]:
                 continue
             profile_dir = str(row.get("profile_dir") or "").strip()
             if profile_dir and not os.path.isabs(profile_dir):
-                profile_dir = os.path.join(REPO_ROOT, profile_dir)
+                profile_dir = os.path.join(str(project_root()), profile_dir)
             return {**row, "profile_dir": os.path.abspath(os.path.expandvars(os.path.expanduser(profile_dir)))}
     return {}
 

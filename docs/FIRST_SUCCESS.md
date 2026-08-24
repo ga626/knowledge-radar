@@ -30,3 +30,5 @@ python scripts\product_install.py rollback
 ```
 
 回滚会同步恢复 `active.json`、Codex MCP block 和 `configure.cmd` 指向，但不会删除你的 data 根。完整细节见 [产品安装与更新](PRODUCT_INSTALL.md)。
+
+如果系统盘空间不足，请先在 [产品安装与更新](PRODUCT_INSTALL.md) 中生成数据迁移计划；关闭浏览器、核对计划和确认令牌后才会复制并切换到你选择的空目录。旧数据根会保留，供回滚使用。

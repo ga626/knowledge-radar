@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import os
+import json
 from pathlib import Path
+import shutil
+import time
 from typing import Any
 
-from onboarding.configuration import public_snapshot, runtime_env_path
+from onboarding.configuration import public_snapshot
 from runtime.media_cache import cleanup_expired_media_cache, media_cache_root
+from runtime.paths import project_root
 
 
 CAPABILITY_PACKS = (
@@ -73,13 +77,28 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
     return rows
 
 
-def _tree_bytes(path: Path) -> int:
+def _tree_bytes(path: Path, *, excluded: tuple[Path, ...] = ()) -> int:
     if not path.exists():
         return 0
     try:
-        return sum(item.stat().st_size for item in path.rglob("*") if item.is_file())
+        return sum(
+            item.stat().st_size
+            for item in path.rglob("*")
+            if item.is_file() and not any(excluded_root == item or excluded_root in item.parents for excluded_root in excluded)
+        )
     except OSError:
         return 0
+
+
+def _storage_ownership_manifest() -> dict[str, Any]:
+    manifest = project_root() / "config" / "storage-ownership.manifest.json"
+    try:
+        payload = json.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("product storage ownership manifest is unavailable") from error
+    if payload.get("schema") != "knowledgeradar-storage-ownership/v1" or not isinstance(payload.get("categories"), list):
+        raise RuntimeError("product storage ownership manifest is invalid")
+    return payload
 
 
 def storage_summary() -> dict[str, Any]:
@@ -94,27 +113,30 @@ def storage_summary() -> dict[str, Any]:
             "cleanup_scope": "源码兼容模式不会扫描工作区；安装产品后可在此查看产品数据根的空间摘要。",
         }
     data_root = Path(configured_root).expanduser()
-    categories = {
-        "浏览器资料": data_root / "browser_data",
-        "运行状态": data_root / "state",
-        "日志": data_root / "logs",
-        "通用缓存": data_root / "cache",
-        "媒体缓存": media_cache_root(),
-        "模型": data_root / "models",
-        "Playwright": data_root / "playwright",
-    }
-    rows = [{"label": label, "bytes": _tree_bytes(path)} for label, path in categories.items()]
+    manifest = _storage_ownership_manifest()
+    rows: list[dict[str, Any]] = []
+    for category in manifest["categories"]:
+        relative = str(category["relative_path"])
+        path = media_cache_root() if category["id"] == "media_cache" else data_root / relative
+        excluded = tuple(data_root / str(item) for item in category.get("exclude_relative_paths", []))
+        rows.append({"id": category["id"], "label": category["label"], "policy": category["policy"], "bytes": _tree_bytes(path, excluded=excluded)})
     return {
         "schema": "knowledgeradar-local-storage-summary/v1",
         "available": True,
         "categories": rows,
         "total_bytes": sum(row["bytes"] for row in rows),
-        "cleanup_scope": "仅可清理已过期的媒体缓存；不会删除密钥、Profile、浏览器资料、日志或模型。",
+        "cleanup_scope": "只对已登记且过期的媒体缓存生成清理计划；执行时先移入可恢复隔离区。密钥、Profile、浏览器资料、模型、备份和未知文件始终受保护。",
     }
 
 
 def expired_media_cleanup(*, apply: bool) -> dict[str, Any]:
-    """Clean only expired media-cache files and return counts rather than paths."""
+    """Plan or quarantine expired media cache without deleting user data.
+
+    ``runtime.media_cache`` remains a development helper with direct deletion
+    semantics.  Product users instead receive a reversible lifecycle: only
+    manifest-known expired files are eligible and application moves them below
+    the active data root's quarantine directory.
+    """
     if not os.environ.get("KR_DATA_ROOT", "").strip():
         return {
             "status": "SKIPPED",
@@ -123,11 +145,42 @@ def expired_media_cleanup(*, apply: bool) -> dict[str, Any]:
             "error_count": 0,
             "scope": "源码兼容模式不清理工作区；请在已安装产品中使用此操作。",
         }
-    result = cleanup_expired_media_cache(dry_run=not apply)
+    data_root = Path(os.environ["KR_DATA_ROOT"]).resolve()
+    cache_root = media_cache_root().resolve()
+    if cache_root != data_root and data_root not in cache_root.parents:
+        return {"status": "SKIPPED", "expired_file_count": 0, "kept_file_count": 0, "error_count": 0, "scope": "媒体缓存不在当前产品数据根，拒绝自动处理。"}
+    result = cleanup_expired_media_cache(root=cache_root, dry_run=True)
+    manifest = cache_root / "manifest.jsonl"
+    known = set()
+    if manifest.is_file():
+        from runtime.media_cache import iter_manifest_records
+
+        for row in iter_manifest_records(cache_root) or ():
+            raw = str(row.get("path") or "")
+            if raw:
+                known.add(Path(raw).resolve())
+    eligible = [Path(raw).resolve() for raw in result["deleted"] if Path(raw).resolve() in known]
+    errors: list[str] = []
+    if apply and eligible:
+        quarantine = data_root / "quarantine" / "media-cache" / str(int(time.time()))
+        for path in eligible:
+            try:
+                relative = path.relative_to(cache_root)
+                target = quarantine / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(path), str(target))
+            except (OSError, ValueError) as error:
+                errors.append(str(error))
+        receipt = data_root / "receipts" / f"media-cache-quarantine-{int(time.time())}.json"
+        receipt.parent.mkdir(parents=True, exist_ok=True)
+        receipt.write_text(
+            '{"schema":"knowledgeradar-media-cache-quarantine/v1","status":"APPLIED","restore_window":"manual until user purges quarantine","file_count":' + str(len(eligible) - len(errors)) + "}\n",
+            encoding="utf-8",
+        )
     return {
-        "status": "APPLIED" if apply else "PLAN",
-        "expired_file_count": len(result["deleted"]),
+        "status": "QUARANTINED" if apply else "PLAN",
+        "expired_file_count": len(eligible),
         "kept_file_count": len(result["kept"]),
-        "error_count": len(result["errors"]),
-        "scope": "仅媒体缓存中的过期文件；不包含密钥、Profile、浏览器资料、日志或模型。",
+        "error_count": len(result["errors"]) + len(errors),
+        "scope": "只处理 manifest 已登记的过期媒体缓存，并先移入可恢复隔离区；不包含密钥、Profile、浏览器资料、日志、模型、备份或未知文件。",
     }

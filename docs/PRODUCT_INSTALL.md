@@ -23,6 +23,18 @@ python scripts\product_install.py migrate-plan --legacy-root D:\Projects\Knowled
 python scripts\product_install.py migrate-apply --legacy-root D:\Projects\KnowledgeRadar
 ```
 
+## 将已安装的数据根迁到其他盘
+
+当产品数据在系统盘占用较大空间时，先关闭 KnowledgeRadar 管理的浏览器，再用**当前已安装版本**中的安装器生成只读计划。目标必须是尚不存在或为空的目录；安装器会复制、逐文件 SHA-256 核验、切换唯一 MCP 配置，然后保留旧数据根供回滚。它不会自动执行，也不会删除旧根、Profile、Cookie、密钥、模型或未知文件。
+
+```bat
+python scripts\product_install.py data-move-plan --data-root D:\Software\KnowledgeRadarData
+python scripts\product_install.py data-move-apply --data-root D:\Software\KnowledgeRadarData --confirmation <plan 中的 confirmation_token>
+python scripts\product_install.py data-move-rollback
+```
+
+计划若发现 `Singleton*` 浏览器锁、空间不足、目标非空或数据在计划后发生变化，会拒绝执行；重新关闭浏览器并生成新计划即可。迁移完成后按 Codex 的受支持方式刷新或重启 MCP，再调用 `health_check` 和 `get_capabilities`。媒体缓存可在本地健康台隔离；其它分类只允许用户手动处理，分类规则见 [隐私和本地状态](PRIVACY_AND_LOCAL_STATE.md)。
+
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。
 
 首次填写配置、查看能力包状态或清理过期媒体缓存，请运行安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\configure.cmd`，并阅读 [首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。

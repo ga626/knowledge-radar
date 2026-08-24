@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-08-12",
+  "updated_at": "2026-08-25",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -255,6 +255,7 @@
     "config/delivery-profile.json",
     "config/profile_registry.example.json",
     "config/project-structure.manifest.json",
+    "config/storage-ownership.manifest.json",
     "config/selectors.json",
     "scripts/generate-mcp-config.py",
     "scripts/setup_codex_product.py",
@@ -291,6 +292,7 @@
     "config/public-source-manifest.json",
     "config/quality-gates.manifest.json",
     "config/project-structure.manifest.json",
+    "config/storage-ownership.manifest.json",
     "scripts/*package*.py",
     "scripts/verify_release_candidate.py",
     "scripts/product_install.py",

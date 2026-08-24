@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 from typing import Any
 from uuid import uuid4
@@ -168,6 +169,7 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
         "KR_BROWSER_DATA_DIR": str(data / "browser_data"),
         "KR_STATE_DIR": str(data / "state"),
         "KR_LOG_DIR": str(data / "logs"),
+        "KR_MEDIA_CACHE_DIR": str(data / "state" / "media_cache"),
         "PLAYWRIGHT_BROWSERS_PATH": str(data / "playwright"),
     }
     lines = [
@@ -236,7 +238,7 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
         "    data = Path(str(active.get('data_root') or '')).resolve()\n"
         "    if active.get('schema') != 'knowledgeradar-active-install/v1' or not (program / 'src' / 'onboarding' / 'setup_wizard.py').is_file() or not data.is_dir():\n"
         "        raise RuntimeError('active KnowledgeRadar installation is unavailable')\n"
-        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs')})\n"
+        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_PROFILE_REGISTRY_PATH': str(data / 'config' / 'profile_registry.json'), 'KR_BROWSER_DATA_DIR': str(data / 'browser_data'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs'), 'KR_MEDIA_CACHE_DIR': str(data / 'state' / 'media_cache')})\n"
         "    sys.path.insert(0, str(program / 'src'))\n"
         "    from onboarding.setup_wizard import run_wizard\n"
         "    run_wizard(port=args.port, open_browser=not args.no_open)\n"
@@ -274,6 +276,140 @@ def tree_summary(path: Path) -> dict[str, Any]:
         return {"exists": False, "files": 0, "bytes": 0, "path_hash": path_hash(path)}
     files = [item for item in path.rglob("*") if item.is_file()] if path.is_dir() else [path]
     return {"exists": True, "files": len(files), "bytes": sum(item.stat().st_size for item in files), "path_hash": path_hash(path)}
+
+
+def _tree_manifest(path: Path) -> dict[str, str]:
+    """Hash a migration tree without reading any file content into receipts."""
+    if not path.is_dir():
+        raise RuntimeError("data root is unavailable")
+    rows: dict[str, str] = {}
+    for item in sorted((entry for entry in path.rglob("*") if entry.is_file()), key=lambda entry: entry.as_posix()):
+        relative = item.relative_to(path).as_posix()
+        rows[relative] = f"{item.stat().st_size}:{sha256_file(item)}"
+    return rows
+
+
+def _migration_token(source: Path, target: Path, source_summary: dict[str, Any]) -> str:
+    payload = json.dumps(
+        {"source": str(source.resolve()), "target": str(target.resolve()), "files": source_summary["files"], "bytes": source_summary["bytes"]},
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
+
+
+def _active_runtime(install_root: Path, active: dict[str, Any]) -> Path:
+    runtime = runtime_python(install_root / "runtime" / str(active.get("version") or ""))
+    if not runtime.is_file():
+        raise RuntimeError("active product runtime is unavailable")
+    return runtime
+
+
+def data_root_move_plan(install_root: Path, target_root: Path) -> dict[str, Any]:
+    """Create a no-write plan to copy the active data root to another volume.
+
+    The source is intentionally retained after activation.  That makes the
+    operation recoverable and prevents an interrupted migration from deleting
+    browser profiles, credentials, or user backups.
+    """
+    install_root = install_root.resolve()
+    active = load_active(install_root)
+    source = Path(str(active["data_root"])).resolve()
+    target = target_root.resolve()
+    if source == target or source in target.parents or target in source.parents:
+        raise RuntimeError("new data root must be a distinct sibling location")
+    if (install_root / "app") in (target, *target.parents):
+        raise RuntimeError("data root must not be inside the immutable app directory")
+    if target.exists() and any(target.iterdir()):
+        raise RuntimeError("new data root must be empty; existing data is never merged automatically")
+    source_summary = tree_summary(source)
+    if not source_summary["exists"]:
+        raise RuntimeError("active data root is unavailable")
+    volume = shutil.disk_usage(target.parent if target.parent.exists() else target.anchor)
+    locked = sorted(str(item.relative_to(source)) for item in source.rglob("Singleton*") if item.exists())
+    return {
+        "schema": "knowledgeradar-data-root-move-plan/v1",
+        "status": "PLAN",
+        "source_data_root_hash": path_hash(source),
+        "target_data_root_hash": path_hash(target),
+        "source": {"files": source_summary["files"], "bytes": source_summary["bytes"]},
+        "target": {"exists": target.exists(), "free_bytes": volume.free},
+        "required_free_bytes": source_summary["bytes"] + max(5 * 1024**3, source_summary["bytes"] // 5),
+        "browser_lock_relative_paths": locked,
+        "confirmation_token": _migration_token(source, target, source_summary),
+        "copy_verify_switch": True,
+        "keeps_source_for_rollback": True,
+        "will_not_modify_development_source": True,
+    }
+
+
+def data_root_move_apply(install_root: Path, target_root: Path, confirmation: str) -> dict[str, Any]:
+    plan = data_root_move_plan(install_root, target_root)
+    if plan["browser_lock_relative_paths"]:
+        raise RuntimeError("close managed browsers before migration; active profile locks were detected")
+    if confirmation != plan["confirmation_token"]:
+        raise RuntimeError("confirmation token does not match the current migration plan")
+    if plan["target"]["free_bytes"] < plan["required_free_bytes"]:
+        raise RuntimeError("target volume does not have the required free space")
+    install_root = install_root.resolve()
+    active = load_active(install_root)
+    source = Path(str(active["data_root"])).resolve()
+    target = target_root.resolve()
+    staging_parent = target.parent
+    staging_parent.mkdir(parents=True, exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=".data-root-staging-", dir=staging_parent))
+    started = int(time.time())
+    try:
+        copied = staging / "payload"
+        shutil.copytree(source, copied, copy_function=shutil.copy2)
+        if _tree_manifest(source) != _tree_manifest(copied):
+            raise RuntimeError("copied data does not match source manifest")
+        copied.replace(target)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+    previous = dict(active)
+    active["data_root"] = str(target)
+    active["data_root_hash"] = path_hash(target)
+    active["previous_data_root"] = str(source)
+    active["data_root_migration_token"] = plan["confirmation_token"]
+    runtime = _active_runtime(install_root, active)
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
+    config = codex_home / "config.toml"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    if config.is_file():
+        shutil.copyfile(config, target / "receipts" / f"codex-config.before-data-move-{started}.toml")
+    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)), encoding="utf-8")
+    write_json_atomic(install_root / "backup" / "active.before-data-move.json", previous)
+    write_json_atomic(install_root / "active.json", active)
+    launcher = write_product_wizard_launcher(active, runtime)
+    receipt = {
+        "schema": "knowledgeradar-data-root-move-receipt/v1",
+        "status": "APPLIED",
+        "plan": plan,
+        "active": active,
+        "source_retained_for_rollback": True,
+        "wizard_launcher": str(launcher),
+    }
+    write_json_atomic(target / "receipts" / f"data-root-move-{started}.json", receipt)
+    return receipt
+
+
+def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
+    install_root = install_root.resolve()
+    backup = install_root / "backup" / "active.before-data-move.json"
+    if not backup.is_file():
+        raise RuntimeError("no data-root migration rollback record is available")
+    previous = json.loads(backup.read_text(encoding="utf-8"))
+    previous_root = Path(str(previous.get("data_root") or "")).resolve()
+    if not previous_root.is_dir():
+        raise RuntimeError("previous data root is unavailable")
+    runtime = _active_runtime(install_root, previous)
+    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
+    config = codex_home / "config.toml"
+    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime)), encoding="utf-8")
+    write_json_atomic(install_root / "active.json", previous)
+    launcher = write_product_wizard_launcher(previous, runtime)
+    return {"schema": "knowledgeradar-data-root-move-rollback/v1", "status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(launcher)}
 
 
 def migration_plan(legacy_root: Path, data_root: Path) -> dict[str, Any]:
@@ -525,7 +661,10 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
-    parser.add_argument("command", choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply"))
+    parser.add_argument(
+        "command",
+        choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback"),
+    )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
     parser.add_argument("--data-root", default="")
@@ -534,6 +673,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--archive", default="", help="downloaded candidate/release ZIP")
     parser.add_argument("--receipt", default="", help="candidate/release receipt JSON matching --archive")
     parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
+    parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
@@ -548,6 +688,16 @@ def main(argv: list[str] | None = None) -> int:
             if not args.legacy_root:
                 raise RuntimeError("migrate-apply requires --legacy-root")
             result = migrate_apply(Path(args.legacy_root), data_root)
+        elif args.command == "data-move-plan":
+            if not args.data_root:
+                raise RuntimeError("data-move-plan requires --data-root as the new empty data root")
+            result = data_root_move_plan(install_root, data_root)
+        elif args.command == "data-move-apply":
+            if not args.data_root or not args.confirmation:
+                raise RuntimeError("data-move-apply requires --data-root and --confirmation")
+            result = data_root_move_apply(install_root, data_root, args.confirmation)
+        elif args.command == "data-move-rollback":
+            result = data_root_move_rollback(install_root)
         elif args.command == "plan":
             result = build_plan(package_root, install_root, data_root, python_exe)
         elif args.command == "apply":

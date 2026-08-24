@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+- Add safe product data-root relocation: plan, explicit confirmation, browser-lock refusal, copy-and-SHA-256 verification, active MCP switch, and rollback while preserving the old data root.
+- Keep browser state, Profile registry, media cache, and product runtime under the active product data root; add a public storage-ownership policy and reversible quarantine for manifest-known expired media cache.
 - Repair Windows stdio verifier cleanup so it waits for the child process and closes all stdio handles before removing its temporary state.
 - Repair the Release first-use contract: one stable `configure.cmd`, public stdio verification, data-root diagnostics, and separated user/developer documentation.
 - Improve the repository entry points, support guidance, contributor conduct, and bilingual README accuracy.
