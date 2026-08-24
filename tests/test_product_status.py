@@ -31,6 +31,28 @@ def test_storage_summary_does_not_scan_source_checkout_without_product_data_root
     assert product_status.expired_media_cleanup(apply=True)["status"] == "SKIPPED"
 
 
+def test_installation_summary_is_sanitized_and_only_uses_the_install_root(tmp_path, monkeypatch) -> None:
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "private-data"
+    data_root.mkdir(parents=True)
+    (install_root / "backup").mkdir(parents=True)
+    (install_root / "backup" / "active.previous.json").write_text("{}", encoding="utf-8")
+    (install_root / "active.json").write_text(
+        '{"schema":"knowledgeradar-active-install/v1","version":"0.1.0a8","channel":"stable","data_root":"'
+        + str(data_root).replace("\\", "\\\\")
+        + '","data_root_hash":"private-hash"}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KR_INSTALL_ROOT", str(install_root))
+
+    summary = product_status.installation_summary()
+
+    assert summary["available"] is True
+    assert summary["version"] == "0.1.0a8"
+    assert summary["data_root_present"] is True
+    assert str(data_root) not in str(summary)
+
+
 def test_storage_summary_uses_manifest_and_does_not_double_count_media_cache(tmp_path, monkeypatch) -> None:
     data_root = tmp_path / "data"
     cache_root = data_root / "state" / "media_cache"

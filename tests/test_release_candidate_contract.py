@@ -31,7 +31,12 @@ def test_product_manifest_includes_runtime_and_plugin() -> None:
     files, _, _ = builder.collect_files(manifest)
     paths = {item.relative_to(ROOT).as_posix() for item in files}
     assert "src/server.py" in paths
+    assert "scripts/product_install.py" in paths
+    assert "bridge/xhs_mcp_bridge.cjs" in paths
     assert "config/codex-product/plugin/knowledgeradar-research/.codex-plugin/plugin.json" in paths
+    assert "scripts/install.bat" not in paths
+    assert "scripts/setup_codex_product.py" not in paths
+    assert "scripts/verify_release_candidate.py" not in paths
 
 
 def test_product_manifest_excludes_generated_egg_metadata() -> None:

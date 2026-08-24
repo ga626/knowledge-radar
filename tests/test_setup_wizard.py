@@ -92,9 +92,14 @@ def test_wizard_status_is_sanitized_and_cleanup_requires_local_session(monkeypat
         "onboarding.setup_wizard.capability_packs",
         lambda snapshot: [{"id": "core_web", "status": "ready", "configured_field_count": 1}],
     )
+    storage_calls = []
     monkeypatch.setattr(
         "onboarding.setup_wizard.storage_summary",
-        lambda: {"available": True, "categories": [{"label": "媒体缓存", "bytes": 12}], "total_bytes": 12},
+        lambda: storage_calls.append(True) or {"available": True, "categories": [{"label": "媒体缓存", "bytes": 12}], "total_bytes": 12},
+    )
+    monkeypatch.setattr(
+        "onboarding.setup_wizard.installation_summary",
+        lambda: {"available": True, "version": "test", "channel": "stable", "data_root_present": True, "rollback_available": False, "message": "ok"},
     )
     calls = []
     monkeypatch.setattr(
@@ -112,7 +117,17 @@ def test_wizard_status_is_sanitized_and_cleanup_requires_local_session(monkeypat
         payload = response.read().decode("utf-8")
         assert response.status == 200
         assert "private-value" not in payload
-        assert "媒体缓存" in payload
+        assert "media_cache" not in payload
+        assert storage_calls == []
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/api/storage")
+        response = connection.getresponse()
+        assert response.status == 200
+        storage = json.loads(response.read().decode("utf-8"))
+        assert storage["total_bytes"] == 12
+        assert storage["categories"][0]["bytes"] == 12
+        assert storage_calls == [True]
 
         connection = HTTPConnection("127.0.0.1", port, timeout=5)
         connection.request("POST", "/api/media-cleanup", body=json.dumps({"apply": True}), headers={"Content-Type": "application/json"})
