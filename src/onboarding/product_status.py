@@ -6,6 +6,8 @@ import os
 import json
 from pathlib import Path
 import shutil
+import subprocess
+import sys
 import time
 from typing import Any
 
@@ -110,6 +112,136 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
             }
         )
     return rows
+
+
+def optional_capabilities() -> list[dict[str, Any]]:
+    """Return only local readiness flags for downloads that require explicit consent."""
+    root_raw = os.environ.get("KR_DATA_ROOT", "").strip()
+    if not root_raw:
+        return []
+    data_root = Path(root_raw).expanduser()
+    state_path = data_root / "state" / "capabilities.json"
+    try:
+        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
+    except (OSError, json.JSONDecodeError):
+        state = {}
+    rows = state.get("capabilities", {}) if isinstance(state, dict) else {}
+    xhs_ready = (
+        isinstance(rows.get("xhs_bridge"), dict)
+        and rows["xhs_bridge"].get("status") == "APPLIED"
+        and (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
+    )
+    browser_root = data_root / "playwright"
+    browser_ready = isinstance(rows.get("browser"), dict) and rows["browser"].get("status") == "APPLIED" and browser_root.is_dir()
+    return [
+        {
+            "id": "browser",
+            "label": "Playwright Chromium",
+            "description": "仅在需要动态网页或受支持浏览器流程时下载。",
+            "status": "ready" if browser_ready else "not_installed",
+            "boundary": "会下载浏览器文件到你的数据根；不自动登录，不调用付费 API。",
+            "restart_required": False,
+        },
+        {
+            "id": "xhs_bridge",
+            "label": "小红书诊断 bridge",
+            "description": "仅在需要小红书本地 bridge 诊断能力时安装 Node.js 依赖。",
+            "status": "ready" if xhs_ready else "not_installed",
+            "boundary": "会下载 Node.js 依赖；不会登录、绕过验证或自动启用生产兜底。",
+            "restart_required": True,
+        },
+    ]
+
+
+def _run_product_installer(arguments: list[str], *, timeout: int) -> dict[str, Any]:
+    """Call the active product installer and keep paths/output inside this process."""
+    install_root = os.environ.get("KR_INSTALL_ROOT", "").strip()
+    program_root = os.environ.get("KR_PROJECT_ROOT", "").strip()
+    if not install_root or not program_root:
+        raise RuntimeError("源码兼容模式不提供产品维护操作。")
+    installer = Path(program_root) / "scripts" / "product_install.py"
+    if not installer.is_file():
+        raise RuntimeError("当前产品安装器不可用。")
+    result = subprocess.run(
+        [sys.executable, str(installer), *arguments, "--install-root", install_root],
+        cwd=Path(program_root),
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("产品维护命令未返回有效状态。") from error
+    if result.returncode or payload.get("status") == "FAIL":
+        raise RuntimeError(str(payload.get("error") or "产品维护操作未完成。"))
+    return payload
+
+
+def data_root_move_console_plan(target_root: str) -> dict[str, Any]:
+    """Return a path-free migration plan; applying remains a separate CLI confirmation."""
+    target_root = target_root.strip()
+    if not target_root or any(char in target_root for char in "\r\n\x00"):
+        raise ValueError("请输入一个有效的新数据根目录。")
+    payload = _run_product_installer(["data-move-plan", "--data-root", target_root], timeout=180)
+    source = payload.get("source", {})
+    target = payload.get("target", {})
+    locks = payload.get("browser_lock_relative_paths", [])
+    return {
+        "status": "PLAN",
+        "source": {"files": int(source.get("files", 0)), "bytes": int(source.get("bytes", 0))},
+        "target": {"exists": bool(target.get("exists")), "free_bytes": int(target.get("free_bytes", 0))},
+        "required_free_bytes": int(payload.get("required_free_bytes", 0)),
+        "browser_lock_count": len(locks) if isinstance(locks, list) else 0,
+        "confirmation_token": str(payload.get("confirmation_token", "")),
+        "next_step": "计划不会迁移数据。请复制确认令牌，按产品安装文档中的 data-move-apply 命令执行。",
+    }
+
+
+def optional_capability_plan(capability: str) -> dict[str, Any]:
+    payload = _run_product_installer(["capability-plan", "--capability", capability], timeout=60)
+    details = payload.get("details", {})
+    return {
+        "status": "PLAN",
+        "capability": str(payload.get("capability") or capability),
+        "label": str(details.get("label") or "可选能力"),
+        "network_download": bool(details.get("network_download")),
+        "login_required": bool(details.get("login_required")),
+        "may_use_paid_api": bool(details.get("may_use_paid_api")),
+        "restart_required": bool(details.get("restart_required")),
+        "confirmation_token": str(payload.get("confirmation_token") or ""),
+        "boundary": str(details.get("boundary") or "仅在明确确认后才会下载安装。"),
+    }
+
+
+def optional_capability_apply(capability: str, confirmation: str) -> dict[str, Any]:
+    if not confirmation or len(confirmation) > 128:
+        raise ValueError("请先生成并确认当前能力安装计划。")
+    payload = _run_product_installer(
+        ["capability-apply", "--capability", capability, "--confirmation", confirmation], timeout=900
+    )
+    return {
+        "status": str(payload.get("status") or "APPLIED"),
+        "capability": str(payload.get("capability") or capability),
+        "restart_required": bool(payload.get("restart_required")),
+    }
+
+
+def diagnostic_snapshot() -> dict[str, Any]:
+    """A copyable, path-free diagnostic record safe for local viewing or export."""
+    snapshot = public_snapshot()
+    return {
+        "schema": "knowledgeradar-local-diagnostic/v1",
+        "installation": installation_summary(),
+        "configured_field_count": len(_configured_keys(snapshot)),
+        "supported_field_count": len(snapshot.get("fields", [])),
+        "capability_packs": [{"id": row["id"], "status": row["status"]} for row in capability_packs(snapshot)],
+        "optional_capabilities": [{"id": row["id"], "status": row["status"]} for row in optional_capabilities()],
+        "privacy": "不含配置值、绝对路径、文件名、账号、Cookie、Profile、日志或任务内容。",
+    }
 
 
 def _tree_bytes(path: Path, *, excluded: tuple[Path, ...] = ()) -> int:

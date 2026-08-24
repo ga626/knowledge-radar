@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import time
@@ -95,3 +96,47 @@ def test_product_media_cleanup_quarantines_only_manifest_known_expired_files(tmp
     assert not known.exists()
     assert unknown.exists()
     assert any((data_root / "quarantine").rglob("old.mp4"))
+
+
+def test_optional_capability_and_diagnostic_status_never_expose_paths_or_values(tmp_path, monkeypatch) -> None:
+    data_root = tmp_path / "private-data"
+    bridge = data_root / "capabilities" / "xhs-bridge"
+    bridge.mkdir(parents=True)
+    (bridge / "xhs_mcp_bridge.cjs").write_text("private bridge", encoding="utf-8")
+    (data_root / "playwright").mkdir()
+    (data_root / "state").mkdir(exist_ok=True)
+    (data_root / "state" / "capabilities.json").write_text(
+        '{"schema":"knowledgeradar-capability-state/v1","capabilities":{"browser":{"status":"APPLIED"},"xhs_bridge":{"status":"APPLIED"}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("KR_DATA_ROOT", str(data_root))
+    monkeypatch.setattr(product_status, "installation_summary", lambda: {"available": True, "message": "ok"})
+    monkeypatch.setattr(product_status, "public_snapshot", lambda: {"fields": [{"key": "TAVILY_API_KEY", "configured": True}]})
+
+    optional = product_status.optional_capabilities()
+    diagnostic = product_status.diagnostic_snapshot()
+
+    assert {row["id"]: row["status"] for row in optional} == {"browser": "ready", "xhs_bridge": "ready"}
+    assert str(data_root) not in json.dumps(diagnostic)
+    assert "private bridge" not in json.dumps(diagnostic)
+
+
+def test_data_move_console_plan_is_sanitized(monkeypatch) -> None:
+    monkeypatch.setattr(
+        product_status,
+        "_run_product_installer",
+        lambda arguments, *, timeout: {
+            "status": "PLAN",
+            "source": {"files": 4, "bytes": 9, "path_hash": "private"},
+            "target": {"exists": False, "free_bytes": 20},
+            "required_free_bytes": 18,
+            "browser_lock_relative_paths": ["browser_data/SingletonLock"],
+            "confirmation_token": "plan-token",
+        },
+    )
+
+    plan = product_status.data_root_move_console_plan("D:\\new-data")
+
+    assert plan["source"] == {"files": 4, "bytes": 9}
+    assert plan["browser_lock_count"] == 1
+    assert "path_hash" not in json.dumps(plan)

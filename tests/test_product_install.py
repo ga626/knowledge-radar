@@ -266,3 +266,57 @@ def test_data_root_move_refuses_wrong_confirmation_or_live_browser_lock(tmp_path
     lock.write_text("locked", encoding="utf-8")
     with pytest.raises(RuntimeError, match="close managed browsers"):
         installer.data_root_move_apply(install_root, target_data, str(plan["confirmation_token"]))
+
+
+def test_optional_browser_capability_requires_a_fresh_plan_and_records_no_private_values(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    plan = installer.capability_plan(install_root, "browser")
+    calls: list[tuple[list[str], Path]] = []
+    monkeypatch.setattr(
+        installer,
+        "_run_optional_download",
+        lambda command, *, cwd, env, action: calls.append((command, cwd)) or (Path(env["PLAYWRIGHT_BROWSERS_PATH"]).mkdir(parents=True, exist_ok=True)),
+    )
+
+    with pytest.raises(RuntimeError, match="confirmation"):
+        installer.capability_apply(install_root, "browser", "wrong-token")
+    result = installer.capability_apply(install_root, "browser", str(plan["confirmation_token"]))
+
+    state = json.loads((data_root / "state" / "capabilities.json").read_text(encoding="utf-8"))
+    assert result == {"schema": "knowledgeradar-capability-apply/v1", "status": "APPLIED", "capability": "browser", "restart_required": False}
+    assert calls[0][0][-3:] == ["-m", "playwright", "install", "chromium"][-3:]
+    assert state["capabilities"]["browser"]["status"] == "APPLIED"
+    assert "data_root" not in json.dumps(state)
+
+
+def test_xhs_bridge_capability_stays_in_data_root_and_requires_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    bridge = package / "bridge"
+    bridge.mkdir()
+    (bridge / "package.json").write_text('{"dependencies": {}}\n', encoding="utf-8")
+    (bridge / "package-lock.json").write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
+    (bridge / "xhs_mcp_bridge.cjs").write_text("console.log('fixture')\n", encoding="utf-8")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+    plan = installer.capability_plan(install_root, "xhs_bridge")
+    monkeypatch.setattr(installer.shutil, "which", lambda name: "npm.exe" if name == "npm" else None)
+    monkeypatch.setattr(
+        installer,
+        "_run_optional_download",
+        lambda command, *, cwd, env, action: (cwd / "node_modules").mkdir(exist_ok=True),
+    )
+
+    result = installer.capability_apply(install_root, "xhs_bridge", str(plan["confirmation_token"]))
+
+    config = tomllib.loads((tmp_path / "codex" / "config.toml").read_text(encoding="utf-8"))
+    assert result["restart_required"] is True
+    assert (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
+    assert config["mcp_servers"]["knowledgeradar"]["env"]["XHS_BRIDGE_PATH"].endswith("xhs-bridge\\xhs_mcp_bridge.cjs") or config["mcp_servers"]["knowledgeradar"]["env"]["XHS_BRIDGE_PATH"].endswith("xhs-bridge/xhs_mcp_bridge.cjs")

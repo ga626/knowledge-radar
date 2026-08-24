@@ -10,6 +10,7 @@
     {"id": "media_cache", "label": "媒体缓存", "relative_path": "state/media_cache", "policy": "quarantine_expired_manifest_known"},
     {"id": "models", "label": "用户启用的模型", "relative_path": "models", "policy": "manual_only"},
     {"id": "playwright", "label": "Playwright", "relative_path": "playwright", "policy": "manual_only"},
+    {"id": "optional_capabilities", "label": "按需 bridge 与其 Node.js 依赖", "relative_path": "capabilities", "policy": "manual_only"},
     {"id": "quarantine", "label": "可恢复隔离区", "relative_path": "quarantine", "policy": "manual_restore_or_purge"},
     {"id": "archive", "label": "历史归档", "relative_path": "archive", "policy": "protected"}
   ],
