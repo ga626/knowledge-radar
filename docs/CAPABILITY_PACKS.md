@@ -29,7 +29,7 @@ python scripts\product_install.py capability-apply --capability xhs_bridge --con
 
 ## 本地健康台
 
-Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\configure.cmd` 后，浏览器中的本地页面会显示：
+Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 兼容）后，浏览器中的固定本地页面会显示：
 
 - 哪些能力包已具备最小配置；
 - 哪些浏览器或 bridge 依赖已经按需安装，并在二次确认后安装它们；

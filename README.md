@@ -35,7 +35,7 @@ KnowledgeRadar 是 Windows 优先、local-first 的 MCP 产品：代码从 GitHu
    python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
    ```
 
-3. 运行安装器生成的 `configure.cmd`。它只启动 `127.0.0.1` 页面，并只写入稳定产品的数据根；已填项目不会回显，留空不会清除已有配置。
+3. 运行安装器生成的 `console.cmd`（`configure.cmd` 仍兼容）。控制台固定为 `http://127.0.0.1:18882/`，只监听当前电脑；登录 Windows 后会自动启动。已填项目不会回显，留空不会清除已有配置。
 4. 按 Codex 的方式重启/刷新后，在 Codex 调用 `health_check`，再调用 `get_capabilities`。预期能看到本机状态和当前工具面；未配置的可选能力会说明下一步，而不是泄露配置值。
 
 完整的首次成功、升级和回滚说明见 [首次成功](docs/FIRST_SUCCESS.md) 与 [产品安装与更新](docs/PRODUCT_INSTALL.md)。
@@ -44,7 +44,7 @@ KnowledgeRadar 是 Windows 优先、local-first 的 MCP 产品：代码从 GitHu
 flowchart LR
   R["Release ZIP"] --> I["本地安装"]
   I --> A["唯一 active.json"]
-  A --> C["configure.cmd"]
+  A --> C["console.cmd / 127.0.0.1:18882"]
   C --> D["本机 data 根"]
   D --> M["Codex MCP"]
 ```

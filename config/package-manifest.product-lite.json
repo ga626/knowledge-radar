@@ -4,9 +4,9 @@
   "description": "Redistributable Codex product runtime, local configuration console, and user help; no development entry points or governance.",
   "include": [
     "README.md", "README.en.md", "LICENSE", ".env.example", "pyproject.toml", "src/**", "bridge/package.json", "bridge/package-lock.json", "bridge/.npmrc", "bridge/*.cjs", "bridge/*.mjs", "bridge/README.md",
-    "scripts/product_install.py",
+    "scripts/product_install.py", "scripts/product_console_launcher.py",
     "config/profile_registry.example.json", "config/codex-product/**", "config/storage-ownership.manifest.json",
-    "docs/ACCOUNT_SETUP.md", "docs/API_KEYS.md", "docs/CAPABILITY_PACKS.md", "docs/FAQ.md", "docs/FIRST_SUCCESS.md", "docs/PRIVACY_AND_LOCAL_STATE.md", "docs/PRODUCT_INSTALL.md", "CHANGELOG.md", "SUPPORT.md", "CODE_OF_CONDUCT.md"
+    "docs/ACCOUNT_SETUP.md", "docs/API_KEYS.md", "docs/CAPABILITY_PACKS.md", "docs/FAQ.md", "docs/FIRST_SUCCESS.md", "docs/LOCAL_CONSOLE.md", "docs/PRIVACY_AND_LOCAL_STATE.md", "docs/PRODUCT_INSTALL.md", "CHANGELOG.md", "SUPPORT.md", "CODE_OF_CONDUCT.md"
   ],
   "exclude": [".git/**", ".codex/**", ".githooks/**", "AGENTS.md", ".env", ".python312/**", "dist/**", "release/**", "backups/**", "browser_data/**", "data/**", "src/data/**", "src/*.egg-info/**", "config/profile_registry.json", "local/**", "project_status/**", "tools/**", "archive/**", "runtime/logs/**", "runtime/reports/**", "runtime/tasks/**", "runtime/cache/**", "runtime/media_cache/**", "runtime/*.json", "runtime/*.jsonl", "runtime/*.sqlite*", "runtime/*.db", "bridge/node_modules/**", "**/__pycache__/**", "**/*.pyc", "**/*.log", "**/*.sqlite*", "**/node_modules/**"],
   "user_must_configure": ["API keys and provider credentials", "proxy settings", "browser profile registry", "optional Python runtime"]

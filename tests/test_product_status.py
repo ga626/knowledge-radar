@@ -22,6 +22,44 @@ def test_capability_packs_report_configuration_without_values() -> None:
     assert "TAVILY_API_KEY" not in str(rows)
 
 
+def test_console_guides_and_dashboard_never_expose_configuration_or_task_content(tmp_path, monkeypatch) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text("TAVILY_API_KEY=private-value\n", encoding="utf-8")
+    monkeypatch.setattr(product_status, "public_snapshot", lambda: {"fields": [{"key": "TAVILY_API_KEY", "configured": True}]})
+    monkeypatch.setattr(product_status, "public_provider_guides", lambda: [{"id": "tavily", "configured": True, "official_url": "https://example.test", "steps": ["step"]}])
+    monkeypatch.setattr(product_status, "_dashboard_task_activity", lambda since: {"available": True, "completed": 2, "active": 1})
+    monkeypatch.setattr(product_status, "_dashboard_trace_activity", lambda since: {"available": True, "successful": 3, "top_tools": [{"label": "kr_research", "count": 3}]})
+    monkeypatch.setattr(product_status, "_dashboard_usage_activity", lambda since: {"available": True, "top_capabilities": [{"label": "vision", "count": 1}]})
+
+    guide_snapshot = product_status.console_configuration_snapshot()
+    dashboard = product_status.dashboard_snapshot()
+    rendered = json.dumps({"guide_snapshot": guide_snapshot, "dashboard": dashboard}, ensure_ascii=False)
+
+    assert guide_snapshot["providers"][0]["id"] == "tavily"
+    assert dashboard["activity"]["tasks"] == {"available": True, "completed": 2, "active": 1}
+    assert dashboard["next_action"]["view"] == "services"
+    states = {row["id"]: row for row in dashboard["control_plane"]["capabilities"]}
+    assert states["core_web"]["detail"] == "已接入"
+    assert states["login_platforms"]["detail"] == "需要登录"
+    assert "private-value" not in rendered
+    assert "target" not in rendered
+
+
+def test_control_plane_never_claims_remote_provider_health() -> None:
+    rows = product_status._control_plane_capabilities(
+        [
+            {"id": "core_web", "label": "核心网页研究", "status": "ready"},
+            {"id": "login_platforms", "label": "登录平台与招聘", "status": "needs_setup"},
+        ],
+        [{"id": "browser", "label": "Playwright Chromium", "status": "not_installed"}],
+    )
+
+    by_id = {row["id"]: row for row in rows}
+    assert by_id["core_web"] == {"id": "core_web", "label": "核心网页研究", "state": "connected", "detail": "已接入"}
+    assert by_id["login_platforms"]["state"] == "manual"
+    assert by_id["browser"]["detail"] == "尚未安装"
+
+
 def test_storage_summary_does_not_scan_source_checkout_without_product_data_root(monkeypatch) -> None:
     monkeypatch.delenv("KR_DATA_ROOT", raising=False)
 

@@ -164,7 +164,66 @@ def test_wizard_page_uses_its_nonce_for_interactive_script() -> None:
         assert response.status == 200
         assert f'nonce="{server.setup_token}"' in page
         assert f"'nonce-{server.setup_token}'" in policy
+        for view_id, label in (
+            ("overview", "总览"),
+            ("services", "能力中心"),
+            ("components", "本地组件"),
+            ("data", "数据与恢复"),
+            ("settings", "设置与帮助"),
+        ):
+            assert f'data-view="{view_id}"' in page
+            assert f'data-view-panel="{view_id}"' in page
+            assert label in page
+        assert "function activateView(id)" in page
+        assert 'class="workspace"' in page
+        assert "/api/dashboard" in page
+        assert "/api/configuration" in page
+        assert "prefers-reduced-motion" in page
     finally:
         server.shutdown()
         server.server_close()
         worker.join(timeout=5)
+
+
+def test_wizard_favicon_is_a_safe_no_content_response() -> None:
+    server = WizardServer(("127.0.0.1", 0))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        connection = HTTPConnection("127.0.0.1", server.server_port, timeout=5)
+        connection.request("GET", "/favicon.ico")
+        response = connection.getresponse()
+
+        assert response.status == 204
+        assert response.read() == b""
+        assert response.getheader("X-Content-Type-Options") == "nosniff"
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+def test_wizard_health_is_safe_and_local_session_can_stop_the_host() -> None:
+    server = WizardServer(("127.0.0.1", 0))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        port = server.server_port
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request("GET", "/api/health")
+        response = connection.getresponse()
+        assert response.status == 200
+        assert json.loads(response.read().decode("utf-8")) == {"schema": "knowledgeradar-local-console/v1", "status": "ready"}
+
+        connection = HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request(
+            "POST",
+            "/api/console/stop",
+            body="{}",
+            headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}", "X-KR-Setup-Token": server.setup_token},
+        )
+        assert connection.getresponse().status == 200
+        worker.join(timeout=5)
+        assert not worker.is_alive()
+    finally:
+        server.server_close()

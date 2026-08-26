@@ -96,9 +96,10 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     launcher = install_root / "configure.cmd"
     assert launcher.is_file()
     launcher_text = launcher.read_text(encoding="utf-8")
-    assert "configure_product.py" in launcher_text
+    assert "console_product.py" in launcher_text
     assert str(data_root) not in launcher_text
-    assert (install_root / "configure_product.py").is_file()
+    assert (install_root / "console_product.py").is_file()
+    assert (install_root / "console.cmd").is_file()
 
 
 def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -118,7 +119,7 @@ def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path,
     assert result["status"] == "ROLLED_BACK"
     assert installer.load_active(install_root)["version"] == "0.1.0"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "EXA_API_KEY=private\n"
-    assert "configure_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
+    assert "console_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
 
 
 def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -132,10 +133,10 @@ def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, mo
     installer.apply_install(first, install_root, data_root, Path(sys.executable), channel="stable", archive=first_archive, receipt_path=first_receipt)
     installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
     active_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
-    assert "configure_product.py" in active_launcher
+    assert "console_product.py" in active_launcher
     installer.rollback(install_root, Path(sys.executable))
     rollback_launcher = (install_root / "configure.cmd").read_text(encoding="utf-8")
-    assert "configure_product.py" in rollback_launcher
+    assert "console_product.py" in rollback_launcher
 
 
 def test_version_neutral_launcher_supports_legacy_active_program(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -147,10 +148,72 @@ def test_version_neutral_launcher_supports_legacy_active_program(tmp_path: Path,
 
     installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
 
-    helper = (install_root / "configure_product.py").read_text(encoding="utf-8")
+    helper = (install_root / "console_product.py").read_text(encoding="utf-8")
     assert "active.json" in helper
     assert "setup_wizard.py" in helper
+    assert "18882" in helper
     assert (install_root / "configure.cmd").is_file()
+    assert (install_root / "console.cmd").is_file()
+
+
+def test_cli_apply_creates_a_visible_per_user_console_startup_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+
+    assert installer.main(
+        [
+            "apply",
+            "--package-root",
+            str(package),
+            "--install-root",
+            str(install_root),
+            "--data-root",
+            str(data_root),
+            "--python",
+            str(Path(sys.executable)),
+            "--archive",
+            str(archive),
+            "--receipt",
+            str(receipt),
+        ]
+    ) == 0
+
+    startup = tmp_path / "roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+    assert startup.is_file()
+    startup_text = startup.read_text(encoding="utf-8")
+    assert "--serve --port 18882 --no-open" in startup_text
+    assert str(data_root) not in startup_text
+
+
+def test_update_rebinds_an_opted_in_console_startup_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "roaming"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    first = package_fixture(tmp_path, "0.1.0")
+    second = package_fixture(tmp_path, "0.2.0")
+    first_archive, first_receipt = artifact_fixture(tmp_path, first)
+    second_archive, second_receipt = artifact_fixture(tmp_path, second)
+
+    installer.apply_install(
+        first,
+        install_root,
+        data_root,
+        Path(sys.executable),
+        channel="stable",
+        archive=first_archive,
+        receipt_path=first_receipt,
+        enable_console_autostart=True,
+    )
+    installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
+
+    startup = tmp_path / "roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+    assert "runtime" in startup.read_text(encoding="utf-8")
+    assert (install_root / "console_product.py").is_file()
 
 
 def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -172,7 +235,7 @@ def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: p
         wizard.run_wizard = lambda **kwargs: captured.update(kwargs)
         monkeypatch.setitem(sys.modules, "onboarding.setup_wizard", wizard)
         assert module.main(["--install-root", str(install_root), "--no-open"]) == 0
-        assert captured == {"port": 0, "open_browser": False}
+        assert captured == {"port": 18882, "open_browser": False}
         assert Path(os.environ["KR_RUNTIME_ENV_PATH"]) == data_root / "config" / "runtime.env"
         assert Path(os.environ["KR_DATA_ROOT"]) == data_root
     finally:

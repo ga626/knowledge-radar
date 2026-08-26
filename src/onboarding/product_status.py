@@ -6,12 +6,13 @@ import os
 import json
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 from typing import Any
 
-from onboarding.configuration import public_snapshot
+from onboarding.configuration import public_provider_guides, public_snapshot
 from runtime.media_cache import cleanup_expired_media_cache, media_cache_root
 from runtime.paths import project_root
 
@@ -242,6 +243,157 @@ def diagnostic_snapshot() -> dict[str, Any]:
         "optional_capabilities": [{"id": row["id"], "status": row["status"]} for row in optional_capabilities()],
         "privacy": "不含配置值、绝对路径、文件名、账号、Cookie、Profile、日志或任务内容。",
     }
+
+
+def _read_dashboard_rows(database: Path, query: str, parameters: tuple[Any, ...] = ()) -> list[sqlite3.Row]:
+    """Read only an already-existing runtime database; never create product state."""
+    if not database.is_file():
+        return []
+    try:
+        connection = sqlite3.connect(database, timeout=2)
+        connection.row_factory = sqlite3.Row
+        try:
+            return list(connection.execute(query, parameters).fetchall())
+        finally:
+            connection.close()
+    except (OSError, sqlite3.DatabaseError):
+        return []
+
+
+def _dashboard_task_activity(since: float) -> dict[str, Any]:
+    from runtime.tasks import default_task_db_path
+
+    database = Path(default_task_db_path())
+    completed = _read_dashboard_rows(
+        database,
+        "SELECT COUNT(*) AS count FROM runtime_tasks WHERE status='completed' AND COALESCE(finished_at, updated_at) >= ?",
+        (since,),
+    )
+    pending = _read_dashboard_rows(
+        database,
+        "SELECT status, COUNT(*) AS count FROM runtime_tasks WHERE status IN ('queued', 'running') GROUP BY status",
+    )
+    return {
+        "available": database.is_file(),
+        "completed": int(completed[0]["count"] or 0) if completed else 0,
+        "active": sum(int(row["count"] or 0) for row in pending),
+    }
+
+
+def _dashboard_trace_activity(since: float) -> dict[str, Any]:
+    from runtime.tool_trace import default_tool_trace_path
+
+    trace_path = Path(default_tool_trace_path())
+    if not trace_path.is_file():
+        return {"available": False, "successful": 0, "top_tools": []}
+    successes = 0
+    by_tool: dict[str, int] = {}
+    try:
+        with trace_path.open("r", encoding="utf-8") as stream:
+            for raw in stream:
+                try:
+                    row = json.loads(raw)
+                    timestamp = str(row.get("timestamp") or "")
+                    event_time = __import__("datetime").datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    continue
+                if event_time < since or str(row.get("parent_trace_id") or "") or row.get("status") != "ok":
+                    continue
+                name = str(row.get("tool_name") or "unknown")[:80]
+                successes += 1
+                by_tool[name] = by_tool.get(name, 0) + 1
+    except OSError:
+        return {"available": False, "successful": 0, "top_tools": []}
+    return {"available": True, "successful": successes, "top_tools": [{"label": name, "count": count} for name, count in sorted(by_tool.items(), key=lambda item: (-item[1], item[0]))[:3]]}
+
+
+def _dashboard_usage_activity(since: float) -> dict[str, Any]:
+    from runtime.usage_tracker import default_usage_db_path
+
+    database = Path(default_usage_db_path())
+    rows = _read_dashboard_rows(
+        database,
+        "SELECT capability, COUNT(*) AS count FROM usage_records WHERE created_at >= ? GROUP BY capability ORDER BY count DESC LIMIT 3",
+        (since,),
+    )
+    return {"available": database.is_file(), "top_capabilities": [{"label": str(row["capability"] or "unknown")[:80], "count": int(row["count"] or 0)} for row in rows]}
+
+
+def _control_plane_capabilities(
+    packs: list[dict[str, Any]], components: list[dict[str, Any]]
+) -> list[dict[str, str]]:
+    """Map existing product readiness to honest, user-facing control-plane states.
+
+    "已接入" means that the necessary local configuration exists.  It does not
+    claim that a remote provider has been called or that a logged-in platform
+    can be used without an interaction; those require a real task or explicit
+    user action respectively.
+    """
+    rows: list[dict[str, str]] = []
+    for pack in packs:
+        if pack["status"] == "ready":
+            state, detail = "connected", "已接入"
+        elif pack["id"] == "login_platforms":
+            state, detail = "manual", "需要登录"
+        else:
+            state, detail = "needs_setup", "需要配置"
+        rows.append({"id": str(pack["id"]), "label": str(pack["label"]), "state": state, "detail": detail})
+    for component in components:
+        ready = component["status"] == "ready"
+        rows.append(
+            {
+                "id": str(component["id"]),
+                "label": str(component["label"]),
+                "state": "local_ready" if ready else "not_installed",
+                "detail": "本地组件就绪" if ready else "尚未安装",
+            }
+        )
+    return rows
+
+
+def dashboard_snapshot(*, window_days: int = 7) -> dict[str, Any]:
+    """Return a bounded, redacted dashboard view from existing local records.
+
+    This endpoint intentionally never reads task targets, URLs, account data,
+    configuration values, filenames, Profile information, or error text.
+    """
+    window_days = max(1, min(int(window_days or 7), 30))
+    since = time.time() - window_days * 86400
+    configuration = public_snapshot()
+    packs = capability_packs(configuration)
+    components = optional_capabilities()
+    installation = installation_summary()
+    task_activity = _dashboard_task_activity(since)
+    trace_activity = _dashboard_trace_activity(since)
+    usage_activity = _dashboard_usage_activity(since)
+    core_pack = next((pack for pack in packs if pack["id"] == "core_web"), None)
+    control_plane = _control_plane_capabilities(packs, components)
+    next_action = (
+        {"view": "services", "label": "配置网页搜索", "reason": "先配置至少一个网页搜索来源，才能启用核心网页研究。"}
+        if core_pack and core_pack["status"] != "ready"
+        else {"view": "services", "label": "查看能力中心", "reason": "核心网页研究已具备最小配置；可按需要补充其他能力。"}
+    )
+    return {
+        "schema": "knowledgeradar-dashboard-snapshot/v1",
+        "window": {"days": window_days, "label": f"近 {window_days} 天", "recorded_locally_only": True},
+        "installation": installation,
+        "research_readiness": "ready" if core_pack and core_pack["status"] == "ready" else "needs_setup",
+        "packs": [{"id": pack["id"], "label": pack["label"], "status": pack["status"]} for pack in packs],
+        "control_plane": {
+            "capabilities": control_plane,
+            "connected_count": sum(item["state"] in {"connected", "local_ready"} for item in control_plane),
+            "attention_count": sum(item["state"] not in {"connected", "local_ready"} for item in control_plane),
+        },
+        "next_action": next_action,
+        "activity": {"tasks": task_activity, "tools": trace_activity, "usage": usage_activity},
+        "pending": {"active_tasks": task_activity["active"], "restart_required": any(bool(item.get("restart_required")) and item.get("status") != "ready" for item in components)},
+        "privacy": "仅汇总本机已有记录；不返回查询、网址、任务内容、账号、文件名、Profile、Cookie、配置值或密钥。",
+    }
+
+
+def console_configuration_snapshot() -> dict[str, Any]:
+    """Provide one versioned public configuration/guide contract for the console."""
+    return {"schema": "knowledgeradar-console-configuration/v1", "providers": public_provider_guides()}
 
 
 def _tree_bytes(path: Path, *, excluded: tuple[Path, ...] = ()) -> int:

@@ -17,7 +17,7 @@ from onboarding.setup_wizard import run_wizard  # noqa: E402
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start the loopback-only KnowledgeRadar setup wizard.")
-    parser.add_argument("--port", type=int, default=0, help="127.0.0.1 port; 0 chooses a free port.")
+    parser.add_argument("--port", type=int, default=18882, help="127.0.0.1 port; use 0 only when a temporary port is required.")
     parser.add_argument("--no-open", action="store_true", help="Do not open the default browser.")
     args = parser.parse_args()
     if not 0 <= args.port <= 65535:

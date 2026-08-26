@@ -56,6 +56,7 @@ bridge/node_modules/
 .codex/tmp/
 .codex/worktrees/
 .codex-praetor/
+.playwright-cli/
 
 # OS
 .DS_Store

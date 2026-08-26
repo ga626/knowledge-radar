@@ -38,7 +38,7 @@ def load_active(install_root: Path) -> dict[str, str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Start the active local KnowledgeRadar setup wizard.")
     parser.add_argument("--install-root", default=str(default_install_root()))
-    parser.add_argument("--port", type=int, default=0)
+    parser.add_argument("--port", type=int, default=18882)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args(argv)
     if not 0 <= args.port <= 65535:

@@ -214,7 +214,7 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
 
 
 def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> Path:
-    """Write a version-neutral Release setup entry point beside ``active.json``.
+    """Write version-neutral console entry points beside ``active.json``.
 
     The helper belongs to the installation root, rather than an app version, so
     a rollback can still configure a pre-wizard product version.  It resolves
@@ -223,46 +223,49 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
     """
     program = Path(str(active["program_root"])).resolve()
     install_root = program.parents[1]
-    helper = install_root / "configure_product.py"
-    helper.write_text(
-        "from __future__ import annotations\n"
-        "import argparse\n"
-        "import json\n"
-        "import os\n"
-        "from pathlib import Path\n"
-        "import sys\n\n"
-        "ROOT = Path(__file__).resolve().parent\n\n"
-        "def main() -> int:\n"
-        "    parser = argparse.ArgumentParser(description='Start the active local KnowledgeRadar setup wizard.')\n"
-        "    parser.add_argument('--port', type=int, default=0)\n"
-        "    parser.add_argument('--no-open', action='store_true')\n"
-        "    args = parser.parse_args()\n"
-        "    if not 0 <= args.port <= 65535:\n"
-        "        parser.error('--port must be between 0 and 65535')\n"
-        "    active = json.loads((ROOT / 'active.json').read_text(encoding='utf-8'))\n"
-        "    program = Path(str(active.get('program_root') or '')).resolve()\n"
-        "    data = Path(str(active.get('data_root') or '')).resolve()\n"
-        "    if active.get('schema') != 'knowledgeradar-active-install/v1' or not (program / 'src' / 'onboarding' / 'setup_wizard.py').is_file() or not data.is_dir():\n"
-        "        raise RuntimeError('active KnowledgeRadar installation is unavailable')\n"
-        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_INSTALL_ROOT': str(ROOT), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_PROFILE_REGISTRY_PATH': str(data / 'config' / 'profile_registry.json'), 'KR_BROWSER_DATA_DIR': str(data / 'browser_data'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs'), 'KR_MEDIA_CACHE_DIR': str(data / 'state' / 'media_cache')})\n"
-        "    sys.path.insert(0, str(program / 'src'))\n"
-        "    from onboarding.setup_wizard import run_wizard\n"
-        "    run_wizard(port=args.port, open_browser=not args.no_open)\n"
-        "    return 0\n\n"
-        "if __name__ == '__main__':\n"
-        "    raise SystemExit(main())\n",
-        encoding="utf-8",
-    )
-    launcher = install_root / "configure.cmd"
-    launcher.write_text(
+    helper = install_root / "console_product.py"
+    shutil.copyfile(PACKAGE_ROOT / "scripts" / "product_console_launcher.py", helper)
+    launcher_text = (
         "@echo off\r\n"
         "setlocal\r\n"
         "set \"PYTHONUTF8=1\"\r\n"
         "set \"PYTHONIOENCODING=utf-8\"\r\n"
-        f"\"{python_exe}\" \"{helper}\" %*\r\n",
+        f"\"{python_exe}\" \"{helper}\" %*\r\n"
+    )
+    launcher = install_root / "configure.cmd"
+    launcher.write_text(launcher_text, encoding="utf-8")
+    (install_root / "console.cmd").write_text(launcher_text, encoding="utf-8")
+    return launcher
+
+
+def console_autostart_path() -> Path:
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+
+
+def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
+    """Create the visible per-user startup entry for the loopback console.
+
+    The entry starts no browser and only hosts ``127.0.0.1:18882``.  A user can
+    remove it with ``console.cmd --disable-autostart``; it contains no profile,
+    data-root, or configuration value.
+    """
+    startup = console_autostart_path()
+    runtime = python_exe.with_name("pythonw.exe")
+    if not runtime.is_file():
+        runtime = python_exe
+    startup.parent.mkdir(parents=True, exist_ok=True)
+    startup.write_text(
+        "@echo off\r\n"
+        f"\"{runtime}\" \"{install_root / 'console_product.py'}\" --serve --port 18882 --no-open\r\n",
         encoding="utf-8",
     )
-    return launcher
+    return startup
+
+
+def refresh_console_autostart(install_root: Path, python_exe: Path) -> Path | None:
+    """Keep an opted-in startup entry on the runtime of the active version."""
+    return write_console_autostart(install_root, python_exe) if console_autostart_path().is_file() else None
 
 
 def initialize_data(data_root: Path, package_root: Path) -> None:
@@ -552,6 +555,7 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
     write_json_atomic(install_root / "backup" / "active.before-data-move.json", previous)
     write_json_atomic(install_root / "active.json", active)
     launcher = write_product_wizard_launcher(active, runtime)
+    refresh_console_autostart(install_root, runtime)
     receipt = {
         "schema": "knowledgeradar-data-root-move-receipt/v1",
         "status": "APPLIED",
@@ -579,6 +583,7 @@ def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
     config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime)), encoding="utf-8")
     write_json_atomic(install_root / "active.json", previous)
     launcher = write_product_wizard_launcher(previous, runtime)
+    refresh_console_autostart(install_root, runtime)
     return {"schema": "knowledgeradar-data-root-move-rollback/v1", "status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(launcher)}
 
 
@@ -755,7 +760,17 @@ def verify_artifact_receipt(package_root: Path, archive: Path, receipt_path: Pat
     return receipt
 
 
-def apply_install(package_root: Path, install_root: Path, data_root: Path, python_exe: Path, *, channel: str, archive: Path | None = None, receipt_path: Path | None = None) -> dict[str, Any]:
+def apply_install(
+    package_root: Path,
+    install_root: Path,
+    data_root: Path,
+    python_exe: Path,
+    *,
+    channel: str,
+    archive: Path | None = None,
+    receipt_path: Path | None = None,
+    enable_console_autostart: bool = False,
+) -> dict[str, Any]:
     plan = build_plan(package_root, install_root, data_root, python_exe)
     provenance = verify_product_package(package_root)
     if archive is None or receipt_path is None:
@@ -807,7 +822,16 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
     config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)), encoding="utf-8")
     write_json_atomic(active_path, active)
     wizard_launcher = write_product_wizard_launcher(active, product_python)
-    receipt = {"schema": "knowledgeradar-activation-receipt/v1", "status": "APPLIED", "active": active, "plugin": plugin, "wizard_launcher": str(wizard_launcher)}
+    autostart = write_console_autostart(install_root, product_python) if enable_console_autostart else refresh_console_autostart(install_root, product_python)
+    receipt = {
+        "schema": "knowledgeradar-activation-receipt/v1",
+        "status": "APPLIED",
+        "active": active,
+        "plugin": plugin,
+        "wizard_launcher": str(wizard_launcher),
+        "console_launcher": str(install_root / "console.cmd"),
+        "console_autostart": str(autostart) if autostart else None,
+    }
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt
 
@@ -826,6 +850,7 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         raise RuntimeError("previous product runtime is unavailable")
     config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime)), encoding="utf-8")
     wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
+    refresh_console_autostart(install_root, previous_runtime)
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
 
 
@@ -845,6 +870,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
     parser.add_argument("--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install")
+    parser.add_argument("--no-console-autostart", action="store_true", help="do not create the per-user local-console startup entry")
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
@@ -880,7 +906,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "plan":
             result = build_plan(package_root, install_root, data_root, python_exe)
         elif args.command == "apply":
-            result = apply_install(package_root, install_root, data_root, python_exe, channel=args.channel, archive=Path(args.archive).resolve() if args.archive else None, receipt_path=Path(args.receipt).resolve() if args.receipt else None)
+            result = apply_install(
+                package_root,
+                install_root,
+                data_root,
+                python_exe,
+                channel=args.channel,
+                archive=Path(args.archive).resolve() if args.archive else None,
+                receipt_path=Path(args.receipt).resolve() if args.receipt else None,
+                enable_console_autostart=not args.no_console_autostart,
+            )
         elif args.command == "status":
             result = {"status": "ACTIVE", "active": load_active(install_root)}
         else:

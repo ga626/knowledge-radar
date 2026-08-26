@@ -35,7 +35,7 @@ jobs:
         run: python scripts/build_product_lite_package.py --dry-run
 
       - name: Collect and run public product contracts
-        run: python -m pytest -q tests/test_product_install.py tests/test_setup_wizard.py tests/test_privacy_boundaries.py tests/test_codex_stdio_contract.py tests/test_capabilities_runtime_environment.py
+        run: python -m pytest -q tests/test_product_install.py tests/test_product_console_launcher.py tests/test_setup_wizard.py tests/test_privacy_boundaries.py tests/test_codex_stdio_contract.py tests/test_capabilities_runtime_environment.py
 
       - name: Build immutable release candidate
         run: python scripts/build_product_lite_package.py --candidate
