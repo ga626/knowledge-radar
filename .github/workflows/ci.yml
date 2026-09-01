@@ -44,7 +44,7 @@ jobs:
         run: python scripts/verify_release_candidate.py --candidate-dir (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
 
       - name: Upload verified candidate
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: knowledgeradar-candidate-${{ github.sha }}
           path: release/candidates/v*-${{ github.sha }}
