@@ -170,9 +170,12 @@ if /I "%KR_INSTALL_SKIP_DEP_DOWNLOAD%"=="1" (
 echo Python 依赖安装完成。
 echo.
 
-echo [阶段 5.5/8] 安装 Playwright 浏览器运行时
+echo [阶段 5.5/8] 可选 Playwright Chromium
 echo ------------------------------------------------------------
-if /I "%KR_INSTALL_SKIP_DEP_DOWNLOAD%"=="1" (
+if /I not "%KR_INSTALL_OPTIONAL_COMPONENTS%"=="1" (
+  echo 默认不下载可选浏览器组件。请在稳定控制台“本地组件”中先生成计划，再确认安装。
+  echo 如确实需要为源码开发环境预装，请显式设置 KR_INSTALL_OPTIONAL_COMPONENTS=1 后重跑。
+) else if /I "%KR_INSTALL_SKIP_DEP_DOWNLOAD%"=="1" (
   echo 当前处于仿真验证模式，已跳过 Playwright 浏览器下载。
 ) else if /I "%KR_INSTALL_SKIP_PLAYWRIGHT_BROWSER%"=="1" (
   echo 已按用户设置跳过 Playwright 浏览器下载。
@@ -207,9 +210,11 @@ if /I "%KR_INSTALL_SKIP_DEP_DOWNLOAD%"=="1" (
 )
 echo.
 
-echo [阶段 6/8] 安装 Node.js 桥接依赖
+echo [阶段 6/8] 可选 Node.js bridge 依赖
 echo ------------------------------------------------------------
-if exist "bridge\package.json" (
+if /I not "%KR_INSTALL_OPTIONAL_COMPONENTS%"=="1" (
+  echo 默认不下载 bridge 依赖。小红书诊断 bridge 仅能在稳定控制台明确确认后安装。
+) else if exist "bridge\package.json" (
   if "%NPM_AVAILABLE%"=="1" (
     if /I "%KR_INSTALL_SKIP_DEP_DOWNLOAD%"=="1" (
       echo 当前处于仿真验证模式，已跳过 Node.js 依赖下载。

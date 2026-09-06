@@ -36,20 +36,43 @@ def _config(tmp_path: Path, *, server_path: Path | None = None) -> Path:
     return config
 
 
-def test_configured_stdio_server_accepts_only_current_project_source(tmp_path: Path) -> None:
+def test_configured_stdio_server_accepts_explicit_current_project_source(tmp_path: Path) -> None:
     config = _config(tmp_path)
     result = continuity_fallback.configured_stdio_server(config_path=config, project_root=tmp_path / "repo")
     assert result["command"] == "python"
     assert result["cwd"] == str((tmp_path / "repo").resolve())
     assert result["env"] == {"PYTHONPATH": "src"}
+    assert result["identity"]["kind"] == "development_source"
 
 
-def test_configured_stdio_server_rejects_different_source_root(tmp_path: Path) -> None:
+def test_configured_stdio_server_rejects_unselected_product_or_arbitrary_source(tmp_path: Path) -> None:
     other = tmp_path / "other.py"
     other.write_text("# other\n", encoding="utf-8")
     config = _config(tmp_path, server_path=other)
-    with pytest.raises(continuity_fallback.FallbackContractError, match="does_not_target_current_project_source"):
+    with pytest.raises(continuity_fallback.FallbackContractError, match="does_not_target_cwd_server"):
         continuity_fallback.configured_stdio_server(config_path=config, project_root=tmp_path / "repo")
+
+
+def test_configured_stdio_server_accepts_selected_active_install(tmp_path: Path) -> None:
+    install_root = tmp_path / "install"
+    program = install_root / "app" / "1.2.3"
+    (program / "src").mkdir(parents=True)
+    server = program / "src" / "server.py"
+    server.write_text("# installed server\n", encoding="utf-8")
+    (install_root / "active.json").write_text(
+        '{"schema":"knowledgeradar-active-install/v1","version":"1.2.3","program_root":"'
+        + str(program).replace("\\", "\\\\")
+        + '"}',
+        encoding="utf-8",
+    )
+    config = _config(tmp_path, server_path=server)
+    text = config.read_text(encoding="utf-8").replace(str(tmp_path / "repo").replace("\\", "/"), str(program).replace("\\", "/"))
+    config.write_text(text, encoding="utf-8")
+
+    result = continuity_fallback.configured_stdio_server(config_path=config, project_root=tmp_path / "repo")
+
+    assert result["identity"]["kind"] == "active_install"
+    assert result["identity"]["version"] == "1.2.3"
 
 
 def test_invoke_uses_validated_config_and_returns_only_config_identity(tmp_path: Path, monkeypatch) -> None:
@@ -68,6 +91,7 @@ def test_invoke_uses_validated_config_and_returns_only_config_identity(tmp_path:
     assert result["result"] == {"ok": True}
     assert result["server"]["config_path"] == str(config.resolve())
     assert "env" not in result["server"]
+    assert result["server"]["identity"]["kind"] == "development_source"
 
 
 def test_continuity_cli_does_not_mark_mcp_tool_error_as_success(monkeypatch, capsys) -> None:

@@ -1,0 +1,10 @@
+{
+  "schema": "knowledgeradar-research-quality-receipt/v1",
+  "status": "pass",
+  "checked_at": "2026-08-27T22:15:28.705243+00:00",
+  "report_path": "D:\\Projects\\KnowledgeRadar\\.codex\\public-repos\\knowledge-radar-p2-clean\\docs\\reference\\KnowledgeRadar-前端视觉与排版规范.md",
+  "evidence_path": "D:\\Projects\\KnowledgeRadar\\.codex\\public-repos\\knowledge-radar-p2-clean\\docs\\reference\\KnowledgeRadar-前端视觉与排版规范.evidence.json",
+  "report_sha256": "601679c60350ddafa07a7c586435d85b5a6feded986e6841787e844087322d79",
+  "evidence_sha256": "bd3bbdbfa15aa21301beca42ae30ec9dd7874eea6ada5048ed44e62f0442815e",
+  "quality_check_schema": "knowledgeradar-research-quality-check/v1"
+}

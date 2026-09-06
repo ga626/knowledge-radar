@@ -45,6 +45,13 @@
       "release": "include"
     },
     {
+      "path": "src/onboarding/assets/",
+      "area": "dev_runtime",
+      "role": "Curated, non-login official documentation screenshots used by the loopback console configuration guides. They contain no account, key, or local runtime data.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "include"
+    },
+    {
       "path": "src/strategy_trees/",
       "area": "dev_runtime",
       "role": "Unified strategy-tree declarations, shadow consistency checks, and governance/cache policy manifests.",
@@ -273,6 +280,7 @@
     "scripts/build_product_lite_package.py",
     "scripts/verify_release_candidate.py",
     "scripts/product_install.py",
+    "scripts/kr_mcp_continuity.py",
     "scripts/build_public_source_projection.py",
     "scripts/verify_package_integrity.py",
     "scripts/verify_all_capabilities.py",
@@ -300,6 +308,7 @@
     "scripts/*package*.py",
     "scripts/verify_release_candidate.py",
     "scripts/product_install.py",
+    "scripts/kr_mcp_continuity.py",
     "scripts/build_public_source_projection.py",
     "scripts/generate-mcp-config.py",
     "scripts/setup_*.bat",

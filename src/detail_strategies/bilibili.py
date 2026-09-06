@@ -78,6 +78,14 @@ class BilibiliDetailStrategy:
         )
         if not transcribe_enabled:
             result["transcript"] = "[transcribe] skipped by KR_BILIBILI_TRANSCRIBE_ON_DETAIL=0"
+        elif str(result["transcript"]).startswith("[transcribe] INSTALL_COMPONENT_MISSING:"):
+            detail = str(result["transcript"]).split(":", 1)[1].split("；", 1)[0].strip()
+            result["component_status"] = {
+                "status": "INSTALL_COMPONENT_MISSING",
+                "scope": "optional_local_transcription_fallback",
+                "missing": [item for item in detail.split("、") if item],
+                "recommended_action": "在本地组件 > 本地媒体理解与转写中完成所需组件安装后重试；字幕和缓存路径不受影响。",
+            }
         comments = self.deps.get_comments(bvid)
         result["comments"] = comments
 

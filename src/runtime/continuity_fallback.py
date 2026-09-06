@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import hashlib
+import json
 import os
 from pathlib import Path
 import tomllib
@@ -38,8 +39,44 @@ def _as_string_map(value: Any) -> dict[str, str]:
     return {str(key): str(item) for key, item in value.items() if isinstance(key, str)}
 
 
+def _active_install_identity(cwd: Path) -> dict[str, str] | None:
+    """Return the active-product identity only when ``cwd`` is that product.
+
+    The product installation lives at ``<install>/app/<version>`` and its
+    authoritative selector is ``<install>/active.json``.  This is deliberately
+    stricter than accepting an arbitrary Python file, while still allowing a
+    development checkout when it is the explicitly supplied project root.
+    """
+
+    install_root = cwd.parent.parent
+    active_path = install_root / "active.json"
+    try:
+        active = json.loads(active_path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(active, dict) or active.get("schema") != "knowledgeradar-active-install/v1":
+        return None
+    try:
+        active_root = Path(str(active.get("program_root") or "")).expanduser().resolve()
+    except OSError:
+        return None
+    if active_root != cwd or not (cwd / "src" / "server.py").is_file():
+        return None
+    return {
+        "kind": "active_install",
+        "active_path": str(active_path),
+        "version": str(active.get("version") or ""),
+        "program_root": str(active_root),
+    }
+
+
 def configured_stdio_server(*, config_path: Path | None = None, project_root: Path | None = None) -> dict[str, Any]:
-    """Read and strictly validate the one registered KR stdio server."""
+    """Read and validate the one registered KR stdio server identity.
+
+    A continuity client must use the same selected product that Codex would
+    launch.  The historical source-root-only check made the fallback unusable
+    after the product installer correctly moved Codex to an active artifact.
+    """
 
     config = Path(config_path or default_codex_config_path()).expanduser().resolve()
     root = Path(project_root or Path(__file__).resolve().parents[2]).resolve()
@@ -58,14 +95,22 @@ def configured_stdio_server(*, config_path: Path | None = None, project_root: Pa
         raise FallbackContractError("knowledgeradar_registration_is_not_stdio")
     expected_server = (root / "src" / "server.py").resolve()
     configured_servers = [Path(item).resolve() for item in args if item.lower().endswith(".py")]
-    if cwd != root or expected_server not in configured_servers:
-        raise FallbackContractError("knowledgeradar_registration_does_not_target_current_project_source")
+    configured_server = cwd / "src" / "server.py"
+    if configured_server.resolve() not in configured_servers:
+        raise FallbackContractError("knowledgeradar_registration_does_not_target_cwd_server")
+    if cwd == root and expected_server in configured_servers:
+        identity = {"kind": "development_source", "program_root": str(root)}
+    else:
+        identity = _active_install_identity(cwd)
+        if identity is None:
+            raise FallbackContractError("knowledgeradar_registration_does_not_target_active_install")
     return {
         "config_path": str(config),
         "command": command,
         "args": args,
         "cwd": str(cwd),
         "env": _as_string_map(entry.get("env")),
+        "identity": identity,
     }
 
 
@@ -172,5 +217,5 @@ def invoke_configured_tool(
     server = configured_stdio_server(config_path=config_path, project_root=project_root)
     return {
         **_invoke_sync(server, str(tool), arguments),
-        "server": {"cwd": server["cwd"], "config_path": server["config_path"]},
+        "server": {"cwd": server["cwd"], "config_path": server["config_path"], "identity": server["identity"]},
     }

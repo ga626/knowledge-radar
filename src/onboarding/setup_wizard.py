@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import threading
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 
 from onboarding.configuration import apply_updates, public_snapshot
@@ -20,6 +22,7 @@ from onboarding.product_status import (
     diagnostic_snapshot,
     expired_media_cleanup,
     installation_summary,
+    local_component_catalog,
     optional_capabilities,
     optional_capability_apply,
     optional_capability_plan,
@@ -35,7 +38,9 @@ class WizardServer(ThreadingHTTPServer):
         super().__init__(server_address, _handler_factory(self))
 
 
-CONSOLE_HEALTH_SCHEMA = "knowledgeradar-local-console/v1"
+CONSOLE_HEALTH_SCHEMA = "knowledgeradar-local-console/v2"
+GUIDE_ASSETS = Path(__file__).with_name("assets").resolve()
+GUIDE_SCREENSHOTS = frozenset(path.name for path in GUIDE_ASSETS.glob("*.jpg"))
 
 
 def _page(token: str, snapshot: dict[str, Any]) -> str:
@@ -76,19 +81,41 @@ def _handler_factory(server: WizardServer):
                 self._security_headers()
                 self.end_headers()
                 return
+            if self.path.startswith("/assets/"):
+                name = self.path.removeprefix("/assets/")
+                if name not in GUIDE_SCREENSHOTS:
+                    self.send_error(HTTPStatus.NOT_FOUND)
+                    return
+                body = (GUIDE_ASSETS / name).read_bytes()
+                self.send_response(HTTPStatus.OK)
+                self._security_headers()
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+                return
             if self.path == "/api/status":
                 snapshot = public_snapshot()
                 self._send_json(
                     HTTPStatus.OK,
-                    {"packs": capability_packs(snapshot), "optional": optional_capabilities(), "installation": installation_summary()},
+                    {"packs": capability_packs(snapshot), "optional": optional_capabilities(), "components": local_component_catalog(), "installation": installation_summary()},
                 )
                 return
             if self.path == "/api/health":
-                # This deliberately contains no version, path, account, task, or
-                # configuration information.  The version-neutral launcher only
-                # needs a safe way to distinguish this loopback server from an
-                # unrelated process that happens to occupy the fixed port.
-                self._send_json(HTTPStatus.OK, {"schema": CONSOLE_HEALTH_SCHEMA, "status": "ready"})
+                # This deliberately exposes no version, path, account, task or
+                # configuration value.  The supervisor must nevertheless prove
+                # that the loopback process is its own role and generation, not
+                # a stale worker or an unrelated service on the fixed port.
+                self._send_json(
+                    HTTPStatus.OK,
+                    {
+                        "schema": CONSOLE_HEALTH_SCHEMA,
+                        "status": "ready",
+                        "role": os.environ.get("KR_CONSOLE_ROLE", "unmanaged"),
+                        "fingerprint": os.environ.get("KR_CONSOLE_FINGERPRINT", ""),
+                        "generation": int(os.environ.get("KR_CONSOLE_GENERATION", "0") or 0),
+                    },
+                )
                 return
             if self.path == "/api/dashboard":
                 self._send_json(HTTPStatus.OK, dashboard_snapshot())
@@ -130,6 +157,9 @@ def _handler_factory(server: WizardServer):
             }
             if self.path not in allowed:
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "不存在的操作。"})
+                return
+            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path != "/api/console/stop":
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "开发预览只读复用稳定数据；请在 stable 控制台执行配置或维护操作。"})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))

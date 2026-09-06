@@ -21,13 +21,13 @@ scripts\install.bat
 
 安装脚本只在当前项目目录内创建本地文件和安装依赖，不会迁移旧的 WorkBuddy/OpenClaw 配置，也不会归档旧项目目录。
 
-安装脚本默认使用国内加速源安装常规依赖：
+安装脚本默认使用国内加速源安装产品运行所需的 Python 依赖：
 
 - Python 依赖：清华 PyPI 镜像 `https://mirrors.tuna.tsinghua.edu.cn/pypi/web/simple`
-- Node.js 依赖：npmmirror `https://registry.npmmirror.com`
-- Playwright 浏览器下载：优先尝试官方源，失败后回退到 `https://cdn.npmmirror.com/binaries/playwright` 和 `https://npmmirror.com/mirrors/playwright`
+- 可选 Node.js bridge 依赖源：npmmirror `https://registry.npmmirror.com`
+- 可选 Playwright 浏览器下载源：官方源、`https://cdn.npmmirror.com/binaries/playwright`、`https://npmmirror.com/mirrors/playwright`
 
-如果 Playwright 浏览器下载失败，安装流程会继续，但浏览器相关能力需要补齐 `runtime\ms-playwright` 或配置代理后重新验证。可在运行安装脚本前设置 `KR_PLAYWRIGHT_PROXY=http://代理地址:端口`。
+Playwright Chromium 与小红书诊断 bridge 默认不会随源码安装自动下载。稳定产品请在“本地组件”页面依次生成计划并确认安装；源码开发若确实需要预装，可显式设置 `KR_INSTALL_OPTIONAL_COMPONENTS=1` 后运行脚本。可在预装浏览器前设置 `KR_PLAYWRIGHT_PROXY=http://代理地址:端口`。
 
 ## 配置服务商
 

@@ -81,13 +81,15 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
     active = installer.load_active(install_root)
     config_text = (codex_home / "config.toml").read_text(encoding="utf-8")
-    config = tomllib.loads(config_text)["mcp_servers"]["knowledgeradar"]
+    parsed_config = tomllib.loads(config_text)
+    config = parsed_config["mcp_servers"]["knowledgeradar"]
 
     assert result["status"] == "APPLIED"
     assert active["version"] == "0.2.0"
     assert active["program_root"].endswith("app\\0.2.0") or active["program_root"].endswith("app/0.2.0")
     assert env_path.read_text(encoding="utf-8") == "TAVILY_API_KEY=private-value\n"
     assert config_text.count("[mcp_servers.knowledgeradar]") == 1
+    assert parsed_config["mcp_optional_startup_grace_ms"] == 0
     assert config["cwd"].startswith(str(install_root))
     assert config["command"].endswith("runtime\\0.2.0\\Scripts\\python.exe") or config["command"].endswith("runtime/0.2.0/Scripts/python.exe")
     assert config["env"]["KR_DATA_ROOT"] == str(data_root)
@@ -163,6 +165,16 @@ def test_cli_apply_creates_a_visible_per_user_console_startup_entry(tmp_path: Pa
     data_root = tmp_path / "data"
     package = package_fixture(tmp_path, "0.1.0")
     archive, receipt = artifact_fixture(tmp_path, package)
+    registered: list[Path] = []
+
+    def register_task(root: Path, runtime: Path) -> Path:
+        del runtime
+        marker = root / "console-autostart.task"
+        marker.write_text("task", encoding="utf-8")
+        registered.append(marker)
+        return marker
+
+    monkeypatch.setattr(installer, "write_console_autostart", register_task)
 
     assert installer.main(
         [
@@ -183,10 +195,8 @@ def test_cli_apply_creates_a_visible_per_user_console_startup_entry(tmp_path: Pa
     ) == 0
 
     startup = tmp_path / "roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
-    assert startup.is_file()
-    startup_text = startup.read_text(encoding="utf-8")
-    assert "--serve --port 18882 --no-open" in startup_text
-    assert str(data_root) not in startup_text
+    assert registered == [install_root / "console-autostart.task"]
+    assert not startup.exists()
 
 
 def test_update_rebinds_an_opted_in_console_startup_entry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -198,6 +208,16 @@ def test_update_rebinds_an_opted_in_console_startup_entry(tmp_path: Path, monkey
     second = package_fixture(tmp_path, "0.2.0")
     first_archive, first_receipt = artifact_fixture(tmp_path, first)
     second_archive, second_receipt = artifact_fixture(tmp_path, second)
+    registrations: list[Path] = []
+
+    def register_task(root: Path, runtime: Path) -> Path:
+        del runtime
+        marker = root / "console-autostart.task"
+        marker.write_text("task", encoding="utf-8")
+        registrations.append(marker)
+        return marker
+
+    monkeypatch.setattr(installer, "write_console_autostart", register_task)
 
     installer.apply_install(
         first,
@@ -211,8 +231,8 @@ def test_update_rebinds_an_opted_in_console_startup_entry(tmp_path: Path, monkey
     )
     installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="stable", archive=second_archive, receipt_path=second_receipt)
 
-    startup = tmp_path / "roaming" / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
-    assert "runtime" in startup.read_text(encoding="utf-8")
+    assert registrations == [install_root / "console-autostart.task", install_root / "console-autostart.task"]
+    assert (install_root / "console-autostart.task").is_file()
     assert (install_root / "console_product.py").is_file()
 
 
@@ -357,6 +377,24 @@ def test_optional_browser_capability_requires_a_fresh_plan_and_records_no_privat
     assert "data_root" not in json.dumps(state)
 
 
+def test_media_component_plans_are_console_owned_and_separate_runtime_from_model(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root = tmp_path / "install"
+    data_root = tmp_path / "data"
+    package = package_fixture(tmp_path, "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path, package)
+    installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
+
+    downloader = installer.capability_plan(install_root, "media_downloader")
+    runtime = installer.capability_plan(install_root, "transcription_runtime")
+    model = installer.capability_plan(install_root, "transcription_model")
+
+    assert downloader["details"]["command"][-1] == "yt-dlp>=2024.8.6"
+    assert runtime["details"]["command"][-1] == "faster-whisper>=1.1,<2.0"
+    assert model["details"]["label"] == "基础转写模型（base）"
+    assert model["details"]["boundary"].startswith("需要先安装本地转写运行时")
+
+
 def test_xhs_bridge_capability_stays_in_data_root_and_requires_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     install_root = tmp_path / "install"
@@ -370,6 +408,8 @@ def test_xhs_bridge_capability_stays_in_data_root_and_requires_restart(tmp_path:
     archive, receipt = artifact_fixture(tmp_path, package)
     installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
     plan = installer.capability_plan(install_root, "xhs_bridge")
+    assert plan["details"]["login_required"] is False
+    assert "Node.js/npm" in plan["details"]["boundary"]
     monkeypatch.setattr(installer.shutil, "which", lambda name: "npm.exe" if name == "npm" else None)
     monkeypatch.setattr(
         installer,
