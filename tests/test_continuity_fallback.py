@@ -94,6 +94,33 @@ def test_invoke_uses_validated_config_and_returns_only_config_identity(tmp_path:
     assert result["server"]["identity"]["kind"] == "development_source"
 
 
+def test_catalog_validation_requires_exact_public_tool_surface() -> None:
+    tools = sorted(continuity_fallback.EXPECTED_TOOL_NAMES)
+    continuity_fallback._validate_tool_catalog(tools)
+    with pytest.raises(continuity_fallback.FallbackContractError, match="tool_catalog_mismatch"):
+        continuity_fallback._validate_tool_catalog(tools[:-1])
+
+
+def test_readiness_retry_is_bounded_and_not_used_for_research_calls(monkeypatch) -> None:
+    attempts: list[str] = []
+
+    async def flaky(_server, _tool, _arguments):
+        attempts.append("call")
+        if len(attempts) == 1:
+            raise OSError("closed")
+        return {"result": {"ok": True}, "tools": sorted(continuity_fallback.EXPECTED_TOOL_NAMES), "tool_list_fingerprint": "sha256:test", "tool_count": 22, "mcp_call_status": "ok"}
+
+    monkeypatch.setattr(continuity_fallback, "_invoke", flaky)
+    result = continuity_fallback._invoke_sync({}, "health_check", {"mode": "summary"})
+    assert result["attempt_count"] == 2
+    assert len(result["retry_failures"]) == 1
+
+    attempts.clear()
+    with pytest.raises(continuity_fallback.FallbackContractError, match="fallback_readiness_retry_exhausted"):
+        continuity_fallback._invoke_sync({}, "kr_research", {})
+    assert len(attempts) == 1
+
+
 def test_continuity_cli_does_not_mark_mcp_tool_error_as_success(monkeypatch, capsys) -> None:
     module = _continuity_cli_module()
     monkeypatch.setattr(module, "record_fallback", lambda **_kwargs: {})
@@ -153,3 +180,27 @@ def test_continuity_cli_accepts_base64url_json_arguments(monkeypatch, capsys) ->
     assert module.main(["call", "--reason", "transport_closed", "--tool", "health_check", "--arguments-base64url", encoded]) == 0
     assert observed["arguments"] == {"candidates": [{"url": "https://example.test", "score": 1}]}
     assert '"status": "ok"' in capsys.readouterr().out
+
+
+def test_continuity_cli_exposes_target_identity_and_retry_receipt(monkeypatch, capsys) -> None:
+    module = _continuity_cli_module()
+    monkeypatch.setattr(module, "record_fallback", lambda **_kwargs: {})
+    monkeypatch.setattr(module, "source_fingerprint", lambda _root: "caller-source")
+    monkeypatch.setattr(
+        module,
+        "invoke_configured_tool",
+        lambda **_kwargs: {
+            "result": {"status": "ok"},
+            "tool_list_fingerprint": "sha256:tools",
+            "tool_count": 22,
+            "attempt_count": 2,
+            "retry_failures": ["attempt_1:OSError:closed"],
+            "source_fingerprint": "active-source",
+            "mcp_call_status": "ok",
+        },
+    )
+    monkeypatch.setattr(module, "record_fallback_call", lambda **kwargs: {"access_path": "continuity_fallback", **kwargs})
+    assert module.main(["call", "--reason", "host_surface_absent", "--tool", "health_check"]) == 0
+    output = capsys.readouterr().out
+    assert '"source_fingerprint": "active-source"' in output
+    assert '"attempt_count": 2' in output

@@ -4,6 +4,12 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+## 0.1.0a11
+
+- Strengthen the Codex MCP continuity path without registering a second MCP server: the fallback now refuses an incomplete or unexpected tool catalog, binds its receipt to the selected active artifact, and records the catalog fingerprint and call attempts.
+- Retry only the read-only readiness checks (`health_check` and `get_capabilities`) once in a fresh fallback process after a transient transport failure; research, account, browser, and other potentially stateful operations are never replayed automatically.
+- Make native-recovery acceptance explicit: a host refresh is recorded as pending, and recovery is confirmed only after both real native checks succeed against the same installed artifact in the next Codex turn.
+
 - Keep the local control console at one fixed loopback address (`127.0.0.1:18882`): reuse a known running instance, refuse foreign port conflicts, and create a visible per-user startup entry so the console returns after Windows sign-in. The active product version remains the only data/configuration authority.
 - Deliver the redesigned workspace console with a research dashboard, capability status, local components, data/recovery, and settings/help views instead of the original single long configuration form.
 - Add explicit local maintenance plans to the control console: path-free data-root migration plans, copyable diagnostic exports, and protected retention guidance.

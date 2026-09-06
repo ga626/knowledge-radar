@@ -11,7 +11,7 @@ def test_evaluate_requires_native_tool_call_for_l2() -> None:
         service_ok=True,
         session_status="observed",
         tool_list_ok=True,
-        native_tools=["health_check"],
+        native_tools=["health_check", "get_capabilities"],
     )
     assert ready["status"] == "native_ready"
     assert ready["access_path"] == continuity.ACCESS_NATIVE
@@ -27,6 +27,29 @@ def test_evaluate_requires_native_tool_call_for_l2() -> None:
     assert waiting["layers"]["l2_thread_native_surface"] == "host_unobserved"
 
 
+def test_native_recovery_requires_two_tools_and_resets_for_a_new_artifact(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(continuity, "runtime_state_dir", lambda: tmp_path)
+    partial = continuity.record_native_call(tool="health_check", source_fingerprint="artifact-a")
+    assert partial["status"] == "native_verification_pending"
+    assert partial["layers"]["l2_thread_native_surface"] == "host_observed_partial"
+
+    ready = continuity.record_native_call(tool="get_capabilities", source_fingerprint="artifact-a")
+    assert ready["status"] == "native_ready"
+    assert ready["native_tools"] == ["get_capabilities", "health_check"]
+
+    replaced = continuity.record_native_call(tool="health_check", source_fingerprint="artifact-b")
+    assert replaced["status"] == "native_verification_pending"
+    assert replaced["native_tools"] == ["health_check"]
+
+
+def test_host_refresh_pending_is_not_native_recovery(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(continuity, "runtime_state_dir", lambda: tmp_path)
+    saved = continuity.record_host_refresh_pending(reason="official_refresh_requested", source_fingerprint="artifact-a")
+    assert saved["status"] == "host_refresh_pending"
+    assert saved["access_path"] == continuity.ACCESS_RUNTIME
+    assert saved["layers"]["l2_thread_native_surface"] == "host_refresh_pending"
+
+
 def test_fallback_is_explicit_and_not_native(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(continuity, "runtime_state_dir", lambda: tmp_path)
     saved = continuity.record_fallback(reason="host_refresh_unavailable", task_id="kr-research-test")
@@ -40,7 +63,8 @@ def test_fallback_is_explicit_and_not_native(tmp_path, monkeypatch) -> None:
 def test_native_receipt_clears_degraded_reason(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(continuity, "runtime_state_dir", lambda: tmp_path)
     continuity.record_fallback(reason="transport_closed")
-    saved = continuity.record_native_call(tool="health_check", source_fingerprint="src-1", tool_list_fingerprint="tools-1")
+    continuity.record_native_call(tool="health_check", source_fingerprint="src-1", tool_list_fingerprint="tools-1")
+    saved = continuity.record_native_call(tool="get_capabilities", source_fingerprint="src-1", tool_list_fingerprint="tools-1")
     assert saved["access_path"] == continuity.ACCESS_NATIVE
     assert saved["status"] == "native_ready"
     assert saved["last_error"] == ""
