@@ -26,7 +26,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAME = "knowledgeradar-research"
 ACTIVE_SCHEMA = "knowledgeradar-active-install/v1"
 CAPABILITY_STATE_SCHEMA = "knowledgeradar-capability-state/v1"
-CAPABILITY_IDS = ("browser", "xhs_bridge")
+CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_runtime", "transcription_model")
 
 
 def sha256_file(path: Path) -> str:
@@ -157,6 +157,23 @@ def replace_mcp_block(text: str, block: str) -> str:
     return "".join(output) if inserted else (text.rstrip() + "\n\n" + block + "\n")
 
 
+def ensure_mcp_catalog_wait(text: str) -> str:
+    """Render the Codex MCP catalog wait as an explicit product policy.
+
+    The server's own startup timeout is 30 seconds. Leaving Codex's optional
+    MCP grace at its short default makes cold starts race the first tool
+    catalog, especially immediately after a Desktop or computer restart. Codex
+    interprets zero as "use this server's startup_timeout_sec", so the policy
+    follows the installed server's explicit 30-second startup budget instead
+    of the short optional-server default.
+    """
+
+    lines = [line for line in text.splitlines() if not line.strip().startswith("mcp_optional_startup_grace_ms")]
+    insert_at = next((index for index, line in enumerate(lines) if line.lstrip().startswith("[")), len(lines))
+    lines.insert(insert_at, "mcp_optional_startup_grace_ms = 0")
+    return "\n".join(lines).rstrip() + "\n"
+
+
 def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
     program = Path(str(active["program_root"])).resolve()
     data = Path(str(active["data_root"])).resolve()
@@ -172,6 +189,8 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
         "KR_BROWSER_DATA_DIR": str(data / "browser_data"),
         "KR_STATE_DIR": str(data / "state"),
         "KR_LOG_DIR": str(data / "logs"),
+        "KR_ACTIVE_INSTALL_ROOT": str(program.parents[1]),
+        "KR_ACTIVE_VERSION": str(active.get("version") or ""),
         "KR_MEDIA_CACHE_DIR": str(data / "state" / "media_cache"),
         "PLAYWRIGHT_BROWSERS_PATH": str(data / "playwright"),
     }
@@ -214,7 +233,7 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
 
 
 def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> Path:
-    """Write a version-neutral Release setup entry point beside ``active.json``.
+    """Write version-neutral console entry points beside ``active.json``.
 
     The helper belongs to the installation root, rather than an app version, so
     a rollback can still configure a pre-wizard product version.  It resolves
@@ -223,46 +242,49 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
     """
     program = Path(str(active["program_root"])).resolve()
     install_root = program.parents[1]
-    helper = install_root / "configure_product.py"
-    helper.write_text(
-        "from __future__ import annotations\n"
-        "import argparse\n"
-        "import json\n"
-        "import os\n"
-        "from pathlib import Path\n"
-        "import sys\n\n"
-        "ROOT = Path(__file__).resolve().parent\n\n"
-        "def main() -> int:\n"
-        "    parser = argparse.ArgumentParser(description='Start the active local KnowledgeRadar setup wizard.')\n"
-        "    parser.add_argument('--port', type=int, default=0)\n"
-        "    parser.add_argument('--no-open', action='store_true')\n"
-        "    args = parser.parse_args()\n"
-        "    if not 0 <= args.port <= 65535:\n"
-        "        parser.error('--port must be between 0 and 65535')\n"
-        "    active = json.loads((ROOT / 'active.json').read_text(encoding='utf-8'))\n"
-        "    program = Path(str(active.get('program_root') or '')).resolve()\n"
-        "    data = Path(str(active.get('data_root') or '')).resolve()\n"
-        "    if active.get('schema') != 'knowledgeradar-active-install/v1' or not (program / 'src' / 'onboarding' / 'setup_wizard.py').is_file() or not data.is_dir():\n"
-        "        raise RuntimeError('active KnowledgeRadar installation is unavailable')\n"
-        "    os.environ.update({'KR_PROJECT_ROOT': str(program), 'KR_SOURCE_ROOT': str(program / 'src'), 'KR_INSTALL_ROOT': str(ROOT), 'KR_DATA_ROOT': str(data), 'KR_RUNTIME_ENV_PATH': str(data / 'config' / 'runtime.env'), 'KR_PROFILE_REGISTRY_PATH': str(data / 'config' / 'profile_registry.json'), 'KR_BROWSER_DATA_DIR': str(data / 'browser_data'), 'KR_STATE_DIR': str(data / 'state'), 'KR_LOG_DIR': str(data / 'logs'), 'KR_MEDIA_CACHE_DIR': str(data / 'state' / 'media_cache')})\n"
-        "    sys.path.insert(0, str(program / 'src'))\n"
-        "    from onboarding.setup_wizard import run_wizard\n"
-        "    run_wizard(port=args.port, open_browser=not args.no_open)\n"
-        "    return 0\n\n"
-        "if __name__ == '__main__':\n"
-        "    raise SystemExit(main())\n",
-        encoding="utf-8",
-    )
-    launcher = install_root / "configure.cmd"
-    launcher.write_text(
+    helper = install_root / "console_product.py"
+    shutil.copyfile(PACKAGE_ROOT / "scripts" / "product_console_launcher.py", helper)
+    launcher_text = (
         "@echo off\r\n"
         "setlocal\r\n"
         "set \"PYTHONUTF8=1\"\r\n"
         "set \"PYTHONIOENCODING=utf-8\"\r\n"
-        f"\"{python_exe}\" \"{helper}\" %*\r\n",
-        encoding="utf-8",
+        f"\"{python_exe}\" \"{helper}\" %*\r\n"
     )
+    launcher = install_root / "configure.cmd"
+    launcher.write_text(launcher_text, encoding="utf-8")
+    (install_root / "console.cmd").write_text(launcher_text, encoding="utf-8")
     return launcher
+
+
+def console_autostart_path() -> Path:
+    appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+
+
+def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
+    """Register the stable supervisor and retire the legacy Startup entry."""
+    helper = install_root / "console_product.py"
+    result = subprocess.run(
+        [str(python_exe), str(helper), "--role", "stable", "--port", "18882", "--enable-autostart"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=False,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"unable to register stable console supervisor: {result.stderr.strip() or result.stdout.strip()}")
+    startup = console_autostart_path()
+    startup.unlink(missing_ok=True)
+    marker = install_root / "console-autostart.task"
+    marker.write_text(json.dumps({"schema": "knowledgeradar-console-autostart/v1", "task_name": "KnowledgeRadar Stable Local Console"}) + "\n", encoding="utf-8")
+    return marker
+
+
+def refresh_console_autostart(install_root: Path, python_exe: Path) -> Path | None:
+    """Refresh a prior explicit Task Scheduler opt-in without probing global Startup."""
+    marker = install_root / "console-autostart.task"
+    return write_console_autostart(install_root, python_exe) if marker.is_file() else None
 
 
 def initialize_data(data_root: Path, package_root: Path) -> None:
@@ -332,7 +354,7 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
             "target": tree_summary(target),
             "command": command,
         }
-    else:
+    elif capability == "xhs_bridge":
         source = program / "bridge"
         if not (source / "package.json").is_file() or not (source / "package-lock.json").is_file():
             raise RuntimeError("xhs bridge package metadata is unavailable")
@@ -340,12 +362,51 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
         summary = {
             "label": "小红书诊断 bridge 依赖",
             "network_download": True,
-            "login_required": True,
+            "login_required": False,
             "may_use_paid_api": False,
             "restart_required": True,
             "target": tree_summary(target),
             "command": ["npm", "ci", "--omit=dev", "--ignore-scripts"],
-            "boundary": "只安装本地 bridge 依赖；不会登录、绕过验证码或把 bridge 自动提升为生产兜底。",
+            "boundary": "需要电脑已安装 Node.js/npm；只安装本地 bridge 依赖，不会登录、绕过验证码或把 bridge 自动提升为生产兜底。",
+        }
+    elif capability == "media_downloader":
+        source = program
+        target = install_root / "runtime" / str(active.get("version") or "")
+        summary = {
+            "label": "媒体下载器",
+            "network_download": True,
+            "login_required": False,
+            "may_use_paid_api": False,
+            "restart_required": False,
+            "target": tree_summary(target),
+            "command": ["python", "-m", "pip", "install", "yt-dlp>=2024.8.6"],
+            "boundary": "只安装本地媒体下载运行时；实际任务仍遵守内容访问规则，不会自动发起下载。",
+        }
+    elif capability == "transcription_runtime":
+        source = program
+        target = install_root / "runtime" / str(active.get("version") or "")
+        summary = {
+            "label": "本地转写运行时",
+            "network_download": True,
+            "login_required": False,
+            "may_use_paid_api": False,
+            "restart_required": False,
+            "target": tree_summary(target),
+            "command": ["python", "-m", "pip", "install", "faster-whisper>=1.1,<2.0"],
+            "boundary": "只安装本地转写运行时；模型权重需在本控制台单独确认，不会上传媒体。",
+        }
+    else:
+        source = program
+        target = data_root / "state" / "models" / "whisper"
+        summary = {
+            "label": "基础转写模型（base）",
+            "network_download": True,
+            "login_required": False,
+            "may_use_paid_api": False,
+            "restart_required": False,
+            "target": tree_summary(target),
+            "command": ["python", "-c", "download faster-whisper base model"],
+            "boundary": "需要先安装本地转写运行时；模型只保存在产品数据目录，不会等到任务开始才下载。",
         }
     return {
         "schema": "knowledgeradar-capability-plan/v1",
@@ -394,7 +455,7 @@ def _refresh_active_mcp_block(install_root: Path, active: dict[str, Any]) -> Non
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
-        replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)),
+        ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime))),
         encoding="utf-8",
     )
 
@@ -411,7 +472,7 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
         env = dict(os.environ)
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
         _run_optional_download([str(_active_runtime(install_root, active)), "-m", "playwright", "install", "chromium"], cwd=program, env=env, action="installing Playwright Chromium")
-    else:
+    elif capability == "xhs_bridge":
         npm = shutil.which("npm")
         if not npm:
             raise RuntimeError("xhs bridge requires Node.js and npm; install them before applying this capability")
@@ -436,6 +497,28 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
             staging.replace(target)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
+    elif capability == "media_downloader":
+        _run_optional_download(
+            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", "yt-dlp>=2024.8.6"],
+            cwd=program,
+            env=dict(os.environ),
+            action="installing the media downloader",
+        )
+    elif capability == "transcription_runtime":
+        _run_optional_download(
+            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", "faster-whisper>=1.1,<2.0"],
+            cwd=program,
+            env=dict(os.environ),
+            action="installing the local transcription runtime",
+        )
+    else:
+        runtime = _active_runtime(install_root, active)
+        check = subprocess.run([str(runtime), "-c", "import faster_whisper"], cwd=program, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+        if check.returncode:
+            raise RuntimeError("local transcription runtime must be installed before downloading a model")
+        model_root = data_root / "state" / "models" / "whisper"
+        code = "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root=r'''" + str(model_root) + "''')"
+        _run_optional_download([str(runtime), "-c", code], cwd=program, env=dict(os.environ), action="downloading the base transcription model")
     _record_capability(data_root, capability, plan)
     _refresh_active_mcp_block(install_root, active)
     return {"schema": "knowledgeradar-capability-apply/v1", "status": "APPLIED", "capability": capability, "restart_required": plan["details"]["restart_required"]}
@@ -548,10 +631,11 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
     config.parent.mkdir(parents=True, exist_ok=True)
     if config.is_file():
         shutil.copyfile(config, target / "receipts" / f"codex-config.before-data-move-{started}.toml")
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)), encoding="utf-8")
+    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime))), encoding="utf-8")
     write_json_atomic(install_root / "backup" / "active.before-data-move.json", previous)
     write_json_atomic(install_root / "active.json", active)
     launcher = write_product_wizard_launcher(active, runtime)
+    refresh_console_autostart(install_root, runtime)
     receipt = {
         "schema": "knowledgeradar-data-root-move-receipt/v1",
         "status": "APPLIED",
@@ -576,9 +660,10 @@ def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
     runtime = _active_runtime(install_root, previous)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime)), encoding="utf-8")
+    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime))), encoding="utf-8")
     write_json_atomic(install_root / "active.json", previous)
     launcher = write_product_wizard_launcher(previous, runtime)
+    refresh_console_autostart(install_root, runtime)
     return {"schema": "knowledgeradar-data-root-move-rollback/v1", "status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(launcher)}
 
 
@@ -755,7 +840,17 @@ def verify_artifact_receipt(package_root: Path, archive: Path, receipt_path: Pat
     return receipt
 
 
-def apply_install(package_root: Path, install_root: Path, data_root: Path, python_exe: Path, *, channel: str, archive: Path | None = None, receipt_path: Path | None = None) -> dict[str, Any]:
+def apply_install(
+    package_root: Path,
+    install_root: Path,
+    data_root: Path,
+    python_exe: Path,
+    *,
+    channel: str,
+    archive: Path | None = None,
+    receipt_path: Path | None = None,
+    enable_console_autostart: bool = False,
+) -> dict[str, Any]:
     plan = build_plan(package_root, install_root, data_root, python_exe)
     provenance = verify_product_package(package_root)
     if archive is None or receipt_path is None:
@@ -804,10 +899,19 @@ def apply_install(package_root: Path, install_root: Path, data_root: Path, pytho
     if config.is_file():
         shutil.copyfile(config, backup)
     plugin = copy_plugin(program_root, codex_home)
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)), encoding="utf-8")
+    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python))), encoding="utf-8")
     write_json_atomic(active_path, active)
     wizard_launcher = write_product_wizard_launcher(active, product_python)
-    receipt = {"schema": "knowledgeradar-activation-receipt/v1", "status": "APPLIED", "active": active, "plugin": plugin, "wizard_launcher": str(wizard_launcher)}
+    autostart = write_console_autostart(install_root, product_python) if enable_console_autostart else refresh_console_autostart(install_root, product_python)
+    receipt = {
+        "schema": "knowledgeradar-activation-receipt/v1",
+        "status": "APPLIED",
+        "active": active,
+        "plugin": plugin,
+        "wizard_launcher": str(wizard_launcher),
+        "console_launcher": str(install_root / "console.cmd"),
+        "console_autostart": str(autostart) if autostart else None,
+    }
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt
 
@@ -824,8 +928,9 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     previous_runtime = runtime_python(install_root / "runtime" / str(previous.get("version") or ""))
     if not previous_runtime.is_file():
         raise RuntimeError("previous product runtime is unavailable")
-    config.write_text(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime)), encoding="utf-8")
+    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime))), encoding="utf-8")
     wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
+    refresh_console_autostart(install_root, previous_runtime)
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
 
 
@@ -845,6 +950,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
     parser.add_argument("--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install")
+    parser.add_argument("--no-console-autostart", action="store_true", help="do not create the per-user local-console startup entry")
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
@@ -880,7 +986,16 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "plan":
             result = build_plan(package_root, install_root, data_root, python_exe)
         elif args.command == "apply":
-            result = apply_install(package_root, install_root, data_root, python_exe, channel=args.channel, archive=Path(args.archive).resolve() if args.archive else None, receipt_path=Path(args.receipt).resolve() if args.receipt else None)
+            result = apply_install(
+                package_root,
+                install_root,
+                data_root,
+                python_exe,
+                channel=args.channel,
+                archive=Path(args.archive).resolve() if args.archive else None,
+                receipt_path=Path(args.receipt).resolve() if args.receipt else None,
+                enable_console_autostart=not args.no_console_autostart,
+            )
         elif args.command == "status":
             result = {"status": "ACTIVE", "active": load_active(install_root)}
         else:

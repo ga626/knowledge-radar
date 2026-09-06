@@ -11,7 +11,7 @@
 ## 正确的安装与配置路径
 
 1. 解压 Release，在目录内执行 `python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json`。
-2. 打开 `%LOCALAPPDATA%\KnowledgeRadar\configure.cmd`；不要从解压目录或 app 目录运行 `setup_wizard.bat`。
+2. 打开 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 仍可用）；固定地址为 `http://127.0.0.1:18882/`。安装会在当前用户登录时启动本地宿主；控制规则见[本地控制台](LOCAL_CONSOLE.md)。不要从解压目录或 app 目录运行 `setup_wizard.bat`。
 3. 只填写需要启用的字段，保存后关闭页面。配置写入 `%LOCALAPPDATA%\KnowledgeRadar\data\config\runtime.env`，不回显任何值。
 4. 按 Codex 的方式重启/刷新 MCP，再调用 `health_check` 与 `get_capabilities`。
 
@@ -29,6 +29,6 @@
 python scripts\product_install.py rollback
 ```
 
-回滚会同步恢复 `active.json`、Codex MCP block 和 `configure.cmd` 指向，但不会删除你的 data 根。完整细节见 [产品安装与更新](PRODUCT_INSTALL.md)。
+回滚会同步恢复 `active.json`、Codex MCP block 和控制台入口指向，但不会删除你的 data 根。完整细节见 [产品安装与更新](PRODUCT_INSTALL.md)。
 
 如果系统盘空间不足，请先在 [产品安装与更新](PRODUCT_INSTALL.md) 中生成数据迁移计划；关闭浏览器、核对计划和确认令牌后才会复制并切换到你选择的空目录。旧数据根会保留，供回滚使用。

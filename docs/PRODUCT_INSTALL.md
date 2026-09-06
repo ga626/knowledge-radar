@@ -37,7 +37,7 @@ python scripts\product_install.py data-move-rollback
 
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。
 
-首次填写配置、查看能力包状态或清理过期媒体缓存，请运行安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\configure.cmd`，并阅读 [首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
+首次填写配置、查看能力包状态或清理过期媒体缓存，请运行安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 保留为兼容别名），并阅读[本地控制台](LOCAL_CONSOLE.md)、[首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。控制台固定为 `http://127.0.0.1:18882/`：安装默认在当前用户登录时启动它；可用 `--no-console-autostart` 禁用。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
 
 ## 可选浏览器与 bridge 依赖
 

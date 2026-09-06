@@ -60,6 +60,29 @@ def test_bilibili_detail_auto_multimodal_attaches_direct_media(tmp_path) -> None
     assert response.data["direct_media"]["reachability"]["status"] == "reachable"
 
 
+def test_bilibili_detail_surfaces_missing_local_transcription_component(tmp_path) -> None:
+    strategy = BilibiliDetailStrategy(
+        BilibiliDetailDeps(
+            extract_bvid=lambda url: "BVtest",
+            get_info=lambda bvid: {"title": "test", "desc": "", "duration": 60},
+            transcribe=lambda bvid, session_id="": "[transcribe] INSTALL_COMPONENT_MISSING: 本地转写运行时（faster-whisper）、FFmpeg；请在本地组件中完成安装后重试。",
+            get_comments=lambda bvid: [],
+            filter_comments=lambda comments, data_dir: [],
+            attach_routing=lambda url, result: result,
+            routing_recommends_l2=lambda result: False,
+            deep_analyze=lambda bvid, result, session_id="": {},
+            direct_media_probe=lambda bvid, enabled: {},
+            evidence_builder=_evidence,
+            data_dir=str(tmp_path),
+        )
+    )
+
+    response = strategy.extract(DetailRequest(url="https://www.bilibili.com/video/BVtest"))
+
+    assert response.data["component_status"]["status"] == "INSTALL_COMPONENT_MISSING"
+    assert response.data["component_status"]["missing"] == ["本地转写运行时（faster-whisper）", "FFmpeg"]
+
+
 def test_youtube_detail_exposes_watch_url_only_direct_media_status() -> None:
     strategy = YouTubeDetailStrategy(
         YouTubeDetailDeps(

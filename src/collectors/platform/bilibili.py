@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import glob
+import importlib.util
 import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -32,6 +34,25 @@ BILI_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     "Referer": "https://search.bilibili.com/",
 }
+
+
+def _missing_transcription_components() -> list[str]:
+    """Return prerequisites required only for the audio-to-ASR fallback.
+
+    Subtitle and transcript-cache paths remain usable without these optional
+    components.  The check happens immediately before queuing a background
+    download so an absent local runtime is never discovered minutes later by a
+    failed worker.
+    """
+
+    missing: list[str] = []
+    if importlib.util.find_spec("yt_dlp") is None:
+        missing.append("媒体下载器（yt-dlp）")
+    if importlib.util.find_spec("faster_whisper") is None:
+        missing.append("本地转写运行时（faster-whisper）")
+    if not shutil.which("ffmpeg"):
+        missing.append("FFmpeg")
+    return missing
 
 
 def extract_bvid(url: str) -> Optional[str]:
@@ -426,6 +447,13 @@ def transcribe_bilibili(
             )
             task_store.mark_completed(task_id, result_path=cache_path, metadata={"subtitle_hit": True, "transcript_chars": len(txt), **timing})
             return txt
+
+        missing_components = _missing_transcription_components()
+        if missing_components:
+            # Do not enqueue a worker that is predetermined to fail.  The
+            # caller receives a machine-readable prefix and the local console
+            # owns the corresponding managed/guided installation choices.
+            return "[transcribe] INSTALL_COMPONENT_MISSING: " + "、".join(missing_components) + "；请在本地组件 > 本地媒体理解与转写中完成安装后重试。"
 
         if os.path.exists(in_progress_path):
             # Stale detection: if .inprogress file is old, the background

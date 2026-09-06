@@ -17,7 +17,7 @@ KnowledgeRadar lets Codex and other MCP clients use one local tool surface. Cred
    python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
    ```
 
-3. Run the generated `configure.cmd`. It opens a loopback-only setup page and writes only the active product data root.
+3. Run the generated `console.cmd` (`configure.cmd` remains compatible). It opens the fixed loopback-only console at `http://127.0.0.1:18882/` and writes only the active product data root. It is started again at Windows sign-in by default; see [the local-console guide](docs/LOCAL_CONSOLE.md) for control options.
 4. Restart or refresh Codex, then call `health_check` and `get_capabilities`.
 
 Read [First success](docs/FIRST_SUCCESS.md) and [product installation](docs/PRODUCT_INSTALL.md) before upgrading or rolling back.
@@ -26,7 +26,7 @@ Read [First success](docs/FIRST_SUCCESS.md) and [product installation](docs/PROD
 
 | Audience | Start here |
 | --- | --- |
-| Release user | This quick start and `configure.cmd`; do not use `install.bat`, `start.cmd`, or pytest. |
+| Release user | This quick start and `console.cmd`; do not use `install.bat`, `start.cmd`, or pytest. |
 | Source developer | [Developer guide](docs/DEVELOPER.md); source checkout and HTTP debugging remain supported there. |
 | Maintainer | [Release candidate guide](docs/RELEASE_CANDIDATE.md); publish only the already-verified immutable artifact. |
 

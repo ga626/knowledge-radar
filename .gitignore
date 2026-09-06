@@ -56,6 +56,7 @@ bridge/node_modules/
 .codex/tmp/
 .codex/worktrees/
 .codex-praetor/
+.playwright-cli/
 
 # OS
 .DS_Store
@@ -68,6 +69,7 @@ _debug_*
 _extracted_*
 _simulation/
 _sandbox_validation/
+tmp/
 
 # Development process documents are workspace artifacts, not product inputs.
 design_docs/

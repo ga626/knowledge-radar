@@ -32,14 +32,15 @@ class DependencySpec:
 DEPENDENCIES: tuple[DependencySpec, ...] = (
     DependencySpec("mcp", "mcp", True, "MCP server runtime", "pip install mcp"),
     DependencySpec("httpx", "httpx", True, "HTTP collection", "pip install httpx"),
-    DependencySpec("playwright", "playwright", False, "dynamic pages and legacy platform crawlers", "pip install playwright; playwright install"),
+    DependencySpec("playwright", "playwright", False, "dynamic pages and legacy platform crawlers", "install it from the local console"),
     DependencySpec("beautifulsoup4", "bs4", False, "generic web static fallback", "pip install beautifulsoup4"),
     DependencySpec("lxml", "lxml", False, "generic web HTML parsing", "pip install lxml"),
     DependencySpec("trafilatura", "trafilatura", False, "generic web article extraction", "pip install trafilatura"),
     DependencySpec("readability-lxml", "readability", False, "generic web readability fallback", "pip install readability-lxml"),
     DependencySpec("pypdf", "pypdf", False, "academic PDF text extraction", "pip install pypdf"),
     DependencySpec("youtube-transcript-api", "youtube_transcript_api", False, "YouTube transcript fallback", "pip install youtube-transcript-api"),
-    DependencySpec("yt-dlp", "yt_dlp", False, "video download for frame extraction", "pip install yt-dlp"),
+    DependencySpec("yt-dlp", "yt_dlp", False, "video download for frame extraction", "install it from the local console"),
+    DependencySpec("faster-whisper", "faster_whisper", False, "local transcription runtime", "install it from the local console"),
     DependencySpec("Pillow", "PIL", False, "QR/image utilities", "pip install Pillow"),
 )
 
@@ -158,7 +159,7 @@ def external_dependency_preflight_summary() -> Dict[str, object]:
             "version": _run_version(node, ["--version"]),
         },
     }
-    critical = ["ffmpeg", "yt_dlp", "faster_whisper", "chrome"]
+    critical = ["chrome"]
     missing_critical = [name for name in critical if not bool(tools[name]["available"])]
     os_name = platform.system()
     status = "ok" if not missing_critical and os_name == "Windows" else "degraded"

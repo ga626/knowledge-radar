@@ -4,6 +4,8 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+- Keep the local control console at one fixed loopback address (`127.0.0.1:18882`): reuse a known running instance, refuse foreign port conflicts, and create a visible per-user startup entry so the console returns after Windows sign-in. The active product version remains the only data/configuration authority.
+- Deliver the redesigned workspace console with a research dashboard, capability status, local components, data/recovery, and settings/help views instead of the original single long configuration form.
 - Add explicit local maintenance plans to the control console: path-free data-root migration plans, copyable diagnostic exports, and protected retention guidance.
 - Make Playwright Chromium and the Xiaohongshu diagnostic bridge opt-in capability downloads.  Each requires a fresh plan and a second confirmation; neither logs in, calls paid APIs, or silently enables a production fallback.
 - Keep optional browser/Node dependencies under the active data root and preserve the single active MCP identity after an explicit capability installation.

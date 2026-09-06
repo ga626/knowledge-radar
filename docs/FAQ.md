@@ -1,6 +1,6 @@
 # FAQ
 
-Release 用户先看 [首次成功](FIRST_SUCCESS.md)。日常配置运行安装器生成的 `configure.cmd`；它打开只监听 `127.0.0.1` 的本地页面，密钥不会回显。源码 checkout 的 `scripts\…` 仅供开发者使用。
+Release 用户先看 [首次成功](FIRST_SUCCESS.md)。日常使用运行安装器生成的 `console.cmd`（`configure.cmd` 兼容）；它固定打开 `http://127.0.0.1:18882/` 的本地页面，密钥不会回显。控制规则见[本地控制台](LOCAL_CONSOLE.md)。源码 checkout 的 `scripts\…` 仅供开发者使用。
 
 ## `/mcp` returns 406 in a browser
 

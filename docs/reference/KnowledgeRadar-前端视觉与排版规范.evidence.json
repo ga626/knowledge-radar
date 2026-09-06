@@ -1,0 +1,104 @@
+{
+  "schema": "knowledgeradar-research-evidence/v1",
+  "artifact": {
+    "report_path": "D:\\Projects\\KnowledgeRadar\\.codex\\public-repos\\knowledge-radar-p2-clean\\docs\\reference\\KnowledgeRadar-前端视觉与排版规范.md",
+    "title": "KnowledgeRadar 前端视觉与排版规范",
+    "research_task_id": "kr-research-d3be9585c5ccc4ad",
+    "created_at": "2026-08-28T06:13:00+08:00"
+  },
+  "budget": {
+    "selected_profile": "deep",
+    "selected_by": "agent",
+    "reason": "全站 UI 规范需同时覆盖本地实测、外部可访问性原则与设计 token 架构。",
+    "remaining_repair_rounds": 1
+  },
+  "tool_calls": [
+    {"id":"T001","tool":"health_check","args_summary":{"mode":"summary"},"status":"ok"},
+    {"id":"T002","tool":"get_capabilities","args_summary":{"summary":true},"status":"ok"},
+    {"id":"T003","tool":"extract_web_page","args_summary":{"source":"W3C contrast minimum"},"status":"ok","receipt_id":"receipt-9e6f2fa92aafdf5a"},
+    {"id":"T004","tool":"extract_web_page","args_summary":{"source":"W3C non-text contrast"},"status":"ok","receipt_id":"receipt-b58a0780c4aa4f36"},
+    {"id":"T005","tool":"extract_web_page","args_summary":{"source":"W3C animation"},"status":"ok","receipt_id":"receipt-32d10bba55942748"},
+    {"id":"T006","tool":"extract_web_page","args_summary":{"source":"Fluent 2 tokens"},"status":"ok","receipt_id":"receipt-61dcffc0a1fbdaff"},
+    {"id":"T007","tool":"local_read","args_summary":{"path":"src/onboarding/console_page.py","scope":"all rendered console routes"},"status":"ok"}
+  ],
+  "evidence_items": [
+    {
+      "id": "E001",
+      "type": "web",
+      "source_ecology": "generic_web_ecology",
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html",
+      "title": "W3C WCAG 2.2 Contrast Minimum",
+      "strength": "strong",
+      "summary": "普通文本最低对比 4.5:1；大文本最低 3:1。"
+    },
+    {
+      "id": "E002",
+      "type": "web",
+      "source_ecology": "generic_web_ecology",
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html",
+      "title": "W3C WCAG 2.2 Non-text Contrast",
+      "strength": "strong",
+      "summary": "有意义的 UI 组件与图形相对相邻色最低对比 3:1。"
+    },
+    {
+      "id": "E003",
+      "type": "web",
+      "source_ecology": "generic_web_ecology",
+      "url": "https://www.w3.org/WAI/WCAG22/Understanding/animation-from-interactions.html",
+      "title": "W3C WCAG 2.2 Animation from Interactions",
+      "strength": "strong",
+      "summary": "非必要的交互动效应可被关闭；可使用 prefers-reduced-motion。"
+    },
+    {
+      "id": "E004",
+      "type": "web",
+      "source_ecology": "generic_web_ecology",
+      "url": "https://fluent2.microsoft.design/design-tokens",
+      "title": "Fluent 2 Design tokens",
+      "strength": "strong",
+      "summary": "设计 token 应包含颜色、字排、间距、圆角、描边、动效，并以原始 token 与语义 token 分层。"
+    },
+    {
+      "id":"E005",
+      "type":"local_code",
+      "local_path":"src/onboarding/console_page.py",
+      "title":"当前控制台样式审计",
+      "summary":"页面内联 CSS 中存在多段 Radar/Capability 样式叠加，实际使用 10px 至 38px 的非角色字号和近似硬编码色值。",
+      "strength":"strong"
+    }
+  ],
+  "claims": [
+    {"id":"C001","text":"关键文字与辅助说明应有最小 12px 的角色字号，并以 4.5:1 为普通文字目标对比。","importance":"critical","supporting_evidence_ids":["E001","E005"]},
+    {"id":"C002","text":"控件边界、状态图标与 focus ring 应有统一可见边界，且状态不能只由颜色表达。","importance":"high","supporting_evidence_ids":["E002","E005"]},
+    {"id":"C003","text":"控制台应以原始 token 加语义 token 统一颜色、字排、间距、圆角、描边与动效。","importance":"high","supporting_evidence_ids":["E004","E005"]},
+    {"id":"C004","text":"非必要动效应尊重 prefers-reduced-motion，雷达动效在减弱动效下必须静止。","importance":"high","supporting_evidence_ids":["E003","E005"]}
+  ],
+  "claim_evidence_chains":[
+    {"claim_id":"C001","tool_call_ids":["T003","T007"],"evidence_ids":["E001","E005"],"sources":["W3C WCAG 2.2 Contrast Minimum","console_page.py 实测审计"],"extracted_facts":["W3C 对普通文本给出 4.5:1 下限。","当前页面存在 10px/11px 淡色信息。"],"inference":"将关键信息的最小角色字号提升到 12px，并以 4.5:1 为设计目标。","limitations":"每种新背景上的最终颜色仍须逐项实测。","strength":"strong"},
+    {"claim_id":"C003","tool_call_ids":["T006","T007"],"evidence_ids":["E004","E005"],"sources":["Fluent 2 Design Tokens","console_page.py 实测审计"],"extracted_facts":["Fluent 将原始值和语义 alias 分层。","控制台原先存在多段叠加 CSS 与近似硬编码值。"],"inference":"以一个最终注入的 DESIGN_SYSTEM_STYLE 定义语义 token 并覆盖共享组件。","limitations":"旧页面专属 CSS 将在后续页面改动中继续向 token 迁移。","strength":"strong"}
+  ],
+  "coverage": {
+    "required_surfaces":["web","local_code"],
+    "covered_surfaces":["web","local_code"],
+    "covered_source_ecologies":["generic_web_ecology"],
+    "skipped_source_ecologies":[
+      {"source_ecology":"academic_literature_ecology","reason":"本次是通用前端规范，不形成需要论文才能支持的科学主张。","claim_gap_ids":["C001","C002","C003","C004"],"reopen_condition":"需要研究特定人群或实验性可用性结论时重开。"},
+      {"source_ecology":"platform_video_ecology","reason":"视频不为 CSS token 与 WCAG 原则提供更强一手依据。","claim_gap_ids":["C001","C002","C003","C004"],"reopen_condition":"需要验证动效教学或用户访谈时重开。"},
+      {"source_ecology":"github_repository_ecology","reason":"实现样例不能替代官方可访问性与设计系统规范。","claim_gap_ids":["C001","C002","C003","C004"],"reopen_condition":"需要比较特定开源设计系统实现时重开。"}
+    ]
+  },
+  "roadmap":[
+    {"phase":"P0","task":"全站实测审计","method":"读取实际页面与 console_page.py","input":"开发预览和候选源码","output":"问题分类","dependency":"none","acceptance":"五个导航页均已覆盖"},
+    {"phase":"P1","task":"外部原则取证","method":"原生 MCP 正文抽取","input":"W3C 与 Fluent 官方资料","output":"有回执的设计原则","dependency":"P0","acceptance":"关键主张均绑定证据"},
+    {"phase":"P2","task":"规范与候选实现","method":"语义 token 覆盖","input":"审计与证据","output":"规范、sidecar 与 CSS","dependency":"P1","acceptance":"字号和组件角色统一"},
+    {"phase":"P3","task":"开发预览验收","method":"定向测试与浏览器实测","input":"P2 候选","output":"18883 验收记录","dependency":"P2","acceptance":"五页无裁切且交互可用"}
+  ],
+  "questioner_checkpoints":[
+    {"stage":"after_local_archaeology","questions":["问题是局部视觉瑕疵，还是全局样式缺少角色约束？","现有雷达布局是否已由用户确认应保留？"],"decision":"continue","reason":"审计确认问题为全局 token 缺失；保留用户已确认的雷达布局。"},
+    {"stage":"after_first_external_round","questions":["官方资料是否足以支持对比、非文字状态、动效和 token 原则？","还需引入学术、视频或代码仓库作为主证据吗？"],"decision":"continue","reason":"W3C 与 Fluent 官方正文已直接支持四类原则；其余生态与主张不直接相关。"},
+    {"stage":"before_final_report","questions":["规范是否给出有限、可实施的字号/颜色/间距/动效 token？","是否明确开发预览与稳定版的边界？"],"decision":"finalize","reason":"规范、evidence sidecar 与候选实现均已写入，余项交由开发预览实测完成。"}
+  ],
+  "known_issues":{"schema":"knowledgeradar-known-issues/v1","generated_at":"2026-08-28T06:13:00+08:00","report_path":"D:\\Projects\\KnowledgeRadar\\.codex\\public-repos\\knowledge-radar-p2-clean\\docs\\reference\\KnowledgeRadar-前端视觉与排版规范.md","issues":[{"id":"KI-UI-001","description":"新增语义色必须实际复核其背景对比；当前证据不等于完整屏幕阅读器测试。","discovered_at":"2026-08-28","status":"未解决","resolved_in_report":null,"next_action":"每次新增状态颜色时复核对比；后续单列辅助技术审计。"}]},
+  "decision_register":{"schema":"knowledgeradar-decision-register/v1","generated_at":"2026-08-28T06:13:00+08:00","report_path":"D:\\Projects\\KnowledgeRadar\\.codex\\public-repos\\knowledge-radar-p2-clean\\docs\\reference\\KnowledgeRadar-前端视觉与排版规范.md","decisions":[{"id":"D-UI-001","title":"采用单一深色雷达 token 体系","status":"approved","recommended_action":"以 DESIGN_SYSTEM_STYLE 作为控制台唯一全局视觉合约。","options":[{"value":"继续多段局部覆盖"},{"value":"统一 token 覆盖"}],"decision_record_location":["规范的 Token 架构","DESIGN_SYSTEM_STYLE"],"next_review":"新增大页面或主题切换时"}]},
+  "process_quality":{"schema":"knowledgeradar-process-quality/v1","capability_handshake":{"health_check":true,"get_capabilities":true},"local_archaeology":{"performed":true,"paths":["src/onboarding/console_page.py"]},"source_ecology_plan":{"considered":["generic_web_ecology","academic_literature_ecology","platform_video_ecology","github_repository_ecology"],"selected":["generic_web_ecology"],"skipped":["academic_literature_ecology","platform_video_ecology","github_repository_ecology"]},"validation_ladder":{"selected_profile":"deep","commands":["check_research_quality.py","pytest","browser UI validation"]},"presentation":[{"surface":"docs/reference/KnowledgeRadar-前端视觉与排版规范.md"}],"preflight_skip_reason":"本轮为已有研究任务的候选 UI 规范收口，未运行会改写候选 sidecar 的预检脚本；已记录能力握手、源码审计、来源生态与全部回执。"}
+}
