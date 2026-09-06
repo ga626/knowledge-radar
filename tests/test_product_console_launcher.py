@@ -87,14 +87,18 @@ def test_stable_task_definition_uses_bounded_recovery_and_ignores_duplicates(tmp
     assert "--program-root" not in script
 
 
-def test_dev_task_is_on_demand_and_bound_to_its_candidate_identity(tmp_path: Path) -> None:
+def test_dev_background_launch_is_detached_and_bound_to_its_candidate_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     launcher = load_launcher()
     candidate = context(launcher, tmp_path, role="dev")
-    script = launcher._task_script(context=candidate, enabled=True, start_now=True)
-    assert launcher.DEV_TASK_PREFIX in script
-    assert str(candidate.program) in script
-    assert "New-ScheduledTaskTrigger" not in script
-    assert "Start-ScheduledTask" in script
+    calls: list[tuple[list[str], Path]] = []
+    monkeypatch.setattr(launcher, "_spawn", lambda command, *, log_path: calls.append((command, log_path)))
+    launcher._start_background(candidate)
+    assert len(calls) == 1
+    command, log_path = calls[0]
+    assert "--supervise" in command
+    assert ["--program-root", str(candidate.program)] == command[-4:-2]
+    assert ["--preview-state-root", str(candidate.supervisor_root)] == command[-2:]
+    assert log_path == candidate.log_path
 
 
 def test_status_reports_a_dead_supervisor_record_as_stale(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -30,7 +30,6 @@ CONSOLE_PORT = 18882
 DEV_CONSOLE_PORT = 18883
 CONSOLE_HEALTH_SCHEMA = "knowledgeradar-local-console/v2"
 STABLE_TASK_NAME = "KnowledgeRadar Stable Local Console"
-DEV_TASK_PREFIX = "KnowledgeRadar Development Preview"
 STARTUP_FILENAME = "KnowledgeRadar Local Console.cmd"  # legacy entry to remove on migration
 MAX_RESTARTS = 5
 RESTART_WINDOW_SECONDS = 120.0
@@ -239,11 +238,13 @@ def _spawn(command: list[str], *, log_path: Path) -> subprocess.Popen[Any]:
 def _start_background(context: ConsoleContext) -> None:
     """Start a supervisor outside the invoking terminal's Windows job tree.
 
-    A development preview is deliberately *not* an auto-start task. It is an
-    on-demand scheduled task: the Task Scheduler gives it an independent host
-    while every explicit open still resolves the current candidate identity.
+    Development previews are deliberately on-demand and never registered as
+    Windows startup tasks. A detached child is enough to survive the calling
+    terminal or Codex session, while avoiding a Task Scheduler dependency that
+    is unavailable in restricted Windows environments (including CI).
+    Stable startup remains the only Task Scheduler responsibility.
     """
-    if os.name == "nt":
+    if context.role == "stable" and os.name == "nt":
         _run_task_script(_task_script(context=context, enabled=True, start_now=True))
         return
     _spawn([sys.executable, str(Path(__file__).resolve()), "--supervise", "--port", str(context.port), "--no-open", *_command_context(context)], log_path=context.log_path)
@@ -423,7 +424,9 @@ def _startup_path() -> Path:
 
 
 def _task_name(context: ConsoleContext) -> str:
-    return STABLE_TASK_NAME if context.role == "stable" else f"{DEV_TASK_PREFIX} {context.fingerprint}"
+    if context.role != "stable":
+        raise RuntimeError("开发预览不使用 Task Scheduler。")
+    return STABLE_TASK_NAME
 
 
 def _ps_literal(value: str) -> str:
@@ -442,7 +445,7 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
         if validate_helper and not helper.is_file():
             raise RuntimeError("稳定安装缺少 console_product.py；请先完成与 stable artifact 绑定的本地安装修复。")
     else:
-        helper = Path(__file__).resolve()
+        raise RuntimeError("开发预览不使用 Task Scheduler。")
     arguments = f'"{helper}" --supervise --role {context.role} --port {context.port} --no-open --install-root "{context.install_root}"'
     if context.role == "dev":
         arguments += f' --program-root "{context.program}" --preview-state-root "{context.supervisor_root}"'
@@ -454,8 +457,6 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
     if context.role == "stable":
         lines.append("$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME")
         lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null")
-    else:
-        lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Settings $settings -RunLevel Limited -Force | Out-Null")
     if start_now:
         lines.append(f"Start-ScheduledTask -TaskName '{_ps_literal(task_name)}'")
     return "\n".join(lines)
