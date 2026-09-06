@@ -69,6 +69,7 @@ _debug_*
 _extracted_*
 _simulation/
 _sandbox_validation/
+tmp/
 
 # Development process documents are workspace artifacts, not product inputs.
 design_docs/
