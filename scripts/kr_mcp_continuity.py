@@ -24,6 +24,7 @@ from runtime.mcp_continuity import (  # noqa: E402
     ACCESS_FALLBACK,
     record_fallback,
     record_fallback_call,
+    record_host_refresh_pending,
     record_native_call,
     snapshot,
     state_path,
@@ -86,6 +87,18 @@ def _cmd_mark_native(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_mark_host_refresh(args: argparse.Namespace) -> int:
+    if not args.reason.strip():
+        _json({"schema": "knowledgeradar-mcp-continuity/v1", "status": "invalid_request", "error": "--reason is required"})
+        return 2
+    _json(record_host_refresh_pending(
+        reason=args.reason,
+        source_fingerprint=args.source_fingerprint,
+        tool_list_fingerprint=args.tool_list_fingerprint,
+    ))
+    return 0
+
+
 def _cmd_activate_fallback(args: argparse.Namespace) -> int:
     if not args.reason.strip():
         _json({"schema": "knowledgeradar-mcp-continuity/v1", "status": "invalid_request", "error": "--reason is required"})
@@ -121,7 +134,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
         _json({"schema": "knowledgeradar-continuity-fallback/v1", "status": "unknown_task", "research_task_id": task_id})
         return 1
 
-    fingerprint = source_fingerprint(ROOT)
+    caller_fingerprint = source_fingerprint(ROOT)
     record_fallback(reason=args.reason, task_id=task_id)
     try:
         invocation = invoke_configured_tool(
@@ -131,7 +144,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
             project_root=ROOT,
         )
     except (FallbackContractError, OSError, ValueError) as exc:
-        continuity = record_fallback_call(tool=tool, outcome="failed", reason=args.reason, task_id=task_id, source_fingerprint=fingerprint)
+        continuity = record_fallback_call(tool=tool, outcome="failed", reason=args.reason, task_id=task_id, source_fingerprint=caller_fingerprint)
         _json({
             "schema": "knowledgeradar-continuity-fallback/v1",
             "status": "fallback_unavailable",
@@ -141,17 +154,18 @@ def _cmd_call(args: argparse.Namespace) -> int:
             "research_task_id": task_id,
             "tool": tool,
             "error": str(exc),
-            "source_fingerprint": fingerprint,
+            "source_fingerprint": caller_fingerprint,
             "continuity": continuity,
         })
         return 1
     if invocation.get("mcp_call_status") != "ok":
+        target_fingerprint = str(invocation.get("source_fingerprint") or caller_fingerprint)
         continuity = record_fallback_call(
             tool=tool,
             outcome="failed",
             reason=args.reason,
             task_id=task_id,
-            source_fingerprint=fingerprint,
+            source_fingerprint=target_fingerprint,
             tool_list_fingerprint=str(invocation.get("tool_list_fingerprint") or ""),
         )
         _json({
@@ -162,7 +176,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
             "degraded_reason": args.reason,
             "research_task_id": task_id,
             "tool": tool,
-            "source_fingerprint": fingerprint,
+            "source_fingerprint": target_fingerprint,
             "tool_list_fingerprint": invocation.get("tool_list_fingerprint"),
             "continuity": continuity,
             "result": invocation.get("result"),
@@ -172,7 +186,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
     if task_id:
         receipt = record_tool_receipt(
             task_id=task_id,
-            trace_id=f"continuity:{fingerprint}:{tool}",
+            trace_id=f"continuity:{invocation.get('source_fingerprint') or caller_fingerprint}:{tool}",
             tool=tool,
             status="ok",
             source_ecology="continuity_fallback",
@@ -183,7 +197,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
         outcome="ok",
         reason=args.reason,
         task_id=task_id,
-        source_fingerprint=fingerprint,
+        source_fingerprint=str(invocation.get("source_fingerprint") or caller_fingerprint),
         tool_list_fingerprint=str(invocation.get("tool_list_fingerprint") or ""),
     )
     _json({
@@ -194,8 +208,11 @@ def _cmd_call(args: argparse.Namespace) -> int:
         "degraded_reason": args.reason,
         "research_task_id": task_id,
         "tool": tool,
-        "source_fingerprint": fingerprint,
+        "source_fingerprint": invocation.get("source_fingerprint") or caller_fingerprint,
         "tool_list_fingerprint": invocation.get("tool_list_fingerprint"),
+        "tool_count": invocation.get("tool_count"),
+        "attempt_count": invocation.get("attempt_count"),
+        "retry_failures": invocation.get("retry_failures", []),
         "tool_receipt": receipt.get("receipt", {}),
         "continuity": continuity,
         "result": invocation.get("result"),
@@ -266,6 +283,12 @@ def main(argv: list[str] | None = None) -> int:
     mark.add_argument("--source-fingerprint", default="")
     mark.add_argument("--tool-list-fingerprint", default="")
     mark.set_defaults(handler=_cmd_mark_native)
+
+    refresh = sub.add_parser("mark-host-refresh-pending")
+    refresh.add_argument("--reason", required=True)
+    refresh.add_argument("--source-fingerprint", default="")
+    refresh.add_argument("--tool-list-fingerprint", default="")
+    refresh.set_defaults(handler=_cmd_mark_host_refresh)
 
     fallback = sub.add_parser("activate-fallback")
     fallback.add_argument("--reason", required=True)

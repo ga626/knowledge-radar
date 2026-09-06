@@ -9,7 +9,7 @@ KnowledgeRadar 是 Codex 的外部研究感知层；用户级 `config.toml` 是�
 
 ## 工作流
 
-1. 优先使用原生 `mcp__knowledgeradar.*`。未显示时，先发现 `knowledgeradar mcp health_check kr_research get_capabilities`；发现仍失败就报告 Codex 宿主工具面故障。原生明确 `Transport closed` 后，先用项目协议探针区分后端与当前 Desktop MCP session，不重启共享 KR 服务。若宿主暴露官方 `config/mcpServer/reload`，请求 reload，并仅在下一 user turn 的原生 `health_check(summary)` 与 `get_capabilities(summary=true)` 都成功后记录恢复；未暴露时，可提示用户完整退出并重新启动 Codex Desktop，再做同样的双调用验收。重启是宿主恢复选项，不是自动重连。只有任务必须在此之前继续时，才可调用版本化 `scripts\kr_mcp_continuity.py call`；输出必须标记 `access_path=continuity_fallback`，不得宣称原生 MCP 已恢复。
+1. 优先使用原生 `mcp__knowledgeradar.*`。未显示时，先发现 `knowledgeradar mcp health_check kr_research get_capabilities`；发现仍失败就记录“本任务原生工具面未附着”，而不是把服务健康误报为可用。原生明确 `Transport closed` 后，先用项目协议探针区分后端与当前 Desktop MCP session，不重启共享 KR 服务。若宿主暴露官方 `config/mcpServer/reload`，先以 `mark-host-refresh-pending` 记录请求，再在下一 user turn 只用真实原生 `health_check(summary)` 与 `get_capabilities(summary=true)` 两项共同验收；缺一项均不是恢复。若宿主未暴露刷新入口，完整退出并重新启动 Codex Desktop 是可重复的宿主恢复动作，但同样必须完成原生双调用验收。任务需要继续时，直接使用版本化 `scripts\kr_mcp_continuity.py call`；它绑定当前 `active.json` 安装身份，对只读就绪调用最多新建一次重试会话，并输出 `access_path=continuity_fallback`、artifact identity、工具目录 fingerprint 与 retry receipt。不得宣称原生 MCP 已恢复，也不得自动重放写入、账号或浏览器操作。
 2. 非平凡或不确定任务先调用 `health_check(mode="summary")` 与 `get_capabilities(summary=true)`，再由 Agent 自主选择来源生态、轮次、工具、扩展和停止点。
 3. 重度研究优先用 `kr_research`，后续按证据需要调用已注册的 Web、学术、GitHub、视频、平台、详情、任务状态和决策日志工具。
 4. 内置 web/search 只能在 KR 路由后作为 `host_internal_web_wave` 使用，并记录 `wave_id`、`strategy_tree`、`reason` 和 `relationship_to_kr`。
@@ -19,6 +19,6 @@ KnowledgeRadar 是 Codex 的外部研究感知层；用户级 `config.toml` 是�
 
 ## 失败边界
 
-- 原生工具在发现后仍不可用：默认报告 Codex 宿主工具面故障；只有 L2 已明确断开且任务不能等待宿主恢复时，才使用带 `--reason`、任务 ID、回执和 handoff 的版本化 `continuity_fallback`。它只保证任务连续，不能让当前线程重新获得原生工具。用户完整重启 Desktop 后，必须重新发生两次真实 native call 才能写 `native_mcp_restored_after_desktop_restart`。不调用未版本化或缺失的 fallback。
+- 原生工具在发现后仍不可用：带 `--reason`、任务 ID、回执和 handoff 的版本化 `continuity_fallback` 是正式连续性路径；它只保证任务连续，不能让当前线程重新获得原生工具。用户完整重启 Desktop 后，只有在同一 artifact 上重新发生 `health_check` 与 `get_capabilities` 两次真实 native call，才能写 `native_mcp_restored_after_desktop_restart`。不调用未版本化、身份不明或工具目录不完整的 fallback。
 - 缺少工具卡不等于 KnowledgeRadar 服务故障；区分宿主注入、stdio、HTTP 和源码配置。
 - 登录、验证码和平台验证转为明确的人工交互状态，不盲目循环重试。

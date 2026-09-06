@@ -22,6 +22,17 @@ import uuid
 
 SCHEMA = "knowledgeradar-continuity-fallback/v1"
 READINESS_TOOLS = {"health_check", "get_capabilities"}
+EXPECTED_TOOL_NAMES = frozenset(
+    {
+        "kr_research", "finalize_research_task", "analyze_decision_logs", "get_task_status",
+        "kr_web_search", "search_github_repositories", "search_youtube", "search_wechat_articles",
+        "search_academic", "extract_web_page", "extract_dynamic_page", "search_bilibili",
+        "search_xiaohongshu", "search_zhihu", "search_recruitment", "get_capabilities", "health_check",
+        "get_content_detail", "manage_xiaohongshu_accounts", "record_research_candidates_tool",
+        "advance_research_candidate", "review_research_progress",
+    }
+)
+MAX_READINESS_ATTEMPTS = 2
 
 
 class FallbackContractError(ValueError):
@@ -127,6 +138,24 @@ def source_fingerprint(project_root: Path | None = None) -> str:
     return digest.hexdigest()[:16]
 
 
+def _catalog_fingerprint(tools: list[str]) -> str:
+    digest = hashlib.sha256("\n".join(sorted(tools)).encode("utf-8")).hexdigest()[:20]
+    return f"sha256:{digest}"
+
+
+def _validate_tool_catalog(tools: list[str]) -> None:
+    """Reject a partial or unexpected server before any tool is invoked."""
+
+    actual = frozenset(tools)
+    if actual != EXPECTED_TOOL_NAMES:
+        missing = ",".join(sorted(EXPECTED_TOOL_NAMES - actual))
+        unexpected = ",".join(sorted(actual - EXPECTED_TOOL_NAMES))
+        raise FallbackContractError(
+            f"configured_server_tool_catalog_mismatch:expected={len(EXPECTED_TOOL_NAMES)}:actual={len(actual)}:"
+            f"missing={missing}:unexpected={unexpected}"
+        )
+
+
 def _jsonable(value: Any) -> Any:
     if hasattr(value, "model_dump"):
         return value.model_dump(mode="json")
@@ -172,10 +201,10 @@ async def _invoke(server: dict[str, Any], tool: str, arguments: dict[str, Any]) 
     async with _configured_session(server) as session:
         listing = await session.list_tools()
         tools = sorted({str(item.name) for item in getattr(listing, "tools", [])})
+        _validate_tool_catalog(tools)
         if tool not in tools:
             raise FallbackContractError(f"configured_server_does_not_expose_tool:{tool}")
         result = await session.call_tool(tool, arguments=arguments)
-    tool_list_fingerprint = hashlib.sha256("\n".join(tools).encode("utf-8")).hexdigest()[:20]
     payload = _jsonable(result)
     mcp_is_error = bool(getattr(result, "isError", False))
     if isinstance(payload, dict):
@@ -183,7 +212,8 @@ async def _invoke(server: dict[str, Any], tool: str, arguments: dict[str, Any]) 
     return {
         "result": payload,
         "tools": tools,
-        "tool_list_fingerprint": f"sha256:{tool_list_fingerprint}",
+        "tool_list_fingerprint": _catalog_fingerprint(tools),
+        "tool_count": len(tools),
         "mcp_call_status": "error" if mcp_is_error else "ok",
     }
 
@@ -192,7 +222,16 @@ def _invoke_sync(server: dict[str, Any], tool: str, arguments: dict[str, Any]) -
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(_invoke(server, tool, arguments))
+        attempts = MAX_READINESS_ATTEMPTS if tool in READINESS_TOOLS else 1
+        failures: list[str] = []
+        for attempt in range(1, attempts + 1):
+            try:
+                result = asyncio.run(_invoke(server, tool, arguments))
+                return {**result, "attempt_count": attempt, "retry_failures": failures}
+            except (OSError, asyncio.TimeoutError) as exc:
+                failures.append(f"attempt_{attempt}:{type(exc).__name__}:{exc}")
+                if attempt == attempts:
+                    raise FallbackContractError(f"fallback_readiness_retry_exhausted:{'|'.join(failures)}") from exc
     raise FallbackContractError("fallback_call_cannot_run_inside_existing_event_loop")
 
 
@@ -215,7 +254,14 @@ def invoke_configured_tool(
     if not isinstance(arguments, dict):
         raise FallbackContractError("arguments_must_be_json_object")
     server = configured_stdio_server(config_path=config_path, project_root=project_root)
+    target_fingerprint = source_fingerprint(Path(str(server["cwd"])))
     return {
         **_invoke_sync(server, str(tool), arguments),
-        "server": {"cwd": server["cwd"], "config_path": server["config_path"], "identity": server["identity"]},
+        "server": {
+            "cwd": server["cwd"],
+            "config_path": server["config_path"],
+            "identity": server["identity"],
+            "source_fingerprint": target_fingerprint,
+        },
+        "source_fingerprint": target_fingerprint,
     }

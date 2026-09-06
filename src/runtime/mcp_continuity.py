@@ -22,6 +22,7 @@ STATE_FILE = "knowledgeradar-mcp-continuity.json"
 ACCESS_NATIVE = "native_mcp"
 ACCESS_RUNTIME = "mcp_server_runtime"
 ACCESS_FALLBACK = "continuity_fallback"
+NATIVE_RECOVERY_TOOLS = frozenset({"health_check", "get_capabilities"})
 _LOCK = threading.RLock()
 
 
@@ -89,7 +90,7 @@ def evaluate(
     native = sorted({str(item) for item in native_tools if str(item)})
     l0 = "pass" if config_ok and service_ok else "fail"
     l1 = "pass" if session_status in {"observed", "initialized"} and tool_list_ok else "fail"
-    l2 = "pass" if native else "host_unobserved"
+    l2 = "pass" if NATIVE_RECOVERY_TOOLS <= set(native) else "host_unobserved"
     l3 = "active" if fallback_active else "not_activated"
     if l2 == "pass":
         status, access = "native_ready", ACCESS_NATIVE
@@ -141,21 +142,47 @@ def record_transition(*, event: str, access_path: str, status: str, reason: str 
 def record_native_call(*, tool: str, source_fingerprint: str = "", tool_list_fingerprint: str = "") -> dict[str, Any]:
     """Record host-observed proof of a real native KR tool call."""
 
+    current = _read()
+    existing_fingerprint = str(current.get("source_fingerprint") or "")
+    existing_tools = current.get("native_tools") if isinstance(current.get("native_tools"), list) else []
+    observed = set(str(item) for item in existing_tools if str(item)) if not source_fingerprint or existing_fingerprint == source_fingerprint else set()
+    observed.add(str(tool))
+    native_tools = sorted(observed)
+    recovered = NATIVE_RECOVERY_TOOLS <= set(native_tools)
     return record_transition(
         event="native_call_observed",
         access_path=ACCESS_NATIVE,
-        status="native_ready",
-        native_tools=[str(tool)],
+        status="native_ready" if recovered else "native_verification_pending",
+        native_tools=native_tools,
         source_fingerprint=source_fingerprint,
         tool_list_fingerprint=tool_list_fingerprint,
         layers={
             "l0_config_process": "pass",
             "l1_mcp_session_tools": "pass",
-            "l2_thread_native_surface": "pass",
+            "l2_thread_native_surface": "pass" if recovered else "host_observed_partial",
             "l3_continuity_fallback": "not_activated",
         },
         last_error="",
-        last_degraded_reason="",
+        last_degraded_reason="" if recovered else "native_recovery_requires_health_check_and_get_capabilities",
+    )
+
+
+def record_host_refresh_pending(*, reason: str, source_fingerprint: str = "", tool_list_fingerprint: str = "") -> dict[str, Any]:
+    """Record a supported host refresh request without pretending it has completed."""
+
+    return record_transition(
+        event="host_refresh_requested",
+        access_path=ACCESS_RUNTIME,
+        status="host_refresh_pending",
+        reason=reason,
+        source_fingerprint=source_fingerprint,
+        tool_list_fingerprint=tool_list_fingerprint,
+        layers={
+            "l0_config_process": "pass",
+            "l1_mcp_session_tools": "pass",
+            "l2_thread_native_surface": "host_refresh_pending",
+            "l3_continuity_fallback": "not_activated",
+        },
     )
 
 
