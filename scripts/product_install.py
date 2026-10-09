@@ -27,6 +27,7 @@ PLUGIN_NAME = "knowledgeradar-research"
 ACTIVE_SCHEMA = "knowledgeradar-active-install/v1"
 CAPABILITY_STATE_SCHEMA = "knowledgeradar-capability-state/v1"
 CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_runtime", "transcription_model")
+TRANSCRIPTION_REQUIREMENTS = ("av>=11,<19", "faster-whisper>=1.1,<2.0")
 
 
 def sha256_file(path: Path) -> str:
@@ -327,15 +328,15 @@ def restore_selected_runtime_components(program: Path, runtime: Path, data_root:
     env = dict(os.environ)
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
     packages = {
-        "media_downloader": ("yt_dlp", "yt-dlp>=2024.8.6"),
-        "transcription_runtime": ("faster_whisper", "faster-whisper>=1.1,<2.0"),
+        "media_downloader": ("import yt_dlp", ("yt-dlp>=2024.8.6",)),
+        "transcription_runtime": ("import faster_whisper, av; assert int(av.__version__.split('.')[0]) < 19", TRANSCRIPTION_REQUIREMENTS),
     }
-    for capability, (module, requirement) in packages.items():
+    for capability, (check_code, requirements) in packages.items():
         if not _capability_enabled(data_root, capability):
             continue
-        check = subprocess.run([str(runtime), "-c", f"import {module}"], cwd=program, env=env, capture_output=True, check=False)
+        check = subprocess.run([str(runtime), "-c", check_code], cwd=program, env=env, capture_output=True, check=False)
         if check.returncode:
-            _run_optional_download([str(runtime), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", requirement], cwd=program, env=env, action=f"restoring {capability}")
+            _run_optional_download([str(runtime), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", *requirements], cwd=program, env=env, action=f"restoring {capability}")
         restored.append(capability)
     if _capability_enabled(data_root, "browser"):
         code = (
@@ -423,7 +424,7 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
             "may_use_paid_api": False,
             "restart_required": False,
             "target": tree_summary(target),
-            "command": ["python", "-m", "pip", "install", "faster-whisper>=1.1,<2.0"],
+            "command": ["python", "-m", "pip", "install", *TRANSCRIPTION_REQUIREMENTS],
             "boundary": "只安装本地转写运行时；模型权重需在本控制台单独确认，不会上传媒体。",
         }
     else:
@@ -537,7 +538,7 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
         )
     elif capability == "transcription_runtime":
         _run_optional_download(
-            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", "faster-whisper>=1.1,<2.0"],
+            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", *TRANSCRIPTION_REQUIREMENTS],
             cwd=program,
             env=dict(os.environ),
             action="installing the local transcription runtime",

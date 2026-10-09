@@ -406,6 +406,7 @@ def test_media_component_plans_are_console_owned_and_separate_runtime_from_model
 
     assert downloader["details"]["command"][-1] == "yt-dlp>=2024.8.6"
     assert runtime["details"]["command"][-1] == "faster-whisper>=1.1,<2.0"
+    assert "av>=11,<19" in runtime["details"]["command"]
     assert model["details"]["label"] == "基础转写模型（base）"
     assert model["details"]["boundary"].startswith("需要先安装本地转写运行时")
 
