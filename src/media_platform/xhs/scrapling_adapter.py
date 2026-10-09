@@ -793,15 +793,6 @@ def search(
     """Search Xiaohongshu through Scrapling using an existing Chrome CDP endpoint."""
     if cdp_url is None:
         cdp_url = f"http://127.0.0.1:{XHS_CHROME_DEBUG_PORT}"
-    try:
-        from scrapling.fetchers import DynamicFetcher
-    except Exception as exc:
-        raise XhsScraplingError(
-            "Scrapling DynamicFetcher 不可用",
-            error_type="dependency_missing",
-            detail=str(exc),
-        ) from exc
-
     started = time.time()
     url = _search_url(keyword, feed_type)
     resolved_cdp_url = _ensure_xhs_page_ws_url(cdp_url)
@@ -818,6 +809,15 @@ def search(
         for item in items:
             item["source"] = "scrapling-cdp-page"
         return items
+
+    try:
+        from scrapling.fetchers import DynamicFetcher
+    except Exception as exc:
+        raise XhsScraplingError(
+            "Scrapling DynamicFetcher 不可用",
+            error_type="dependency_missing",
+            detail=str(exc),
+        ) from exc
 
     def page_action(page):
         try:

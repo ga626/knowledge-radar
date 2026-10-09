@@ -1,0 +1,206 @@
+{
+  "schema": "knowledgeradar-recruitment-city-registry/v1",
+  "updated": "2026-07-06",
+  "platforms": {
+    "boss": {
+      "param_name": "city",
+      "param_names": [
+        "city"
+      ],
+      "value_kind": "boss_city_code",
+      "source": "curated_registry",
+      "passthrough_when_missing": false
+    },
+    "zhilian": {
+      "param_name": "jl",
+      "param_names": [
+        "jl"
+      ],
+      "value_kind": "zhilian_jl_code",
+      "source": "curated_registry",
+      "passthrough_when_missing": false
+    },
+    "liepin": {
+      "param_name": "dq",
+      "param_names": [
+        "city",
+        "dq"
+      ],
+      "value_kind": "liepin_dq_code",
+      "source": "official_city_page_dqCode",
+      "passthrough_when_missing": false
+    }
+  },
+  "cities": {
+    "北京": {
+      "aliases": [
+        "北京市"
+      ],
+      "platform_params": {
+        "boss": "101010100",
+        "zhilian": "530",
+        "liepin": "010"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-bj/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "上海": {
+      "aliases": [
+        "上海市"
+      ],
+      "platform_params": {
+        "boss": "101020100",
+        "zhilian": "538",
+        "liepin": "020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-sh/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "广州": {
+      "aliases": [
+        "广州市"
+      ],
+      "platform_params": {
+        "boss": "101280100",
+        "zhilian": "763",
+        "liepin": "050020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-gz/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "深圳": {
+      "aliases": [
+        "深圳市"
+      ],
+      "platform_params": {
+        "boss": "101280600",
+        "zhilian": "765",
+        "liepin": "050090"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-sz/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "杭州": {
+      "aliases": [
+        "杭州市"
+      ],
+      "platform_params": {
+        "boss": "101210100",
+        "zhilian": "653",
+        "liepin": "070020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-hz/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "成都": {
+      "aliases": [
+        "成都市"
+      ],
+      "platform_params": {
+        "boss": "101270100",
+        "zhilian": "801",
+        "liepin": "280020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-cd/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "南京": {
+      "aliases": [
+        "南京市"
+      ],
+      "platform_params": {
+        "boss": "101190100",
+        "zhilian": "635",
+        "liepin": "060020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-nj/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "武汉": {
+      "aliases": [
+        "武汉市"
+      ],
+      "platform_params": {
+        "boss": "101200100",
+        "zhilian": "736",
+        "liepin": "170020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-wuhan/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "西安": {
+      "aliases": [
+        "西安市"
+      ],
+      "platform_params": {
+        "boss": "101110100",
+        "zhilian": "854",
+        "liepin": "270020"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-xian/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    },
+    "苏州": {
+      "aliases": [
+        "苏州市"
+      ],
+      "platform_params": {
+        "boss": "101190400",
+        "zhilian": "639",
+        "liepin": "060080"
+      },
+      "platform_param_sources": {
+        "liepin": {
+          "url": "https://www.liepin.com/city-suzhou/",
+          "field": "dqCode",
+          "verified_at": "2026-07-06"
+        }
+      }
+    }
+  }
+}

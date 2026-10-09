@@ -309,7 +309,8 @@ def _resolve_registry_profile_dir(profile_dir: str) -> str:
     expanded = os.path.expandvars(os.path.expanduser(str(profile_dir)))
     if os.path.isabs(expanded):
         return os.path.abspath(expanded)
-    return os.path.abspath(os.path.join(str(project_root()), expanded))
+    base_root = os.environ.get("KR_DATA_ROOT", "").strip() or str(project_root())
+    return os.path.abspath(os.path.join(base_root, expanded))
 
 
 def _manual_profile_row_for_platform(platform: str) -> Dict:

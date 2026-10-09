@@ -4,6 +4,12 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+## 0.1.0a13
+
+- 修复小红书原生页面 CDP 搜索被可选 Scrapling 导入提前阻断的问题；真正使用 DynamicFetcher 的路径仍明确报告依赖缺失。
+- 公开并打包已有招聘城市参数表，恢复 BOSS、猎聘等平台的城市过滤；未知城市仍拒绝猜测代码。
+- 浏览器登记的相对 Profile 路径按产品数据根解析，避免升级后读取程序目录中的空账号。
+
 ## 0.1.0a11
 
 - Strengthen the Codex MCP continuity path without registering a second MCP server: the fallback now refuses an incomplete or unexpected tool catalog, binds its receipt to the selected active artifact, and records the catalog fingerprint and call attempts.
