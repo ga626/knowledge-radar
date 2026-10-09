@@ -277,7 +277,7 @@ def _parse_boss_cards_from_page(port: int, keyword: str, city: str, limit: int) 
                     && !/沟通过|已投递|在线简历|附件简历|求职助手|我的|职位/.test(text);
                 const empty = /暂无职位|没有找到|无搜索结果|换个关键词/.test(text);
                 return JSON.stringify({{
-                    ready: cardCount > 0 || networkCount > 0 || blocked || loginRequired || empty || document.readyState === 'complete',
+                    ready: cardCount > 0 || networkCount > 0 || blocked || empty || (loginRequired && performance.now() > 1800),
                     cardCount,
                     networkCount,
                     blocked,
@@ -337,6 +337,7 @@ def _parse_boss_cards_from_page(port: int, keyword: str, city: str, limit: int) 
                     blocked,
                     loginRequired,
                     cardCount: cards.length,
+                    loginModalCount: Array.from(document.querySelectorAll('.login-dialog,.login-modal,.login-register,[role="dialog"]')).filter(el => {{const rect=el.getBoundingClientRect(); return rect.width > 0 && rect.height > 0 && /扫码登录|密码登录|验证码登录/.test(el.innerText || '')}}).length,
                     waitState: {json.dumps("WAIT_STATE_PLACEHOLDER")},
                     title: document.title,
                     url: location.href,
@@ -400,9 +401,12 @@ def _classify_boss_page_state(data: Dict[str, Any]) -> Dict[str, Any]:
     title = str(data.get("title") or data.get("pageTitle") or "")
     url = str(data.get("url") or "")
     blocked = bool(data.get("blocked")) or bool(re.search(r"安全验证|滑动验证|captcha|verify|访问异常|请求异常", text, re.I))
-    login_required = bool(data.get("loginRequired")) or (
+    strong_login = int(data.get("loginModalCount") or 0) > 0 or "/web/user" in url
+    account_evidence = bool(re.search(r"沟通过|已投递|在线简历|附件简历|求职助手", text))
+    usable_content = bool(data.get("items")) or int(data.get("cardCount") or 0) > 0
+    login_required = strong_login or (bool(data.get("loginRequired")) and not (account_evidence or usable_content)) or (
         bool(re.search(r"扫码登录|密码登录|验证码登录|注册|立即登录", text))
-        and not bool(re.search(r"沟通过|已投递|在线简历|附件简历|求职助手|我的|职位", text))
+        and not (account_evidence or usable_content)
     )
     if blocked:
         return {
@@ -424,7 +428,7 @@ def _classify_boss_page_state(data: Dict[str, Any]) -> Dict[str, Any]:
             "url": url,
             "title": title,
         }
-    if "zhipin.com" in url and ("/web/geek" in url or "/job_detail/" in url or "职位" in text or "我的" in text):
+    if "zhipin.com" in url and (account_evidence or usable_content):
         return {
             "auth_state": "authenticated",
             "status": "ok",
@@ -991,6 +995,8 @@ def legacy_search_boss(keyword: str, city: str = "", limit: int = 10) -> Dict:
         log.warning(f"BOSS直聘搜索被门禁拦截: {gate['reason']}")
         return _format_search_error("BOSS直聘", {
             "error": f"搜索被策略门禁拦截: {gate['reason']}",
+            "failure_type": "rate_limited",
+            "manual_action_required": False,
             "gate_status": gate,
         }, trace=trace, strategy="stealth_cdp_page")
 

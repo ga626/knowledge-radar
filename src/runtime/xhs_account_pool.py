@@ -72,7 +72,7 @@ def xhs_account_pool_summary(registry: Dict[str, Any] | None = None) -> Dict[str
         if not row.get("manual_action_required")
         and not row.get("cooldown_active")
         and str(row.get("runtime_state") or "") not in {"blocked", "locked"}
-        and int((row.get("risk") or {}).get("risk_score") or 100) <= _max_auto_switch_risk(policy)
+        and _risk_score(row) < _max_auto_switch_risk(policy)
     ]
     return {
         "schema": "knowledgeradar-xhs-account-pool/v3",
@@ -90,7 +90,7 @@ def xhs_account_pool_summary(registry: Dict[str, Any] | None = None) -> Dict[str
             "accounts": len(account_rows),
             "profiles": len(profiles),
             "bindings": len(bindings),
-            "healthy": sum(1 for row in account_rows if row.get("runtime_state") in {"healthy", "available"} or row.get("status") == "healthy"),
+            "healthy": sum(1 for row in available_rows if row.get("runtime_state") in {"healthy", "available"}),
             "cooldown": sum(1 for row in account_rows if row.get("cooldown_active")),
             "manual_action": sum(1 for row in account_rows if row.get("manual_action_required")),
         },
@@ -119,6 +119,7 @@ def select_account(
     reason_code: str = "",
     switches_used: int = 0,
     allow_manual_recovery_followup: bool = False,
+    excluded_profile_ids: List[str] | None = None,
 ) -> Dict[str, Any]:
     """Select the lowest-risk account for a purpose and return policy outcome."""
     registry = registry or profile_registry_internal()
@@ -128,14 +129,17 @@ def select_account(
     if account_rows is None:
         account_rows = xhs_account_pool_summary(registry).get("accounts", [])
     candidates = []
+    excluded = set(excluded_profile_ids or [])
     for row in account_rows:
+        if not row.get("profile_id") or row.get("profile_id") in excluded:
+            continue
         if str(row.get("platform") or "xiaohongshu").lower() not in {"xiaohongshu", "xhs"}:
             continue
-        risk_score = int((row.get("risk") or {}).get("risk_score") or 100)
+        risk_score = _risk_score(row)
         runtime_state = str(row.get("runtime_state") or "")
-        if row.get("manual_action_required") or runtime_state in {"blocked", "locked"}:
+        if row.get("manual_action_required") or row.get("cooldown_active") or runtime_state in {"blocked", "locked"}:
             continue
-        if risk_score > _max_auto_switch_risk(policy):
+        if risk_score >= _max_auto_switch_risk(policy):
             continue
         candidates.append(row)
     recommended = candidates[0] if candidates else {}
@@ -144,7 +148,7 @@ def select_account(
         purpose=purpose,
         mode=policy_mode,
         reason_code=reason_code,
-        risk_score=int((recommended.get("risk") or {}).get("risk_score") or 100),
+        risk_score=_risk_score(recommended),
         policy=policy,
         switches_used=switches_used,
         allow_manual_recovery_followup=allow_manual_recovery_followup,
@@ -163,6 +167,14 @@ def select_account(
         "switch_decision": decision,
         "requires_manual_confirm": bool(decision.get("manual_confirm_required")),
     }
+
+
+def _risk_score(row: Dict[str, Any]) -> int:
+    value = (row.get("risk") or {}).get("risk_score")
+    try:
+        return int(value) if value is not None else 100
+    except (TypeError, ValueError):
+        return 100
 
 
 def _max_auto_switch_risk(policy: Dict[str, Any]) -> int:

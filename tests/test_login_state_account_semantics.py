@@ -582,9 +582,9 @@ def test_search_recruitment_promotes_manual_interaction(monkeypatch) -> None:
     assert result["metadata"]["status_class"] == "NEEDS_INTERACTION"
     assert result["error"]["manual_interaction_envelope"]["platform"] == "boss"
     assert result["error"]["manual_interaction_envelope"]["original_tool"] == "search_recruitment"
-    assert result["error"]["manual_interaction"]["status"] == "action_required_not_opened"
+    assert result["error"]["manual_interaction"]["status"] == "waiting_for_user"
     assert result["error"]["manual_interaction"]["manual_open_mode"] == "health_check(mode='request_browser_interaction:boss:login_required')"
-    assert interactions == []
+    assert interactions[0][0] == "boss"
 
 
 def test_search_recruitment_does_not_open_browser_for_liepin_ambiguous(monkeypatch) -> None:

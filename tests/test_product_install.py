@@ -28,6 +28,21 @@ def _load():
 installer = _load()
 
 
+def test_upgrade_restores_only_previously_selected_components(tmp_path, monkeypatch):
+    data_root = tmp_path / "data"
+    installer.write_json_atomic(installer.capability_state_path(data_root), {
+        "schema": installer.CAPABILITY_STATE_SCHEMA,
+        "capabilities": {"media_downloader": {"status": "APPLIED"}},
+    })
+    calls = []
+    monkeypatch.setattr(installer.subprocess, "run", lambda *_args, **_kwargs: types.SimpleNamespace(returncode=1))
+    monkeypatch.setattr(installer, "_run_optional_download", lambda command, **kwargs: calls.append(command))
+    result = installer.restore_selected_runtime_components(tmp_path, Path("python.exe"), data_root)
+    assert result == ["media_downloader"]
+    assert len(calls) == 1 and calls[0][-1].startswith("yt-dlp")
+    assert not any("whisper" in arg or "playwright" == arg for command in calls for arg in command)
+
+
 @pytest.fixture(autouse=True)
 def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
@@ -391,6 +406,7 @@ def test_media_component_plans_are_console_owned_and_separate_runtime_from_model
 
     assert downloader["details"]["command"][-1] == "yt-dlp>=2024.8.6"
     assert runtime["details"]["command"][-1] == "faster-whisper>=1.1,<2.0"
+    assert "av>=11,<19" in runtime["details"]["command"]
     assert model["details"]["label"] == "基础转写模型（base）"
     assert model["details"]["boundary"].startswith("需要先安装本地转写运行时")
 

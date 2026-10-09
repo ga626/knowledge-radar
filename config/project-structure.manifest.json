@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-08-25",
+  "updated_at": "2026-10-09",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -30,6 +30,13 @@
     }
   ],
   "directories": [
+    {
+      "path": "src/runtime/",
+      "area": "dev_runtime",
+      "role": "Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "include"
+    },
     {
       "path": "src/",
       "area": "dev_runtime",
@@ -183,6 +190,13 @@
       "role": "Optional bundled/local Python runtime.",
       "codex_edit": "do_not_edit",
       "release": "exclude_from_git_optional_in_distribution"
+    },
+    {
+      "path": "config/recruitment_city_registry.json",
+      "area": "dev_runtime",
+      "role": "公开招聘城市参数表；随产品分发，不含用户状态或凭据。",
+      "codex_edit": "allowed",
+      "release": "include"
     }
   ],
   "forbidden_release_patterns": [
@@ -290,7 +304,8 @@
     "start-knowledgeradar-server.cmd",
     "start-knowledgeradar-server-detached.py",
     "start-knowledgeradar-server-hidden.ps1",
-    "pyproject.toml"
+    "pyproject.toml",
+    "config/recruitment_city_registry.json"
   ],
   "watch_path_globs": [
     ".npmrc",

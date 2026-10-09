@@ -92,6 +92,8 @@ def test_xhs_empty_detail_does_not_request_manual_login(monkeypatch, tmp_path) -
         )
     )
     strategy._call_bridge = lambda note_id, xsec_token, xsec_source: {"status": "ok", "noteData": {}}  # type: ignore[method-assign]
+    # Parser fixture: account orchestration has its own integration regression.
+    strategy._extract = strategy._extract_single
 
     response = strategy.extract(DetailRequest(url="https://www.xiaohongshu.com/explore/0123456789abcdef01234567"))
 
@@ -202,6 +204,7 @@ def test_xhs_security_detail_requests_manual_login(monkeypatch, tmp_path) -> Non
         )
     )
     strategy._call_bridge = lambda note_id, xsec_token, xsec_source: {"status": "ok", "noteData": note_data}  # type: ignore[method-assign]
+    strategy._extract = strategy._extract_single
 
     response = strategy.extract(DetailRequest(url="https://www.xiaohongshu.com/explore/0123456789abcdef01234567"))
 

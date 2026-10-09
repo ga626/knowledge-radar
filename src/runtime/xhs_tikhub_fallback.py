@@ -13,7 +13,6 @@ from typing import Any, Dict
 
 import httpx
 
-from .chrome_manager import XHS_CHROME_DEBUG_PORT
 from .env_loader import load_runtime_env
 from .xhs_tikhub_adapter import normalize_tikhub_xhs_detail_response, normalize_tikhub_xhs_search_response
 from .xhs_tikhub_usage import (
@@ -116,7 +115,7 @@ def plan_tikhub_break_glass_fallback(
             "enabled": enabled,
             "dry_run": dry_run,
             "browser_pool_unavailable": browser_unavailable,
-            "trigger_condition": "healthy_browser_count_zero_or_no_observed_search_candidate",
+            "trigger_condition": "task_browser_accounts_exhausted",
             "daily_budget_usd": budget,
             "max_calls_per_task": max_calls,
             "daily_usage": daily.get("summary", {}),
@@ -286,9 +285,10 @@ def execute_tikhub_xhs_detail_fallback(
     confirmation: str = "",
     timeout_s: float = 20.0,
     task_failover_id: str = "",
+    browser_exhaustion: Dict[str, Any] | None = None,
 ) -> Dict[str, Any]:
     plan = plan_tikhub_xhs_detail_fallback(note_id, share_text=share_text)
-    auto_allowed = _break_glass_enabled() and not _break_glass_dry_run()
+    auto_allowed = _break_glass_enabled() and not _break_glass_dry_run() and _browser_pool_unavailable(browser_exhaustion or {}, {})
     if confirmation != CONFIRMATION_PHRASE and not auto_allowed:
         return {**plan, "status": "blocked", "reason_code": "MANUAL_CONFIRM_REQUIRED", "api_call_count": 0}
     if _break_glass_dry_run() and confirmation != CONFIRMATION_PHRASE:
@@ -406,14 +406,17 @@ def _break_glass_max_calls() -> int:
 
 
 def _browser_pool_unavailable(browser_availability: Dict[str, Any], route_scoring: Dict[str, Any]) -> bool:
-    try:
-        healthy_count = int(browser_availability.get("healthy_count") or 0)
-    except Exception:
-        healthy_count = 0
-    if healthy_count > 0:
+    # Missing observations and historical route scores never authorize spend.
+    if browser_availability.get("schema") != "xhs-task-browser-exhaustion/v1":
         return False
-    top = route_scoring.get("top_recommendation") or {}
-    if str(top.get("browser_base") or "") == f"chrome_{XHS_CHROME_DEBUG_PORT}" and str(top.get("channel_id") or "") == f"chrome_{XHS_CHROME_DEBUG_PORT}_scrapling_cdp":
-        if str(top.get("recommendation") or "") == "best_observed_candidate":
-            return False
-    return True
+    registered = set(browser_availability.get("registered_profile_ids") or [])
+    failed = set(browser_availability.get("failed_profile_ids") or [])
+    excluded = set(browser_availability.get("policy_excluded_profile_ids") or [])
+    return bool(
+        registered
+        and browser_availability.get("task_id")
+        and browser_availability.get("exhausted") is True
+        and browser_availability.get("common_failure") is False
+        and registered == failed | excluded
+        and not (failed & excluded)
+    )

@@ -1,23 +1,18 @@
-# Account And Browser Profile Setup
+# 平台账号与登录恢复
 
-Some platforms require interactive login and persistent browser profiles. KnowledgeRadar cannot and should not bypass QR-code login, CAPTCHA, device verification, or platform risk controls.
+在本地控制台的“能力中心 → 平台账号与登录恢复”查看登记账号。小红书按 A/B/C 显示登记全名和登记编号；编号来自登记字段或名称末尾的数字，未登记时明确显示缺失，不使用调试端口猜测账号。
 
-Run:
+## 日常使用
 
-```bat
-scripts\setup_accounts.bat
-```
+- 工具调用实际观察到登录失效或验证要求时，登记对应账号待办、请求 Windows 提醒并打开该账号的受管浏览器。无需一直打开网站。Windows 提醒可能受系统设置影响；网站待办和工具响应保留同一事件。
+- 小红书可以继续尝试其他允许账号，已失效账号仍保留恢复提示。公共组件错误、请求限频和空结果不会被当作扫码问题。
+- 登录后点击该账号的“已登录，验证恢复”。探针通过后才恢复普通浏览器生命周期；尚未通过时保留待办。小红书已有扫码等待会自动监测恢复。
+- 关闭窗口只代表窗口被回收。基于 Cookie 的探针只证明认证材料存在；实际调用仍逐次核验。安全验证由你操作。
 
-The helper opens the selected platform login page and waits for you to finish. Before login/profile setup, platform checks may be reported as needing interaction or configuration. After setup, rerun verification; configured platforms should pass, and any remaining degradation should be investigated.
+## 唯一运行规则
 
-## Platforms
+搜索和详情共用任务内账号执行器。每个允许账号在同一任务最多尝试一次，切号后从 CDP、认证到执行重新走完整流程。自动付费兜底需要本任务的穷尽回执，历史健康、推荐当前账号或公共组件错误均不能授权付费。
 
-| Platform | Setup expectation | First-run verification |
-| --- | --- | --- |
-| Xiaohongshu | Interactive browser login/profile; optional probe after setup | Needs interaction before login; should pass after configured |
-| Zhihu | Interactive browser login/profile | Needs interaction before login; should pass after configured |
-| BOSS | Interactive browser login and possible security verification | Needs interaction/security handling before login; should pass after configured |
-| Liepin | Interactive browser login when required | Needs interaction before login when the site asks; should pass after configured |
-| Maimai | Interactive browser login when required | Uses web fallback when browser search is unavailable; remaining failures should be investigated |
+旧详情内切号、切号后立即兜底、静态健康计数决定付费，以及只返回“需要操作但不提醒”的普通调用入口已经退休。独立 Profile、风险冷却、跨进程操作锁、费用上限、人工交互去重和闲置浏览器回收继续承担各自职责。
 
-Profile examples live in `config\profile_registry.example.json`. Real profile state belongs in `config\profile_registry.json` or `local\profiles\`, both local-only.
+开发预览只读，账号操作在已安装的稳定控制台执行。Profile、Cookie、登记表和运行状态保留在产品数据根，更新不会覆盖。

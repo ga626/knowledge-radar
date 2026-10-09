@@ -121,7 +121,11 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
         status_kind = str(pack["status_kind"])
         ready = bool(configured_count) if fields else status_kind == "ready"
         if status_kind == "manual":
-            status = "needs_interaction"
+            from runtime.browser_sessions import browser_sessions_summary
+
+            sessions = browser_sessions_summary(limit=100).get("sessions") or []
+            pending = any(row.get("state") in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"} for row in sessions)
+            status = "needs_interaction" if pending else "on_call_check"
         elif status_kind == "optional" and not ready:
             status = "optional"
         else:
@@ -148,9 +152,7 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
 def optional_capabilities() -> list[dict[str, Any]]:
     """Return user-selectable downloads, never a generic host-software bucket."""
     root_raw = os.environ.get("KR_DATA_ROOT", "").strip()
-    if not root_raw:
-        return []
-    data_root = Path(root_raw).expanduser()
+    data_root = Path(root_raw).expanduser() if root_raw else Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "KnowledgeRadar" / "data"
     state_path = data_root / "state" / "capabilities.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
@@ -163,11 +165,13 @@ def optional_capabilities() -> list[dict[str, Any]]:
         and (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
     )
     browser_root = data_root / "playwright"
-    browser_ready = isinstance(rows.get("browser"), dict) and rows["browser"].get("status") == "APPLIED" and browser_root.is_dir()
+    browser_ready = browser_root.is_dir() and any(path.is_file() for pattern in ("chromium-*/chrome-*/chrome.exe", "chromium-*/chrome-*/chrome", "chromium-*/chrome-*/chrome-linux*/chrome") for path in browser_root.glob(pattern))
     media_downloader_ready = bool(importlib.util.find_spec("yt_dlp"))
     transcription_runtime_ready = bool(importlib.util.find_spec("faster_whisper"))
     model_cache = whisper_model_cache_dir()
-    transcription_model_ready = model_cache.is_dir() and any(model_cache.iterdir())
+    required_model_files = ("model.bin", "config.json", "tokenizer.json")
+    snapshots = model_cache.glob("models--Systran--faster-whisper-base/snapshots/*") if model_cache.is_dir() else []
+    transcription_model_ready = any(all((path / name).is_file() and (path / name).stat().st_size > 0 for name in required_model_files) for path in snapshots)
     return [
         {
             "id": "browser",
@@ -228,7 +232,9 @@ def local_component_catalog() -> dict[str, Any]:
     """Organize local setup by user goal, with every download owned by the console."""
     chrome = resolve_managed_chrome()
     node_available = bool(shutil.which("node"))
-    ffmpeg_available = bool(shutil.which("ffmpeg"))
+    from runtime.dependency_preflight import _ffmpeg_path
+
+    ffmpeg_available = bool(_ffmpeg_path())
     selectable = {row["id"]: row for row in optional_capabilities()}
     return {
         "summary": "插件本体只安装控制台和基础研究路径；所有额外功能组件都在这里按你的选择下载或完成安装引导。",
@@ -538,6 +544,8 @@ def _control_plane_capabilities(
             state, detail = "connected", "已接入"
         elif status == "needs_interaction":
             state, detail = "manual", "需要登录"
+        elif status == "on_call_check":
+            state, detail = "on_call_check", "调用时核验"
         elif status == "optional":
             state, detail = "optional", "按需启用"
         else:
@@ -587,7 +595,7 @@ def dashboard_snapshot(*, window_days: int = 7) -> dict[str, Any]:
         "control_plane": {
             "capabilities": control_plane,
             "connected_count": sum(item["state"] in {"connected", "local_ready"} for item in control_plane),
-            "attention_count": sum(item["state"] not in {"connected", "local_ready"} for item in control_plane),
+            "attention_count": sum(item["state"] not in {"connected", "local_ready", "on_call_check"} for item in control_plane),
         },
         "next_action": next_action,
         "activity": {"tasks": task_activity, "tools": trace_activity, "usage": usage_activity},
@@ -608,6 +616,7 @@ def console_configuration_snapshot() -> dict[str, Any]:
             "needs_setup": "需要配置",
             "optional": "按需启用",
             "needs_interaction": "需要人工登录",
+            "on_call_check": "调用时核验",
         },
     }
 

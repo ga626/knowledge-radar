@@ -61,6 +61,7 @@ def validation_report(
     *,
     actual_tools: Iterable[str] | None = None,
     repo_root: str | Path | None = None,
+    check_test_paths: bool = True,
 ) -> dict[str, Any]:
     errors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
@@ -114,7 +115,7 @@ def validation_report(
                         }
                     )
         if root:
-            for rel_path in list(tree.get("owner_code_paths") or []) + list(tree.get("tests") or []):
+            for rel_path in list(tree.get("owner_code_paths") or []) + (list(tree.get("tests") or []) if check_test_paths else []):
                 if not (root / str(rel_path)).exists():
                     errors.append({"tree_id": tree_id, "type": "declared_path_missing", "path": str(rel_path)})
 

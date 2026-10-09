@@ -15,6 +15,7 @@ def plan_xhs_account_switch(
     switches_used: int = 0,
     registry: Dict[str, Any] | None = None,
     allow_manual_recovery_followup: bool = False,
+    excluded_profile_ids: list[str] | None = None,
 ) -> Dict[str, Any]:
     """Return a switch plan without executing it."""
     registry = registry or profile_registry_internal()
@@ -24,6 +25,7 @@ def plan_xhs_account_switch(
         registry=registry,
         switches_used=switches_used,
         allow_manual_recovery_followup=allow_manual_recovery_followup,
+        excluded_profile_ids=excluded_profile_ids,
     )
     executable = admission.get("action") == "allowed"
     return {
@@ -55,6 +57,7 @@ def execute_xhs_account_switch(
     switches_used: int = 0,
     registry: Dict[str, Any] | None = None,
     allow_manual_recovery_followup: bool = False,
+    excluded_profile_ids: list[str] | None = None,
 ) -> Dict[str, Any]:
     """Switch the managed XHS Chrome profile when safe_auto policy permits it.
 
@@ -69,6 +72,7 @@ def execute_xhs_account_switch(
         switches_used=switches_used,
         registry=registry,
         allow_manual_recovery_followup=allow_manual_recovery_followup,
+        excluded_profile_ids=list(set(excluded_profile_ids or []) | ({current_profile_id} if current_profile_id else set())),
     )
     if not plan.get("executable"):
         return {**plan, "status": "blocked", "execution_mode": "not_executed"}

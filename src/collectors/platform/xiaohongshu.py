@@ -34,9 +34,9 @@ from runtime.xhs_candidates import normalize_xhs_detail_snapshot, xhs_detail_con
 from runtime.xhs_account_events import record_xhs_account_event
 from runtime.profile_registry import profile_registry_internal, raw_registry_for_platform, select_main_chain_profile
 from runtime.xhs_account_pool import xhs_account_pool_summary
-from runtime.xhs_account_switcher import execute_xhs_account_switch
 from runtime.xhs_route_events import record_xhs_route_event, xhs_route_event_summary
 from runtime.xhs_route_scoring import xhs_route_scoring_summary
+from runtime.xhs_task_failover import CURRENT_XHS_PROFILE, run_browser_accounts, task_profile
 from runtime.xhs_tikhub_fallback import execute_tikhub_break_glass_fallback
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -59,7 +59,7 @@ XHS_SEARCH_BRIDGE_BREAKER_KEY = "collector:xhs.search_bridge_fallback"
 
 def _resolve_xhs_cdp_url(chrome_debug_url) -> str:
     """Resolve legacy helper or current concrete XHS CDP endpoint safely."""
-    resource_key = _browser_resource_key("xhs")
+    resource_key = f"xhs:{CURRENT_XHS_PROFILE.get()}" if CURRENT_XHS_PROFILE.get() else _browser_resource_key("xhs")
     return str(chrome_debug_url(resource_key) if callable(chrome_debug_url) else (chrome_debug_url or ""))
 
 
@@ -146,6 +146,8 @@ def _record_xhs_login_preflight(reason_code: str, state: Dict) -> None:
 
 
 def _selected_xhs_profile_id() -> str:
+    if CURRENT_XHS_PROFILE.get():
+        return CURRENT_XHS_PROFILE.get()
     try:
         pid = _find_chrome_with_debug_port("xhs")
         current_dir = os.path.normcase(os.path.abspath(_chrome_user_data_dir_for_pid(pid))).lower() if pid else ""
@@ -170,54 +172,8 @@ def _selected_xhs_profile_id() -> str:
         return ""
 
 
-def _auto_switch_xhs_account(
-    *,
-    purpose: str,
-    reason_code: str,
-    trace: CollectionTrace | None = None,
-    last_tool: str = "",
-    notes: List[str] | None = None,
-    current_profile_id: str = "",
-    switches_used: int = 0,
-    allow_manual_recovery_followup: bool = False,
-) -> Dict:
-    """Record the failure and execute readonly account switching if admitted."""
-    current_profile_id = current_profile_id or _selected_xhs_profile_id()
-    record_result: Dict = {}
-    if current_profile_id:
-        try:
-            record_result = record_xhs_account_event(
-                current_profile_id,
-                reason_code,
-                last_tool=last_tool or f"xhs_{purpose}",
-                notes=notes or [],
-            )
-        except Exception as exc:
-            record_result = {"status": "error", "error": str(exc)}
-    try:
-        switch_result = execute_xhs_account_switch(
-            purpose,
-            reason_code=reason_code,
-            current_profile_id=current_profile_id,
-            switches_used=switches_used,
-            allow_manual_recovery_followup=allow_manual_recovery_followup,
-        )
-    except Exception as exc:
-        switch_result = {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
-    payload = {
-        "current_profile_id": current_profile_id,
-        "reason_code": reason_code,
-        "record": record_result,
-        "switch": switch_result,
-    }
-    if trace:
-        trace.add(
-            "xhs_account_auto_switch",
-            "ok" if switch_result.get("status") == "ok" else "skipped",
-            detail=str(switch_result.get("denial_reason") or switch_result.get("reason_code") or reason_code),
-            metadata=payload,
-        )
-    return payload
+def _auto_switch_xhs_account(**kwargs) -> Dict:
+    return dict(status="skipped", reason="task_executor_owns_account_failover")
 
 
 def _xhs_login_preflight_result(
@@ -266,7 +222,7 @@ def _xhs_login_preflight_result(
         {
             "error": "小红书登录态未确认，已在搜索前停止",
             "type": "login_required_before_search",
-            "failure_type": "login_required_before_search",
+            "failure_type": "anti_bot_verification" if "verification" in reason else "login_required" if reason else "auth_state_unconfirmed",
             "message": "小红书登录态未确认，未触发站内搜索。",
             "retryable": False,
             "platform_state": "login_required" if reason else "auth_state_unconfirmed",
@@ -305,17 +261,18 @@ def _xhs_login_preflight_result(
     return result
 
 
-def _try_tikhub_break_glass_search(keyword: str, limit: int, *, trace: CollectionTrace, trigger_reason: str) -> Dict | None:
+def _try_tikhub_break_glass_search(keyword: str, limit: int, *, trace: CollectionTrace, trigger_reason: str, browser_exhaustion: Dict | None = None) -> Dict | None:
     """Try paid TikHub search only when break-glass guards allow it."""
     try:
-        registry = profile_registry_internal()
-        account_pool = xhs_account_pool_summary(registry)
+        if not browser_exhaustion:
+            return None
         route_matrix = xhs_route_event_summary(recent_limit=80)
         route_scoring = xhs_route_scoring_summary(route_matrix)
         result = execute_tikhub_break_glass_fallback(
             keyword,
             limit=limit,
-            browser_availability=account_pool.get("availability") or {},
+            browser_availability=browser_exhaustion,
+            task_failover_id=str(browser_exhaustion.get("task_id") or ""),
             route_scoring=route_scoring,
         )
         status = str(result.get("status") or "")
@@ -811,9 +768,10 @@ def _external_search_then_detail(keyword: str, limit: int, *, trace: CollectionT
                     log_info=log.info,
                     log_warning=log.warning,
                     log_error=log.error,
-                    auto_switch_account=_auto_switch_xhs_account,
                     request_user_login=request_user_login,
                     selected_profile_id=_selected_xhs_profile_id,
+                    allow_auto_user_login_request=True,
+                    allow_paid_fallback=False,
                 )
             )
             detail = detail_strategy.extract(
@@ -897,7 +855,7 @@ def _xhs_detail_needs_fallback(note_data: Dict) -> bool:
 def _recover_xhs_xsec_token(note_id: str) -> str:
     """Recover xsec_token from all open XHS search/detail tabs."""
     try:
-        resource_key = _browser_resource_key("xhs")
+        resource_key = f"xhs:{CURRENT_XHS_PROFILE.get()}" if CURRENT_XHS_PROFILE.get() else _browser_resource_key("xhs")
         if not _ensure_chrome_debugging(resource_key):
             return ""
         scrapling_path = os.path.join(PROJECT_ROOT, "media_platform", "xhs", "scrapling_adapter.py")
@@ -962,7 +920,7 @@ def _recover_pending_xhs_interaction_if_authenticated(state: Dict, *, profile_id
             (
                 item
                 for item in pending
-                if str(item.get("platform") or "") == "xhs"
+                if str(item.get("platform") or "").split(":", 1)[0] == "xhs"
                 and (
                     (profile_id and str(item.get("profile_id") or "") == profile_id)
                     or (profile_hash and str(item.get("profile_dir_hash") or "") == profile_hash)
@@ -987,7 +945,7 @@ def _recover_pending_xhs_interaction_if_authenticated(state: Dict, *, profile_id
 def _extract_xhs_detail_via_cdp(note_id: str, xsec_token: str = "", xsec_source: str = "pc_search") -> Dict | None:
     """Use the existing XHS CDP page as a fast detail fallback."""
     try:
-        resource_key = _browser_resource_key("xhs")
+        resource_key = f"xhs:{CURRENT_XHS_PROFILE.get()}" if CURRENT_XHS_PROFILE.get() else _browser_resource_key("xhs")
         if not _ensure_chrome_debugging(resource_key):
             return None
         scrapling_path = os.path.join(PROJECT_ROOT, "media_platform", "xhs", "scrapling_adapter.py")
@@ -1001,23 +959,21 @@ def _extract_xhs_detail_via_cdp(note_id: str, xsec_token: str = "", xsec_source:
         if xsec_token:
             target_url += f"?xsec_token={xsec_token}&xsec_source={xsec_source or 'pc_search'}"
 
-        snapshot_js = xhs_detail_content_snapshot_js(max_chars=2400)
+        snapshot_js = xhs_detail_content_snapshot_js(max_chars=24000)
         snapshot_js_json = json.dumps(snapshot_js)
         js_code = r"""
-        (async (url) => {
+        (async () => {
           const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-          location.href = url;
-          await sleep(4500);
           const snapshotFactory = eval(%s);
           let data = await snapshotFactory();
           if (!data.selectorTexts || (!data.selectorTexts['#detail-title'] && !data.selectorTexts['#detail-desc'])) {
             await sleep(3500);
             data = await snapshotFactory();
           }
-          return data;
-        })
+          return JSON.stringify(data);
+        })()
         """ % snapshot_js_json
-        snapshot = scrapling_adapter._cdp_json(page_ws, f"({js_code})({json.dumps(target_url)})", timeout=15)
+        snapshot = scrapling_adapter._cdp_json(page_ws, js_code, timeout=20, navigate_url=target_url)
         normalized = normalize_xhs_detail_snapshot(snapshot if isinstance(snapshot, dict) else {})
         data = {
             "title": normalized.get("title", ""),
@@ -1097,138 +1053,58 @@ def legacy_search_xiaohongshu(keyword: str, limit: int = 10, search_type: str = 
 
     with xhs_operation("search", keyword=keyword):
         with chrome_active_operation("xhs"):
-            return _legacy_search_xiaohongshu_impl(keyword, limit, search_type, probe_mode)
+            return _search_xhs_account_task(keyword, limit, search_type, probe_mode)
 
 
-def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: str = "all", probe_mode: bool = False) -> Dict:
+def _search_xhs_account_task(keyword: str, limit: int, search_type: str, probe_mode: bool) -> Dict:
+    registry = profile_registry_internal()
+    pool = xhs_account_pool_summary(registry)
+
+    def attempt(profile_id: str) -> Dict:
+        with task_profile(profile_id), chrome_active_operation(f"xhs:{profile_id}"):
+            result = _legacy_search_xiaohongshu_impl(keyword, limit, search_type, probe_mode, profile_id=profile_id)
+            if not result.get("error"):
+                record_xhs_account_event(profile_id, "OK", last_tool="search_xiaohongshu")
+            return result
+
+    result, receipt = run_browser_accounts(
+        registry, pool, _selected_xhs_profile_id(), attempt,
+        lambda profile, reason: record_xhs_account_event(profile, reason, last_tool="search_xiaohongshu"),
+    )
+    if result.get("error") and receipt["exhausted"] and not probe_mode:
+        trace = CollectionTrace("小红书", ["browser_account_pool", "external_search_then_detail", "tikhub_break_glass"])
+        trace.add("browser_account_pool", "failed", detail="task_accounts_exhausted", metadata=receipt)
+        external = _external_search_then_detail(keyword, min(limit, 20), trace=trace, search_type=search_type)
+        if external.get("items"):
+            result = external
+        else:
+            paid = _try_tikhub_break_glass_search(
+                keyword, limit, trace=trace, trigger_reason="task_accounts_exhausted", browser_exhaustion=receipt,
+            )
+            if paid:
+                result = paid
+    result.setdefault("metadata", {})["account_failover"] = receipt
+    return result
+
+
+def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: str = "all", probe_mode: bool = False, *, profile_id: str = "") -> Dict:
     log.info(f"search_xiaohongshu: keyword={keyword!r}, limit={limit}, type={search_type}, probe_mode={probe_mode}")
     limit = 1 if probe_mode else min(limit, 20)
-    # A gate is a historical safety signal, not a global verdict on every
-    # isolated profile or on the non-browser fallbacks.  It changes the first
-    # low-risk action to external discovery, then the current account still
-    # gets one serialized page-level preflight if discovery produces no usable
-    # evidence.  This must never fan a verified risk event out to A/B/C.
-    gate = _xhs_search_gate_active()
-    prefer_external = False if probe_mode else bool(gate.get("active") or _recent_xhs_search_verified())
-    if prefer_external:
-        strategy_tree = ["previous_global_gate_observed", "external_search_then_detail", "chrome_cdp_preflight", "login_preflight", "scrapling_cdp", "tikhub_break_glass", "bridge_fallback_diagnostic_only"]
-    else:
-        strategy_tree = ["chrome_cdp_preflight", "login_preflight", "scrapling_cdp", "tikhub_break_glass", "bridge_fallback_diagnostic_only"]
-    trace = CollectionTrace("小红书", strategy_tree)
+    trace = CollectionTrace("小红书", ["chrome_cdp_preflight", "login_preflight", "scrapling_cdp"] )
     effective_type = "image" if probe_mode and search_type in ("all", "normal", "") else ("all" if search_type in ("all", "normal", "") else search_type)
     guard_state = _xhs_low_frequency_guard(keyword, search_type=effective_type, probe_mode=probe_mode)
 
-    if gate.get("active") and not probe_mode:
-        trace.add(
-            "previous_global_gate_observed",
-            "ok",
-            detail="historical_gate_changes_first_action_only",
-            metadata={
-                "last_outcome": str(gate.get("last_outcome") or ""),
-                "cooldown_remaining_s": gate.get("cooldown_remaining_s", 0),
-                "last_reason": str(gate.get("last_reason") or "")[:120],
-            },
-        )
-
-    if prefer_external:
-        log.info("  策略: 历史失败信号存在，先以站外发现 + 详情验证获取低风险证据")
-        fallback_result = _external_search_then_detail(keyword, limit, trace=trace, search_type=effective_type)
-        if fallback_result.get("items"):
-            _record_xhs_search_gate(
-                outcome="ok",
-                reason="external_search_then_detail_success",
-                search_type=effective_type,
-                probe_mode=probe_mode,
-                metadata={"strategy": "external_search_then_detail", "historical_gate_observed": bool(gate.get("active"))},
-            )
-            return fallback_result
-
-    active_profile_id = _selected_xhs_profile_id()
+    active_profile_id = profile_id or _selected_xhs_profile_id()
     active_resource = f"xhs:{active_profile_id}" if active_profile_id else "xhs"
     if not _ensure_chrome_debugging(active_resource, target_profile_id=active_profile_id):
-        log.warning("Chrome 调试模式不可用，终止小红书搜索")
         trace.add("chrome_cdp_preflight", "failed", detail="cdp_unavailable", error_type="cdp_unavailable", retryable=True)
-        switch = _auto_switch_xhs_account(
-            purpose="search",
-            reason_code="CDP_PORT_UNAVAILABLE",
-            trace=trace,
-            last_tool="search_xiaohongshu_cdp_preflight",
-        )
-        api_fallback = _try_tikhub_break_glass_search(keyword, limit, trace=trace, trigger_reason="cdp_unavailable")
-        if api_fallback:
-            return api_fallback
-        result = _format_search_error("小红书", {
-            "error": "Chrome/CDP 不可用，无法执行小红书搜索",
-            "retryable": True,
-            "hint": f"确认 Chrome 可启动、{XHS_CHROME_DEBUG_PORT} 调试端口未被占用，并保留 xhs_user_data_dir 登录态",
+        return _format_search_error("小红书", {
+            "error": "该账号 Chrome/CDP 连接不可用", "type": "cdp_unavailable", "retryable": True,
         }, trace=trace, strategy="chrome_cdp_preflight")
-        metadata = dict(result.get("metadata") or {})
-        metadata["platform_health_probe"] = _xhs_probe_payload(
-            status="fail",
-            reason_code="CDP_UNAVAILABLE",
-            mode="read_only",
-            evidence={"cdp_url": _chrome_debug_url(active_resource)},
-        )
-        metadata["account_auto_switch"] = switch
-        result["metadata"] = metadata
-        return result
     trace.add("chrome_cdp_preflight", "ok", detail="debug_port_ready")
     account_state = xiaohongshu_account_state(_chrome_debug_url(active_resource))
-    pending_recovery: Dict = {}
     if not _xhs_login_state_ok(account_state):
-        account_switches: List[Dict] = []
-        # A confirmed login or verification gate on any profile is immediately
-        # surfaced for that exact profile. Search probing then continues in the
-        # fixed B -> A -> C account-pool order; it never retries the gated
-        # profile and it never hides later account prompts behind the first.
-        for switches_used in range(3):
-            reason, trigger_evidence = _xhs_manual_auth_evidence(account_state)
-            if reason and active_profile_id:
-                interaction = request_user_login(
-                    "xhs",
-                    reason,
-                    target_profile_id=active_profile_id,
-                    trigger_evidence=trigger_evidence,
-                    source="search_xiaohongshu.login_failover",
-                )
-                trace.add("manual_interaction", "ok", detail=reason, metadata={"profile_id": active_profile_id, "manual_interaction": interaction})
-            if switches_used >= 2:
-                break
-            account_switch = _auto_switch_xhs_account(
-                purpose="search",
-                reason_code="SECURITY_VERIFICATION" if bool(account_state.get("has_verify_prompt")) else "LOGIN_REQUIRED",
-                trace=trace,
-                last_tool="search_xiaohongshu_login_preflight",
-                notes=[str(account_state.get("msg") or account_state.get("detail") or "")[:120]],
-                current_profile_id=active_profile_id,
-                switches_used=switches_used,
-                allow_manual_recovery_followup=True,
-            )
-            account_switches.append(account_switch)
-            switch = account_switch.get("switch") or {}
-            next_profile_id = str(switch.get("target_profile_id") or "")
-            if str(switch.get("status") or "") != "ok" or not next_profile_id:
-                break
-            active_profile_id = next_profile_id
-            active_resource = f"xhs:{active_profile_id}"
-            if not _ensure_chrome_debugging(active_resource, target_profile_id=active_profile_id):
-                continue
-            account_state = xiaohongshu_account_state(_chrome_debug_url(active_resource))
-            if _xhs_login_state_ok(account_state):
-                trace.add("login_preflight_after_account_switch", "ok", detail="alternate_profile_authenticated", metadata={"account_auto_switches": account_switches})
-                break
-        if _xhs_login_state_ok(account_state):
-            trace.add(
-                "login_preflight",
-                "ok",
-                detail="account_state_confirmed_after_failover",
-                metadata={"code": account_state.get("code"), "account_auto_switches": account_switches, "active_profile_id": active_profile_id},
-            )
-        else:
-            api_fallback = _try_tikhub_break_glass_search(keyword, limit, trace=trace, trigger_reason="login_preflight_failed")
-            if api_fallback:
-                return api_fallback
-            return _xhs_login_preflight_result(trace, account_state, account_switch={"attempts": account_switches}, profile_id_override=active_profile_id)
+        return _xhs_login_preflight_result(trace, account_state, profile_id_override=active_profile_id)
     pending_recovery = _recover_pending_xhs_interaction_if_authenticated(account_state, profile_id_override=active_profile_id)
     trace.add(
         "login_preflight",
@@ -1364,11 +1240,18 @@ def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: 
     except Exception as e:
         error_data = e.to_dict() if hasattr(e, "to_dict") else {"error": str(e), "type": "scrapling_error"}
         log.warning(f"Scrapling 小红书搜索失败，将回退 bridge: {error_data}")
+        if isinstance(e, (ImportError, ModuleNotFoundError, SyntaxError, FileNotFoundError)) or error_data.get("type") in {"dependency_missing", "configuration_error"}:
+            return _format_search_error("小红书", {
+                "error": "本地采集组件不可用，需修复组件后重试",
+                "type": "dependency_missing", "failure_type": "dependency_missing",
+                "retryable": False, "manual_action_required": False,
+            }, trace=trace, strategy="scrapling_cdp")
+
         verification_hit = error_data.get("login_required") or error_data.get("type") == "verification_required"
         error_type = "anti_bot_verification" if verification_hit else str(error_data.get("type") or "request_failed")
         trace.add("scrapling_cdp", "failed", detail=str(error_data.get("error") or ""), error_type=error_type, retryable=True)
         if verification_hit:
-            profile_id = _selected_xhs_profile_id()
+            profile_id = active_profile_id
             manual_interaction = (
                 request_user_login(
                     "xhs",
@@ -1391,24 +1274,7 @@ def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: 
                 detail="platform_verification_required",
                 metadata={"manual_interaction": manual_interaction},
             )
-        else:
-            _auto_switch_xhs_account(
-                purpose="search",
-                reason_code="SEARCH_PAGE_DEGRADED",
-                trace=trace,
-                last_tool="search_xiaohongshu_scrapling_cdp",
-                notes=[str(error_data.get("error") or "")[:120]],
-            )
-
         if verification_hit:
-            api_fallback = _try_tikhub_break_glass_search(
-                keyword,
-                limit,
-                trace=trace,
-                trigger_reason="scrapling_security_verification",
-            )
-            if api_fallback:
-                return api_fallback
             _record_xhs_search_gate(
                 outcome="blocked",
                 reason="platform_verification_required",

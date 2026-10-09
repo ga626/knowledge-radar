@@ -307,12 +307,16 @@ def snapshot(*, transport: str, tool_names: Iterable[str]) -> dict[str, Any]:
             current = _write({**current, "fallback_processes": fallback_processes})
     selected_transport = str(transport or "unknown")
     server = dict((current.get("server_processes") or {}).get(selected_transport) or current.get("server_process") or {})
-    server.setdefault("status", "running" if os.getpid() else "unknown")
-    server.setdefault("pid", os.getpid())
-    server.setdefault("transport", str(transport or "unknown"))
+    recorded_server = dict(server)
+    own_record = server.get("pid") == os.getpid()
+    if not own_record:
+        server = {"status": "running", "pid": os.getpid(), "transport": selected_transport,
+                  "source_fingerprint": "", "started_at": "", "registration_status": "not_observed_in_this_process"}
     declared_fingerprint = tool_list_fingerprint(names)
     observed = dict((current.get("tool_lists") or {}).get(selected_transport) or current.get("tool_list") or {})
-    session_status = "observed" if any(item.get("kind") == "tools_list_observed" for item in current.get("events", []) if isinstance(item, dict)) else "unobserved"
+    if not own_record:
+        observed = {}
+    session_status = "observed" if observed.get("status") == "observed" else "unobserved"
     continuity = evaluate_continuity(
         config_ok=True,
         service_ok=bool(server.get("status") == "running"),
@@ -324,6 +328,8 @@ def snapshot(*, transport: str, tool_names: Iterable[str]) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "server_process": server,
+        "recorded_server_process": recorded_server,
+        "response_process": {"pid": os.getpid(), "transport": selected_transport, "registration_matches_response": own_record},
         "server_processes": current.get("server_processes") or {},
         "fallback_processes": current.get("fallback_processes") or {},
         "fallback_tool_lists": current.get("fallback_tool_lists") or {},

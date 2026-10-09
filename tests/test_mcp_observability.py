@@ -46,6 +46,19 @@ def test_tool_fingerprint_is_order_independent() -> None:
     assert observability.tool_list_fingerprint(["b", "a", "a"]) == observability.tool_list_fingerprint(["a", "b"])
 
 
+def test_another_process_record_is_history_not_current_response(tmp_path, monkeypatch):
+    monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
+    observability.record_server_started(transport="stdio", tool_names=["native"], source_fingerprint="old")
+    observability.record_tool_list(transport="stdio", tool_names=["native"], session_id="old-session")
+    old_pid = observability.os.getpid()
+    monkeypatch.setattr(observability.os, "getpid", lambda: old_pid + 100000)
+    result = observability.snapshot(transport="stdio", tool_names=["native"])
+    assert result["server_process"]["pid"] == old_pid + 100000
+    assert result["recorded_server_process"]["pid"] == old_pid
+    assert result["mcp_session"]["status"] == "unobserved"
+    assert not result["response_process"]["registration_matches_response"]
+
+
 def test_concurrent_transactions_keep_json_state_and_leave_no_fixed_tmp(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
     errors: list[Exception] = []

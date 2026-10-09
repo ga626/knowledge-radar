@@ -38,7 +38,9 @@ log = logging.getLogger(__name__)
 SUMMARIZE_THRESHOLD_CHARS = 3000       # transcript 摘要阈值
 MAX_FRAMES = 8                          # 多模态分析最大帧数
 FRAME_INTERVAL_SEC = 15                 # 帧提取间隔（秒）
-FFMPEG_PATH = os.environ.get("KR_FFMPEG_EXE", "ffmpeg")
+from runtime.dependency_preflight import _ffmpeg_path
+
+FFMPEG_PATH = _ffmpeg_path() or "ffmpeg"
 
 
 # ─── 数据结构 ──────────────────────────────────────────────────────────

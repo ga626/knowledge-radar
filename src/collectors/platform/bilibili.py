@@ -9,7 +9,6 @@ import json
 import logging
 import os
 import re
-import shutil
 import subprocess
 import sys
 import threading
@@ -19,6 +18,7 @@ from typing import Dict, List, Optional
 import httpx
 from kr_core.collection import CollectionTrace, format_search_error, format_search_response
 from runtime.asr_policy import AsrPolicy
+from runtime.dependency_preflight import _ffmpeg_path
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 from runtime.task_adapter import LocalTaskAdapter, LocalTaskSpec
 from runtime.task_scope import make_task_scope, merge_scope_metadata
@@ -50,7 +50,7 @@ def _missing_transcription_components() -> list[str]:
         missing.append("媒体下载器（yt-dlp）")
     if importlib.util.find_spec("faster_whisper") is None:
         missing.append("本地转写运行时（faster-whisper）")
-    if not shutil.which("ffmpeg"):
+    if not _ffmpeg_path():
         missing.append("FFmpeg")
     return missing
 

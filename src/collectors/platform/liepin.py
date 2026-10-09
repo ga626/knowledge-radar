@@ -746,9 +746,9 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
         await sleep(400);
       }
       waitState.elapsedMs = Date.now() - waitStarted;
-      const expression = `
+      const expression = String.raw`
         (() => {
-          const clean = value => String(value || '').replace(/\\s+/g, ' ').trim();
+          const clean = value => String(value || '').replace(/\s+/g, ' ').trim();
           const text = document.body ? document.body.innerText || '' : '';
           const blocked = /安全验证|滑动验证|captcha/i.test(text);
           const isVisible = el => {
@@ -789,7 +789,7 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
             || (document.querySelector('h1') || document.querySelector('[class*="job-title"], [class*="JobTitle"]') || {}).textContent
             || document.title
           );
-          const salary = clean(((text.match(/\\d+(?:\\.\\d+)?\\s*[-~]\\s*\\d+(?:\\.\\d+)?\\s*[Kk万]?(?:·\\d+薪)?|面议/) || [])[0]) || '');
+          const salary = clean(((text.match(/\d+(?:\.\d+)?\s*[-~]\s*\d+(?:\.\d+)?\s*[Kk万]?(?:·\d+薪)?|面议/) || [])[0]) || '');
           const primaryIntro = clean(
             (document.querySelector('.job-intro-container .paragraph') || document.querySelector('.job-intro-container') || {}).innerText
             || (document.querySelector('.job-intro-container .paragraph') || document.querySelector('.job-intro-container') || {}).textContent
@@ -832,7 +832,6 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
             urlSignal,
             securityEvidenceStrength,
             loginEvidenceStrength,
-            waitState,
             text_length: text.length,
             page_title: document.title,
           });
@@ -866,7 +865,9 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
             cdp_result: evaluated.result || {},
           });
       await send('Target.closeTarget', { targetId });
-      console.log(raw);
+      const payload = JSON.parse(raw);
+      payload.waitState = waitState;
+      console.log(JSON.stringify(payload));
       ws.close();
     })().catch(error => {
       console.error(error && error.stack ? error.stack : String(error));
@@ -1028,6 +1029,8 @@ def legacy_search_liepin(keyword: str, city: str = "", limit: int = 10) -> Dict:
         log.warning(f"猎聘搜索被门禁拦截: {gate['reason']}")
         return _format_search_error("猎聘", {
             "error": f"搜索被策略门禁拦截: {gate['reason']}",
+            "failure_type": "rate_limited",
+            "manual_action_required": False,
             "gate_status": gate,
         }, trace=trace, strategy="chrome_cdp_page")
 

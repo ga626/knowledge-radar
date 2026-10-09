@@ -287,7 +287,10 @@ def validate_strategy_tree_bundle(
     actual_tools: list[str] | tuple[str, ...] | set[str] | None = None,
     repo_root: str | Path | None = None,
 ) -> dict[str, Any]:
-    return validation_report(bundle or build_strategy_tree_bundle(include_nodes=True), actual_tools=actual_tools, repo_root=repo_root or _ROOT)
+    root = Path(repo_root or _ROOT)
+    installed = (root / "SBOM.json").exists()
+    return validation_report(bundle or build_strategy_tree_bundle(include_nodes=True), actual_tools=actual_tools,
+                             repo_root=root, check_test_paths=not installed)
 
 
 def governance_registry_manifest() -> dict[str, Any]:

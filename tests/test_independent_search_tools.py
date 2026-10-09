@@ -129,6 +129,7 @@ def test_search_wechat_articles_is_independent_l1_tool(monkeypatch):
 def test_search_zhihu_wraps_cookie_failures(monkeypatch):
     monkeypatch.setattr(server, "registry", _ZhihuRegistry())
     monkeypatch.setattr(server, "managed_browser_platforms", lambda: ("zhihu",))
+    monkeypatch.setattr(server, "request_browser_interaction", lambda *_args, **_kwargs: {"status": "waiting_for_user"})
 
     result = server.search_zhihu("cookie probe", limit=1)
 
@@ -136,6 +137,6 @@ def test_search_zhihu_wraps_cookie_failures(monkeypatch):
     assert result["error"]["type"] == "login_or_cookie_unavailable"
     assert result["error"]["expected_degraded"] is False
     assert result["error"]["status_class"] == "NEEDS_INTERACTION"
-    assert result["error"]["manual_interaction"]["status"] == "action_required_not_opened"
+    assert result["error"]["manual_interaction"]["status"] == "waiting_for_user"
     assert result["error"]["manual_interaction"]["manual_open_mode"] == "health_check(mode='request_browser_interaction:zhihu:login_or_cookie_unavailable')"
     assert result["metadata"]["strategy"] == "zhihu_cookie_governed_fallback"

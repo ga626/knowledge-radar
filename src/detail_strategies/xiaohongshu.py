@@ -20,6 +20,7 @@ from runtime.xhs_health import get_xhs_detail_health_tracker, record_xhs_regress
 from runtime.xhs_selector_contract import XHS_SELECTOR_BUNDLE_VERSION
 from runtime.xhs_candidates import normalize_xhs_image_assets
 from runtime.xhs_tikhub_fallback import execute_tikhub_xhs_detail_fallback
+from runtime.xhs_task_failover import CURRENT_XHS_PROFILE, run_browser_accounts, task_profile
 
 XHS_DETAIL_BRIDGE_BREAKER_KEY = "collector:xhs.detail_bridge"
 
@@ -37,10 +38,10 @@ class XiaohongshuDetailDeps:
     log_info: Callable[[str], None]
     log_warning: Callable[[str], None]
     log_error: Callable[[str], None]
-    auto_switch_account: Callable[..., Dict[str, Any]] | None = None
     request_user_login: Callable[..., Dict] | None = None
     selected_profile_id: Callable[[], str] | None = None
     allow_auto_user_login_request: bool = False
+    allow_paid_fallback: bool = True
 
 
 class XiaohongshuDetailStrategy:
@@ -144,6 +145,44 @@ class XiaohongshuDetailStrategy:
         }
 
     def _extract(self, url: str, result: Dict, *, request: DetailRequest, auto_multimodal: bool = False) -> Dict:
+        if not self.deps.selected_profile_id:
+            return self._extract_single(url, result, request=request, auto_multimodal=auto_multimodal)
+        from collectors.platform import xiaohongshu as xhs
+        from runtime.profile_registry import profile_registry_internal
+        from runtime.xhs_account_pool import xhs_account_pool_summary
+        from runtime.xhs_account_events import record_xhs_account_event
+        from runtime.chrome_manager import chrome_active_operation
+        from kr_core.collection import CollectionTrace
+
+        def attempt(profile_id: str) -> Dict:
+            with task_profile(profile_id), chrome_active_operation(f"xhs:{profile_id}"):
+                resource = f"xhs:{profile_id}"
+                if not xhs._ensure_chrome_debugging(resource, target_profile_id=profile_id):
+                    return {"error": "该账号CDP不可用", "failure_type": "cdp_unavailable"}
+                state = xhs.xiaohongshu_account_state(xhs._chrome_debug_url(resource))
+                if not xhs._xhs_login_state_ok(state):
+                    return xhs._xhs_login_preflight_result(CollectionTrace("小红书", ["detail_login_preflight"]), state, profile_id_override=profile_id)
+                data = self._extract_single(url, dict(result), request=request, auto_multimodal=auto_multimodal)
+                if not data.get("error"):
+                    record_xhs_account_event(profile_id, "OK", last_tool="get_content_detail:xiaohongshu")
+                return data
+
+        registry = profile_registry_internal()
+        data, receipt = run_browser_accounts(
+            registry, xhs_account_pool_summary(registry), self.deps.selected_profile_id(), attempt,
+            lambda profile, reason: record_xhs_account_event(profile, reason, last_tool="get_content_detail:xiaohongshu"),
+            purpose="detail",
+        )
+        if data.get("error") and receipt["exhausted"] and self.deps.allow_paid_fallback:
+            note_id, xsec_token, xsec_source = self._parse_url(url)
+            if note_id:
+                paid = self._try_tikhub_detail_fallback(note_id, xsec_token, xsec_source, url=url, attempts=[], browser_exhaustion=receipt)
+                if paid:
+                    data = self._fill_result(url, dict(result), paid, auto_multimodal=auto_multimodal, request=request)
+        data.setdefault("metadata", {})["account_failover"] = receipt
+        return data
+
+    def _extract_single(self, url: str, result: Dict, *, request: DetailRequest, auto_multimodal: bool = False) -> Dict:
         note_id, xsec_token, xsec_source = self._parse_url(url)
         if not note_id:
             return {"platform": self.platform, "error": f"无法从 URL 提取小红书笔记 ID: {url}", "url": url}
@@ -181,15 +220,6 @@ class XiaohongshuDetailStrategy:
             bridge_error = f"Bridge 返回错误: {detail.get('error', 'unknown')}"
             page_state = classify_xhs_page_state(bridge_error, url=url)
             manual = bool(page_state.get("manual_action_required"))
-            tikhub_attempt = self._try_tikhub_detail_fallback(note_id, xsec_token, xsec_source, url=url, attempts=fallback_attempts)
-            if tikhub_attempt:
-                return self._fill_result(url, result, tikhub_attempt, auto_multimodal=auto_multimodal, request=request)
-            switch = self._auto_switch_account(
-                purpose="detail",
-                reason_code=str(page_state.get("failure_subtype") or "DETAIL_WEAK").upper(),
-                note_id=note_id,
-                failure_subtype=str(detail.get("failure_type") or "request_failed"),
-            )
             return self._failure_payload(
                 url=url,
                 note_id=note_id,
@@ -200,20 +230,10 @@ class XiaohongshuDetailStrategy:
                 manual_action_required=manual,
                 fallback_attempts=fallback_attempts,
                 detail=detail,
-                extra={"account_auto_switch": switch},
             )
         note_data = detail.get("noteData", {})
         if not self.deps.detail_needs_fallback(note_data):
             return self._fill_result(url, result, note_data, auto_multimodal=auto_multimodal, request=request)
-        tikhub_note = self._try_tikhub_detail_fallback(note_id, xsec_token, xsec_source, url=url, attempts=fallback_attempts)
-        if tikhub_note:
-            return self._fill_result(url, result, tikhub_note, auto_multimodal=auto_multimodal, request=request)
-        self._auto_switch_account(
-            purpose="detail",
-            reason_code="DETAIL_WEAK",
-            note_id=note_id,
-            failure_subtype="empty_detail",
-        )
         return self._empty_detail_failure(
             url=url,
             note_id=note_id,
@@ -379,10 +399,13 @@ class XiaohongshuDetailStrategy:
         attempts.append(attempt)
         return None
 
-    def _try_tikhub_detail_fallback(self, note_id: str, xsec_token: str, xsec_source: str, *, url: str, attempts: List[Dict[str, Any]]) -> Optional[Dict]:
+    def _try_tikhub_detail_fallback(self, note_id: str, xsec_token: str, xsec_source: str, *, url: str, attempts: List[Dict[str, Any]], browser_exhaustion: Dict | None = None) -> Optional[Dict]:
+        if not browser_exhaustion:
+            return None
         attempt: Dict[str, Any] = {"strategy": "tikhub_detail_break_glass", "status": "skipped", "reason": "after_browser_detail_failed"}
         try:
-            result = execute_tikhub_xhs_detail_fallback(note_id, xsec_token=xsec_token, xsec_source=xsec_source, share_text=url)
+            result = execute_tikhub_xhs_detail_fallback(note_id, xsec_token=xsec_token, xsec_source=xsec_source, share_text=url,
+                                                       browser_exhaustion=browser_exhaustion, task_failover_id=browser_exhaustion["task_id"])
         except Exception as exc:
             attempt.update({"status": "failed", "error": f"{type(exc).__name__}: {exc}"})
             attempts.append(attempt)
@@ -421,7 +444,9 @@ class XiaohongshuDetailStrategy:
             }
         env = os.environ.copy()
         env["NODE_OPTIONS"] = ""
-        xhs_port = str(os.environ.get("KR_XHS_CHROME_DEBUG_PORT") or XHS_CHROME_DEBUG_PORT)
+        from runtime.chrome_manager import _chrome_debug_port
+
+        xhs_port = _chrome_debug_port(f"xhs:{CURRENT_XHS_PROFILE.get()}") if CURRENT_XHS_PROFILE.get() else str(os.environ.get("KR_XHS_CHROME_DEBUG_PORT") or XHS_CHROME_DEBUG_PORT)
         env["KR_XHS_CHROME_DEBUG_PORT"] = xhs_port
         env["KR_CHROME_DEBUG_PORT"] = xhs_port
         cmd = [self.deps.node_exe, self.deps.bridge_path, "detail", note_id, xsec_token, xsec_source]
@@ -436,6 +461,9 @@ class XiaohongshuDetailStrategy:
         )
         stdout_text = (proc.stdout or "").strip()
         stderr_text = (proc.stderr or "").strip()
+        if proc.returncode and any(marker in stderr_text for marker in ("MODULE_NOT_FOUND", "ERR_MODULE_NOT_FOUND", "Cannot find module")):
+            return {"status": "error", "failure_type": "dependency_missing",
+                    "error": "小红书详情 Bridge 缺少本地组件，请在本地组件页恢复；无需重新登录。"}
         detail = self._extract_json(stdout_text, stderr_text=stderr_text)
         if detail is None:
             policy.mark_failure(
@@ -713,19 +741,6 @@ class XiaohongshuDetailStrategy:
             return self.deps.ocr_first_image(images, task_metadata=scope_metadata)
         except TypeError:
             return self.deps.ocr_first_image(images)
-
-    def _auto_switch_account(self, *, purpose: str, reason_code: str, note_id: str, failure_subtype: str) -> Dict[str, Any]:
-        if not self.deps.auto_switch_account:
-            return {"status": "skipped", "reason": "auto_switch_hook_missing"}
-        try:
-            return self.deps.auto_switch_account(
-                purpose=purpose,
-                reason_code=reason_code,
-                last_tool="get_content_detail:xiaohongshu",
-                notes=[f"note_id={note_id}", f"failure_subtype={failure_subtype}"],
-            )
-        except Exception as exc:
-            return {"status": "failed", "error": f"{type(exc).__name__}: {exc}"}
 
 
 def _safe_int(value: Any, default: int) -> int:

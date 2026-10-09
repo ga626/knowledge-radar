@@ -26,3 +26,17 @@ def test_boss_startup_url_is_neutral_hangzhou_jobs_page() -> None:
     assert chrome_manager.BOSS_STARTUP_URL == "https://www.zhipin.com/web/geek/jobs?city=101210100"
     assert "Python" not in chrome_manager.BOSS_STARTUP_URL
     assert "%E5%BC%80%E5%8F%91" not in chrome_manager.BOSS_STARTUP_URL
+
+
+def test_local_rate_gate_is_not_a_login_or_captcha_event(monkeypatch):
+    monkeypatch.setattr(boss, "probe_boss_auth_state", lambda **_: {"status": "ok"})
+    monkeypatch.setattr(boss, "check_search_gate", lambda *_args, **_kwargs: {"allowed": False, "reason": "搜索间隔过短（需等待10秒）"})
+    result = boss.legacy_search_boss("产品经理", "", 1)
+    assert result["error"]["type"] == "rate_limited"
+    assert not result["error"]["manual_action_required"]
+    assert "anti_bot_verification" not in result["error"]["failure_tags"]
+
+
+def test_visible_login_modal_overrides_background_cards():
+    state = boss._classify_boss_page_state({"url": "https://www.zhipin.com/web/geek/jobs", "loginModalCount": 1, "items": [{"title": "职位"}]})
+    assert state["auth_state"] == "login_required"
