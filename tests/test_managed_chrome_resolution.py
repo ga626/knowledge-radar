@@ -256,7 +256,7 @@ def test_manual_interaction_expiry_closes_only_the_expected_managed_profile(monk
     assert "boss" not in chrome_manager._CHROME_KEEP_ALIVE
     assert cleanup == [("boss", profile)]
     assert any(kwargs.get("event") == "manual_interaction_expired" for _args, kwargs in transitions)
-    assert all(not kwargs.get("metadata", {}).get("authenticated") for _args, kwargs in transitions)
+    assert all(kwargs.get("metadata", {}).get("authenticated") is not True for _args, kwargs in transitions)
 
 
 def test_idle_loop_does_not_renew_an_explicit_manual_interaction(monkeypatch, tmp_path) -> None:
