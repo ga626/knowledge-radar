@@ -31,6 +31,13 @@
   ],
   "directories": [
     {
+      "path": "src/runtime/",
+      "area": "dev_runtime",
+      "role": "Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution.",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "include"
+    },
+    {
       "path": "src/",
       "area": "dev_runtime",
       "role": "Python package source.",

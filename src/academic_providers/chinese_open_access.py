@@ -83,21 +83,6 @@ class ChineseOpenAccessProvider:
                 works.extend(self._collect_from_url(client, url, request, seen, limit))
                 if len(works) >= limit:
                     return works[:limit]
-            if self.config.available:
-                for url in self.config.direct_pdf_samples:
-                    work = self._make_work(
-                        title=f"{self.config.display_name} open full-text sample",
-                        url=url,
-                        request=request,
-                        full_text_status="direct_pdf",
-                        confidence=0.72,
-                        raw={"fallback_sample": True},
-                    )
-                    if work.url not in seen:
-                        works.append(work)
-                        seen.add(work.url)
-                    if len(works) >= limit:
-                        break
         return works[:limit]
 
     def search_urls(self, request: AcademicSearchRequest) -> Sequence[str]:

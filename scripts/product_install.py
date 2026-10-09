@@ -321,6 +321,37 @@ def _capability_enabled(data_root: Path, capability: str) -> bool:
     return isinstance(row, dict) and row.get("status") == "APPLIED"
 
 
+def restore_selected_runtime_components(program: Path, runtime: Path, data_root: Path) -> list[str]:
+    """Preserve explicitly installed components across a versioned venv upgrade."""
+    restored = []
+    env = dict(os.environ)
+    env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
+    packages = {
+        "media_downloader": ("yt_dlp", "yt-dlp>=2024.8.6"),
+        "transcription_runtime": ("faster_whisper", "faster-whisper>=1.1,<2.0"),
+    }
+    for capability, (module, requirement) in packages.items():
+        if not _capability_enabled(data_root, capability):
+            continue
+        check = subprocess.run([str(runtime), "-c", f"import {module}"], cwd=program, env=env, capture_output=True, check=False)
+        if check.returncode:
+            _run_optional_download([str(runtime), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", requirement], cwd=program, env=env, action=f"restoring {capability}")
+        restored.append(capability)
+    if _capability_enabled(data_root, "browser"):
+        code = (
+            "from playwright.sync_api import sync_playwright\n"
+            "with sync_playwright() as p:\n"
+            "    for options in ({'headless': True}, {'headless': True, 'channel': 'chromium'}):\n"
+            "        browser = p.chromium.launch(**options)\n"
+            "        browser.close()\n"
+        )
+        check = subprocess.run([str(runtime), "-c", code], cwd=program, env=env, capture_output=True, check=False)
+        if check.returncode:
+            _run_optional_download([str(runtime), "-m", "playwright", "install", "chromium"], cwd=program, env=env, action="restoring the selected Playwright browser")
+        restored.append("browser")
+    return restored
+
+
 def _capability_token(active: dict[str, Any], capability: str, source: Path) -> str:
     package_lock = source / "package-lock.json"
     payload = {
@@ -876,6 +907,7 @@ def apply_install(
             shutil.rmtree(staging, ignore_errors=True)
     product_python = ensure_runtime(program_root, install_root, plan["version"], python_exe)
     initialize_data(data_root, package_root)
+    restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
     active = {
         "schema": ACTIVE_SCHEMA,
         "channel": channel,
@@ -911,6 +943,7 @@ def apply_install(
         "wizard_launcher": str(wizard_launcher),
         "console_launcher": str(install_root / "console.cmd"),
         "console_autostart": str(autostart) if autostart else None,
+        "restored_runtime_components": restored_components,
     }
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt

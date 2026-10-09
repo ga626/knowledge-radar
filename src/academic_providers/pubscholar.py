@@ -133,7 +133,7 @@ class PubScholarProvider(ChineseOpenAccessProvider):
     def _search_with_browser_sync(self, *, query: str, limit: int) -> Dict[str, Any]:
         captured: List[Dict[str, Any]] = []
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True)
+            browser = playwright.chromium.launch(headless=True, channel="chromium")
             try:
                 page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
 
@@ -263,7 +263,7 @@ def verify_pubscholar_article_fulltext(article_url: str, *, timeout_s: float = 1
 
 def _verify_pubscholar_article_fulltext_sync(url: str, *, timeout_s: float = 15.0) -> Dict[str, Any]:
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True)
+        browser = playwright.chromium.launch(headless=True, channel="chromium")
         try:
             page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
             resource_urls: List[str] = []

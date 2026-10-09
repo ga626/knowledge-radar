@@ -4,6 +4,35 @@ from __future__ import annotations
 
 import json
 
+ACCOUNT_ALERT_HTML = '''<section class="panel form" aria-labelledby="account-heading"><h3 id="account-heading">平台账号与登录恢复</h3><p>失效会在工具调用时提醒并打开对应窗口。关闭窗口不会被当作登录成功。</p><p id="account-status" class="notice" role="status">正在读取账号状态…</p><div class="grid2" id="account-cards"></div></section>'''
+ACCOUNT_ALERT_SCRIPT = r'''
+let accountRequest=false,accountFingerprint='',accountFeedback='';
+async function refreshAccounts(){
+  if(accountRequest)return;accountRequest=true;
+  try{
+    const snapshot=await api('/api/account-alerts');
+    const fingerprint=JSON.stringify(snapshot);
+    const pending=snapshot.accounts.filter(x=>x.needs_action);
+    const banner=§('#account-alert-banner');
+    banner.hidden=!pending.length;
+    banner.textContent=pending.length?'需要处理 '+pending.length+' 个账号：'+pending.map(x=>x.platform_label+' '+x.slot_label+' '+x.display_label+(x.account_number?'（'+x.account_number+'）':'')).join('、')+'。点击查看并恢复。':'';
+    §('#account-status').textContent=accountFeedback||(pending.length?'有 '+pending.length+' 个账号等待登录或验证。':'当前没有已记录的登录待处理事件；尚未验证的账号将在实际调用时检查。')+(snapshot.read_only?' 开发预览只读，登录操作在稳定交付后使用。':'');
+    if(fingerprint!==accountFingerprint){
+      accountFingerprint=fingerprint;
+      §('#account-cards').innerHTML=snapshot.accounts.map(x=>'<article class="provider-row"><div><h4>'+esc(x.platform_label)+' '+esc(x.slot_label)+' · '+esc(x.display_label)+'</h4><p>登记编号：'+esc(x.account_number||'未单独登记')+(x.number_source==='registered_display_label'?'（来自登记名称）':'')+'</p><p>'+esc(x.needs_action?'需要处理：'+x.reason:x.state==='UNOBSERVED'?'尚未验证':x.state==='CLOSED'?'窗口已回收；认证请以实际调用为准':'最近记录：'+x.state)+'</p><div class="toolbar"><button class="button" data-account="'+esc(x.profile_id)+'" data-account-action="open" '+(snapshot.read_only?'disabled':'')+'>打开该账号窗口</button><button class="button" data-account="'+esc(x.profile_id)+'" data-account-action="verify" '+(snapshot.read_only?'disabled':'')+'>已登录，验证恢复</button></div></div></article>').join('');
+    }
+  }catch(error){§('#account-status').textContent='账号状态连接失败，保留上次观察：'+error.message;}finally{accountRequest=false;}
+}
+§('#account-alert-banner').onclick=()=>{activateView('services');§('#account-heading').scrollIntoView({block:'start'});};
+§('#account-cards').onclick=async event=>{
+  const button=event.target.closest('[data-account]');if(!button)return;
+  button.disabled=true;
+  try{const result=await api('/api/account-recovery',{profile_id:button.dataset.account,action:button.dataset.accountAction});accountFeedback=result.detail||result.status||'操作已提交';§('#account-status').textContent=accountFeedback;accountFingerprint='';await refreshAccounts();}
+  catch(error){§('#account-status').textContent=error.message;}finally{button.disabled=false;}
+};
+refreshAccounts();setInterval(refreshAccounts,2000);
+'''
+
 
 RADAR_STYLE = r"""
 /* The radar is a status visual: echoes are deliberately anonymous and never
@@ -275,7 +304,7 @@ html{color-scheme:dark}body{background:radial-gradient(circle at 84% -16%,rgba(6
 CAPABILITY_CENTER_SCRIPT = r"""
 function renderCapabilityCatalog(){
   const map=$('#capability-map'),detail=$('#provider-goals');if(!map||!detail)return;
-  const statusText={ready:'本机已接入',needs_setup:'需要配置',optional:'按需启用',needs_interaction:'需要人工登录'};
+  const statusText={ready:'本机已接入',needs_setup:'需要配置',optional:'按需启用',needs_interaction:'需要人工登录',on_call_check:'调用时核验'};
   const select=id=>{const pack=capabilityPacks.find(row=>row.id===id)||capabilityPacks[0];if(!pack)return;map.querySelectorAll('[data-pack]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.pack===pack.id)));const rows=(pack.provider_ids||[]).map(providerId=>guides.find(guide=>guide.id===providerId)).filter(Boolean);const providers=rows.length?'<section class="provider-group"><div class="provider-group-head"><h3>可配置服务</h3><span>按需选择，不必全部填写</span></div><div class="provider-list">'+rows.map(g=>'<article class="provider-row"><div><h4>'+esc(g.label)+'</h4><p>'+esc(g.purpose)+'</p><div class="provider-meta"><span>'+esc(g.tier)+'</span><span class="'+(g.configured?'configured':'needs')+'">'+(g.configured?'已保存到本机':'尚未配置')+'</span></div></div><button class="button" data-guide="'+esc(g.id)+'">查看配置</button></article>').join('')+'</div></section>':'<section class="provider-group"><div class="provider-group-head"><h3>这一包不要求填写 Key</h3><span>状态从本机运行时读取</span></div><p class="notice">'+esc(pack.needs)+'</p></section>';detail.innerHTML='<section class="capability-brief"><div class="pack-top"><span class="pack-index">能力包</span><span class="pack-status '+esc(pack.status)+'">'+esc(statusText[pack.status]||'状态未知')+'</span></div><h3>'+esc(pack.label)+'</h3><p>'+esc(pack.description)+'</p><div class="tool-list">'+(pack.tools||[]).map(tool=>'<code>'+esc(tool)+'</code>').join('')+'</div><p class="notice"><b>使用边界</b><br>'+esc(pack.boundary)+'</p></section>'+providers;detail.querySelectorAll('[data-guide]').forEach(button=>button.onclick=()=>showGuide(guides.find(guide=>guide.id===button.dataset.guide)));};
   map.innerHTML=capabilityPacks.map((pack,index)=>'<button type="button" class="capability-pack" data-pack="'+esc(pack.id)+'" aria-pressed="false"><div class="pack-top"><span class="pack-index">0'+(index+1)+'</span><span class="pack-status '+esc(pack.status)+'">'+esc(statusText[pack.status]||'状态未知')+'</span></div><h3>'+esc(pack.label)+'</h3><p>'+esc(pack.description)+'</p><div class="pack-meta"><span>'+esc(pack.tool_count)+' 个工具</span><span>'+esc(pack.needs)+'</span></div></button>').join('');map.querySelectorAll('[data-pack]').forEach(button=>button.onclick=()=>select(button.dataset.pack));select(capabilityPacks[0]?.id);
 }
@@ -373,4 +402,7 @@ function activate(id){activateView(id);}
         )
         .replace("</script>", RADAR_SCRIPT + "\n" + CAPABILITY_CENTER_SCRIPT + "\n</script>", 1)
     )
+    enhanced = enhanced.replace('<main class="workspace">', '<main class="workspace"><button type="button" class="button warn" id="account-alert-banner" hidden aria-live="polite"></button>', 1)
+    enhanced = enhanced.replace('<div class="capability-map" id="capability-map"', ACCOUNT_ALERT_HTML + '<div class="capability-map" id="capability-map"', 1)
+    enhanced = enhanced.replace("</script>", ACCOUNT_ALERT_SCRIPT + "</script>", 1)
     return enhanced.replace("__TOKEN__", token).replace("__TOKEN_JSON__", token_json).replace("§", "$")

@@ -7,12 +7,14 @@ session state without launching browsers or knowing platform collection logic.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
 import threading
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
@@ -145,11 +147,16 @@ def manual_action_request_from_session(
     identity = dict((data.get("metadata") or {}).get("account_identity") or {})
     display_label = str(identity.get("display_label") or data.get("account_slot") or data.get("profile_id") or platform)
     masked_hint = str(identity.get("masked_hint") or "")
+    from .account_alerts import account_identity_fields
+
+    identity_fields = account_identity_fields(data, {**identity, "display_label": display_label})
     # XHS recovery sessions are profile-scoped (``xhs:<profile_id>``).  Keep
     # that internal resource key out of the human-facing prompt while still
     # preserving it in the interaction/session id.
     platform_label = "小红书" if platform.split(":", 1)[0] in {"xhs", "xiaohongshu"} else platform
-    human_message = f"{platform_label}“{display_label}”需要扫码登录。原因：{_human_reason(reason)}。已打开对应窗口；其余不依赖该平台的工作会继续。"
+    number_hint = f"，登记编号 {identity_fields['account_number']}" if identity_fields['account_number'] else ""
+    slot_hint = f" {identity_fields['slot_label']}" if identity_fields['slot_label'] else ""
+    human_message = f"{platform_label}{slot_hint}“{display_label}”{number_hint}需要扫码登录。原因：{_human_reason(reason)}。请处理对应账号窗口或打开服务页；其余工作会继续。"
     return {
         "schema_version": MANUAL_ACTION_SCHEMA_VERSION,
         "interaction_id": str(data.get("session_id") or ""),
@@ -158,6 +165,9 @@ def manual_action_request_from_session(
         "account_slot": str(data.get("account_slot") or ""),
         "profile_dir_hash": str(data.get("profile_dir_hash") or ""),
         "display_label": display_label,
+        "account_number": identity_fields["account_number"],
+        "number_source": identity_fields["number_source"],
+        "slot_label": identity_fields["slot_label"],
         "masked_hint": masked_hint,
         "debug_port": str(data.get("debug_port") or ""),
         "action_type": _action_type_from_reason(reason),
@@ -239,12 +249,46 @@ class BrowserSessionStore:
         self._lock = threading.RLock()
         self._sessions: Dict[str, BrowserSession] = {}
         self._loaded = False
+        self._file_signature = None
+
+    @contextmanager
+    def _transaction(self):
+        with self._lock:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            with self.state_path.with_suffix(".lock").open("a+b") as lock_file:
+                lock_file.seek(0, os.SEEK_END)
+                if not lock_file.tell():
+                    lock_file.write(b"0")
+                    lock_file.flush()
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_LOCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+                try:
+                    self._ensure_loaded()
+                    yield
+                finally:
+                    lock_file.seek(0)
+                    if os.name == "nt":
+                        msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
     def _ensure_loaded(self) -> None:
-        if self._loaded:
+        try:
+            stat = self.state_path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        except FileNotFoundError:
+            signature = None
+        if self._loaded and self._file_signature == signature:
             return
         self._loaded = True
-        if not self.state_path.is_file():
+        self._file_signature = signature
+        self._sessions = {}
+        if signature is None:
             return
         data = _json_loads(self.state_path.read_text(encoding="utf-8"))
         for item in data.get("sessions", []) or []:
@@ -282,7 +326,15 @@ class BrowserSessionStore:
             "updated_at": utc_now_iso(),
             "sessions": [session.to_dict() for session in self._sessions.values()],
         }
-        self.state_path.write_text(_json_dumps(payload), encoding="utf-8")
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=self.state_path.parent, delete=False, suffix=".tmp") as handle:
+            temporary = Path(handle.name)
+            handle.write(_json_dumps(payload))
+        try:
+            temporary.replace(self.state_path)
+            stat = self.state_path.stat()
+            self._file_signature = (stat.st_mtime_ns, stat.st_size, stat.st_ino)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def _record_event(self, session: BrowserSession, event: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         self.event_path.parent.mkdir(parents=True, exist_ok=True)
@@ -322,7 +374,7 @@ class BrowserSessionStore:
         metadata: Optional[Dict[str, Any]] = None,
         event: str = "session_upserted",
     ) -> Dict[str, Any]:
-        with self._lock:
+        with self._transaction():
             self._ensure_loaded()
             sid = ""
             for existing in self._sessions.values():
@@ -372,7 +424,7 @@ class BrowserSessionStore:
         metadata: Optional[Dict[str, Any]] = None,
         event: str = "session_transitioned",
     ) -> Dict[str, Any]:
-        with self._lock:
+        with self._transaction():
             self._ensure_loaded()
             session = next(
                 (
@@ -410,6 +462,10 @@ class BrowserSessionStore:
                 session.last_probe_result = _sanitize_metadata(last_probe_result)
             if metadata:
                 session.metadata.update(_sanitize_metadata(metadata))
+            if profile_id and metadata and metadata.get("account_recovery_pending") is False and last_probe_result and last_probe_result.get("status") == "ok" and not last_probe_result.get("manual_action_required"):
+                for previous in self._sessions.values():
+                    if previous.profile_id == profile_id:
+                        previous.metadata["account_recovery_pending"] = False
             session.updated_at = now_ts()
             session.last_activity_at = session.updated_at
             self._sessions[session.session_id] = session
@@ -429,7 +485,7 @@ class BrowserSessionStore:
         event: str = "session_deadline_updated",
     ) -> Dict[str, Any]:
         """Persist an idle deadline without treating it as browser activity."""
-        with self._lock:
+        with self._transaction():
             self._ensure_loaded()
             session = next(
                 (
@@ -464,7 +520,7 @@ class BrowserSessionStore:
         return candidates[0]
 
     def record_event(self, platform: str, event: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        with self._lock:
+        with self._transaction():
             self._ensure_loaded()
             session = self.latest_for_platform(platform)
             if session is None:
@@ -490,18 +546,18 @@ class BrowserSessionStore:
 
     def compact_terminal_sessions(self, *, retain_closed: int = 100, retain_failed: int = 20, dry_run: bool = False) -> Dict[str, Any]:
         """Archive old terminal records without touching active user interactions."""
-        with self._lock:
+        with self._transaction():
             self._ensure_loaded()
             retained: Dict[str, BrowserSession] = {}
             removed: list[BrowserSession] = []
             buckets = {"CLOSED": max(0, int(retain_closed)), "FAILED": max(0, int(retain_failed))}
             for state, limit in buckets.items():
-                rows = sorted((item for item in self._sessions.values() if item.state == state), key=lambda item: item.updated_at, reverse=True)
+                rows = sorted((item for item in self._sessions.values() if item.state == state and not item.metadata.get("account_recovery_pending")), key=lambda item: item.updated_at, reverse=True)
                 for item in rows[:limit]:
                     retained[item.session_id] = item
                 removed.extend(rows[limit:])
             for item in self._sessions.values():
-                if item.state not in buckets:
+                if item.state not in buckets or item.metadata.get("account_recovery_pending"):
                     retained[item.session_id] = item
             if not dry_run:
                 self._sessions = retained
@@ -528,7 +584,7 @@ class BrowserSessionStore:
         pending = [
             session
             for session in sessions
-            if session.get("state") in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"}
+            if session.get("state") in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"} or (session.get("metadata") or {}).get("account_recovery_pending")
         ]
         return {
             "schema_version": SCHEMA_VERSION,
@@ -539,7 +595,7 @@ class BrowserSessionStore:
             "counts": counts,
             "pending_human_action": len(pending),
             "pending_interactions": [manual_action_request_from_session(session) for session in pending],
-            "sessions": sorted(sessions, key=lambda item: item.get("updated_at") or 0, reverse=True)[:20],
+            "sessions": sorted(sessions, key=lambda item: item.get("updated_at") or 0, reverse=True)[:max(20, min(recent_events_limit, 200))],
             "recent_events": self.recent_events(recent_events_limit),
         }
 

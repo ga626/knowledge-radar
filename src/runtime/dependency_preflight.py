@@ -81,6 +81,8 @@ def _ffmpeg_path() -> str:
     bin_dir = _env_path("KR_FFMPEG_BIN")
     suffix = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
     candidates = [str(Path(bin_dir) / suffix)] if bin_dir else []
+    if os.environ.get("KR_DATA_ROOT"):
+        candidates.append(str(Path(os.environ["KR_DATA_ROOT"]) / "tools" / "ffmpeg" / "bin" / suffix))
     candidates.append(str(project_root() / "runtime" / "tools" / "ffmpeg" / "bin" / suffix))
     candidates.append(shutil.which("ffmpeg") or "")
     return _first_existing(candidates)

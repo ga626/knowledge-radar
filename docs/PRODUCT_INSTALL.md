@@ -52,3 +52,7 @@ python scripts\product_install.py capability-apply --capability xhs_bridge --con
 ```
 
 两项内容都保存在当前数据根，更新程序不会覆盖。若 Node.js/npm 不可用，bridge 安装会停止并提示先安装它们；安装器不会替你更改系统级 Node、浏览器或代理设置。
+
+## 已选组件随更新保留
+
+更新前已安装并登记的媒体下载器、转写运行时与 Playwright Chromium，会在新版本运行时中恢复后再切换安装身份。未选择的组件和模型不会自动下载；缓存与账号资料留在数据根。FFmpeg 统一按显式配置、数据根工具目录与系统安装解析。组件准备失败时保留已有 active。

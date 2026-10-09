@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from pathlib import Path
 
 from academic_providers.models import AcademicSearchRequest, AcademicWork
@@ -8,6 +9,30 @@ from academic_providers.profile import PROFILE_SCHEMA_VERSION, load_academic_pro
 from academic_providers.relevance import score_metadata_relevance, score_metadata_relevance_with_profiles, select_fulltext_candidates
 from academic_providers.registry import academic_provider_registry, instantiate_academic_providers
 from academic_providers.service import _CACHE, _provider_order, _providers, academic_provider_status, search_academic_metadata
+
+
+def test_empty_provider_and_failed_provider_are_not_all_failed(monkeypatch) -> None:
+    import academic_providers.service as service
+
+    _CACHE.clear()
+
+    class Empty:
+        def search(self, request):
+            return []
+
+    class Failed:
+        def search(self, request):
+            raise RuntimeError("upstream unavailable")
+
+    monkeypatch.setattr(service, "_providers", lambda: {"openalex": Empty(), "crossref": Failed()})
+    monkeypatch.setattr(service, "_provider_plan", lambda *args: SimpleNamespace(provider_order=["openalex", "crossref"]))
+    monkeypatch.setattr(service, "_route_plan_metadata", lambda plan: {})
+    monkeypatch.setattr(service, "academic_provider_status", lambda: {})
+    monkeypatch.setattr(service, "_rate_limit", lambda name: None)
+    response = search_academic_metadata(AcademicSearchRequest(query="no matching paper", provider="auto"))
+    assert response.error["type"] == "partial_provider_errors_no_results"
+    assert response.metadata["completed_providers"] == ["openalex"]
+    assert response.metadata["degraded_reason"] == "no_relevant_results"
 
 
 def test_builtin_academic_provider_profiles_are_valid_and_complete() -> None:
@@ -180,7 +205,8 @@ def test_search_main_flow_ranks_results_by_metadata_relevance(monkeypatch) -> No
 
     result = search_academic_metadata(AcademicSearchRequest(query="retrieval augmented generation", provider="openalex", limit=2))
 
-    assert [item.url for item in result.items] == ["https://example.org/rag", "https://example.org/ocean"]
+    assert [item.url for item in result.items] == ["https://example.org/rag"]
+    assert result.metadata["relevance_ranking"]["discarded_unrelated_count"] == 1
     assert result.metadata["relevance_ranking"]["applied"] is True
     assert result.metadata["relevance_ranking"]["top_score"] > 0
 

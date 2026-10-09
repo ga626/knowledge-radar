@@ -178,8 +178,12 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
             )
 
     attempted: List[str] = []
+    completed: List[str] = []
     errors = []
     all_items: List[AcademicWork] = []
+    from .relevance import has_query_evidence
+
+    relevant: List[AcademicWork] = []
     used_provider = ""
     for name in order:
         provider = providers[name]
@@ -205,14 +209,19 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
         except Exception as exc:
             errors.append({"provider": name, "type": "unknown", "message": str(exc), "retryable": True})
             continue
+        completed.append(name)
         if items:
-            all_items.extend(items)
-            used_provider = name if not used_provider else used_provider
-        if len(_dedupe(all_items)) >= max(1, int(request.limit or 5)):
+            all_items.extend(item for item in items if not item.raw.get("fallback_sample"))
+            matching = [item for item in items if not item.raw.get("fallback_sample") and has_query_evidence(request.query, item)]
+            relevant.extend(matching)
+            if matching and not used_provider:
+                used_provider = name
+        if len(_dedupe(relevant)) >= max(1, int(request.limit or 5)):
             break
 
     limit = max(1, min(int(request.limit or 5), 20))
-    ranked = _rank_search_results(request.query, _dedupe(all_items))
+    relevant = _dedupe(relevant)
+    ranked = _rank_search_results(request.query, relevant)
     fulltext_resolution = _resolve_fulltext_candidates(request, ranked)
     deduped = ranked[:limit]
     if not deduped:
@@ -220,16 +229,17 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
             query=request.query,
             provider=used_provider or "none",
             error={
-                "type": _aggregate_error_type(errors),
-                "message": "No academic provider returned results",
+                "type": _aggregate_error_type(errors, completed=bool(completed)),
+                "message": "No query-relevant academic results were returned",
                 "details": errors,
-                "retryable": True,
+                "retryable": any(error.get("retryable", False) for error in errors),
             },
             metadata={
                 "attempted_providers": attempted,
+                "completed_providers": completed,
                 "provider_status": academic_provider_status(),
                 "expected_degraded": True,
-                "degraded_reason": "academic_provider_unavailable",
+                "degraded_reason": "no_relevant_results" if completed else "academic_provider_unavailable",
                 "planner": _route_plan_metadata(route_plan),
             },
         )
@@ -239,12 +249,15 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
         items=deduped,
         metadata={
             "attempted_providers": attempted,
+            "completed_providers": completed,
             "planner": _route_plan_metadata(route_plan),
             "fallback_used": bool(attempted and used_provider != attempted[0]),
             "errors": errors,
             "cache": {"hit": False, "ttl_s": _CACHE_TTL_S},
             "provider_status": academic_provider_status(),
             "relevance_ranking": {
+                "discarded_unrelated_count": len(_dedupe(all_items)) - len(relevant),
+                "identity_verification": "search_candidates_only; title match does not prove edition, year or DOI identity",
                 "strategy": "metadata_title_abstract_source_confidence",
                 "applied": True,
                 "top_score": score_metadata_relevance(request.query, deduped[0]) if deduped else 0.0,
@@ -384,7 +397,11 @@ def _classify_provider_error(exc: Exception) -> str:
     return "request_failed"
 
 
-def _aggregate_error_type(errors: List[Dict[str, object]]) -> str:
+def _aggregate_error_type(errors: List[Dict[str, object]], *, completed: bool = False) -> str:
+    if not errors:
+        return "empty_results"
+    if completed:
+        return "partial_provider_errors_no_results"
     if errors and all(error.get("type") == "rate_limited" for error in errors):
         return "all_providers_rate_limited"
     if any(error.get("type") == "rate_limited" for error in errors):

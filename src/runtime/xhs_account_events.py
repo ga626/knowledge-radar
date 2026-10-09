@@ -79,6 +79,7 @@ def xhs_account_admission(
     mode: str | None = None,
     switches_used: int = 0,
     allow_manual_recovery_followup: bool = False,
+    excluded_profile_ids: List[str] | None = None,
 ) -> Dict[str, Any]:
     """Return advisory admission for an Xiaohongshu chain purpose.
 
@@ -96,6 +97,7 @@ def xhs_account_admission(
         reason_code=reason_code,
         switches_used=switches_used,
         allow_manual_recovery_followup=allow_manual_recovery_followup,
+        excluded_profile_ids=excluded_profile_ids,
     )
     decision = selected.get("switch_decision") or {}
     purpose = str(purpose or "").strip().lower() or "diagnostic"

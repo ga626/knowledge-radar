@@ -62,6 +62,7 @@ def test_tikhub_break_glass_defaults_to_live_paid_fallback(monkeypatch) -> None:
 
 
 def test_runtime_env_loader_reads_repo_dotenv(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("KR_RUNTIME_ENV_PATH", raising=False)
     monkeypatch.delenv("TIKHUB_API_KEY", raising=False)
     monkeypatch.setattr(env_loader, "REPO_ROOT", str(tmp_path))
     (tmp_path / ".env").write_text("TIKHUB_API_KEY=from-dotenv\n", encoding="utf-8")

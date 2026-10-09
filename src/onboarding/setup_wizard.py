@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from onboarding.configuration import apply_updates, public_snapshot
+from runtime.account_alerts import account_alert_snapshot, recover_account
 from onboarding.console_page import render_console_page
 from onboarding.product_status import (
     capability_packs,
@@ -74,6 +75,9 @@ def _handler_factory(server: WizardServer):
             self.send_header("X-Frame-Options", "DENY")
 
         def do_GET(self) -> None:
+            if self.path == "/api/account-alerts":
+                self._send_json(HTTPStatus.OK, {**account_alert_snapshot(), "read_only": os.environ.get("KR_CONSOLE_READ_ONLY") == "1"})
+                return
             if self.path == "/favicon.ico":
                 # Keep the browser console quiet without adding a static-file
                 # surface to the loopback-only configuration server.
@@ -148,6 +152,7 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
                 return
             allowed = {
+                "/api/account-recovery",
                 "/api/config",
                 "/api/media-cleanup",
                 "/api/data-move-plan",
@@ -174,6 +179,8 @@ def _handler_factory(server: WizardServer):
                     threading.Thread(target=server.shutdown, daemon=True).start()
                 elif self.path == "/api/media-cleanup":
                     response = expired_media_cleanup(apply=payload.get("apply") is True)
+                elif self.path == "/api/account-recovery":
+                    response = recover_account(str(payload.get("profile_id") or ""), str(payload.get("action") or ""))
                 elif self.path == "/api/data-move-plan":
                     response = data_root_move_console_plan(str(payload.get("target_root") or ""))
                 elif self.path == "/api/capability-plan":

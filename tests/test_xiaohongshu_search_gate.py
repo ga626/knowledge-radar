@@ -104,7 +104,7 @@ def test_xiaohongshu_historical_manual_gate_is_collector_context_not_a_top_level
     assert result["metadata"]["xhs_route_receipt"]["entry_gate_observed"] is True
 
 
-def test_collector_historical_gate_attempts_external_then_admitted_fallbacks(monkeypatch) -> None:
+def test_single_account_collector_cannot_authorize_fallback_from_historical_gate(monkeypatch) -> None:
     calls = []
     monkeypatch.setattr(xhs, "_xhs_search_gate_active", lambda: {"active": True, "last_outcome": "failed", "cooldown_remaining_s": 60})
     monkeypatch.setattr(xhs, "_recent_xhs_search_verified", lambda: False)
@@ -122,10 +122,10 @@ def test_collector_historical_gate_attempts_external_then_admitted_fallbacks(mon
 
     result = xhs._legacy_search_xiaohongshu_impl("真实调研问题", limit=1)
 
-    assert calls == ["external", "cdp", "switch", "tikhub"]
+    assert calls == ["cdp"]
     attempts = result["metadata"]["collection"]["attempts"]
-    assert any(item["name"] == "previous_global_gate_observed" for item in attempts)
-    assert any(item["name"] == "external_search_then_detail" for item in attempts)
+    assert attempts[0]["name"] == "chrome_cdp_preflight"
+    assert result["error"]["type"] == "cdp_unavailable"
 
 
 def test_security_verification_prompts_each_profile_while_following_route_order(monkeypatch) -> None:
@@ -134,9 +134,14 @@ def test_security_verification_prompts_each_profile_while_following_route_order(
         {"code": -1, "has_verify_prompt": True, "msg": "A verification"},
         {"code": -1, "has_verify_prompt": True, "msg": "C verification"},
     ]
-    switches = iter(["xhs-a", "xhs-c"])
     prompts = []
-    switch_calls = []
+    from contextlib import nullcontext
+    registry = {"raw": {"policy": {"default_mode": "safe_auto", "max_switches_per_task": 2}}}
+    pool = {"accounts": [{"profile_id": profile, "runtime_state": "healthy", "risk": {"risk_score": 0}} for profile in ("xhs-b", "xhs-a", "xhs-c")]}
+    monkeypatch.setattr(xhs, "profile_registry_internal", lambda: registry)
+    monkeypatch.setattr(xhs, "xhs_account_pool_summary", lambda *_: pool)
+    monkeypatch.setattr(xhs, "record_xhs_account_event", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr(xhs, "chrome_active_operation", lambda *_: nullcontext())
 
     monkeypatch.setattr(xhs, "_xhs_search_gate_active", lambda: {"active": False})
     monkeypatch.setattr(xhs, "_recent_xhs_search_verified", lambda: False)
@@ -151,23 +156,11 @@ def test_security_verification_prompts_each_profile_while_following_route_order(
         "request_user_login",
         lambda platform, reason, **kwargs: prompts.append((platform, reason, kwargs["target_profile_id"])) or {"status": "waiting_for_user"},
     )
-    monkeypatch.setattr(
-        xhs,
-        "_auto_switch_xhs_account",
-        lambda **kwargs: switch_calls.append(kwargs) or {"switch": {"status": "ok", "target_profile_id": next(switches)}},
-    )
     monkeypatch.setattr(xhs, "_try_tikhub_break_glass_search", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        xhs,
-        "_xhs_login_preflight_result",
-        lambda trace, state, **kwargs: {"items": [], "total": 0, "platform": "小红书", "error": {"type": "login_required"}},
-    )
-
-    xhs._legacy_search_xiaohongshu_impl("验证路由矩阵", limit=1)
+    result = xhs._search_xhs_account_task("验证路由矩阵", 1, "all", True)
 
     assert [item[2] for item in prompts] == ["xhs-b", "xhs-a", "xhs-c"]
-    assert [item["current_profile_id"] for item in switch_calls] == ["xhs-b", "xhs-a"]
-    assert all(item["allow_manual_recovery_followup"] is True for item in switch_calls)
+    assert result["metadata"]["account_failover"]["exhausted"] is True
 
 
 def test_xiaohongshu_manual_error_exposes_resumable_envelope() -> None:

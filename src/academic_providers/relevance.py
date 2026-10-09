@@ -7,6 +7,17 @@ from typing import Iterable, List
 
 from .models import AcademicWork
 from .profile import AcademicProviderProfile
+from .models import normalize_title
+
+STOP_WORDS = {"is", "the", "all", "you", "and", "for", "of", "to", "in", "an", "on"}
+
+
+def has_query_evidence(query: str, work: AcademicWork) -> bool:
+    terms = [term for term in _query_terms(query) if term not in STOP_WORDS]
+    if not terms:
+        return True
+    metadata = _normalize_text(work.title + " " + work.abstract)
+    return any(term in metadata for term in terms)
 
 
 def score_metadata_relevance(query: str, work: AcademicWork) -> float:
@@ -21,6 +32,8 @@ def score_metadata_relevance_with_profiles(
     terms = _query_terms(query)
     if not terms:
         return 0.0
+    if normalize_title(query) == normalize_title(work.title):
+        return 1.0 - _profile_overlap_penalty(work, profiles or {})
     title = _normalize_text(work.title)
     abstract = _normalize_text(work.abstract)
     source = _normalize_text(work.source)

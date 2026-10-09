@@ -27,6 +27,8 @@ ERROR_TYPE_NORMALIZED = {
     "anti_bot": "anti_bot_verification",
     "ambiguous_page_state": "ambiguous_page_state",
     "city_mismatch": "city_mismatch",
+    **{name: name for name in ("rate_limited", "dependency_missing", "configuration_error", "city_mapping_missing",
+                               "login_required", "anti_bot_verification", "cdp_unavailable", "empty_results", "request_failed", "parse_failed")},
 }
 
 NON_RESULT_STRATEGIES = {"chrome_cdp_preflight", "persistent_profile_cookie"}
@@ -133,7 +135,7 @@ def normalize_error_type(raw_type: Any, message: str = "", platform_state: str =
     value = str(raw_type or "").strip().lower()
     text = f"{value} {message or ''} {platform_state or ''}".lower()
     if value in ERROR_TYPE_ALIASES:
-        return ERROR_TYPE_ALIASES[value]
+        value = ERROR_TYPE_ALIASES[value]
     if value in ERROR_TYPE_NORMALIZED:
         return ERROR_TYPE_NORMALIZED[value]
     if any(token in text for token in ("verification", "captcha", "风控", "拦截", "验证", "扫码查看")):

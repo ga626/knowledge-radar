@@ -887,7 +887,7 @@ def _request_manual_interaction_for_result(
     original_tool: str,
     original_args: Dict | None = None,
 ) -> Dict:
-    """Attach a manual-action advisory; ordinary searches never open Chrome."""
+    """Route an observed login failure through the single account recovery owner."""
 
     if not isinstance(result, dict):
         return result
@@ -942,14 +942,16 @@ def _request_manual_interaction_for_result(
         metadata["manual_interaction_request"] = skipped
         result["metadata"] = metadata
         return result
-    interaction = {
-        "status": "action_required_not_opened",
-        "platform": platform_id,
-        "reason": reason,
-        "original_tool": original_tool,
-        "manual_open_mode": f"health_check(mode='request_browser_interaction:{platform_id}:{reason}')",
-        "detail": "普通搜索遇到登录、验证码或风控时不会自动打开 Chrome；只有明确请求人工交互才会打开受管窗口。",
-    }
+    if error.get("gate_status") or error.get("cooldown_seconds_remaining") or error.get("last_reason"):
+        interaction = {"status": "skipped", "reason": "historical_gate_requires_current_account_evidence", "platform": platform_id}
+    else:
+        interaction = request_browser_interaction(
+            platform_id, reason, target_profile_id=target_profile_id,
+            trigger_evidence=[f"observed_tool={original_tool}", f"observed_failure={reason}"],
+            source=original_tool,
+        )
+        interaction["original_tool"] = original_tool
+        interaction["manual_open_mode"] = f"health_check(mode='request_browser_interaction:{platform_id}:{reason}')"
 
     enriched = dict(error)
     enriched["manual_interaction"] = interaction
@@ -1821,8 +1823,15 @@ def _wechat_article_queries(query: str, account_hint: str = "") -> List[str]:
 
 
 def _wechat_article_url(url: str) -> bool:
-    lowered = str(url or "").lower()
-    return "mp.weixin.qq.com" in lowered
+    from urllib.parse import urlparse, parse_qs
+
+    parsed = urlparse(str(url or ""))
+    if parsed.scheme not in {"http", "https"} or parsed.hostname != "mp.weixin.qq.com":
+        return False
+    if re.fullmatch(r"/s/[A-Za-z0-9_-]+", parsed.path):
+        return True
+    query = parse_qs(parsed.query)
+    return parsed.path == "/s" and all(query.get(key) for key in ("__biz", "mid", "idx", "sn"))
 
 
 def _wechat_annotated_item(item: Dict, discovery_query: str) -> Dict:
@@ -2769,8 +2778,8 @@ def get_capabilities(
         with governed_call("get_capabilities", "capabilities.agent_summary") as gov:
             cache = get_ttl_cache("capabilities.agent_summary", ttl_s=60, max_items=8)
             cold_static = os.environ.get("KR_SUMMARY_COLD_STATIC", "true").strip().lower() not in {"0", "false", "no", "off"}
-            cache_key = stable_key("capabilities.agent_summary", len(ACTUAL_MCP_TOOLS), cold_static)
-            cached = cache.get(cache_key, allow_stale=True)
+            cache_key = stable_key("capabilities.agent_summary", os.getpid(), len(ACTUAL_MCP_TOOLS), cold_static)
+            cached = cache.get(cache_key, allow_stale=False)
             if cached:
                 return cached
             compute_started = time.time()
@@ -3741,8 +3750,8 @@ def _health_check_agent_summary() -> Dict:
     with governed_call("health_check", "health.summary") as gov:
         cache = get_ttl_cache("health.summary", ttl_s=float(os.environ.get("KR_HEALTH_SUMMARY_TTL_S", "30")), max_items=8)
         cold_static = os.environ.get("KR_HEALTH_SUMMARY_COLD_STATIC", "true").strip().lower() not in {"0", "false", "no", "off"}
-        cache_key = stable_key("health.summary", len(ACTUAL_MCP_TOOLS), cold_static)
-        cached = cache.get(cache_key, allow_stale=True)
+        cache_key = stable_key("health.summary", os.getpid(), len(ACTUAL_MCP_TOOLS), cold_static)
+        cached = cache.get(cache_key, allow_stale=False)
         if cached:
             return cached
         compute_started = time.time()
@@ -4113,9 +4122,9 @@ def _xiaohongshu_detail_strategy() -> XiaohongshuDetailStrategy:
             log_info=log.info,
             log_warning=log.warning,
             log_error=log.error,
-            auto_switch_account=xhs_collectors._auto_switch_xhs_account,
             request_user_login=request_user_login,
             selected_profile_id=xhs_collectors._selected_xhs_profile_id,
+            allow_auto_user_login_request=True,
         )
     )
 

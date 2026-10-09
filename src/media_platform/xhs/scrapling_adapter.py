@@ -103,7 +103,7 @@ def _resolve_cdp_url(cdp_url: str) -> str:
     )
 
 
-def _cdp_json(page_ws_url: str, expression: str, *, timeout: int = 15) -> Dict:
+def _cdp_json(page_ws_url: str, expression: str, *, timeout: int = 15, navigate_url: str = "") -> Dict:
     script = r"""
     (async () => {
       const wsUrl = process.argv[1];
@@ -125,6 +125,13 @@ def _cdp_json(page_ws_url: str, expression: str, *, timeout: int = 15) -> Dict:
         ws.send(JSON.stringify({ id, method, params: params || {} }));
       });
       await send('Runtime.enable');
+      const navigateUrl = process.argv[3] || '';
+      if (navigateUrl) {
+        await send('Page.enable');
+        const navigation = await send('Page.navigate', { url: navigateUrl });
+        if (navigation.error || navigation.result && navigation.result.errorText) throw new Error('CDP navigation failed');
+        await new Promise(resolve => setTimeout(resolve, 4500));
+      }
       const evaluated = await send('Runtime.evaluate', {
         expression,
         awaitPromise: true,
@@ -133,6 +140,7 @@ def _cdp_json(page_ws_url: str, expression: str, *, timeout: int = 15) -> Dict:
       const value = evaluated.result && evaluated.result.result
         ? evaluated.result.result.value
         : '{}';
+      if (evaluated.error || evaluated.result && evaluated.result.exceptionDetails) throw new Error('CDP evaluation failed: ' + JSON.stringify(evaluated.error || evaluated.result.exceptionDetails));
       console.log(value || '{}');
       ws.close();
     })().catch(error => {
@@ -141,7 +149,7 @@ def _cdp_json(page_ws_url: str, expression: str, *, timeout: int = 15) -> Dict:
     });
     """
     proc = silent_subprocess_run(
-        ["node", "-e", script, page_ws_url, expression],
+        ["node", "-e", script, page_ws_url, expression, navigate_url],
         capture_output=True,
         text=True,
         encoding="utf-8",

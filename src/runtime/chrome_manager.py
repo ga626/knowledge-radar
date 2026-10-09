@@ -1366,9 +1366,17 @@ def request_user_login(
                 "masked_hint": profile_meta.get("masked_hint", ""),
             },
             "manual_source": source,
+            "account_recovery_pending": True,
             "trigger_evidence": evidence,
         },
         event="user_login_requested",
+    )
+    from .desktop_notification import notify_account_failure
+
+    notification = notify_account_failure(manual_action_request_from_session(session, reason_code=reason))
+    session = transition_browser_session(
+        resource_key, "NEEDS_USER", desired_visibility="attention", reason=reason,
+        metadata={"desktop_notification": notification}, event="account_failure_notification_dispatched",
     )
 
     # Start or switch silently first.  Visibility is granted only after the
@@ -1587,6 +1595,7 @@ def complete_browser_interaction(
             last_probe_result=probe_result,
             metadata={
                 "probe_status": probe_result.get("status"),
+                "account_recovery_pending": not probe_ok,
                 "manual_state_auto_recovered": probe_ok,
                 "platform_state": probe_result.get("platform_state") or probe_result.get("auth_state") or "",
             },

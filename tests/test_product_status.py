@@ -19,7 +19,7 @@ def test_capability_packs_report_configuration_without_values() -> None:
 
     assert rows["core_web"]["status"] == "ready"
     assert rows["content_intelligence"]["status"] == "optional"
-    assert rows["accounts_browser"]["status"] == "needs_interaction"
+    assert rows["accounts_browser"]["status"] == "on_call_check"
     assert "diagnostics_privacy" not in rows
     assert rows["core_web"]["tool_count"] == 4
     assert "TAVILY_API_KEY" not in str(rows)
@@ -54,7 +54,7 @@ def test_console_guides_and_dashboard_never_expose_configuration_or_task_content
     assert dashboard["next_action"]["view"] == "services"
     states = {row["id"]: row for row in dashboard["control_plane"]["capabilities"]}
     assert states["core_web"]["detail"] == "已接入"
-    assert states["accounts_browser"]["detail"] == "需要登录"
+    assert states["accounts_browser"]["detail"] == "调用时核验"
     assert "private-value" not in rendered
     assert "target" not in rendered
 
@@ -197,7 +197,7 @@ def test_optional_capability_and_diagnostic_status_never_expose_paths_or_values(
     diagnostic = product_status.diagnostic_snapshot()
 
     states = {row["id"]: row["status"] for row in optional}
-    assert states["browser"] == "ready"
+    assert states["browser"] == "not_installed"  # Empty directory and APPLIED history do not prove a browser binary.
     assert states["xhs_bridge"] == "ready"
     assert {"media_downloader", "transcription_runtime", "transcription_model"}.issubset(states)
     assert str(data_root) not in json.dumps(diagnostic)
@@ -208,7 +208,10 @@ def test_local_component_catalog_groups_everything_by_user_goal(tmp_path, monkey
     data_root = tmp_path / "private-data"
     model_cache = data_root / "models" / "whisper"
     model_cache.mkdir(parents=True)
-    (model_cache / "model.bin").write_bytes(b"cached")
+    snapshot = model_cache / "models--Systran--faster-whisper-base" / "snapshots" / "fixture"
+    snapshot.mkdir(parents=True)
+    for filename in ("model.bin", "config.json", "tokenizer.json"):
+        (snapshot / filename).write_bytes(b"cached")
     monkeypatch.setenv("KR_DATA_ROOT", str(data_root))
     monkeypatch.setenv("KR_STATE_DIR", str(data_root))
     monkeypatch.setattr(product_status, "resolve_managed_chrome", lambda: None)
