@@ -34,6 +34,7 @@ DEFAULT_SEARCH_COOLDOWN_MAX_S = 7200
 LEASED_BROWSER_PLATFORMS = {"boss", "liepin", "zhilian"}
 PLATFORM_LEASE_TTL_S = 180
 NO_COOLDOWN_REASONS = {
+    "city_mapping_missing",
     "empty_results",
     "no_results",
     "zero_results",
@@ -197,7 +198,10 @@ def check_search_gate(
             (platform, hour_ago)
         ).fetchone()[0]
 
-        failure_query = "SELECT COUNT(*) FROM recruitment_search_gate WHERE platform = ? AND ts > ? AND outcome IN ('blocked', 'failed')"
+        failure_query = (
+            "SELECT COUNT(*) FROM recruitment_search_gate WHERE platform = ? AND ts > ? "
+            "AND outcome IN ('blocked', 'failed') AND lower(reason) != 'city_mapping_missing'"
+        )
         failure_params: list[Any] = [platform, hour_ago]
         if account_norm:
             failure_query += " AND (account_slot = ? OR account_slot = '')"

@@ -6,6 +6,7 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## 0.1.0a13
 
+- 城市表缺失保留失败记录，不再误触发平台风险冷却或耗尽账号失败预算；既有配置错误冷却可由新分类自动忽略，真实平台风控仍受保护。
 - 修复小红书原生页面 CDP 搜索被可选 Scrapling 导入提前阻断的问题；真正使用 DynamicFetcher 的路径仍明确报告依赖缺失。
 - 公开并打包已有招聘城市参数表，恢复 BOSS、猎聘等平台的城市过滤；未知城市仍拒绝猜测代码。
 - 浏览器登记的相对 Profile 路径按产品数据根解析，避免升级后读取程序目录中的空账号。
