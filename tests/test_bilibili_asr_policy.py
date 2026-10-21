@@ -144,6 +144,9 @@ def test_invalid_cache_reexecutes_without_rewriting_completed_history(monkeypatc
         calls.append(1)
         return {"txt": "new usable transcript"}
     monkeypatch.setitem(sys.modules, "transcribe_bilibili", SimpleNamespace(transcribe=transcribe))
+    # 该离线用例只用既有音频；不能依赖开发机已安装的可选下载器。
+    monkeypatch.setitem(sys.modules, "yt_dlp", SimpleNamespace(
+        YoutubeDL=lambda *a, **kw: pytest.fail("cached audio must not download")))
 
     assert bili.transcribe_bilibili("BVstale", output_dir=str(output)) == "new usable transcript"
     assert isolated_runtime.get_task(original) == before
