@@ -50,6 +50,13 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def verify_runtime_inputs(package_root: Path) -> None:
+    metadata = json.loads((package_root / "config/runtime-artifacts.json").read_text(encoding="utf-8"))
+    for relative, key in (("pyproject.toml", "pyproject_sha256"), ("config/runtime-win-py312.lock", "lock_sha256")):
+        if sha256_file(package_root / relative) != metadata.get(key):
+            raise RuntimeError("candidate runtime lock identity mismatch: " + relative)
+
+
 def safe_extract(archive: Path, destination: Path) -> Path:
     with zipfile.ZipFile(archive) as bundle:
         names = bundle.namelist()
@@ -152,6 +159,7 @@ def verify(candidate_dir: Path) -> dict[str, object]:
         issues = package_content_issues(package_root)
         if issues:
             raise RuntimeError("candidate contains private-content patterns: " + "; ".join(issues))
+        verify_runtime_inputs(package_root)
         tools = stdio_probe(package_root)
     missing_tools = sorted(EXPECTED_TOOLS - set(tools))
     if missing_tools:

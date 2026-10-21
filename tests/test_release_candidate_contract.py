@@ -74,3 +74,19 @@ def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
         assert "unsafe" in str(exc)
     else:
         raise AssertionError("unsafe archive was accepted")
+
+
+def test_candidate_rejects_worktree_line_endings_in_runtime_identity(tmp_path: Path) -> None:
+    import hashlib
+    import pytest
+    (tmp_path / "config").mkdir()
+    (tmp_path / "pyproject.toml").write_bytes(b"version = 'test'\n")
+    (tmp_path / "config/runtime-win-py312.lock").write_bytes(b"locked\n")
+    metadata = {"pyproject_sha256": hashlib.sha256(b"version = 'test'\r\n").hexdigest(),
+                "lock_sha256": hashlib.sha256(b"locked\n").hexdigest()}
+    (tmp_path / "config/runtime-artifacts.json").write_text(json.dumps(metadata), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="runtime lock identity mismatch"):
+        verifier.verify_runtime_inputs(tmp_path)
+    metadata["pyproject_sha256"] = hashlib.sha256((tmp_path / "pyproject.toml").read_bytes()).hexdigest()
+    (tmp_path / "config/runtime-artifacts.json").write_text(json.dumps(metadata), encoding="utf-8")
+    verifier.verify_runtime_inputs(tmp_path)
