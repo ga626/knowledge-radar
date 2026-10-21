@@ -4,6 +4,12 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+## 0.1.0a18
+
+- 转写缓存失效时创建下一代任务，保留已完成历史并重新生成可验证正文。
+- B站转写失败或未就绪会返回结构化状态，不再把提示文字当作转写成功。
+- 持久任务结果排除自身阻塞引用；真实子任务仍阻塞时禁止假完成。
+
 ## 0.1.0a17
 
 - 单账号恢复与业务调用始终绑定登记的浏览器资料目录，避免登录失败后改用旧目录扫码。
