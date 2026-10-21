@@ -1,0 +1,1080 @@
+{
+  "schema": "knowledgeradar-evaluation/v1",
+  "version": 1,
+  "cases": [
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.advance_research_candidate"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.advance_research_candidate",
+      "executor": "surface",
+      "entry": "advance_research_candidate",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='kr_research 返回的研究任务 ID。'))])], ctx=Load()), ctx=Load())), arg(arg='candidate_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='候选池返回的 candidate_id。'))])], ctx=Load()), ctx=Load())), arg(arg='stage', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='selected'), Constant(value='deferred'), Constant(value='detail_extracted'), Constant(value='identity_checked'), Constant(value='cross_checked'), Constant(value='counterevidence'), Constant(value='degraded_or_blocked')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='候选当前证据阶段。'))])], ctx=Load()), ctx=Load())), arg(arg='tool', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='产生该阶段的工具或方法。'))])], ctx=Load()), ctx=Load())), arg(arg='outcome', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='低基数结果标签；不要填写 URL、原文或账号信息。'))])], ctx=Load()), ctx=Load())), arg(arg='evidence_receipt_ids', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='List', ctx=Load()), slice=Name(id='str', ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='支撑本次升阶的已返回 research_receipt IDs。详情、身份、交叉核验、反例和退化阶段必须提供。'))])], ctx=Load()), ctx=Load())), arg(arg='independence_rationale', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='单一权威来源足以支持 cross_checked 时的低基数独立性理由；否则 cross_checked 需要至少两个回执。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), List(elts=[], ctx=Load()), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.advance_research_candidate"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.advance_research_candidate",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.analyze_decision_logs"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.analyze_decision_logs",
+      "executor": "surface",
+      "entry": "analyze_decision_logs",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='读取最近决策日志条数。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=500))])], ctx=Load()), ctx=Load())), arg(arg='compact', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时只返回聚合摘要和少量错误样例。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=50), Constant(value=False)])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.analyze_decision_logs"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.analyze_decision_logs",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.extract_dynamic_page"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.extract_dynamic_page",
+      "executor": "surface",
+      "entry": "extract_dynamic_page",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='url', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='http/https URL。返回浏览器渲染后的正文抽取结果。')), keyword(arg='json_schema_extra', value=Dict(keys=[Constant(value='format')], values=[Constant(value='uri')]))])], ctx=Load()), ctx=Load())), arg(arg='wait_ms', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='DOM 加载后的额外等待毫秒数。')), keyword(arg='ge', value=Constant(value=0)), keyword(arg='le', value=Constant(value=15000))])], ctx=Load()), ctx=Load())), arg(arg='timeout', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='页面加载和抽取超时秒数。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=120))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=3000), Constant(value=25.0), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.extract_dynamic_page"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.extract_dynamic_page",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.extract_web_page"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.extract_web_page",
+      "executor": "surface",
+      "entry": "extract_web_page",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='url', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='http/https URL。返回清洗后的 title/content/content_format/collector 等字段。')), keyword(arg='json_schema_extra', value=Dict(keys=[Constant(value='format')], values=[Constant(value='uri')]))])], ctx=Load()), ctx=Load())), arg(arg='use_jina', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时允许外部 Reader 服务参与抽取；为 false 时只用本地静态抽取。'))])], ctx=Load()), ctx=Load())), arg(arg='timeout', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='单次请求超时秒数。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=60))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=True), Constant(value=20.0), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.extract_web_page"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.extract_web_page",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.finalize_research_task"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.finalize_research_task",
+      "executor": "surface",
+      "entry": "finalize_research_task",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='kr_research 返回的研究任务 ID。'))])], ctx=Load()), ctx=Load())), arg(arg='ecology_outcomes', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='List', ctx=Load()), slice=Name(id='Dict', ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='每个 considered source ecology 的 outcome（used/strategic_skip/blocked/not_relevant/not_reached）、原因、receipt_ids；战略跳过/不相关还须 claim_gap_ids 和 reopen_condition。'))])], ctx=Load()), ctx=Load())), arg(arg='stop_rationale', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='模型自主停止的证据边际收益/边界理由。'))])], ctx=Load()), ctx=Load())), arg(arg='key_claims', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='List', ctx=Load()), slice=Name(id='Dict', ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='关键主张及 supporting_evidence_ids、supporting_receipt_ids；高重要性主张缺少真实回执支持将返回 needs_repair。'))])], ctx=Load()), ctx=Load())), arg(arg='quality_status', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='check_research_quality 的结果，深研应为 pass。'))])], ctx=Load()), ctx=Load())), arg(arg='transcript_status', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='Codex transcript 可见性，如 available、partial 或 unavailable。'))])], ctx=Load()), ctx=Load())), arg(arg='report_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='深研 Markdown 报告的绝对路径；deep 必填。'))])], ctx=Load()), ctx=Load())), arg(arg='evidence_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='报告 evidence sidecar 的绝对路径；deep 必填。'))])], ctx=Load()), ctx=Load())), arg(arg='quality_receipt_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='check_research_quality --receipt 生成的哈希绑定回执；deep 必填。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value='unavailable'), Constant(value=''), Constant(value=''), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.finalize_research_task"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.finalize_research_task",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_capabilities"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.get_capabilities",
+      "executor": "surface",
+      "entry": "get_capabilities",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='summary', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时返回压缩摘要；为 false 时返回完整能力、状态和策略 manifest，响应更大。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False)])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_capabilities"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.get_capabilities",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "mcp.get_content_detail"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.get_content_detail",
+      "executor": "surface",
+      "entry": "get_content_detail",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='url', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='内容 URL。支持开放网页和已实现的平台详情 URL；返回正文、元数据、评论、字幕或转写线索、图片或视频处理结果、证据字段、错误和后台任务引用。')), keyword(arg='json_schema_extra', value=Dict(keys=[Constant(value='format')], values=[Constant(value='uri')]))])], ctx=Load()), ctx=Load())), arg(arg='enable_deep_analysis', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时允许更深的图片、视频、音频或内容分析；成本更高，可能较慢或产生后台任务。'))])], ctx=Load()), ctx=Load())), arg(arg='enable_comment_filtering', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时允许评论筛选或评论分析；可能增加耗时，失败时应保留原始评论或退化说明。'))])], ctx=Load()), ctx=Load())), arg(arg='auto_multimodal', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时允许图片 OCR、视频或音频转写、视觉理解等多媒体处理；可能较慢，可能产生后台任务，完成后可按返回字段等待并重读详情。'))])], ctx=Load()), ctx=Load())), arg(arg='research_session_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='旧研究会话别名。普通调用留空；保留兼容。'))])], ctx=Load()), ctx=Load())), arg(arg='work_scope_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='工作范围 ID。普通调用留空；用于把后台任务绑定到同一工作范围。'))])], ctx=Load()), ctx=Load())), arg(arg='task_scope_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='任务范围 ID。普通调用留空；用于等待或聚合同一任务范围的后台任务。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load())), arg(arg='include_transcript', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Name(id='bool', ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='明确允许或禁止字幕/ASR；未指定时跟随增强开关。允许时由有界持久任务执行。'))])], ctx=Load()), ctx=Load())), arg(arg='include_comments', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Name(id='bool', ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='明确允许或禁止评论采集；未指定时跟随评论分析开关。'))])], ctx=Load()), ctx=Load())), arg(arg='include_ocr', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Name(id='bool', ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='明确允许或禁止图片OCR；未指定时跟随多模态开关。'))])], ctx=Load()), ctx=Load())), arg(arg='deadline_s', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='增强任务总deadline秒数，含排队；到期停止自有worker。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=3600))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=False), Constant(value=False), Constant(value=False), Constant(value=''), Constant(value=''), Constant(value=''), Constant(value=''), Constant(value=None), Constant(value=None), Constant(value=None), Constant(value=600)])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。",
+      "change_reason": "P2 explicit media steps and deadline contract"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_content_detail"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.get_content_detail",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_task_status"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.get_task_status",
+      "executor": "surface",
+      "entry": "get_task_status",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='任务 ID。传 cancel:<task_id> 可取消 queued/running 任务；传 summary 或 compact 返回轻量摘要。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回最近任务数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=100))])], ctx=Load()), ctx=Load())), arg(arg='compact', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时返回聚合摘要，不返回完整最近任务列表。'))])], ctx=Load()), ctx=Load())), arg(arg='wait', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='为 true 时等待指定 task/scope/source 的阻塞任务进入终态；可能变慢。'))])], ctx=Load()), ctx=Load())), arg(arg='max_wait_s', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='wait=true 时最长等待秒数；0 表示使用运行时默认值。')), keyword(arg='ge', value=Constant(value=0)), keyword(arg='le', value=Constant(value=600))])], ctx=Load()), ctx=Load())), arg(arg='research_session_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='旧研究会话别名。普通调用留空；保留兼容。'))])], ctx=Load()), ctx=Load())), arg(arg='work_scope_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='工作作用域 ID。由上游详情调用返回；普通调用留空。'))])], ctx=Load()), ctx=Load())), arg(arg='task_scope_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='任务作用域 ID。由上游详情调用返回；普通调用留空。'))])], ctx=Load()), ctx=Load())), arg(arg='source_url', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='源内容 URL。可用于等待绑定到该来源的后台任务。'))])], ctx=Load()), ctx=Load())), arg(arg='content_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='平台内容 ID。可用于等待绑定到该内容的后台任务。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=20), Constant(value=False), Constant(value=False), Constant(value=0.0), Constant(value=''), Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_task_status"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.get_task_status",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.health_check"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.health_check",
+      "executor": "surface",
+      "entry": "health_check",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='检查模式。full 执行完整探活；summary/light/lite 返回模型决策用轻量摘要；diagnostic_summary 返回诊断摘要；browser_sessions 等诊断模式返回浏览器交互状态。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='full')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.health_check"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.health_check",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.kr_research"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.kr_research",
+      "executor": "surface",
+      "entry": "kr_research",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='task', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='研究/查证/感知任务目标。返回路线、来源生态和可选第一波证据。'))])], ctx=Load()), ctx=Load())), arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='plan_only'), Constant(value='first_wave'), Constant(value='deep_route')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='plan_only 只规划；first_wave 执行低风险首轮搜索；deep_route 返回深度路线但不自动执行高风险详情。'))])], ctx=Load()), ctx=Load())), arg(arg='budget', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='fast'), Constant(value='balanced'), Constant(value='deep'), Constant(value='diagnostic')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='预算档位；控制建议深度和首轮数量，不固定工具序列。'))])], ctx=Load()), ctx=Load())), arg(arg='source_ecology_hints', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选来源生态提示，逗号分隔，如 academic_literature_ecology,github_repository_ecology。'))])], ctx=Load()), ctx=Load())), arg(arg='evidence_needs', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选证据需求，例如官方来源、学术、平台讨论、实现证据、近期性。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='first_wave 每个低风险来源返回候选数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=10))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='plan_only'), Constant(value='balanced'), Constant(value=''), Constant(value=''), Constant(value=5), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.kr_research"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.kr_research",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.kr_web_search"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.kr_web_search",
+      "executor": "surface",
+      "entry": "kr_web_search",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='query', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='开放 Web 搜索查询词。返回候选网页、新闻、博客、文档、项目主页等 URL 和摘要。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回候选结果数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='freshness', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value=''), Constant(value='day'), Constant(value='week'), Constant(value='month'), Constant(value='year')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='时间过滤范围。空字符串表示不限制时间。'))])], ctx=Load()), ctx=Load())), arg(arg='provider', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='auto'), Constant(value='tavily'), Constant(value='anysearch'), Constant(value='brave'), Constant(value='exa'), Constant(value='searxng'), Constant(value='codex_web_search'), Constant(value='codex_builtin_web_search'), Constant(value='youtube'), Constant(value='yt'), Constant(value='github'), Constant(value='gh')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='搜索后端。auto 使用已配置波次；codex_web_search/codex_builtin_web_search 仅在对应 host capability card 有已验证调用契约时可用；youtube/yt/github/gh 为兼容旧调用的别名。'))])], ctx=Load()), ctx=Load())), arg(arg='include_raw_content', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='bool', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='是否请求后端返回原始正文。可能增加响应体积和耗时。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回可供账本绑定的 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=5), Constant(value=''), Constant(value='auto'), Constant(value=False), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.kr_web_search"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.kr_web_search",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.manage_xiaohongshu_accounts"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.manage_xiaohongshu_accounts",
+      "executor": "surface",
+      "entry": "manage_xiaohongshu_accounts",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='action', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='操作：summary 查看已认领账号；begin_claim 打开指定 profile 等待扫码；confirm_claim 在已登录后保存用户确认的账号名称；recover 对指定账号做一次最小恢复确认。'))])], ctx=Load()), ctx=Load())), arg(arg='profile_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='小红书 profile ID。summary 可留空；其余操作必填。'))])], ctx=Load()), ctx=Load())), arg(arg='display_label', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='用户确认的人类名称，例如“工作主号”。仅 confirm_claim 使用，不保存密码或完整账号 ID。'))])], ctx=Load()), ctx=Load())), arg(arg='masked_hint', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选脱敏提示，例如“尾号 1234”。仅 confirm_claim 使用。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.manage_xiaohongshu_accounts"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.manage_xiaohongshu_accounts",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.record_research_candidates_tool"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.record_research_candidates_tool",
+      "executor": "surface",
+      "entry": "record_research_candidates_tool",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='kr_research 返回的研究任务 ID。'))])], ctx=Load()), ctx=Load())), arg(arg='source_ecology', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='候选来自的来源生态。'))])], ctx=Load()), ctx=Load())), arg(arg='tool', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='本次发现候选所用工具。'))])], ctx=Load()), ctx=Load())), arg(arg='candidates', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='List', ctx=Load()), slice=Name(id='Dict', ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='本次已获得的候选对象。系统只保存不可逆候选 ID、阶段和低基数元数据，不保存 URL、标题、原查询或正文。'))])], ctx=Load()), ctx=Load())), arg(arg='query', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='本次实际查询；只即时计算 HMAC 指纹，绝不写入账本。'))])], ctx=Load()), ctx=Load())), arg(arg='language', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='本次查询语言标签，例如 zh、en 或 mixed。'))])], ctx=Load()), ctx=Load())), arg(arg='intent_label', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='查询意图标签，例如 implementation、counterexample、user_experience。'))])], ctx=Load()), ctx=Load())), arg(arg='receipt_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='刚完成的显式 research_task_id 工具调用返回的 research_receipt.receipt_id；缺失时仅记录为未核验候选。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.record_research_candidates_tool"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.record_research_candidates_tool",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.review_research_progress"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.review_research_progress",
+      "executor": "surface",
+      "entry": "review_research_progress",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='kr_research 返回的研究任务 ID。'))])], ctx=Load()), ctx=Load())), arg(arg='phase', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='after_archaeology'), Constant(value='after_first_candidates'), Constant(value='before_delivery')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='低频审阅阶段。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.review_research_progress"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.review_research_progress",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_academic"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_academic",
+      "executor": "surface",
+      "entry": "search_academic",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='query', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='学术检索查询、DOI、arXiv 线索或用户提供的引用文本/文件线索。返回题名、作者、年份、DOI、摘要、开放全文状态等元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回文献数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='provider', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='学术数据源名称。auto 使用已配置的公开元数据和开放全文链；显式值用于指定单个数据源。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=5), Constant(value='openalex'), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_academic"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_academic",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_bilibili"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_bilibili",
+      "executor": "surface",
+      "entry": "search_bilibili",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='keyword', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='B站搜索关键词。返回视频标题、URL、UP 主、简介、播放/互动数据和发布时间等元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='page_size', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回视频数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=30))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_bilibili"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_bilibili",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_github_repositories"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_github_repositories",
+      "executor": "surface",
+      "entry": "search_github_repositories",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='query', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='GitHub 仓库搜索关键词或 GitHub search 语法。返回仓库、README/issue 线索和元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回仓库数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_github_repositories"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_github_repositories",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_recruitment"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_recruitment",
+      "executor": "surface",
+      "entry": "search_recruitment",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='platform', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='boss'), Constant(value='liepin'), Constant(value='maimai'), Constant(value='v2ex'), Constant(value='zhilian')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='招聘来源。取值为 boss、liepin、maimai、v2ex、zhilian。'))])], ctx=Load()), ctx=Load())), arg(arg='keyword', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='职位关键词。返回职位标题、URL、公司或社区信息、摘要和平台元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='city', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='城市中文名；不限城市时留空。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回职位数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=10)])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_recruitment"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_recruitment",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_wechat_articles"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_wechat_articles",
+      "executor": "surface",
+      "entry": "search_wechat_articles",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='query', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='微信公众号文章搜索关键词。返回公开文章候选 URL、标题、摘要、发布时间线索和来源线索。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回文章候选数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='freshness', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value=''), Constant(value='day'), Constant(value='week'), Constant(value='month'), Constant(value='year')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='时间过滤范围。空字符串表示不限制时间。'))])], ctx=Load()), ctx=Load())), arg(arg='account_hint', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='公众号名称或账号线索；为空时按主题检索。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value=''), Constant(value=''), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_wechat_articles"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_wechat_articles",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_xiaohongshu"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_xiaohongshu",
+      "executor": "surface",
+      "entry": "search_xiaohongshu",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='keyword', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='小红书搜索关键词。返回笔记标题、URL、作者、摘要、图文/视频类型和平台元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回笔记数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='search_type', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='all'), Constant(value='image'), Constant(value='video'), Constant(value='normal'), Constant(value='force_probe')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='内容类型过滤。all/normal 为综合，image 为图文，video 为视频，force_probe 为低频诊断探测。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value='all'), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_xiaohongshu"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_xiaohongshu",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_youtube"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_youtube",
+      "executor": "surface",
+      "entry": "search_youtube",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='keyword', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='YouTube 视频搜索关键词。返回公开视频标题、URL、频道、摘要、发布时间等元数据。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回视频数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=25))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_youtube"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_youtube",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_zhihu"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "surface.search_zhihu",
+      "executor": "surface",
+      "entry": "search_zhihu",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='keyword', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='知乎搜索关键词。返回回答、文章、问题或视频条目的标题、URL、摘要、作者、赞同数和类型。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='返回条目数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=20))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选的 kr_research 任务 ID；提供后返回 research_receipt。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=10), Constant(value='')])",
+      "layer": "contract",
+      "auto": true,
+      "success": "注册名、签名、文档一致；不证明平台连通。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_zhihu"
+      ],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "case_id": "live.search_zhihu",
+      "executor": "manual",
+      "layer": "native_mcp",
+      "auto": false,
+      "ttl_seconds": 3600,
+      "success": "绑定实际宿主与产品身份的业务断言及原生回执。",
+      "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。"
+    },
+    {
+      "case_id": "flow.search_to_detail",
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "flow.search_detail"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_product_contracts.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/evaluation/test_product_contracts.py",
+        "src/understanding/evidence.py",
+        "src/kr_core/models.py",
+        "src/kr_core/evidence_store.py",
+        "src/runtime/tool_trace.py",
+        "src/generic_web/url_policy.py",
+        "src/collectors/platform/liepin.py",
+        "src/collectors/platform/xiaohongshu.py",
+        "src/use_cases/content_detail.py",
+        "src/detail_strategies/zhihu.py",
+        "src/detail_strategies/xiaohongshu.py",
+        "src/runtime/account_business.py"
+      ],
+      "success": "搜索URL、详情与证据关联一致，正文可回读。",
+      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+    },
+    {
+      "case_id": "account.route_order",
+      "version": 3,
+      "oracle_version": 2,
+      "capabilities": [
+        "account.rotation"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_account_observations.py",
+        "tests/test_xhs_task_failover.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/test_xiaohongshu_search_gate.py",
+        "src/runtime/xhs_task_failover.py",
+        "src/runtime/account_observations.py",
+        "tests/evaluation/test_account_observations.py",
+        "tests/test_xhs_task_failover.py"
+      ],
+      "success": "逐账号尝试，历史gate不能授权兜底，提示精确profile。",
+      "change_reason": "逐账号结构化失败、CAS、防迟到以及六种账号起点穷尽合同"
+    },
+    {
+      "case_id": "task.fanin",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "task.lifecycle"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_runtime_task_fanin.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/test_runtime_task_fanin.py"
+      ],
+      "success": "后台结果可等待，失败可回读，会话隔离。"
+    },
+    {
+      "case_id": "evidence.empty_detail",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "evidence.integrity"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_product_contracts.py::test_empty_detail_never_verified"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/evaluation/test_product_contracts.py"
+      ],
+      "success": "空详情不得已验证。",
+      "known_issue": "F01"
+    },
+    {
+      "case_id": "evidence.future_date",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "evidence.integrity"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_product_contracts.py::test_future_publication_is_not_evergreen"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/evaluation/test_product_contracts.py"
+      ],
+      "success": "未来日期不得被判为evergreen。",
+      "known_issue": "F02"
+    },
+    {
+      "case_id": "trace.success_body",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "evidence.integrity"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_product_contracts.py::test_successful_body_does_not_create_failure_tags"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "tests/evaluation/test_product_contracts.py"
+      ],
+      "success": "成功正文不得污染故障标签。",
+      "known_issue": "F03"
+    },
+    {
+      "case_id": "trace.repository_routing",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.search_github_repositories"
+      ],
+      "executor": "natural_trace",
+      "trace_case": "simple_repository_search",
+      "trace_cases": "tests/fixtures/natural_calling_eval_cases.json",
+      "input": "tests/evaluation/fixtures/repository_trace.json",
+      "layer": "fixture",
+      "auto": true,
+      "dependencies": [
+        "scripts/kr_natural_calling_eval.py",
+        "tests/fixtures/natural_calling_eval_cases.json",
+        "tests/evaluation/fixtures/repository_trace.json"
+      ],
+      "oracle_dependencies": [
+        "scripts/kr_natural_calling_eval.py"
+      ],
+      "success": "固定路由轨迹符合自然调用合同；不宣称已真实检索。"
+    },
+    {
+      "case_id": "security.url_host",
+      "version": 3,
+      "oracle_version": 2,
+      "capabilities": [
+        "mcp.extract_web_page"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_p1_boundaries.py",
+        "tests/test_setup_wizard.py",
+        "tests/evaluation/test_offline_policy.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_p1_boundaries.py",
+        "tests/test_setup_wizard.py",
+        "tests/evaluation/test_offline_policy.py",
+        "src/onboarding/setup_wizard.py",
+        "src/onboarding/static/page.html",
+        "src/generic_web/url_policy.py",
+        "src/use_cases/content_detail.py",
+        "src/detail_strategies/zhihu.py",
+        "src/collectors/platform/zhihu.py",
+        "src/collectors/url_manager.py"
+      ],
+      "success": "输入/重定向/Host/Origin边界拒绝，合法入口可用",
+      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+    },
+    {
+      "case_id": "task.durable",
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "task.lifecycle"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_mcp_observability.py",
+        "tests/evaluation/test_durable_tasks.py",
+        "tests/evaluation/test_p2_execution.py"
+      ],
+      "layer": "integration",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_durable_tasks.py",
+        "tests/evaluation/test_p2_execution.py",
+        "src/runtime/mcp_dispatch.py",
+        "src/runtime/mcp_observability.py",
+        "src/runtime/task_service.py",
+        "src/runtime/task_process.py",
+        "src/runtime/task_adapter.py",
+        "src/server.py",
+        "tests/test_mcp_observability.py",
+        "src/generic_web/url_policy.py",
+        "src/runtime/mcp_runtime.py"
+      ],
+      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞",
+      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+    },
+    {
+      "case_id": "account.facts",
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "account.rotation"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_account_alerts.py",
+        "tests/evaluation/test_account_observations.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_account_observations.py",
+        "src/runtime/account_observations.py",
+        "src/runtime/account_alerts.py",
+        "src/runtime/desktop_notification.py",
+        "src/runtime/chrome_manager.py",
+        "src/runtime/xhs_auth_watcher.py",
+        "tests/test_account_alerts.py",
+        "src/runtime/account_business.py",
+        "src/runtime/xhs_task_failover.py"
+      ],
+      "success": "同profile事实/TTL/事件去重/业务与认证分离",
+      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+    },
+    {
+      "case_id": "content.contracts",
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "mcp.get_content_detail"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_content_contracts.py",
+        "tests/test_bilibili_asr_policy.py",
+        "tests/test_xiaohongshu_detail_regressions.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_content_contracts.py",
+        "tests/test_bilibili_asr_policy.py",
+        "tests/test_xiaohongshu_detail_regressions.py",
+        "src/kr_core/content_contracts.py",
+        "src/collectors/platform/xiaohongshu.py",
+        "src/collectors/platform/liepin.py",
+        "src/detail_strategies/xiaohongshu.py"
+      ],
+      "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
+      "change_reason": "自然语音金标绑定音频及转写哈希，数字、专名和语义单列；受保护URL在任务管道中传递且不落盘"
+    },
+    {
+      "case_id": "storage.lifecycle",
+      "version": 2,
+      "oracle_version": 2,
+      "capabilities": [
+        "mcp.get_task_status"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_product_status.py",
+        "tests/evaluation/test_storage_lifecycle.py",
+        "tests/test_media_cache.py",
+        "tests/evaluation/test_activity_index.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_storage_lifecycle.py",
+        "tests/test_media_cache.py",
+        "tests/evaluation/test_activity_index.py",
+        "src/onboarding/product_status.py",
+        "src/onboarding/static/page.html",
+        "tests/test_product_status.py"
+      ],
+      "success": "活动租约不清理、登记文件可隔离恢复、日志增量",
+      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+    },
+    {
+      "case_id": "delivery.identity",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_capabilities"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/evaluation/test_delivery_identity.py"
+      ],
+      "layer": "fixture",
+      "auto": true,
+      "timeout_seconds": 120,
+      "dependencies": [
+        "tests/evaluation/test_delivery_identity.py"
+      ],
+      "success": "包与ZIP身份/离线锁定/同版本拒覆盖/回退前验证"
+    }
+  ]
+}

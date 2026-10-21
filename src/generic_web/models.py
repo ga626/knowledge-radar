@@ -33,9 +33,10 @@ class GenericWebResponse:
     error: Optional[Dict[str, Any]] = None
 
     def to_mcp_dict(self) -> Dict[str, Any]:
+        from .url_policy import redact_url
         data: Dict[str, Any] = {
-            "url": self.url,
-            "final_url": self.final_url or self.url,
+            "url": redact_url(self.url),
+            "final_url": redact_url(self.final_url or self.url),
             "title": self.title,
             "content": self.content,
             "content_format": self.content_format,

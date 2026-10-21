@@ -31,7 +31,10 @@ class YouTubeDetailStrategy:
             result = {"platform": self.platform, "url": request.url, "error": "无法从 URL 提取 YouTube video_id"}
             return self._response(request, result)
 
-        result = self.deps.get_detail(video_id)
+        if "include_transcript" in request.options:
+            result = self.deps.get_detail(video_id, include_transcript=bool(request.options["include_transcript"]))
+        else:
+            result = self.deps.get_detail(video_id)
         result.setdefault("platform", self.platform)
         result.setdefault("url", request.url)
         if result.get("error"):

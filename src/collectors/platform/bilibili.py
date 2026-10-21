@@ -264,18 +264,45 @@ def _asr_task_metadata(
     return metadata
 
 
-def _write_transcript_cache(path: str, text: str) -> None:
+def _write_transcript_cache(path: str, text: str, *, kind="subtitle", audio_path="") -> None:
+    import hashlib
+    import json
+    from pathlib import Path
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(text)
+    destination = Path(path)
+    temporary = destination.with_suffix(destination.suffix + ".pending")
+    temporary.write_text(text, encoding="utf-8")
+    temporary.replace(destination)
+    from runtime.asset_identity import file_identity, model_identity
+    policy = AsrPolicy.from_env()
+    receipt = {"schema": "knowledgeradar-transcript-cache/v3", "policy": policy.compact(),
+               "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "source_id": destination.stem,
+               "kind": kind, "claim_accuracy": "unmeasured",
+               "audio": file_identity(audio_path) if audio_path else None,
+               "model_identity": model_identity(policy) if kind == "asr" else None}
+    destination.with_suffix(destination.suffix + ".identity.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
 
 
 def _read_transcript_cache(path: str) -> str:
     if not os.path.exists(path):
         return ""
     try:
+        import hashlib
+        import json
+        from pathlib import Path
+        receipt = json.loads(Path(path + ".identity.json").read_text(encoding="utf-8"))
+        if receipt.get("schema") != "knowledgeradar-transcript-cache/v3":
+            return ""
         with open(path, "r", encoding="utf-8") as f:
-            return f.read()
+            text = f.read()
+        if receipt.get("policy") != AsrPolicy.from_env().compact() or receipt.get("sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest():
+            return ""
+        if receipt.get("kind") == "asr":
+            from runtime.asset_identity import file_identity, model_identity
+            audio = receipt.get("audio") or {}
+            if not audio.get("name") or file_identity(Path(path).parent / audio["name"]) != audio or model_identity(AsrPolicy.from_env()) != receipt.get("model_identity"):
+                return ""
+        return text
     except Exception:
         return ""
 
@@ -580,13 +607,14 @@ def transcribe_bilibili(
                 from transcribe_bilibili import transcribe as transcribe_audio
                 result = transcribe_audio(existing_audio, model_size=policy.primary_model, policy=policy)
                 txt = result.get("txt", "")
+                if not str(txt).strip() or str(txt).lstrip().startswith("[transcribe]"):
+                    raise ValueError("ASR returned no usable transcript")
                 timing["download_s"] = round(float(result.get("download_s") or timing["download_s"]), 3)
                 timing["model_load_s"] = round(float(result.get("model_load_s") or 0), 3)
                 timing["transcribe_s"] = round(float(result.get("transcribe_s") or result.get("duration_s") or 0), 3)
                 timing["total_s"] = round(time.time() - task_started, 3)
-                if txt and not os.path.exists(cache_path):
-                    with open(cache_path, "w", encoding="utf-8") as f:
-                        f.write(txt)
+                if txt:
+                    _write_transcript_cache(cache_path, txt, kind="asr", audio_path=existing_audio)
                 srt = result.get("srt", "")
                 if srt:
                     with open(os.path.join(output_dir, f"{bvid}_transcript.srt"), "w", encoding="utf-8") as f:
@@ -649,6 +677,12 @@ def transcribe_bilibili(
             _do_transcribe,
         )
 
+        if os.environ.get("KR_DURABLE_WORKER") == "1":
+            finished = task_store.get_task(task_id) or {}
+            cached = _read_transcript_cache(cache_path)
+            if cached and finished.get("status") == "completed":
+                return cached
+            return "[transcribe] failed: " + str(finished.get("error_code") or finished.get("status") or "no_result")
         return ("[transcribe] 语音下载和转写已在后台启动（约1-2分钟），"
                 f"完成后可重新调用 get_content_detail 获取转写文本")
     except Exception as e:

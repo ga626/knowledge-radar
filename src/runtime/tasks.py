@@ -17,8 +17,8 @@ from runtime.status_schema import normalize_error_code
 from runtime.task_scope import SERVER_RUN_ID
 
 
-TASK_STATUSES = ("queued", "running", "completed", "failed", "skipped", "cancelled")
-TERMINAL_STATUSES = ("completed", "failed", "skipped", "cancelled")
+TASK_STATUSES = ("queued", "running", "waiting_for_user", "completed", "failed", "skipped", "cancelled", "interrupted")
+TERMINAL_STATUSES = ("completed", "failed", "skipped", "cancelled", "interrupted")
 
 
 def _default_runtime_dir() -> str:
@@ -493,6 +493,24 @@ class TaskStore:
     def mark_cancelled(self, task_id: str, reason: str, metadata: Optional[Dict] = None) -> Dict:
         return self._mark(task_id, "cancelled", finished=True, error=reason, error_code="cancelled", metadata=metadata)
 
+    def mark_interrupted(self, task_id: str, reason: str = "worker_interrupted", metadata: Optional[Dict] = None) -> Dict:
+        return self._mark(task_id, "interrupted", finished=True, error=reason, error_code="interrupted", metadata=metadata)
+
+    def mark_waiting_for_user(self, task_id: str, metadata: Optional[Dict] = None) -> Dict:
+        return self._mark(task_id, "waiting_for_user", metadata=metadata)
+
+    def claim_queued(self, task_id: str, owner: Dict) -> bool:
+        self.initialize()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT metadata_json FROM runtime_tasks WHERE task_id=? AND status='queued'", (task_id,)).fetchone()
+            if not row:
+                return False
+            meta = {**_json_loads(row["metadata_json"]), **owner}
+            cur = conn.execute("UPDATE runtime_tasks SET status='running', started_at=?, updated_at=?, attempts=attempts+1, metadata_json=? WHERE task_id=? AND status='queued'",
+                               (now_ts(), now_ts(), _json_dumps(meta), task_id))
+            return cur.rowcount == 1
+
     def _mark(
         self,
         task_id: str,
@@ -524,7 +542,7 @@ class TaskStore:
                     error=?,
                     error_code=CASE WHEN ? != '' THEN ? ELSE error_code END,
                     metadata_json=?
-                WHERE task_id=?
+                WHERE task_id=? AND status NOT IN ('completed','failed','cancelled','skipped','interrupted')
                 """,
                 (
                     status,
@@ -876,7 +894,7 @@ class TaskStore:
                 UPDATE runtime_tasks SET
                     updated_at=?,
                     metadata_json=?
-                WHERE task_id=?
+                WHERE task_id=? AND status IN ('queued', 'running', 'retry_wait')
                 """,
                 (ts, _json_dumps(merged_metadata), task_id),
             )

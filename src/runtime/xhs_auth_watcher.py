@@ -11,6 +11,7 @@ import json
 import logging
 import threading
 import time
+import uuid
 from typing import Dict
 
 import httpx
@@ -32,6 +33,8 @@ class XhsAuthWatcher:
         self.profile_id = str(profile_id or "")
         self.resource_key = f"xhs:{self.profile_id}"
         self.stop_event = threading.Event()
+        self.owner_generation = uuid.uuid4().hex
+        self.recovery_session = None
         self.thread = threading.Thread(target=self._run, name=f"kr-xhs-auth-{self.profile_id[-8:]}", daemon=True)
 
     def start(self) -> None:
@@ -54,12 +57,23 @@ class XhsAuthWatcher:
         # Delayed import prevents a chrome-manager -> watcher -> chrome-manager
         # cycle during service boot.
         from .chrome_manager import complete_browser_interaction, probe_browser_auth
+        from .account_observations import AccountObservationStore
+
+        store = AccountObservationStore()
+        lease = store.begin_recovery(self.profile_id, owner_generation=self.owner_generation)
+        if lease["status"] != "active":
+            self.stop_event.set()
+            return False
+        self.recovery_session = lease
 
         probe = probe_browser_auth("xhs", target_profile_id=self.profile_id)
         if probe.get("status") != "ok" or probe.get("auth_state") != "authenticated_with_platform_confirmation":
             self._record("xhs_auth_watcher_probe_not_authenticated", trigger=reason, probe_status=probe.get("status"), auth_state=probe.get("auth_state"))
             return False
-        completed = complete_browser_interaction("xhs", probe_result=probe, profile_id=self.profile_id)
+        completed = complete_browser_interaction("xhs", probe_result=probe, profile_id=self.profile_id, recovery_session=lease)
+        if completed.get("status") != "ok":
+            self.stop_event.set()
+            return False
         self._record("xhs_auth_watcher_auto_completed", state="READY_SILENT", trigger=reason, completed=completed.get("status") == "ok")
         return bool(completed.get("status") == "ok")
 
@@ -122,6 +136,9 @@ class XhsAuthWatcher:
                     return
         finally:
             with _LOCK:
+                if self.recovery_session:
+                    from .account_observations import AccountObservationStore
+                    AccountObservationStore().release_recovery(self.recovery_session)
                 if _WATCHERS.get(self.profile_id) is self:
                     _WATCHERS.pop(self.profile_id, None)
 

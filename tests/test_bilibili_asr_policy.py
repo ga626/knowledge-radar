@@ -17,7 +17,7 @@ def test_bilibili_asr_cache_hit_skips_subtitle_download_and_asr(monkeypatch, tmp
     output_dir = tmp_path / "transcripts"
     output_dir.mkdir()
     cache_path = output_dir / "BVcache_transcript.txt"
-    cache_path.write_text("cached transcript", encoding="utf-8")
+    bili._write_transcript_cache(str(cache_path), "cached transcript")
     called = {"subtitle": 0}
 
     def fake_subtitle(*args, **kwargs):

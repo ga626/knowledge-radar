@@ -25,7 +25,7 @@ from runtime.recruitment_city import resolve_recruitment_city
 from runtime.recruitment_governance import check_search_gate, record_search_outcome
 from runtime.recruitment_network import extract_recruitment_items_from_payloads, recruitment_network_observer_script
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 SELECTORS_PATH = os.path.join(PROJECT_ROOT, "config", "selectors.json")
 
 

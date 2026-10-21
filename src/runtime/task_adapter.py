@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import os
 import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
+from generic_web.url_policy import public_evidence_payload
 
 from .failure_tags import detect_failure_tags
 from .resource_concurrency import acquire_resource, infer_task_resource
@@ -56,8 +58,11 @@ class LocalTaskAdapter:
                 "timeout_s": spec.timeout_s,
             },
         )
-        thread = threading.Thread(target=self._run, args=(spec, fn), daemon=True)
-        thread.start()
+        if os.environ.get("KR_DURABLE_WORKER") == "1":
+            self._run(spec, fn)
+        else:
+            thread = threading.Thread(target=self._run, args=(spec, fn), daemon=True)
+            thread.start()
         return task
 
     def submit_lifecycle(self, spec: LocalTaskSpec, fn: Callable[[], None]) -> Dict[str, Any]:
@@ -91,15 +96,22 @@ class LocalTaskAdapter:
                 "timeout_s": spec.timeout_s,
             },
         )
-        thread = threading.Thread(target=self._run_lifecycle, args=(spec, fn), daemon=True)
-        thread.start()
+        if os.environ.get("KR_DURABLE_WORKER") == "1":
+            self._run_lifecycle(spec, fn)
+        else:
+            thread = threading.Thread(target=self._run_lifecycle, args=(spec, fn), daemon=True)
+            thread.start()
         return task
 
     def _run_lifecycle(self, spec: LocalTaskSpec, fn: Callable[[], None]) -> None:
         resource_kind = infer_task_resource(spec.task_type, {"resource_kind": spec.resource_kind, **(spec.metadata or {})})
         with acquire_resource(resource_kind) as resource_meta:
             self.store.heartbeat(spec.task_id, metadata={"phase": "resource_acquired", **resource_meta})
-            fn()
+            try:
+                fn()
+            except Exception as exc:
+                self.store.mark_failed(spec.task_id, str(exc), error_code=type(exc).__name__)
+                raise
 
     def _run(self, spec: LocalTaskSpec, fn: Callable[[], Dict[str, Any]]) -> None:
         started = time.time()
@@ -126,13 +138,23 @@ class LocalTaskAdapter:
                     result = fn()
                 if self._is_cancelled(spec.task_id):
                     return
+                if time.time() - started > spec.timeout_s:
+                    self.store.mark_failed(spec.task_id, "task deadline exceeded during attempt", error_code="deadline_exceeded")
+                    return
+                if isinstance(result, dict):
+                    if result.get("manual_action_required") or result.get("status") == "needs_interaction":
+                        self.store.mark_waiting_for_user(spec.task_id, metadata={"phase": "waiting_for_user", "resume_policy": "explicit_retry"})
+                        return
+                    if result.get("error") or result.get("failure_type") or result.get("status") in {"failed", "error", "empty"}:
+                        self.store.mark_failed(spec.task_id, "task returned structured failure", error_code=str(result.get("failure_type") or "task_failed"))
+                        return
                 self.store.mark_completed(
                     spec.task_id,
                     result_path=spec.result_path,
                     metadata={
                         "attempt": attempt,
                         "elapsed_s": round(time.time() - started, 3),
-                        **(result or {}),
+                        **public_evidence_payload(result or {}),
                     },
                 )
                 return

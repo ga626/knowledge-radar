@@ -45,7 +45,7 @@ def snapshot_from_response(query: str, response: Dict[str, Any], *, elapsed_ms: 
         if ecology and ecology not in ecologies:
             ecologies.append(ecology)
         strength = str(item.get("evidence_strength") or "")
-        if strength and not strength.startswith("weak"):
+        if strength in {"strong", "contextual", "verified_detail", "cross_checked", "strong_platform_network"}:
             evidence_count += 1
     return SearchQualitySnapshot(
         query=query,

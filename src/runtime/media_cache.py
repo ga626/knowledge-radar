@@ -65,6 +65,8 @@ def media_cache_subdir(kind: str, *, content_id: str = "", task_id: str = "") ->
     for part in parts:
         path /= part
     path.mkdir(parents=True, exist_ok=True)
+    from runtime.storage_lifecycle import StorageLeases
+    StorageLeases().acquire(path)
     return path
 
 
@@ -153,18 +155,28 @@ def cleanup_expired_media_cache(
             if manifest_abs and resolved == manifest_abs:
                 kept.append(str(path))
                 continue
-            ttl = ttl_by_path.get(resolved, default_ttl_seconds)
+            from runtime.storage_lifecycle import StorageLeases
+            if StorageLeases().protected(path):
+                kept.append(str(path))
+                continue
+            if resolved not in ttl_by_path:
+                kept.append(str(path))
+                continue
+            ttl = ttl_by_path[resolved]
             if current - path.stat().st_mtime >= ttl:
                 deleted.append(str(path))
-                if not dry_run:
-                    path.unlink()
             else:
                 kept.append(str(path))
         except Exception as exc:
             errors.append({"path": str(path), "error": str(exc)})
 
-    _remove_empty_dirs(base, dry_run=dry_run)
-    return {"root": str(base), "deleted": deleted, "kept": kept, "errors": errors}
+    receipt = None
+    if deleted and not dry_run:
+        from runtime.storage_lifecycle import quarantine_files
+        product_data = Path(os.environ.get("KR_DATA_ROOT") or base.parent)
+        receipt = quarantine_files(deleted, cache_root=base, data_root=product_data)
+        deleted = [str(base / row["relative"]) for row in receipt["files"] if row["status"] == "quarantined"]
+    return {"root": str(base), "deleted": deleted, "kept": kept, "errors": errors, "quarantine": receipt}
 
 
 def _remove_empty_dirs(root: Path, *, dry_run: bool) -> None:

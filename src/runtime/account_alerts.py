@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+from urllib.parse import quote
 
 from .browser_sessions import browser_sessions_summary
 from .profile_registry import profile_registry_internal
@@ -50,6 +51,8 @@ def account_alert_snapshot() -> dict:
         fields = account_identity_fields(profile, identity)
         session = by_profile.get(profile["profile_id"], {})
         state = str(session.get("state") or "UNOBSERVED")
+        from .account_observations import AccountObservationStore
+        observation = AccountObservationStore().get(profile["profile_id"])
         rows.append({
             **fields, "profile_id": profile["profile_id"], "platform": platform,
             "platform_label": LABELS[platform], "state": state,
@@ -57,7 +60,18 @@ def account_alert_snapshot() -> dict:
             "reason": str(session.get("reason") or ""),
             "updated_at": str(session.get("updated_at_iso") or ""),
             "notification": (session.get("metadata") or {}).get("desktop_notification") or {},
+            "observation": observation,
+            "verified": observation["verified"],
+            "status_category": "verified" if observation["verified"] else "recovery" if observation["needs_action"] else "unverified",
+            "deep_link": "#accounts?profile=" + quote(profile["profile_id"], safe=""),
         })
+        if observation.get("observed_at"):
+            rows[-1]["needs_action"] = observation["needs_action"]
+        row = rows[-1]
+        row["status_category"] = "verified" if row["verified"] else "recovery" if row["needs_action"] else "unverified"
+        row["login_status"] = "verified" if row["verified"] else "needs_recovery" if row["needs_action"] else "unobserved"
+        row["login_verified"] = row["verified"]
+        row["group_id"], row["group_label"] = ("content", "内容与社区") if platform in {"xhs", "xiaohongshu", "zhihu"} else ("recruitment", "招聘与职业") if platform in {"boss", "liepin", "zhilian", "maimai"} else ("academic", "学术与资料")
     return {"schema": "knowledgeradar-account-alerts/v1", "accounts": rows,
             "pending_count": sum(row["needs_action"] for row in rows)}
 
@@ -73,15 +87,32 @@ def recover_account(profile_id: str, action: str) -> dict:
         raise ValueError("实验通道不属于当前账号恢复流程。")
     platform = str(profile["platform"])
     resource = f"xhs:{profile_id}" if platform in {"xiaohongshu", "xhs"} else platform
+    if action == "ack":
+        from .account_observations import AccountObservationStore
+        store = AccountObservationStore()
+        event_id = store.get(profile_id).get("event_id")
+        if event_id:
+            store.delivery(event_id, "acknowledged")
+        return {"status": "acknowledged", "profile_id": profile_id}
     if action == "verify":
+        import uuid
+        from .account_observations import AccountObservationStore
+        store = AccountObservationStore()
+        recovery = store.begin_recovery(profile_id, owner_generation=uuid.uuid4().hex)
+        if recovery["status"] != "active":
+            return {"status": "busy", "profile_id": profile_id, "detail": "此账号正在由其他恢复会话验证。"}
         probe_platform = "xhs" if platform in {"xiaohongshu", "xhs"} else platform
-        probe = probe_browser_auth(probe_platform, target_profile_id=profile_id)
-        if probe.get("status") != "ok" or probe.get("manual_action_required"):
-            return {"status": "not_verified", "profile_id": profile_id,
-                    "detail": probe.get("detail") or "当前账号尚未验证通过，请完成登录或稍后重试。", "probe": probe}
-        result = complete_browser_interaction(probe_platform, probe_result=probe, profile_id=profile_id)
-        result["detail"] = "该账号探针已通过，浏览器已恢复普通生命周期；实际任务仍会逐次核验。"
-        return result
+        try:
+            probe = probe_browser_auth(probe_platform, target_profile_id=profile_id)
+            if probe.get("status") != "ok" or probe.get("manual_action_required"):
+                return {"status": "not_verified", "profile_id": profile_id,
+                        "detail": probe.get("detail") or "当前账号尚未验证通过，请完成登录或稍后重试。", "probe": probe}
+            result = complete_browser_interaction(probe_platform, probe_result=probe, profile_id=profile_id, recovery_session=recovery)
+            if result.get("status") == "ok":
+                result["detail"] = "登录探针已通过；账号仍待真实业务验证，成功后才显示绿色。"
+            return result
+        finally:
+            store.release_recovery(recovery)
     if action == "open":
         return request_user_login(resource, "manual_login", target_profile_id=profile_id,
                                   trigger_evidence=["user_requested_account_recovery"], source="account_console")

@@ -213,7 +213,16 @@ def normalize_xhs_image_assets(payload: Dict[str, Any]) -> tuple[List[Dict[str, 
             role = _clean_text(item.get("role") or "unknown").lower()
             if not url or role not in {"content", "unknown", "noise"}:
                 continue
-            assets.append({"url": url, "role": role})
+            owner = str(item.get("note_id") or item.get("owner_note_id") or "")
+            expected = str(payload.get("note_id") or payload.get('noteId') or '')
+            if not expected:
+                match = re.search(r'/(?:explore|discovery/item)/([a-zA-Z0-9]+)', str(payload.get('url') or ''))
+                expected = match.group(1) if match else ''
+            if owner and expected and owner != expected:
+                role = "noise"
+            elif role == 'content' and (not owner or not expected):
+                role = 'unknown'
+            assets.append({"url": url, "role": role, "owner_note_id": owner})
     else:
         raw_images = payload.get("images") if isinstance(payload.get("images"), list) else []
         assets = [{"url": _clean_text(item), "role": "unknown"} for item in raw_images if _clean_text(item)]
@@ -223,7 +232,8 @@ def normalize_xhs_image_assets(payload: Dict[str, Any]) -> tuple[List[Dict[str, 
         quality[key] = quality.get(key, 0) + 1
     content = [item["url"] for item in assets if item["role"] == "content"]
     unknown = [item["url"] for item in assets if item["role"] == "unknown"]
-    images = list(dict.fromkeys(content or unknown))
+    # 未确认归属的全页图片保留元数据，不自动送OCR/付费理解。
+    images = list(dict.fromkeys(content))
     return assets, images, quality
 
 

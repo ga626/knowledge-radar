@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, List
 
 
-XHS_SELECTOR_BUNDLE_VERSION = "xhs-selector-bundle-20260613-v1"
+XHS_SELECTOR_BUNDLE_VERSION = "xhs-selector-bundle-20261020-v2"
 
 XHS_DETAIL_SELECTORS: Dict[str, List[str]] = {
     "title": [
@@ -109,8 +109,8 @@ def xhs_detail_selector_js(max_chars: int = 2400) -> str:
       classes.push(String(current.getAttribute && current.getAttribute('data-testid') || ''));
     }}
     const context = classes.join(' ').toLowerCase();
-    if (/(avatar|comment|reply|author|user|emoji|icon|toolbar|qrcode|qr-code)/i.test(context)) return 'noise';
-    if (/(note-content|note-detail|note-item|swiper|carousel|image-container|media|cover)/i.test(context)) return 'content';
+    if (/(avatar|comment|reply|author|user|emoji|icon|toolbar|qrcode|qr-code|recommend|related|feed-card)/i.test(context)) return 'noise';
+    if (node.closest('.note-container, .note-detail-mask, #noteContainer') && /(swiper|carousel|image-container|note-content)/i.test(context)) return 'content';
     return 'unknown';
   }}
   function addImage(src, node) {{
@@ -122,7 +122,8 @@ def xhs_detail_selector_js(max_chars: int = 2400) -> str:
     if (!seenImages.has(src)) {{
       seenImages.add(src);
       const role = imageRole(node);
-      imageAssets.push({{url: src, role}});
+      const owner = (location.pathname.match(/\\/(?:explore|discovery\\/item)\\/([a-zA-Z0-9]+)/) || [])[1] || '';
+      imageAssets.push({{url: src, role, owner_note_id: role === 'content' ? owner : ''}});
       imageQuality[role + '_count'] = Number(imageQuality[role + '_count'] || 0) + 1;
       if (role !== 'noise') images.push(src);
     }}

@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 from kr_core.strategy import generic_web_strategy_tree
 
 from .models import GenericWebRequest, GenericWebResponse, utc_now_iso
+from .url_policy import URLPolicyError, guarded_fetch, public_addresses, reader_allowed
 
 
 class GenericWebError(Exception):
@@ -45,15 +46,17 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
     errors = []
     strategy = generic_web_strategy_tree(use_jina=request.use_jina)
 
-    if not _valid_http_url(request.url):
+    try:
+        public_addresses(request.url)
+    except URLPolicyError as exc:
         return _error_response(
             request,
             started,
-            GenericWebError("invalid_url", "Only http/https URLs are supported", collector="generic_web"),
+            GenericWebError("restricted_url", str(exc), collector="generic_web"),
             strategy=strategy,
         )
 
-    if request.use_jina:
+    if request.use_jina and reader_allowed(request.url):
         try:
             return _with_elapsed(_collect_via_jina(request), started, errors=errors, strategy=strategy)
         except GenericWebError as exc:
@@ -87,8 +90,11 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
 
 
 def _valid_http_url(url: str) -> bool:
-    parsed = urlparse(url or "")
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    try:
+        public_addresses(url, resolve=False)
+        return True
+    except URLPolicyError:
+        return False
 
 
 def _collect_via_jina(request: GenericWebRequest) -> GenericWebResponse:
@@ -103,8 +109,7 @@ def _collect_via_jina(request: GenericWebRequest) -> GenericWebResponse:
     headers = {"Accept": "text/plain, text/markdown;q=0.9, */*;q=0.8"}
     try:
         jina_timeout = min(float(request.timeout or 20.0), 8.0)
-        with httpx.Client(timeout=jina_timeout, follow_redirects=True, headers=headers) as client:
-            response = client.get(reader_url)
+        response = guarded_fetch(reader_url, timeout=jina_timeout, headers=headers)
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         raise GenericWebError("network_error", str(exc), collector="jina_reader") from exc
     except httpx.RequestError as exc:
@@ -145,8 +150,7 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }
     try:
-        with httpx.Client(timeout=request.timeout, follow_redirects=True, headers=headers) as client:
-            response = client.get(request.url)
+        response = guarded_fetch(request.url, timeout=request.timeout, headers=headers)
     except (httpx.ConnectError, httpx.TimeoutException) as exc:
         raise GenericWebError("network_error", str(exc), collector=collector) from exc
     except httpx.RequestError as exc:
@@ -158,13 +162,21 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         raise GenericWebError("network_error", f"HTTP {response.status_code}", collector=collector, status_code=response.status_code)
 
     content_type = response.headers.get("content-type", "")
-    if "html" not in content_type.lower() and "xml" not in content_type.lower():
+    if not any(kind in content_type.lower() for kind in ["html", "xml", "text/plain", "text/markdown"]):
         raise GenericWebError("unsupported_content_type", f"Unsupported content-type: {content_type}", collector=collector, status_code=response.status_code)
     return response, content_type
 
 
 def _collect_via_trafilatura(request: GenericWebRequest) -> GenericWebResponse:
     response, content_type = _fetch_html(request, collector="trafilatura")
+    if content_type.lower().startswith(("text/plain", "text/markdown")):
+        text = response.text[:1_000_000].strip()
+        if not text:
+            raise GenericWebError("empty_detail", "Plain text body is empty", collector="plain_text")
+        return GenericWebResponse(url=request.url, final_url=str(response.url), title=request.url.rsplit("/", 1)[-1],
+                                  content=text, content_format="text", collector="plain_text", fetched_at=utc_now_iso(),
+                                  metadata={"status_code": response.status_code, "content_type": content_type,
+                                            "content_chars": len(text), "truncated": len(response.text) > len(text)})
     try:
         import trafilatura
 

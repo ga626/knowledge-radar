@@ -35,6 +35,10 @@ def run_browser_accounts(
     """Try each eligible profile once, including a full search after every change."""
     rows = pool.get("accounts") or []
     policy = (registry.get("raw") or {}).get("policy") or registry.get("policy") or {}
+    policy = dict(policy)
+    if purpose in {"search", "detail", "main_chain", "diagnostic", "patrol"}:
+        # 只读逐账号轮换由本任务穷尽集合限次；旧全局单次切换上限不再截断C。
+        policy["max_switches_per_task"] = max(1, len(rows) - 1)
     selection = select_account(purpose, registry=registry, account_rows=rows)
     eligible = [str(row["profile_id"]) for row in rows if select_account(
         purpose, registry=registry, account_rows=[row],
@@ -47,6 +51,12 @@ def run_browser_accounts(
         "registered_profile_ids": registered, "failed_profile_ids": [],
         "policy_excluded_profile_ids": [profile for profile in registered if profile not in eligible],
         "attempts": [], "exhausted": False, "common_failure": False,
+        "profiles": [{"profile_id": str(row.get("profile_id") or ""), "account_slot": row.get("account_slot", ""),
+                      "attempted": False, "eligible": str(row.get("profile_id") or "") in eligible,
+                      "reason": "eligible_not_attempted" if str(row.get("profile_id") or "") in eligible else
+                                str((row.get("observation") or {}).get("reason") or row.get("runtime_state") or "risk_or_policy_excluded"),
+                      "expires_at": (row.get("observation") or {}).get("expires_at")}
+                     for row in rows if row.get("profile_id")],
     }
     result = {"error": {"type": "browser_accounts_unavailable", "message": "账号均处于登录或风控等待状态"}}
     reason = "PROFILE_START_FAILED"
@@ -61,12 +71,17 @@ def run_browser_accounts(
             if not decision.get("allowed"):
                 receipt["stopped_by_policy"] = decision.get("reason")
                 return result, receipt
-        result = attempt(profile)
+        from .account_observations import account_observation_attempt
+        with account_observation_attempt(profile) as marker:
+            result = attempt(profile)
+        profile_receipt = next(row for row in receipt["profiles"] if row["profile_id"] == profile)
+        profile_receipt["attempted"] = True
         error = result.get("error") or {}
         if not isinstance(error, dict):
             error = {"type": result.get("failure_type") or "unknown"}
         failure = str(result.get("failure_type") or error.get("failure_type") or error.get("type") or "unknown").lower()
         page_state = result.get("page_state") or error.get("page_state") or {}
+        failed = bool(error or result.get("failure_type") or result.get("status") in {"failed", "error", "empty", "needs_interaction"} or result.get("manual_action_required") or page_state.get("manual_action_required"))
         if page_state.get("manual_action_required"):
             subtype = str(page_state.get("failure_subtype") or "")
             observed_state = str(page_state.get("platform_state") or "")
@@ -76,8 +91,14 @@ def run_browser_accounts(
                 failure = "login_required"
             elif observed_state in {"platform_verification_required", "app_scan_required"}:
                 failure = "platform_verification_required"
-        receipt["attempts"].append({"profile_id": profile, "status": "failed" if error else "ok", "failure_type": failure if error else ""})
-        if not error:
+        receipt["attempts"].append({"profile_id": profile, "status": "failed" if failed else "ok", "failure_type": failure if failed else ""})
+        profile_receipt["reason"] = failure if failed else "business_success"
+        if not failed:
+            from .account_observations import observe_account
+            observe_account(profile, "xiaohongshu", "business_verified", source=f"{purpose}_business_result", expected_revision=marker["revision"])
+            for row in receipt["profiles"]:
+                if row["eligible"] and not row["attempted"]:
+                    row["reason"] = "not_needed_after_success"
             return result, receipt
         if failure not in ACCOUNT_FAILURES:
             receipt["common_failure"] = True
@@ -85,8 +106,8 @@ def run_browser_accounts(
         receipt["failed_profile_ids"].append(profile)
         reason = ("SECURITY_VERIFICATION" if "verification" in failure else
                   "LOGIN_REQUIRED" if failure in {"login_required", "cookie_missing"} else "CDP_PORT_UNAVAILABLE")
-        record_failure(profile, reason)
-    receipt["exhausted"] = bool(registered) and set(registered) == set(
-        receipt["failed_profile_ids"] + receipt["policy_excluded_profile_ids"]
-    )
+        with account_observation_attempt(profile, revision=marker["revision"]):
+            record_failure(profile, reason)
+    # 跳过不等于试过且失败；有任一政策排除时不授权付费兜底。
+    receipt["exhausted"] = bool(registered) and set(registered) == set(receipt["failed_profile_ids"])
     return result, receipt

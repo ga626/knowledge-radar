@@ -1,0 +1,13 @@
+<section class="view account-center" data-view-panel="accounts" hidden aria-labelledby="account-heading">
+<div class="heading"><div><h2 id="account-heading">平台与账号</h2><p>查看每个登记账号的登录状态，找到需要扫码或验证的账号。</p></div><button type="button" class="button" id="account-refresh">刷新状态</button></div>
+<div class="account-filters" role="group" aria-label="按登录状态筛选">
+<button type="button" data-account-filter="all" aria-pressed="true">全部账号 <span id="account-count-all">—</span></button>
+<button type="button" data-account-filter="recovery" aria-pressed="false" class="recovery">需要恢复 <span id="account-count-recovery">—</span></button>
+<button type="button" data-account-filter="verified" aria-pressed="false" class="verified">已登录 <span id="account-count-verified">—</span></button>
+<button type="button" data-account-filter="unobserved" aria-pressed="false">待核验 <span id="account-count-unobserved">—</span></button>
+</div>
+<div class="account-controls"><label for="account-search">查找账号</label><input id="account-search" type="search" placeholder="平台、登记全名或编号" autocomplete="off"><span id="account-readonly" hidden>开发预览只读，登录操作暂不可用</span></div>
+<p id="account-status" class="account-message" role="status">正在读取账号状态…</p>
+<div id="account-cards" class="account-groups"></div>
+<p class="account-footnote">绿色代表最近一次真实业务验证通过，实际调用仍会核验。关闭窗口不代表退出登录；没有认证证据的账号显示为待核验。失效时会提醒并打开对应账号窗口。</p>
+</section>

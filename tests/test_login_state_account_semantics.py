@@ -975,6 +975,7 @@ def test_boss_soft_security_prompt_with_results_is_readable(monkeypatch) -> None
 
 
 def test_maimai_soft_security_prompt_with_results_is_readable(monkeypatch) -> None:
+    monkeypatch.setenv("KR_MAIMAI_EXPERIMENTAL_SEARCH", "1")
     class Proc:
         returncode = 0
         stderr = ""
@@ -1005,7 +1006,7 @@ def test_zhilian_soft_login_prompt_with_results_is_readable(monkeypatch) -> None
         stderr = ""
         stdout = """
         {
-          "items": [{"title": "数据分析师", "company": "ACME", "area": "杭州"}],
+          "items": [{"title": "数据分析师", "company": "ACME", "area": "杭州", "url": "https://jobs.zhaopin.com/CC000000000J00000000000.htm"}],
           "blocked": false,
           "needLogin": true,
           "rateLimited": false,

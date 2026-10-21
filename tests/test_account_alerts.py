@@ -80,7 +80,66 @@ def test_verify_recovery_requires_probe_before_any_cleanup(monkeypatch):
     assert probes == [("xhs", {"target_profile_id": "A"})]
 
 
-def test_notification_uses_data_not_interpolated_powershell(monkeypatch):
+def test_probe_exception_releases_recovery_owner(tmp_path, monkeypatch):
+    import pytest
+    from runtime import chrome_manager
+    from runtime.account_observations import AccountObservationStore
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "xiaohongshu"}]}})
+    monkeypatch.setattr(chrome_manager, "probe_browser_auth", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("probe")))
+    with pytest.raises(RuntimeError, match="probe"):
+        account_alerts.recover_account("A", "verify")
+    assert AccountObservationStore().begin_recovery("A", owner_generation="other")["status"] == "active"
+
+
+def test_late_failure_cannot_reopen_browser_after_success(monkeypatch):
+    from types import SimpleNamespace
+    from runtime import chrome_manager, account_observations
+    released = []
+    coordinator = SimpleNamespace(acquire_exclusive=lambda *a, **k: SimpleNamespace(acquired=True, lease_id="own"), release=lambda key: released.append(key))
+    monkeypatch.setattr(chrome_manager, "get_runtime_lease_coordinator", lambda: coordinator)
+    monkeypatch.setattr(chrome_manager, "_find_chrome_with_debug_port", lambda _: None)
+    monkeypatch.setattr(chrome_manager, "_managed_chrome_profile_dir", lambda *a, **k: "fixture")
+    monkeypatch.setattr(chrome_manager, "_profile_metadata_for_platform", lambda *a, **k: {"profile_id": "A"})
+    monkeypatch.setattr(chrome_manager, "_chrome_debug_port", lambda _: "9331")
+    monkeypatch.setattr(account_observations, "observe_account", lambda *a, **k: {"accepted": False})
+    monkeypatch.setattr(chrome_manager, "upsert_browser_session", lambda **k: (_ for _ in ()).throw(AssertionError("stale failure must not open a recovery session")))
+    result = chrome_manager.request_user_login("xhs", target_profile_id="A", trigger_evidence=["login_required"])
+    assert result["status"] == "superseded" and released == ["own"]
+
+
+def test_resolved_failure_closes_only_owned_notification_helper(tmp_path):
+    from runtime.account_observations import AccountObservationStore
+    store = AccountObservationStore(tmp_path / "facts.db")
+    failed = store.observe("B", "xhs", "needs_login", source="call")
+    store.observe("B", "xhs", "auth_verified", source="probe")
+    closed = []
+    from types import SimpleNamespace
+    process = SimpleNamespace(poll=lambda: None, terminate=lambda: closed.append("helper"))
+    desktop_notification._watch_delivery(process, tmp_path / "no-receipt", store, failed["event_id"], {})
+    assert closed == ["helper"]
+
+
+def test_pending_failure_replay_keeps_registered_slot_and_number(tmp_path, monkeypatch):
+    from runtime.account_observations import AccountObservationStore
+    from runtime import profile_registry
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("KR_CONSOLE_READ_ONLY", raising=False)
+    monkeypatch.delenv("KR_DESKTOP_NOTIFICATIONS_DISABLED", raising=False)
+    store = AccountObservationStore()
+    store.observe("B", "xiaohongshu", "needs_login", source="interrupted_call")
+    monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "B", "platform": "xiaohongshu", "display_label": "B4973", "account_slot": "xhs_account_b"}]}})
+    calls = []
+    monkeypatch.setattr(desktop_notification, "notify_account_failure", lambda payload: calls.append(payload) or {"status": "fixture"})
+    assert len(desktop_notification.drain_notification_outbox()) == 1
+    assert calls[0]["slot_label"] == "B" and calls[0]["account_number"] == "4973"
+    store.observe("B", "xiaohongshu", "auth_verified", source="probe")
+    assert desktop_notification.drain_notification_outbox() == []
+
+
+def test_notification_uses_data_not_interpolated_powershell(monkeypatch, tmp_path):
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    monkeypatch.setattr(desktop_notification.threading.Thread, "start", lambda _: None)
     monkeypatch.delenv("KR_CONSOLE_READ_ONLY", raising=False)
     monkeypatch.delenv("KR_DESKTOP_NOTIFICATIONS_DISABLED", raising=False)
     monkeypatch.setattr(desktop_notification.os, "name", "nt")

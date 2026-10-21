@@ -7,7 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Callable, Optional
 
-import httpx
+from urllib.parse import urlsplit
+from generic_web.url_policy import guarded_fetch
 
 log = logging.getLogger("mcp-server")
 
@@ -62,17 +63,18 @@ def expand_xhs_short_url(url: str, *, timeout: float = 8.0) -> str:
     url = str(url or "").strip()
     if not url:
         return ""
-    if "xhslink.com" not in url and "xiaohongshu.com" not in url:
+    host = (urlsplit(url).hostname or "").lower()
+    if not any(host == domain or host.endswith("." + domain) for domain in ("xhslink.com", "xiaohongshu.com")):
         return url
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as client:
-            response = client.get(url)
-            final_url = str(response.url or url)
-            if "xiaohongshu.com" in final_url:
-                return final_url
-            match = XHS_NOTE_URL_RE.search(response.text or "")
-            if match:
-                return match.group(0)
+        response = guarded_fetch(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        final_url = str(response.url or url)
+        final_host = (urlsplit(final_url).hostname or "").lower()
+        if final_host == "xiaohongshu.com" or final_host.endswith(".xiaohongshu.com"):
+            return final_url
+        match = XHS_NOTE_URL_RE.search(response.text or "")
+        if match:
+            return match.group(0)
     except Exception as exc:
         log.debug(f"短链展开失败: platform=xhs, error={exc}")
     return url
@@ -110,19 +112,19 @@ def preflight_xhs_url(
     if negative_cache_lookup and negative_cache_lookup(url):
         return UrlPreflightResult(url=url, final_url=url, available=False, reason="negative_cached")
     try:
-        with httpx.Client(timeout=timeout, follow_redirects=True, headers={"User-Agent": "Mozilla/5.0"}) as client:
-            response = client.get(url)
-            final_url = str(response.url or url)
-            text = (response.text or "")[:4000]
-            if response.status_code >= 400:
-                return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="http_error", status_code=response.status_code)
-            if "页面不见了" in text or "你访问的页面不见了" in text or "not found" in text.lower():
-                if negative_cache_record:
-                    negative_cache_record(final_url or url, "dead_page")
-                return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="dead_page", status_code=response.status_code)
-            if "xiaohongshu.com" not in final_url:
-                return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="off_platform", status_code=response.status_code)
-            return UrlPreflightResult(url=url, final_url=final_url, available=True, status_code=response.status_code)
+        response = guarded_fetch(url, timeout=timeout, headers={"User-Agent": "Mozilla/5.0"})
+        final_url = str(response.url or url)
+        text = (response.text or "")[:4000]
+        if response.status_code >= 400:
+            return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="http_error", status_code=response.status_code)
+        if "页面不见了" in text or "你访问的页面不见了" in text or "not found" in text.lower():
+            if negative_cache_record:
+                negative_cache_record(final_url or url, "dead_page")
+            return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="dead_page", status_code=response.status_code)
+        final_host = (urlsplit(final_url).hostname or "").lower()
+        if not (final_host == "xiaohongshu.com" or final_host.endswith(".xiaohongshu.com")):
+            return UrlPreflightResult(url=url, final_url=final_url, available=False, reason="off_platform", status_code=response.status_code)
+        return UrlPreflightResult(url=url, final_url=final_url, available=True, status_code=response.status_code)
     except Exception as exc:
         log.debug(f"URL 预检失败: platform=xhs, error={exc}")
         return UrlPreflightResult(url=url, final_url=url, available=False, reason="preflight_error")

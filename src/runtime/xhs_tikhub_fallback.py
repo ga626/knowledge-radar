@@ -417,6 +417,6 @@ def _browser_pool_unavailable(browser_availability: Dict[str, Any], route_scorin
         and browser_availability.get("task_id")
         and browser_availability.get("exhausted") is True
         and browser_availability.get("common_failure") is False
-        and registered == failed | excluded
-        and not (failed & excluded)
+        and registered == failed
+        and not excluded
     )

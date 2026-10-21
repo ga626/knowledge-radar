@@ -92,7 +92,7 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             "KR_LOG_DIR": str(state_root / "logs"),
         })
         process = subprocess.Popen(
-            [str(python_exe), "-X", "utf8", str(src / "server.py")],
+            [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src)) + ");runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
             cwd=root,
             env=env,
             stdin=subprocess.PIPE,

@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import subprocess
 from runtime.process import silent_subprocess_run
 from urllib.parse import quote, unquote
@@ -22,7 +23,7 @@ from runtime.recruitment_governance import check_search_gate, record_search_outc
 from runtime.recruitment_network import extract_recruitment_items_from_payloads, recruitment_network_observer_script
 
 log = logging.getLogger("mcp-server")
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 SELECTORS_PATH = os.path.join(PROJECT_ROOT, "config", "selectors.json")
 
 REMOTE_CITY_MARKERS = ("远程", "全国", "不限", "居家", "remote")
@@ -220,19 +221,24 @@ def _finalize_liepin_search_state(data: Dict, city: str = "", limit: int = 15) -
     return {**data, "items": []}
 
 
-def _job_detail_quality(text: str) -> Dict:
+def _job_detail_quality(text: str, *, extraction_source: str = "", title: str = "") -> Dict:
     """Score whether extracted text looks like a usable recruitment JD."""
-    content = str(text or "").strip()
+    import html
+    content = re.sub(r"<[^>]+>", " ", html.unescape(str(text or ""))).strip()
     positive_tokens = ["职位介绍", "职责描述", "任职要求", "岗位职责", "岗位要求", "工作内容", "职位描述"]
     negative_tokens = ["首页 职位 校园", "登录/注册", "登录获取更匹配职位"]
     positive = [token for token in positive_tokens if token in content]
     negative = [token for token in negative_tokens if token in content[:500]]
-    ok = len(content) >= 180 and bool(positive) and len(negative) < 2
+    semantic = re.findall(r"负责|熟悉|经验|本科|学历|技能|开发|设计|responsibilit\w*|experience|qualification\w*|proficien\w*|develop\w*|degree", content, re.I)
+    trusted_body = extraction_source in {"jobposting_jsonld", "job_intro_primary"} and bool(title.strip()) and len(set(s.lower() for s in semantic)) >= 2
+    ok = len(content) >= (100 if trusted_body else 180) and (bool(positive) or trusted_body) and len(negative) < 2
     return {
         "ok": ok,
         "chars": len(content),
         "positive_tokens": positive,
         "negative_tokens": negative,
+        "extraction_source": extraction_source or "unattributed",
+        "quality_reason": "usable_jd" if ok else "short_or_unattributed_job_body",
     }
 
 
@@ -824,6 +830,7 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
             title,
             salary,
             jd,
+            extraction_source: jsonLdDescription ? 'jobposting_jsonld' : primaryIntro ? 'job_intro_primary' : jdCandidates.length ? 'heuristic_job_section' : 'page_fallback',
             blocked,
             loginLike,
             captchaElementCount,
@@ -914,7 +921,7 @@ def liepin_detail_via_cdp(url: str, timeout_s: int = 30) -> Dict:
             data.setdefault("recommended_fallback", "static_detail_retry")
             return data
         jd = str(data.get("jd") or "").strip()
-        quality = _job_detail_quality(jd)
+        quality = _job_detail_quality(jd, extraction_source=str(data.get("extraction_source") or ""), title=str(data.get("title") or ""))
         data["detail_quality"] = quality
         data["diagnostics"]["layers"]["parser"] = {"status": "ok" if quality["ok"] else "empty", "content_chars": len(jd)}
         data["diagnostics"]["layers"]["evidence"] = {"status": "detail_text" if quality["ok"] else "none"}

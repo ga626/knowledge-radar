@@ -54,7 +54,8 @@ class XiaohongshuDetailStrategy:
         result: Dict = {"platform": self.platform, "title": "", "desc": "", "transcript": "", "url": request.url}
         started = __import__("time").time()
         try:
-            data = self._extract(request.url, result, request=request, auto_multimodal=request.auto_multimodal)
+            data = self._extract(request.url, result, request=request,
+                                 auto_multimodal=bool(request.options.get("include_ocr", request.auto_multimodal)))
         except subprocess.TimeoutExpired:
             data = self._handle_timeout(request.url, result)
         except Exception as exc:
@@ -163,7 +164,7 @@ class XiaohongshuDetailStrategy:
                 if not xhs._xhs_login_state_ok(state):
                     return xhs._xhs_login_preflight_result(CollectionTrace("小红书", ["detail_login_preflight"]), state, profile_id_override=profile_id)
                 data = self._extract_single(url, dict(result), request=request, auto_multimodal=auto_multimodal)
-                if not data.get("error"):
+                if not (data.get("error") or data.get("failure_type") or data.get("status") in {"failed", "error", "empty", "needs_interaction"} or data.get("manual_action_required")):
                     record_xhs_account_event(profile_id, "OK", last_tool="get_content_detail:xiaohongshu")
                 return data
 
@@ -567,7 +568,7 @@ class XiaohongshuDetailStrategy:
         result["desc"] = note_data.get("desc", "")
         result["content"] = note_data.get("content", "")
         result["author"] = note_data.get("author", "")
-        image_assets, images, image_quality = normalize_xhs_image_assets(note_data)
+        image_assets, images, image_quality = normalize_xhs_image_assets({**note_data, 'note_id': note_id})
         result["images"] = images
         result["image_assets"] = image_assets
         result["image_quality"] = image_quality

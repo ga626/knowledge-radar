@@ -226,7 +226,7 @@ def test_xhs_ocr_runs_for_long_text_when_images_present(monkeypatch, tmp_path) -
     note_data = {
         "title": "图文笔记",
         "content": "这是一段已经很长的正文。" * 20,
-        "images": ["https://sns-img.example/xhs-one.jpg"],
+        "image_assets": [{"url": "https://sns-img.example/xhs-one.jpg", "role": "content", "owner_note_id": "0123456789abcdef01234567"}],
     }
     strategy = _strategy(note_data, ocr_calls)
 

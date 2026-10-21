@@ -1,4 +1,4 @@
-﻿"""
+"""
 FastMCP Server — 全网知识搜索系统
 =====================================
 MCP Server，默认以 streamable-http 常驻模式运行，供 OpenClaw 远程连接。
@@ -8,7 +8,7 @@ stdio:  KR_MCP_TRANSPORT=stdio python server.py
 调试:   python -m mcp dev server.py          # MCP Inspector
 Cursor: python -m mcp install server.py       # 注册到 Cursor
 
-工具清单以本文件中的 @mcp.tool() 注册集合为准，并通过 capabilities.build_tool_surface()
+工具清单以本文件中的 @nonblocking_mcp_tool(mcp) 注册集合为准，并通过 capabilities.build_tool_surface()
 暴露给 Agent、health_check 和文档校验。
 """
 import json
@@ -21,10 +21,12 @@ import threading
 import time
 import importlib.util
 import uuid
+from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from typing import Annotated, Any, Dict, List, Literal
 
 from pydantic import Field
+from runtime.mcp_dispatch import nonblocking_mcp_tool
 
 from mcp.server.fastmcp import FastMCP
 
@@ -51,7 +53,7 @@ from runtime.research_ledger import (  # noqa: E402
     update_candidate_stage as update_research_candidate_stage,
 )
 from runtime.platform_risk import build_manual_interaction_envelope, compute_platform_cooldown, normalize_platform_risk_event  # noqa: E402
-from runtime.mcp_observability import record_fallback_server_stopped, record_server_started, record_tool_list, snapshot as mcp_observability_snapshot  # noqa: E402
+from runtime.mcp_observability import record_fallback_server_stopped, record_server_started, record_server_stopped, record_tool_list, snapshot as mcp_observability_snapshot  # noqa: E402
 from runtime.mcp_runtime import source_fingerprint  # noqa: E402
 from runtime.redaction import RedactingLogFilter, redact_url  # noqa: E402
 
@@ -388,9 +390,31 @@ MCP_STREAMABLE_HTTP_PATH = os.environ.get("KR_MCP_PATH", "/mcp")
 MCP_SSE_PATH = os.environ.get("KR_MCP_SSE_PATH", "/sse")
 MCP_MESSAGE_PATH = os.environ.get("KR_MCP_MESSAGE_PATH", "/messages/")
 
+@asynccontextmanager
+async def _mcp_lifespan(_server):
+    """main、SDK和导出app走同一真实生命周期；普通import不登记服务。"""
+    record_server_started(
+        transport=MCP_TRANSPORT, tool_names=ACTUAL_MCP_TOOLS,
+        source_fingerprint=source_fingerprint(REPO_ROOT),
+        invocation_kind="continuity_fallback" if os.environ.get("KR_CONTINUITY_FALLBACK") == "1" else "native_server",
+        invocation_id=os.environ.get("KR_CONTINUITY_INVOCATION_ID", ""),
+    )
+    from runtime.desktop_notification import start_notification_outbox_worker
+    notification_stop = start_notification_outbox_worker()
+    try:
+        yield {}
+    finally:
+        notification_stop.set()
+        if os.environ.get("KR_CONTINUITY_FALLBACK") == "1":
+            record_fallback_server_stopped(invocation_id=os.environ.get("KR_CONTINUITY_INVOCATION_ID", ""))
+        else:
+            record_server_stopped(transport=MCP_TRANSPORT)
+
+
 mcp = FastMCP(
     "全网知识搜索",
     log_level="INFO",
+    lifespan=_mcp_lifespan,
     host=MCP_HOST,
     port=MCP_PORT,
     streamable_http_path=MCP_STREAMABLE_HTTP_PATH,
@@ -1082,7 +1106,7 @@ if planning_tools_enabled():
 # 工具 1.6: analyze_decision_logs
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("analyze_decision_logs", strategy="decision_log_summary")
 def analyze_decision_logs(
     limit: Annotated[int, Field(description="读取最近决策日志条数。", ge=1, le=500)] = 50,
@@ -1110,7 +1134,7 @@ def _decision_logs_compact_from_summary(summary: Dict) -> Dict:
     return decision_logs_compact_from_summary(summary)
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("get_task_status", strategy="runtime_task_store")
 def get_task_status(
     task_id: Annotated[str, Field(description="任务 ID。传 cancel:<task_id> 可取消 queued/running 任务；传 summary 或 compact 返回轻量摘要。")] = "",
@@ -1132,6 +1156,16 @@ def get_task_status(
     """
     store = get_task_store()
     limit = max(1, min(int(limit or 20), 100))
+    task_id = str(task_id or "").strip()
+    if task_id.startswith("retry:"):
+        from runtime.task_service import TaskService
+        retried = TaskService(store).retry(task_id.split(":", 1)[1].strip())
+        return {"status": "ok" if retried else "not_found", "task": compact_task_ref(retried)}
+    if task_id.startswith("cancel:"):
+        real_id = task_id.split(":", 1)[1].strip()
+        task = store.cancel_task(real_id) if real_id else None
+        return {"status": "ok" if task else "not_found", "task": compact_task_ref(task),
+                "cancelled": bool(task and task.get("status") == "cancelled")}
     cleanup = store.cleanup_stale_tasks(limit=limit)
     session_id = str(research_session_id or "").strip()
     scope_wait_requested = any(str(value or "").strip() for value in (task_scope_id, work_scope_id, source_url, content_id, task_id))
@@ -1178,7 +1212,7 @@ def get_task_status(
                 "blocking_only": True,
                 "binding": "legacy_research_session_fanin",
             }
-        return {
+        response = {
             "schema_version": "knowledgeradar-task-status/v2",
             "status": "ok",
             "server_run_id": SERVER_RUN_ID,
@@ -1192,10 +1226,17 @@ def get_task_status(
                 "reason": cleanup.get("reason", ""),
             },
         }
+        if task_id.startswith("durable-"):
+            from runtime.task_service import TaskService
+            response["durable_result"] = TaskService(store).result(task_id)
+        return response
     if str(task_id or "").strip().lower() in {"summary", "compact"}:
         compact = True
         task_id = ""
     if task_id:
+        if task_id.startswith("durable-"):
+            from runtime.task_service import TaskService
+            return TaskService(store).result(task_id)
         if task_id.startswith("cancel:"):
             real_task_id = task_id.split(":", 1)[1].strip()
             if not real_task_id:
@@ -1575,7 +1616,7 @@ def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> 
     return results
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("kr_research", strategy="workflow_research_perception")
 def kr_research(
     task: Annotated[str, Field(description="研究/查证/感知任务目标。返回路线、来源生态和可选第一波证据。")],
@@ -1660,7 +1701,7 @@ def kr_research(
     return result
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("record_research_candidates", strategy="research_candidate_ledger")
 def record_research_candidates_tool(
     research_task_id: Annotated[str, Field(description="kr_research 返回的研究任务 ID。")],
@@ -1679,7 +1720,7 @@ def record_research_candidates_tool(
     )
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("advance_research_candidate", strategy="research_candidate_ledger")
 def advance_research_candidate(
     research_task_id: Annotated[str, Field(description="kr_research 返回的研究任务 ID。")],
@@ -1694,7 +1735,7 @@ def advance_research_candidate(
     return update_research_candidate_stage(task_id=research_task_id, candidate_id=candidate_id, stage=stage, tool=tool, outcome=outcome, evidence_receipt_ids=evidence_receipt_ids, independence_rationale=independence_rationale)
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("review_research_progress", strategy="research_gap_review")
 def review_research_progress(
     research_task_id: Annotated[str, Field(description="kr_research 返回的研究任务 ID。")],
@@ -1704,7 +1745,7 @@ def review_research_progress(
     return review_research_task(task_id=research_task_id, phase=phase)
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("finalize_research_task", strategy="research_delivery_closeout")
 def finalize_research_task(
     research_task_id: Annotated[str, Field(description="kr_research 返回的研究任务 ID。")],
@@ -1744,7 +1785,7 @@ def finalize_research_task(
 # 工具 2: kr_web_search
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("kr_web_search", strategy="provider_fallback")
 def kr_web_search(
     query: Annotated[str, Field(description="开放 Web 搜索查询词。返回候选网页、新闻、博客、文档、项目主页等 URL 和摘要。")],
@@ -1844,7 +1885,7 @@ def _wechat_annotated_item(item: Dict, discovery_query: str) -> Dict:
     return annotated
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_github_repositories", strategy="platform_sidecar")
 def search_github_repositories(
     query: Annotated[str, Field(description="GitHub 仓库搜索关键词或 GitHub search 语法。返回仓库、README/issue 线索和元数据。")],
@@ -1888,7 +1929,7 @@ def search_github_repositories(
     return result
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_youtube", strategy="platform_adapter")
 def search_youtube(
     keyword: Annotated[str, Field(description="YouTube 视频搜索关键词。返回公开视频标题、URL、频道、摘要、发布时间等元数据。")],
@@ -1910,7 +1951,7 @@ def search_youtube(
     return result
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_wechat_articles", strategy="generic_web_wechat_l1")
 def search_wechat_articles(
     query: Annotated[str, Field(description="微信公众号文章搜索关键词。返回公开文章候选 URL、标题、摘要、发布时间线索和来源线索。")],
@@ -2027,7 +2068,7 @@ def search_wechat_articles(
 # 工具 2.5: search_academic
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_academic", strategy="academic_api_metadata")
 def search_academic(
     query: Annotated[str, Field(description="学术检索查询、DOI、arXiv 线索或用户提供的引用文本/文件线索。返回题名、作者、年份、DOI、摘要、开放全文状态等元数据。")],
@@ -2051,7 +2092,7 @@ def search_academic(
 # 工具 3: extract_web_page
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("extract_web_page", strategy="generic_web_fallback")
 def extract_web_page(
     url: Annotated[str, Field(description="http/https URL。返回清洗后的 title/content/content_format/collector 等字段。", json_schema_extra={"format": "uri"})],
@@ -2080,7 +2121,7 @@ def extract_web_page(
 # 工具 4: extract_dynamic_page
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("extract_dynamic_page", strategy="dynamic_playwright")
 def extract_dynamic_page(
     url: Annotated[str, Field(description="http/https URL。返回浏览器渲染后的正文抽取结果。", json_schema_extra={"format": "uri"})],
@@ -2112,7 +2153,7 @@ def extract_dynamic_page(
 # 工具 5: search_bilibili
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_bilibili", strategy="platform_adapter")
 def search_bilibili(
     keyword: Annotated[str, Field(description="B站搜索关键词。返回视频标题、URL、UP 主、简介、播放/互动数据和发布时间等元数据。")],
@@ -2134,7 +2175,7 @@ def search_bilibili(
 # 工具 5: search_xiaohongshu（图文/视频分流 + 自动双搜）
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_xiaohongshu", strategy="platform_adapter")
 def search_xiaohongshu(
     keyword: Annotated[str, Field(description="小红书搜索关键词。返回笔记标题、URL、作者、摘要、图文/视频类型和平台元数据。")],
@@ -2293,7 +2334,7 @@ def _attach_xiaohongshu_error_context(result: Dict) -> Dict:
 # ═══════════════════════════════════════════════════════════════════════
 
 _strip_html_text = understanding_strip_html_text
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_zhihu", strategy="platform_adapter")
 def search_zhihu(
     keyword: Annotated[str, Field(description="知乎搜索关键词。返回回答、文章、问题或视频条目的标题、URL、摘要、作者、赞同数和类型。")],
@@ -2345,7 +2386,10 @@ def _legacy_bilibili_from_request(request: SearchRequest) -> Dict:
 
 
 def _legacy_zhihu_from_request(request: SearchRequest) -> Dict:
-    return zhihu_collectors.legacy_search_zhihu(request.keyword, limit=request.limit)
+    from runtime.account_business import observe_business
+    profile = _managed_chrome_profile_dir("zhihu")
+    result = zhihu_collectors.legacy_search_zhihu(request.keyword, limit=request.limit)
+    return observe_business("zhihu", result, profile_dir=profile, source="zhihu_search_business")
 
 
 def _legacy_xiaohongshu_from_request(request: SearchRequest) -> Dict:
@@ -2550,6 +2594,9 @@ def _with_recruitment_runtime_guards(platform: str, keyword: str, city: str, cal
             )
     try:
         result = call()
+        if platform in {"boss", "liepin", "zhilian"}:
+            from runtime.account_business import observe_business
+            result = observe_business(platform, result, profile_dir=_managed_chrome_profile_dir(platform), source=platform + "_search_business")
         if isinstance(result, dict):
             metadata = dict(result.get("metadata") or {})
             metadata.setdefault("admission", admission)
@@ -2626,7 +2673,7 @@ def _recruitment_open_web_fallback_after_route_failure(
     return format_collection_search_response(display, items[:limit], metadata=metadata)
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("search_recruitment", strategy="platform_adapter")
 def search_recruitment(
     platform: Annotated[Literal["boss", "liepin", "maimai", "v2ex", "zhilian"], Field(description="招聘来源。取值为 boss、liepin、maimai、v2ex、zhilian。")],
@@ -2764,7 +2811,7 @@ def search_recruitment(
 # 工具 7: get_capabilities
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("get_capabilities", strategy="capability_discovery")
 def get_capabilities(
     summary: Annotated[bool, Field(description="为 true 时返回压缩摘要；为 false 时返回完整能力、状态和策略 manifest，响应更大。")] = False,
@@ -2932,7 +2979,7 @@ def _xhs_profile_for_identity(profile_id: str) -> Dict:
     return {}
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("manage_xiaohongshu_accounts", strategy="account_identity_lifecycle")
 def manage_xiaohongshu_accounts(
     action: Annotated[str, Field(description="操作：summary 查看已认领账号；begin_claim 打开指定 profile 等待扫码；confirm_claim 在已登录后保存用户确认的账号名称；recover 对指定账号做一次最小恢复确认。")],
@@ -3064,7 +3111,7 @@ def manage_xiaohongshu_accounts(
     }
 
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("health_check", strategy="layered_runtime_diagnostics")
 def health_check(
     mode: Annotated[str, Field(description="检查模式。full 执行完整探活；summary/light/lite 返回模型决策用轻量摘要；diagnostic_summary 返回诊断摘要；browser_sessions 等诊断模式返回浏览器交互状态。")] = "full",
@@ -3897,7 +3944,7 @@ def _summary_validation_rollup(checks: Dict[str, Dict]) -> Dict:
 # 工具 8: get_content_detail
 # ═══════════════════════════════════════════════════════════════════════
 
-@mcp.tool()
+@nonblocking_mcp_tool(mcp)
 @traced_tool("get_content_detail", strategy="detail_strategy")
 def get_content_detail(
     url: Annotated[str, Field(description="内容 URL。支持开放网页和已实现的平台详情 URL；返回正文、元数据、评论、字幕或转写线索、图片或视频处理结果、证据字段、错误和后台任务引用。", json_schema_extra={"format": "uri"})],
@@ -3908,6 +3955,10 @@ def get_content_detail(
     work_scope_id: Annotated[str, Field(description="工作范围 ID。普通调用留空；用于把后台任务绑定到同一工作范围。")] = "",
     task_scope_id: Annotated[str, Field(description="任务范围 ID。普通调用留空；用于等待或聚合同一任务范围的后台任务。")] = "",
     research_task_id: Annotated[str, Field(description="可选的 kr_research 任务 ID；提供后返回 research_receipt。")]= "",
+    include_transcript: Annotated[bool | None, Field(description="明确允许或禁止字幕/ASR；未指定时跟随增强开关。允许时由有界持久任务执行。")]= None,
+    include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
+    include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
+    deadline_s: Annotated[float, Field(description="增强任务总deadline秒数，含排队；到期停止自有worker。", ge=1, le=3600)] = 600,
 ) -> Dict:
     """详情页正文抽取。
 
@@ -3935,30 +3986,32 @@ def get_content_detail(
         work_scope_id=scope.work_scope_id,
         task_scope_id=scope.task_scope_id,
         scope_kind=scope.scope_kind,
-        options={"task_scope": scope.compact()},
+        options={"task_scope": scope.compact(),
+                 "include_transcript": include_transcript if include_transcript is not None else (auto_multimodal or enable_deep_analysis),
+                 "include_comments": include_comments if include_comments is not None else enable_comment_filtering,
+                 "include_ocr": include_ocr if include_ocr is not None else (auto_multimodal or enable_deep_analysis)},
     )
-    failure_cache_key = detail_failure_cache.key(platform=request.platform, url=request.url)
-    cached_failure = detail_failure_cache.get(failure_cache_key)
-    if cached_failure is not None:
-        cached_failure = _attach_research_session_tasks(cached_failure, session_id, scope.compact())
-        _record_detail_evidence(str(cached_failure.get("platform") or request.platform), request.url, cached_failure)
-        return cached_failure
-    if request.platform == "小红书":
-        with chrome_active_operation("xhs"):
-            result = _handle_detail_request(request).to_legacy_dict()
-    else:
-        result = _handle_detail_request(request).to_legacy_dict()
-    result = _attach_research_session_tasks(result, session_id, scope.compact())
-    if isinstance(result, dict) and result.get("error"):
-        failure_type = str(result.get("failure_type") or result.get("error_type") or "")
-        cacheable_failures = {"empty_detail", "dead_link", "unsupported_url", "anti_bot_verification", "login_required"}
-        if failure_type in cacheable_failures or bool(result.get("manual_action_required")):
-            typed_key = detail_failure_cache.key(platform=request.platform, url=request.url, failure_type=failure_type)
-            detail_failure_cache.set(failure_cache_key, result)
-            if typed_key != failure_cache_key:
-                detail_failure_cache.set(typed_key, result)
-    _record_detail_evidence(str(result.get("platform") or request.platform), request.url, result)
-    return result
+    if enable_deep_analysis or auto_multimodal or enable_comment_filtering or any(request.options.get(k) for k in ["include_transcript", "include_comments", "include_ocr"]):
+        from dataclasses import asdict
+        from runtime.task_service import TaskService
+        service = TaskService()
+        task = service.submit("content_detail", asdict(request), timeout_s=deadline_s, scope=scope.to_metadata())
+        response = service.result(task["task_id"])
+        if response.get("status") == "completed":
+            return {**response["result"], "task_id": task["task_id"],
+                    "durable_task": {"status": "completed", "artifact_sha256": (task.get("metadata") or {}).get("artifact_sha256"),
+                                     "reused": True}}
+        return {"status": response["status"], "accepted": True, "task_id": task["task_id"], "task": compact_task_ref(task),
+                "result_tool": "get_task_status", "cancel": "cancel:" + task["task_id"], "retry": "retry:" + task["task_id"],
+                "source": "durable_process", "scope_binding": scope.compact()}
+    return _execute_detail_request(request)
+
+
+def _execute_detail_request(request: DetailRequest) -> Dict:
+    from use_cases.content_detail import execute_detail_request
+    return execute_detail_request(request, failure_cache=detail_failure_cache, handle=_handle_detail_request,
+        bind_tasks=_attach_research_session_tasks, record_evidence=_record_detail_evidence,
+        chrome_operation=chrome_active_operation)
 
 
 def _attach_research_session_tasks(result: Dict, research_session_id: str, scope: Dict | None = None) -> Dict:
@@ -4057,7 +4110,7 @@ def _handle_detail_request(request: DetailRequest) -> DetailResponse:
             response.platform,
             request.url,
             data,
-            evidence=response.evidence or build_detail_evidence(request.url, response.platform, data),
+            evidence=build_detail_evidence(request.url, response.platform, data),
             metadata=_attach_detail_degradation(response.platform, request.url, data, dict(response.metadata)),
         )
         _record_detail_decision(request, normalized, time.time() - started)
@@ -4183,6 +4236,8 @@ def _boss_detail_strategy() -> RecruitmentDetailStrategy:
 
 def _bootstrap_persistent_runtime() -> None:
     """Warm up long-lived browser dependencies for HTTP/SSE server mode."""
+    from runtime.task_service import TaskService
+    TaskService().recover()
     reconciled = reconcile_stale_xhs_manual_interactions()
     if reconciled["rejected"]:
         log.warning("已撤销 %s 个账号绑定不一致的小红书人工交互窗口", reconciled["rejected"])
@@ -4217,13 +4272,6 @@ def main() -> None:
     fallback_invocation_id = os.environ.get("KR_CONTINUITY_INVOCATION_ID", "")
     is_continuity_fallback = os.environ.get("KR_CONTINUITY_FALLBACK") == "1"
     _install_mcp_observability()
-    record_server_started(
-        transport=MCP_TRANSPORT,
-        tool_names=ACTUAL_MCP_TOOLS,
-        source_fingerprint=source_fingerprint(REPO_ROOT),
-        invocation_kind="continuity_fallback" if is_continuity_fallback else "native_server",
-        invocation_id=fallback_invocation_id,
-    )
     log.info("=" * 50)
     log.info(f"  全网知识搜索 MCP Server 启动 ({MCP_TRANSPORT} 模式)")
     if MCP_TRANSPORT in {"sse", "streamable-http"}:
@@ -4232,6 +4280,8 @@ def main() -> None:
     log.info(f"  工具({len(ACTUAL_MCP_TOOLS)}): {', '.join(ACTUAL_MCP_TOOLS)}")
     log.info("  ✨ 小红书/知乎支持 Chrome 调试模式按需自动启动（保留持久登录态）")
     log.info("=" * 50)
+    from runtime.task_service import TaskService
+    TaskService().recover()
     if MCP_TRANSPORT in {"sse", "streamable-http"}:
         _bootstrap_persistent_runtime()
     try:
@@ -4240,6 +4290,8 @@ def main() -> None:
         if is_continuity_fallback:
             record_fallback_server_stopped(invocation_id=fallback_invocation_id)
 
+
+_install_mcp_observability()
 
 if __name__ == "__main__":
     main()

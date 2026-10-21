@@ -153,6 +153,47 @@ def test_storage_summary_uses_manifest_and_does_not_double_count_media_cache(tmp
     assert summary["total_bytes"] == len(b"task") + len(b"media")
 
 
+def test_per_profile_counts_registered_browser_subset_without_exporting_paths(tmp_path, monkeypatch):
+    from runtime import profile_registry
+    data = tmp_path / "data"
+    one = data / "browser_data" / "A"
+    two = data / "browser_data" / "B"
+    one.mkdir(parents=True)
+    two.mkdir()
+    (one / "state").write_bytes(b"aaaa")
+    (two / "state").write_bytes(b"bb")
+    monkeypatch.setenv("KR_DATA_ROOT", str(data))
+    monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [
+        {"profile_id": "A", "profile_dir": str(one)}, {"profile_id": "B", "profile_dir": str(two)},
+        {"profile_id": "external", "profile_dir": str(tmp_path / "private")},
+    ]}})
+    summary = product_status.storage_summary()
+    assert {p["profile_id"]: p["bytes"] for p in summary["per_profile"]} == {"A": 4, "B": 2, "external": 0}
+    assert summary["per_profile_bytes"] == 6
+    assert summary["total_bytes"] == 6
+    assert str(tmp_path) not in str(summary)
+
+
+def test_shared_profile_alias_is_counted_once_and_attributed_to_active_account(tmp_path, monkeypatch):
+    from runtime import profile_registry
+    browser = tmp_path / "browser_data" / "A"
+    child = browser / "nested"
+    child.mkdir(parents=True)
+    (child / "file").write_bytes(b"aaaa")
+    monkeypatch.setenv("KR_DATA_ROOT", str(tmp_path))
+    monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [
+        {"profile_id": "old_alias", "profile_dir": str(browser), "account_pool_member": False},
+        {"profile_id": "current", "profile_dir": str(browser), "account_pool_member": True},
+        {"profile_id": "nested", "profile_dir": str(child)},
+    ]}})
+    summary = product_status.storage_summary()
+    rows = {row["profile_id"]: row for row in summary["per_profile"]}
+    assert rows["current"]["bytes"] == 4
+    assert rows["old_alias"]["status"] == rows["nested"]["status"] == "shared_directory"
+    assert rows["old_alias"]["shared_with_profile_id"] == rows["nested"]["shared_with_profile_id"] == "current"
+    assert summary["per_profile_bytes"] == summary["total_bytes"] == 4
+
+
 def test_product_media_cleanup_quarantines_only_manifest_known_expired_files(tmp_path, monkeypatch) -> None:
     data_root = tmp_path / "data"
     cache_root = data_root / "state" / "media_cache"
@@ -166,6 +207,9 @@ def test_product_media_cleanup_quarantines_only_manifest_known_expired_files(tmp
     os.utime(known, (old, old))
     os.utime(unknown, (old, old))
     record_media_cache_entry(known, kind="video", ttl_seconds=10)
+    from runtime.storage_lifecycle import StorageLeases
+    StorageLeases().release(known.parent)
+    StorageLeases().release(unknown.parent)
 
     plan = product_status.expired_media_cleanup(apply=False)
     applied = product_status.expired_media_cleanup(apply=True)

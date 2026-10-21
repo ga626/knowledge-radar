@@ -107,13 +107,17 @@ def source_identity(require_clean: bool) -> tuple[str, int]:
     return commit, timestamp
 
 
-def copy_files(files: Iterable[Path], output: Path) -> list[dict[str, object]]:
+def tracked_bytes(path: Path, commit: str) -> bytes:
+    return subprocess.run(['git','show',f'{commit}:{normalize(path.relative_to(ROOT))}'],cwd=ROOT,capture_output=True,check=True).stdout
+
+
+def copy_files(files: Iterable[Path], output: Path, *, commit: str = '') -> list[dict[str, object]]:
     records: list[dict[str, object]] = []
     for source in files:
         relative = source.relative_to(ROOT)
         target = output / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(source.read_bytes())
+        target.write_bytes(tracked_bytes(source,commit) if commit else source.read_bytes())
         records.append({"path": normalize(relative), "sha256": sha256_file(target), "size": target.stat().st_size})
     return records
 
@@ -123,33 +127,35 @@ def package_version() -> str:
         return str(tomllib.load(handle)["project"]["version"])
 
 
-def write_metadata(output: Path, manifest_path: Path, files: list[dict[str, object]], commit: str) -> None:
+def write_metadata(output: Path, manifest_path: Path, files: list[dict[str, object]], commit: str, *, candidate=False) -> None:
     manifest = load_json(manifest_path)
     provenance = {
         "schema": "knowledgeradar-package-provenance/v2",
         "source_commit": commit,
-        "source_dirty": False,
+        "source_dirty": bool(git_value("status", "--porcelain", "--untracked-files=all")),
         "manifest_path": normalize(manifest_path.relative_to(ROOT)),
-        "manifest_sha256": sha256_file(manifest_path),
+        "manifest_sha256": hashlib.sha256(tracked_bytes(manifest_path,commit)).hexdigest() if candidate else sha256_file(manifest_path),
         "builder_path": "scripts/build_product_lite_package.py",
-        "builder_sha256": sha256_file(Path(__file__)),
+        "builder_sha256": hashlib.sha256(tracked_bytes(Path(__file__),commit)).hexdigest() if candidate else sha256_file(Path(__file__)),
         "file_count": len(files),
         "files": files,
+        "dependencies": load_json(ROOT / "config/runtime-artifacts.json"),
     }
-    (output / "package-provenance.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (output / "package-provenance.json").write_text(json.dumps(provenance, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",newline='\n')
     sbom = {
         "schema": "knowledgeradar-content-inventory/v1",
         "scope": "package file inventory; dependency licenses are declared by their upstream distributions",
         "package": "knowledgeradar",
         "version": package_version(),
         "files": files,
+        "dependencies": load_json(ROOT / "config/runtime-artifacts.json"),
     }
-    (output / "SBOM.json").write_text(json.dumps(sbom, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    (output / "SBOM.json").write_text(json.dumps(sbom, ensure_ascii=False, indent=2) + "\n", encoding="utf-8",newline='\n')
     (output / "GENERATED_FROM.md").write_text(
         "# Generated Package\n\n"
-        "Generated only from tracked files in a clean public checkout.\n"
+        "Source identity and cleanliness are recorded in package-provenance.json.\n"
         f"\n- Source commit: `{commit}`\n- Manifest: `{provenance['manifest_path']}`\n",
-        encoding="utf-8",
+        encoding="utf-8",newline='\n',
     )
 
 
@@ -186,8 +192,19 @@ def build(manifest_path: Path, output: Path, *, dry_run: bool, candidate: bool) 
         import shutil
         shutil.rmtree(output)
     output.mkdir(parents=True)
-    records = copy_files(files, output)
-    write_metadata(output, manifest_path, records, commit)
+    records = copy_files(files, output,commit=commit if candidate else '')
+    runtime_inputs = load_json(ROOT / "config/runtime-artifacts.json")
+    if runtime_inputs.get("lock_sha256") != sha256_file(ROOT / "config/runtime-win-py312.lock") or runtime_inputs.get("pyproject_sha256") != sha256_file(ROOT / "pyproject.toml"):
+        raise RuntimeError("frozen runtime inputs no longer match source")
+    for row in runtime_inputs["wheels"]:
+        source = ROOT / "local/runtime-wheelhouse" / row["file"]
+        if source.name != row["file"] or not source.is_file() or sha256_file(source) != row["sha256"]:
+            raise RuntimeError("missing or changed frozen runtime wheel: " + row["file"])
+        target = output / "runtime-wheelhouse" / row["file"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+        records.append({"path": "runtime-wheelhouse/" + row["file"], "sha256": row["sha256"], "size": row["size"]})
+    write_metadata(output, manifest_path, records, commit,candidate=candidate)
     if not candidate:
         print(f"package generated: {output}")
         return 0

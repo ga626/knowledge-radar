@@ -1,0 +1,376 @@
+{
+  "schema": "knowledgeradar-evaluation/v1",
+  "version": 1,
+  "capabilities": [
+    {
+      "capability_id": "mcp.advance_research_candidate",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "advance_research_candidate"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.analyze_decision_logs",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "analyze_decision_logs"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.extract_dynamic_page",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "extract_dynamic_page"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.extract_web_page",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "extract_web_page"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.finalize_research_task",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "finalize_research_task"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.get_capabilities",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "get_capabilities"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.get_content_detail",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "get_content_detail"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.get_task_status",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "get_task_status"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.health_check",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "health_check"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.kr_research",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "kr_research"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.kr_web_search",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "kr_web_search"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.manage_xiaohongshu_accounts",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "manage_xiaohongshu_accounts"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.record_research_candidates_tool",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "record_research_candidates_tool"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.review_research_progress",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "review_research_progress"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_academic",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_academic"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_bilibili",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_bilibili"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_github_repositories",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_github_repositories"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_recruitment",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_recruitment"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_wechat_articles",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_wechat_articles"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_xiaohongshu",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_xiaohongshu"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_youtube",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_youtube"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "mcp.search_zhihu",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "search_zhihu"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。"
+    },
+    {
+      "capability_id": "flow.search_detail",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "dependencies": [
+        "src/kr_core/models.py",
+        "src/kr_core/evidence_store.py"
+      ],
+      "depends_on": [
+        "mcp.kr_web_search",
+        "mcp.get_content_detail"
+      ],
+      "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+    },
+    {
+      "capability_id": "account.rotation",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "dependencies": [
+        "src/runtime/account_observations.py",
+        "src/runtime/account_business.py",
+        "src/runtime/desktop_notification.py"
+      ],
+      "depends_on": [
+        "mcp.search_xiaohongshu"
+      ],
+      "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+    },
+    {
+      "capability_id": "task.lifecycle",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "dependencies": [
+        "src/runtime/tasks.py",
+        "src/runtime/task_adapter.py",
+        "src/runtime/task_service.py",
+        "src/runtime/task_process.py",
+        "src/runtime/process_identity.py",
+        "src/runtime/mcp_dispatch.py"
+      ],
+      "depends_on": [
+        "mcp.get_task_status"
+      ],
+      "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+    },
+    {
+      "capability_id": "evidence.integrity",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "dependencies": [
+        "src/understanding/evidence.py",
+        "src/runtime/tool_trace.py"
+      ],
+      "depends_on": [
+        "mcp.get_content_detail"
+      ],
+      "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+    }
+  ]
+}

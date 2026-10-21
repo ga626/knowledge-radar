@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 from runtime.process import silent_subprocess_run
 from typing import Dict, List
@@ -29,6 +30,10 @@ def _format_search_error(platform: str, error_item: Dict, *, trace: CollectionTr
 
 def maimai_search_via_cdp_state(keyword: str, limit: int = 10) -> Dict:
     """通过 CDP 控制 Chrome 搜索脉脉职位，并保留页面状态。"""
+    if os.environ.get("KR_MAIMAI_EXPERIMENTAL_SEARCH") != "1":
+        return {"items": [], "status": "unsupported", "failure_type": "collector_retired",
+                "platform_state": "unsupported", "manual_action_required": False,
+                "error": "旧职位端点缺少有效业务证据，已停止自动调用；可使用其他招聘来源。"}
     port = int(MAIMAI_CHROME_DEBUG_PORT)
 
     js_code = r"""

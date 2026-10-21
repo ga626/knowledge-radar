@@ -21,6 +21,7 @@ def test_media_cache_root_uses_env_and_not_legacy_data(monkeypatch, tmp_path) ->
 def test_media_cache_records_manifest_and_cleans_expired_files(monkeypatch, tmp_path) -> None:
     cache_root = tmp_path / "cache"
     monkeypatch.setenv("KR_MEDIA_CACHE_DIR", str(cache_root))
+    monkeypatch.setenv("KR_DATA_ROOT", str(tmp_path))
 
     expired = media_cache_subdir("video", content_id="BV1old") / "old.mp4"
     fresh = media_cache_subdir("video", content_id="BV1new") / "new.mp4"
@@ -33,6 +34,8 @@ def test_media_cache_records_manifest_and_cleans_expired_files(monkeypatch, tmp_
     os.utime(fresh, (now, now))
     record_media_cache_entry(expired, kind="video", content_id="BV1old", task_id="task-old", ttl_seconds=10)
     record_media_cache_entry(fresh, kind="video", content_id="BV1new", task_id="task-new", ttl_seconds=3600)
+    from runtime.storage_lifecycle import StorageLeases
+    StorageLeases().release(expired.parent)
 
     result = cleanup_expired_media_cache(root=cache_root, now=now)
 
@@ -41,4 +44,5 @@ def test_media_cache_records_manifest_and_cleans_expired_files(monkeypatch, tmp_
     assert fresh.exists()
     assert not result["errors"]
     assert (cache_root / "manifest.jsonl").exists()
+    assert result["quarantine"]["quarantined_count"] == 1
 

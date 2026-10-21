@@ -16,7 +16,7 @@ import threading
 import time
 from typing import Any, Dict, Iterator, List, Optional
 
-from .failure_tags import detect_failure_tags
+from .failure_tags import FAILURE_TAGS, detect_failure_tags
 from .paths import runtime_log_dir
 
 
@@ -212,12 +212,47 @@ def infer_failure_code(result: Any, exc: Optional[BaseException] = None) -> str:
     if exc is not None:
         return type(exc).__name__
     if isinstance(result, dict):
+        code = result.get("failure_type") or result.get("failure_code")
+        if code:
+            return str(code)
         error = result.get("error")
         if isinstance(error, dict):
             return str(error.get("type") or error.get("code") or "")
         if error:
             return "error"
+        if result.get("status") in {"failed", "error", "needs_interaction"}:
+            return str(result["status"])
     return ""
+
+
+def structured_failure_tags(result: Any, exc: Optional[BaseException] = None) -> List[str]:
+    """只读错误与失败attempt，不扫描成功正文、工具说明或平台标签。"""
+    if exc is not None:
+        return detect_failure_tags(type(exc).__name__, str(exc))
+    if not isinstance(result, dict):
+        return []
+    tags = set()
+
+    def collect(failure):
+        if not isinstance(failure, dict):
+            return
+        error = failure.get("error")
+        error = error if isinstance(error, dict) else {}
+        code = failure.get("failure_type") or failure.get("failure_code") or failure.get("error_type") or error.get("failure_type") or error.get("type") or error.get("code")
+        if code:
+            tags.update([str(code)] if code in FAILURE_TAGS else detect_failure_tags(code))
+        elif isinstance(failure.get("error"), str):
+            # 只为旧错误字段兜底，绝不扫描正文、URL或任意detail。
+            tags.update(detect_failure_tags(failure["error"]))
+
+    collect(result)
+    metadata = result.get("metadata")
+    collection = metadata.get("collection") if isinstance(metadata, dict) else None
+    attempts = collection.get("attempts") if isinstance(collection, dict) else None
+    for attempt in attempts if isinstance(attempts, list) else []:
+        if isinstance(attempt, dict) and attempt.get("status") in {"failed", "error", "blocked"}:
+            collect(attempt)
+    return sorted(tags)
 
 
 @contextmanager
@@ -273,7 +308,7 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             elapsed_s=elapsed,
             retry_count=0,
             failure_code=failure_code,
-            failure_tags=detect_failure_tags(failure_code, exc, result),
+            failure_tags=structured_failure_tags(result, exc),
             metadata=metadata or {},
         )
         get_tool_trace_recorder().record(event)

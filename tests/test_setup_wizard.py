@@ -128,7 +128,7 @@ def test_wizard_status_is_sanitized_and_cleanup_requires_local_session(monkeypat
     try:
         port = server.server_port
         connection = HTTPConnection("127.0.0.1", port, timeout=5)
-        connection.request("GET", "/api/status")
+        connection.request("GET", "/api/status", headers={"X-KR-Setup-Token": server.setup_token})
         response = connection.getresponse()
         payload = response.read().decode("utf-8")
         assert response.status == 200
@@ -138,7 +138,7 @@ def test_wizard_status_is_sanitized_and_cleanup_requires_local_session(monkeypat
         assert storage_calls == []
 
         connection = HTTPConnection("127.0.0.1", port, timeout=5)
-        connection.request("GET", "/api/storage")
+        connection.request("GET", "/api/storage", headers={"X-KR-Setup-Token": server.setup_token})
         response = connection.getresponse()
         assert response.status == 200
         storage = json.loads(response.read().decode("utf-8"))

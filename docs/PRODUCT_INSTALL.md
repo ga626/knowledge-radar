@@ -56,3 +56,16 @@ python scripts\product_install.py capability-apply --capability xhs_bridge --con
 ## 已选组件随更新保留
 
 更新前已安装并登记的媒体下载器、转写运行时与 Playwright Chromium，会在新版本运行时中恢复后再切换安装身份。未选择的组件和模型不会自动下载；缓存与账号资料留在数据根。FFmpeg 统一按显式配置、数据根工具目录与系统安装解析。组件准备失败时保留已有 active。
+
+
+## 离线锁定与候选隔离验证
+
+核心运行时只使用config/runtime-win-py312.lock与runtime-artifacts.json列出的同一wheelhouse，逐SHA核验后通过--no-index --require-hashes安装。当前受控目标为Windows x64/Python3.12；其他平台应生成并验收对应锁，不可复用本锁冒充通用安装。
+
+verify-install需指定独立install/data根和同一ZIP/receipt；只stage程序和运行时，不写active.json、不注册Codex或自启动。待正式收口授权和main身份满足后才可apply。已有同版本但内容不同会拒绝覆盖，应使用独立根或正式新版本。程序、锁与ZIP不一致直接失败，不回退在线解析。回退先验证旧程序和运行时，再切active与插件。
+
+```powershell
+python scripts/product_install.py verify-install --package-root <extracted-package> --install-root <isolated-root> --data-root <isolated-data> --archive <frozen-zip> --receipt <candidate-receipt>
+```
+
+浏览器/模型/下载器为可选资产；核心依赖安装成功不等于账号、浏览器、模型已就绪。其实际身份须在能力与候选回执中读取。

@@ -1,0 +1,78 @@
+{
+  "schema": "knowledgeradar-retirement/v1",
+  "date": "2026-10-20",
+  "entries": [
+    {
+      "mechanism": "profile-state.json default writer",
+      "status": "retired",
+      "replacement": "record_profile_state defaults to AccountObservation; historical explicit-path fixture only",
+      "owner": "runtime/profile_registry.py"
+    },
+    {
+      "mechanism": "xhs old global max-switch cap for readonly",
+      "status": "retired",
+      "replacement": "task-local eligible profile set bounds all read-only attempts; global risk/cooldown still stop",
+      "owner": "runtime/xhs_task_failover.py"
+    },
+    {
+      "mechanism": "direct expired media unlink",
+      "status": "retired",
+      "replacement": "manifest-known quarantine + leases + SHA restore receipt",
+      "owner": "runtime/media_cache.py"
+    },
+    {
+      "mechanism": "legacy task lifecycle threads",
+      "status": "compatibility",
+      "replacement": "new enhanced detail uses durable process; legacy adapter synchronous inside worker; old callers keep API until migrated",
+      "owner": "runtime/task_adapter.py"
+    },
+    {
+      "mechanism": "browser session state as login truth",
+      "status": "retired",
+      "replacement": "window lifecycle retained, AccountObservation supplies readiness",
+      "owner": "runtime/account_alerts.py"
+    },
+    {
+      "mechanism": "maimai direct search",
+      "status": "disabled",
+      "replacement": "explicit experimental flag only; open-web discovery remains candidate evidence",
+      "owner": "collectors/platform/maimai.py"
+    },
+    {
+      "mechanism": "runtime campaign/quality governance in user package",
+      "status": "excluded",
+      "replacement": "five exact runtime module paths excluded; developer files retained",
+      "owner": "config/package-manifest.product-lite.json"
+    },
+    {
+      "mechanism": "MediaCrawler restricted header files",
+      "status": "excluded",
+      "replacement": "68 files retained with headers in source; excluded from product pending exact provenance",
+      "owner": "config/license-source-inventory.json"
+    },
+    {
+      "mechanism": "large inline console strings",
+      "status": "retired",
+      "replacement": "renderer loads static assets; one bundle and one runtime remain",
+      "owner": "onboarding/console_page.py"
+    },
+    {
+      "mechanism": "online core pip resolution",
+      "status": "retired",
+      "replacement": "hash lock + verified offline wheelhouse only; optional capabilities retain separate readiness",
+      "owner": "scripts/product_install.py"
+    },
+    {
+      "mechanism": "unversioned transcript cache",
+      "status": "read_only_ignored",
+      "replacement": "old files preserved but untrusted identities do not hit new cache",
+      "owner": "collectors/platform/bilibili.py"
+    },
+    {
+      "mechanism": "standalone browser model recursive delete helper",
+      "status": "not_adopted",
+      "replacement": "no copy into this branch; browser launch disables on-device model feature; no profile cloning path exists",
+      "owner": "runtime/chrome_manager.py"
+    }
+  ]
+}

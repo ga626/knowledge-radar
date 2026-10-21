@@ -6,6 +6,7 @@ import json
 import os
 import secrets
 import threading
+import time
 import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,6 +37,7 @@ class WizardServer(ThreadingHTTPServer):
 
     def __init__(self, server_address: tuple[str, int]):
         self.setup_token = secrets.token_urlsafe(32)
+        self.setup_token_created_at = time.monotonic()
         super().__init__(server_address, _handler_factory(self))
 
 
@@ -59,7 +61,7 @@ def _handler_factory(server: WizardServer):
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Cache-Control", "no-store")
+            self._security_headers()
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
@@ -75,6 +77,12 @@ def _handler_factory(server: WizardServer):
             self.send_header("X-Frame-Options", "DENY")
 
         def do_GET(self) -> None:
+            if not self._local_request_allowed():
+                self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "local_origin_required"})
+                return
+            if self.path.startswith("/api/") and self.path != "/api/health" and not self._valid_page_token():
+                self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
+                return
             if self.path == "/api/account-alerts":
                 self._send_json(HTTPStatus.OK, {**account_alert_snapshot(), "read_only": os.environ.get("KR_CONSOLE_READ_ONLY") == "1"})
                 return
@@ -136,7 +144,10 @@ def _handler_factory(server: WizardServer):
             if self.path != "/":
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            body = _page(server.setup_token, public_snapshot()).encode("utf-8")
+            if time.monotonic() - server.setup_token_created_at >= 1800:
+                server.setup_token = secrets.token_urlsafe(32)
+                server.setup_token_created_at = time.monotonic()
+            body = _page(server.setup_token, {}).encode("utf-8")
             self.send_response(HTTPStatus.OK)
             self._security_headers()
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -145,10 +156,11 @@ def _handler_factory(server: WizardServer):
             self.wfile.write(body)
 
         def do_POST(self) -> None:
-            expected_origin = f"http://127.0.0.1:{server.server_port}"
-            if self.headers.get("Origin") != expected_origin or not secrets.compare_digest(
-                self.headers.get("X-KR-Setup-Token", ""), server.setup_token
-            ):
+            if not self._local_request_allowed():
+                self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "local_origin_required"})
+                return
+            expected_origin = "http://" + self.headers.get("Host", "").lower()
+            if self.headers.get("Origin") != expected_origin or not self._valid_page_token():
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
                 return
             allowed = {
@@ -192,6 +204,20 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.OK, response)
             except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)})
+
+        def _valid_page_token(self) -> bool:
+            return time.monotonic() - server.setup_token_created_at < 1800 and secrets.compare_digest(
+                self.headers.get("X-KR-Setup-Token", ""), server.setup_token
+            )
+
+        def _local_request_allowed(self) -> bool:
+            allowed = {f"127.0.0.1:{server.server_port}", f"localhost:{server.server_port}"}
+            if self.headers.get("Host", "").lower() not in allowed:
+                return False
+            origin = self.headers.get("Origin")
+            if origin and origin not in {f"http://{host}" for host in allowed}:
+                return False
+            return self.headers.get("Sec-Fetch-Site", "none") in {"none", "same-origin"}
 
     return Handler
 

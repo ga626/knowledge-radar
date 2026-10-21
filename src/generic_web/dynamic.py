@@ -14,10 +14,17 @@ from urllib.parse import urlparse
 from .collector import collect_rendered_html
 from .models import GenericWebRequest, GenericWebResponse, utc_now_iso
 from runtime.executables import resolve_managed_chrome
+from runtime.chrome_manager import CHROMIUM_MODEL_POLICY_ARGS
 from runtime.tool_trace import record_trace_child
+from .url_policy import public_addresses, guarded_fetch, URLPolicyError
 
 
 def collect_dynamic_url(request: GenericWebRequest, *, wait_ms: int = 3000) -> GenericWebResponse:
+    try:
+        public_addresses(request.url)
+    except URLPolicyError as exc:
+        return GenericWebResponse(url=request.url, collector="dynamic_playwright", fetched_at=utc_now_iso(),
+                                  error={"type": "restricted_url", "message": str(exc), "collector": "dynamic_playwright"})
     if not os.environ.get("KR_DYNAMIC_CHILD"):
         return _collect_dynamic_url_subprocess(request, wait_ms=wait_ms)
     return _collect_dynamic_url_current_process(request, wait_ms=wait_ms)
@@ -108,17 +115,52 @@ async def _collect_dynamic_url_async(request: GenericWebRequest, *, wait_ms: int
 
     timeout_ms = max(1000, int(float(request.timeout or 20.0) * 1000))
     async with async_playwright() as p:
-        launch_options = {"headless": True}
+        launch_options = {"headless": True, "args": CHROMIUM_MODEL_POLICY_ARGS}
         chrome_exe = _find_chrome_exe()
         if chrome_exe:
             launch_options["executable_path"] = chrome_exe
         browser = await p.chromium.launch(**launch_options)
         try:
-            page = await browser.new_page(
+            context = await browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 locale="zh-CN",
+                service_workers="block",
             )
-            response = await page.goto(request.url, wait_until="domcontentloaded", timeout=timeout_ms)
+            navigation_redirects = {}
+            async def guarded_route(route):
+                req = route.request
+                if req.method != "GET":
+                    await route.abort("blockedbyclient")
+                    return
+                try:
+                    navigation = req.is_navigation_request() and req.frame == page.main_frame
+                    fetched = await asyncio.to_thread(guarded_fetch, req.url, timeout=float(request.timeout), follow_redirects=not navigation)
+                    if navigation and fetched.status_code in {301, 302, 303, 307, 308}:
+                        # Playwright不会再次拦截HTTP重定向的下一跳。以空白成功页截住，
+                        # 再由显式goto逐跳导航，避免浏览器自行访问未验证目标。
+                        navigation_redirects[req.url] = fetched.headers["location"]
+                        await route.fulfill(status=200, headers={"content-type": "text/html"}, body="")
+                        return
+                    await route.fulfill(status=fetched.status_code, headers=dict(fetched.headers), body=fetched.content)
+                except (URLPolicyError, httpx.RequestError):
+                    await route.abort("blockedbyclient")
+            import httpx
+            await context.route("**/*", guarded_route)
+            if hasattr(context, "route_web_socket"):
+                async def close_socket(ws):
+                    await ws.close()
+                await context.route_web_socket("**/*", close_socket)
+            await context.add_init_script("window.WebSocket = class { constructor() { throw new Error('URL_POLICY_BLOCKED'); } }; window.RTCPeerConnection = undefined; window.WebTransport = undefined;")
+            page = await context.new_page()
+            target = request.url
+            for _ in range(6):
+                response = await page.goto(target, wait_until="domcontentloaded", timeout=timeout_ms)
+                redirected = navigation_redirects.pop(target, None)
+                if not redirected:
+                    break
+                target = redirected
+            else:
+                raise URLPolicyError("dynamic navigation redirect limit exceeded")
             networkidle_status = "ready"
             try:
                 await page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8000))
@@ -174,8 +216,11 @@ async def _collect_dynamic_url_async(request: GenericWebRequest, *, wait_ms: int
 
 
 def _valid_http_url(url: str) -> bool:
-    parsed = urlparse(url or "")
-    return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
+    try:
+        public_addresses(url, resolve=False)
+        return True
+    except URLPolicyError:
+        return False
 
 
 def _find_chrome_exe() -> str:

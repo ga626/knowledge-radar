@@ -111,7 +111,7 @@ def search_youtube(keyword: str, limit: int = 10) -> Dict:
         return _youtube_error(str(exc), error_type=_youtube_error_type(exc))
 
 
-def get_youtube_detail(video_id_or_url: str) -> Dict:
+def get_youtube_detail(video_id_or_url: str, *, include_transcript: bool = True) -> Dict:
     video_id = extract_youtube_video_id(video_id_or_url)
     if not video_id:
         return {"platform": "YouTube", "url": video_id_or_url, "error": "无法从 URL 提取 YouTube video_id"}
@@ -143,7 +143,7 @@ def get_youtube_detail(video_id_or_url: str) -> Dict:
             "author": snippet.get("channelTitle", ""),
             "channel_id": snippet.get("channelId", ""),
             "published_at": snippet.get("publishedAt", ""),
-            "duration": (item.get("contentDetails") or {}).get("duration", ""),
+            "duration_original": (item.get("contentDetails") or {}).get("duration", ""),
             "stats": stats,
             "video_play_count": _int_or_zero(stats.get("viewCount")),
             "liked_count": _int_or_zero(stats.get("likeCount")),
@@ -158,9 +158,12 @@ def get_youtube_detail(video_id_or_url: str) -> Dict:
                 "strategy": "http_api",
             },
         }
-        captions = list_youtube_captions(video_id)
+        from kr_core.content_contracts import duration_seconds
+        detail["duration"] = duration_seconds(detail["duration_original"])
+        detail["duration_unit"] = "seconds"
+        captions = list_youtube_captions(video_id) if include_transcript else {"status": "skipped", "reason": "explicitly_disabled"}
         detail["captions"] = captions
-        transcript = fetch_youtube_transcript(video_id, preferred_languages=["zh-Hans", "zh", "en"])
+        transcript = fetch_youtube_transcript(video_id, preferred_languages=["zh-Hans", "zh", "en"]) if include_transcript else {"text": "", "status": "skipped", "reason": "explicitly_disabled"}
         detail["transcript"] = transcript.get("text", "")
         detail["transcript_metadata"] = transcript
         return detail

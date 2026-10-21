@@ -341,6 +341,25 @@ def select_main_chain_profile(platform: str = "xiaohongshu", path: str | None = 
 
 def profile_state_summary(path: str | None = None) -> Dict[str, Any]:
     """Return sanitized runtime state for profiles, without switching accounts."""
+    if path is None:
+        from .account_observations import AccountObservationStore, legacy_projection
+        facts = AccountObservationStore().all()
+        if facts:
+            rows = [legacy_projection(row) for row in facts]
+            known = {row['profile_id'] for row in rows}
+            # 旧文件只保留账号存在信息，过期历史不能重新赋予绿色/登录判定。
+            for legacy in profile_state_summary(path=profile_state_path()).get('profiles', []):
+                if legacy['profile_id'] not in known:
+                    rows.append({**legacy, 'state': 'unknown', 'reason_code': '',
+                                 'manual_action_required': False, 'cooldown_active': False,
+                                 'cooldown_remaining_s': 0, 'source': 'legacy_read_only',
+                                 'notes': ['旧记录尚无当前业务验证']})
+            return {"schema": "knowledgeradar-profile-state-summary/v1", "status": "ok", "profiles": rows,
+                    "source": "AccountObservation", "counts": {"total": len(rows),
+                    "healthy": sum(row["state"] == "healthy" for row in rows),
+                    "cooldown": sum(row["cooldown_active"] for row in rows),
+                    "manual_action": sum(row["manual_action_required"] for row in rows),
+                    "blocked": sum(row["state"] == "needs_verification" for row in facts)}}
     path = path or profile_state_path()
     if not os.path.isfile(path):
         return {
@@ -436,6 +455,12 @@ def record_profile_state(
     profile_id = str(profile_id or "").strip()
     if not profile_id:
         return {"status": "degraded", "error": "profile_id is required"}
+    if path is None:
+        from .account_observations import observe_account, legacy_projection
+        mapped = "needs_login" if reason_code in {"LOGIN_REQUIRED", "COOKIE_MISSING"} else "needs_verification" if manual_action_required else "cooldown" if cooldown_seconds else "auth_verified" if state in {"healthy", "available"} else "unknown" if state in {"unknown", "unobserved"} else "degraded"
+        fact = observe_account(profile_id, platform, mapped, source=last_tool or "legacy_state_adapter", reason=reason_code,
+                               ttl_s=cooldown_seconds if cooldown_seconds else None)
+        return {"status": "ok", "profile": legacy_projection(fact), "write_target": "AccountObservation"}
     path = path or profile_state_path()
     data = _load_profile_state_file(path)
     rows = data.setdefault("profiles", [])

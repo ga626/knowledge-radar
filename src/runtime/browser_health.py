@@ -9,7 +9,7 @@ import threading
 from typing import Any, Dict, List
 
 from .platform_diagnostics import build_platform_health_probe
-from .chrome_manager import _chrome_debug_url, _ensure_chrome_debugging
+from .chrome_manager import _chrome_debug_url, _ensure_chrome_debugging, CHROMIUM_MODEL_POLICY_ARGS
 from .executables import resolve_managed_chrome
 from .profile_registry import raw_registry_for_platform, select_main_chain_profile
 from .xhs_account_events import classify_account_event, record_xhs_account_event
@@ -558,7 +558,7 @@ def _probe_playwright_chromium_xhs_login_sync(timeout_ms: int = 30000) -> Dict[s
                 headless=False,
                 timeout=timeout_ms,
                 viewport={"width": 1280, "height": 900},
-                args=["--no-first-run", "--no-default-browser-check"],
+                args=["--no-first-run", "--no-default-browser-check", *CHROMIUM_MODEL_POLICY_ARGS],
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=timeout_ms)
@@ -745,7 +745,7 @@ def _probe_playwright_chromium_launch_only_sync(timeout_ms: int = 20000) -> Dict
                 headless=False,
                 timeout=timeout_ms,
                 viewport={"width": 1280, "height": 900},
-                args=["--no-first-run", "--no-default-browser-check"],
+                args=["--no-first-run", "--no-default-browser-check", *CHROMIUM_MODEL_POLICY_ARGS],
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto("about:blank", wait_until="domcontentloaded", timeout=timeout_ms)
@@ -842,7 +842,7 @@ def _probe_playwright_chromium_xhs_page_load_sync(timeout_ms: int = 30000) -> Di
                 headless=False,
                 timeout=timeout_ms,
                 viewport={"width": 1280, "height": 900},
-                args=["--no-first-run", "--no-default-browser-check"],
+                args=["--no-first-run", "--no-default-browser-check", *CHROMIUM_MODEL_POLICY_ARGS],
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto("https://www.xiaohongshu.com/explore", wait_until="domcontentloaded", timeout=timeout_ms)
@@ -1154,7 +1154,7 @@ def _probe_playwright_chromium_xhs_search_page_sync(keyword: str, timeout_ms: in
                 headless=False,
                 timeout=timeout_ms,
                 viewport={"width": 1280, "height": 900},
-                args=["--no-first-run", "--no-default-browser-check"],
+                args=["--no-first-run", "--no-default-browser-check", *CHROMIUM_MODEL_POLICY_ARGS],
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(
@@ -1323,7 +1323,7 @@ def _probe_playwright_chromium_xhs_detail_sync(keyword: str, timeout_ms: int = 4
                 headless=False,
                 timeout=timeout_ms,
                 viewport={"width": 1280, "height": 900},
-                args=["--no-first-run", "--no-default-browser-check"],
+                args=["--no-first-run", "--no-default-browser-check", *CHROMIUM_MODEL_POLICY_ARGS],
             )
             page = context.pages[0] if context.pages else context.new_page()
             page.goto(
