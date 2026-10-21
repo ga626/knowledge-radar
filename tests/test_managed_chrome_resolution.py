@@ -237,7 +237,7 @@ def test_restart_rejects_stale_xhs_manual_session_bound_to_another_profile(monke
     assert "xhs" not in chrome_manager._CHROME_KEEP_ALIVE
 
 
-def test_manual_interaction_expiry_closes_only_the_expected_managed_profile(monkeypatch, tmp_path) -> None:
+def test_explicit_manual_cancel_closes_only_the_expected_managed_profile(monkeypatch, tmp_path) -> None:
     profile = str(tmp_path / "boss-profile")
     chrome_manager._CHROME_KEEP_ALIVE["boss"] = True
     chrome_manager._MANAGED_CHROME_PIDS["boss"] = 4321
@@ -250,12 +250,12 @@ def test_manual_interaction_expiry_closes_only_the_expected_managed_profile(monk
     cleanup = []
     monkeypatch.setattr(chrome_manager, "_cleanup_managed_chrome_platform", lambda platform, *, expected_profile_dir="": cleanup.append((platform, expected_profile_dir)))
 
-    result = chrome_manager.cancel_browser_interaction("boss", reason="manual_interaction_expired", expected_profile_dir=profile)
+    result = chrome_manager.cancel_browser_interaction("boss", reason="manual_interaction_cancelled", expected_profile_dir=profile)
 
     assert result["status"] == "cancelled"
     assert "boss" not in chrome_manager._CHROME_KEEP_ALIVE
     assert cleanup == [("boss", profile)]
-    assert any(kwargs.get("event") == "manual_interaction_expired" for _args, kwargs in transitions)
+    assert any(kwargs.get("event") == "manual_interaction_cancelled" for _args, kwargs in transitions)
     assert all(kwargs.get("metadata", {}).get("authenticated") is not True for _args, kwargs in transitions)
 
 

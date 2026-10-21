@@ -974,8 +974,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 4,
-      "oracle_version": 4,
+      "version": 6,
+      "oracle_version": 6,
       "capabilities": [
         "account.rotation"
       ],
@@ -983,7 +983,9 @@
       "nodes": [
         "tests/test_account_alerts.py",
         "tests/evaluation/test_account_observations.py",
-        "tests/test_installed_business_routes.py"
+        "tests/test_installed_business_routes.py",
+        "tests/test_browser_recovery_contract.py",
+        "tests/test_manual_browser_lifetime.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1005,10 +1007,13 @@
         "src/detail_strategies/zhihu.py",
         "src/understanding/text.py",
         "src/collectors/platform/xiaohongshu.py",
-        "src/detail_strategies/xiaohongshu.py"
+        "src/detail_strategies/xiaohongshu.py",
+        "src/runtime/profile_registry.py",
+        "tests/test_browser_recovery_contract.py",
+        "tests/test_manual_browser_lifetime.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "真实安装复现：小红书搜索卡点击补临时参数，内容限制与账号失效分离，顶层人工状态一致"
+      "change_reason": "扫码窗口跨进程保护、所有平台超时只提醒、未验证完成不收尾；进程退出和其他客户端清理回归"
     },
     {
       "case_id": "content.contracts",
