@@ -64,7 +64,8 @@ def test_xhs_ui_proof_survives_identity_endpoint_failure(monkeypatch):
     assert result["ok"] is False
 
 
-def test_xhs_token_recovery_expression_is_valid_and_uses_live_page(monkeypatch):
+@pytest.mark.parametrize("click_required", [False, True])
+def test_xhs_token_recovery_expression_is_valid_and_uses_live_page(monkeypatch, click_required):
     from collectors.platform import xiaohongshu as xhs
     import importlib.util
     note = "0123456789abcdef01234567"
@@ -81,11 +82,24 @@ def test_xhs_token_recovery_expression_is_valid_and_uses_live_page(monkeypatch):
         def load(target):
             original_exec(target)
             def evaluate(_ws, expression, **_kwargs):
-                prelude = 'global.location={href:"https://www.xiaohongshu.com/search_result"};global.document={querySelectorAll:()=>[{href:"https://www.xiaohongshu.com/explore/' + note + '?xsec_token=memory-only"}]};'
-                result = subprocess.run([shutil.which("node"), "-e", prelude + "console.log(" + expression + ")"],capture_output=True,text=True,encoding="utf-8",check=True)
+                link = "https://www.xiaohongshu.com/explore/" + note
+                prelude = 'global.location={href:"https://www.xiaohongshu.com/search_result",origin:"https://www.xiaohongshu.com"};'
+                prelude += 'const card={href:' + json.dumps(link if click_required else link+'?xsec_token=memory-only') + ',getClientRects:()=>[{}],click:()=>{location.href=' + json.dumps(link+'?xsec_token=memory-only') + '}};global.document={querySelectorAll:()=>[card]};'
+                result = subprocess.run([shutil.which("node"), "-e", prelude + "Promise.resolve(" + expression + ").then(console.log)"],capture_output=True,text=True,encoding="utf-8",check=True)
                 return json.loads(result.stdout)
             target._cdp_json = evaluate
         spec.loader.exec_module = load
         return value
     monkeypatch.setattr(importlib.util, "module_from_spec", module)
     assert xhs._recover_xhs_xsec_token(note) == "memory-only"
+
+
+def test_content_app_gate_does_not_poison_all_account_logins(monkeypatch, tmp_path):
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    registry = {"raw": {"policy": {"default_mode": "safe_auto"}}}
+    pool = {"accounts": [{"profile_id": name, "risk": {"risk_score": 0}, "runtime_state": "healthy"} for name in ("A", "B", "C")]}
+    recorded = []
+    _, receipt = run_browser_accounts(registry, pool, "B", lambda _: {"error": "note gate", "page_state": {"platform_state": "app_scan_required", "manual_action_required": True}}, lambda *args: recorded.append(args), purpose="detail")
+    assert len(receipt["attempts"]) == 1
+    assert receipt["common_failure"] and not receipt["exhausted"]
+    assert recorded == []

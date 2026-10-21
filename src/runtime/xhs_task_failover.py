@@ -89,7 +89,10 @@ def run_browser_accounts(
                 failure = "global_platform_risk"
             elif observed_state == "login_required":
                 failure = "login_required"
-            elif observed_state in {"platform_verification_required", "app_scan_required"}:
+            elif observed_state == "app_scan_required":
+                # A note access gate is not evidence that every login expired.
+                failure = "app_scan_required"
+            elif observed_state == "platform_verification_required":
                 failure = "platform_verification_required"
         receipt["attempts"].append({"profile_id": profile, "status": "failed" if failed else "ok", "failure_type": failure if failed else ""})
         profile_receipt["reason"] = failure if failed else "business_success"

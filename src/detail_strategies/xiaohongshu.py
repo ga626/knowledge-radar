@@ -350,7 +350,7 @@ class XiaohongshuDetailStrategy:
             "failure_subtype": failure_subtype,
             "note_id": note_id,
             "page_state": page_state,
-            "manual_action_required": bool(manual_action_required),
+            "manual_action_required": bool(manual_action_required or page_state.get("manual_action_required")),
             "fallback_attempts": fallback_attempts,
             "selector_bundle_version": XHS_SELECTOR_BUNDLE_VERSION,
             "selector_hit_count": selector_hit_count,

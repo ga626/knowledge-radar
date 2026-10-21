@@ -68,6 +68,13 @@ def test_xhs_image_only_detail_is_not_empty_fallback() -> None:
     assert xhs_collector.detail_needs_fallback({"title": "页面不见了", "content": ""})
 
 
+def test_detail_gate_preserves_manual_action_at_top_level() -> None:
+    strategy = _strategy({}, [])
+    state = classify_xhs_page_state("请打开小红书App扫码查看")
+    result = strategy._failure_payload(url="https://www.xiaohongshu.com/explore/0123456789abcdef01234567", note_id="0123456789abcdef01234567", error="content gate", failure_type="empty_detail", failure_subtype="app_scan_required", fallback_attempts=[], page_state=state)
+    assert result["manual_action_required"] is True
+
+
 def test_xhs_empty_detail_does_not_request_manual_login(monkeypatch, tmp_path) -> None:
     health_path = tmp_path / "xhs-health.jsonl"
     tracker = xhs_health.XhsDetailHealthTracker(str(health_path))
