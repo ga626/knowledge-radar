@@ -414,6 +414,9 @@ def transcribe_bilibili(
                 source_url=f"https://www.bilibili.com/video/{bvid}",
                 metadata={"cache_hit": True},
             )
+            # 已完成任务是历史事实；仍记录缓存访问，但不重写完成回执。
+            if (task_store.get_task(task_id) or {}).get("status") == "completed":
+                return cached_text
             task_store.upsert_task(
                 task_id=task_id,
                 task_type="bilibili_transcribe",
@@ -435,6 +438,13 @@ def transcribe_bilibili(
             )
             task_store.mark_completed(task_id, result_path=cache_path, metadata={"cache_hit": True, **timing})
             return cached_text
+
+        # 缓存不再有效时创建下一代任务，保留旧完成记录的幂等语义。
+        # 同一前代+输出路径得到同一代ID，并发请求可复用正在执行的一代。
+        while (previous := task_store.get_task(task_id)) and previous.get("status") == "completed":
+            generation = json.dumps({"previous": task_id, "finished_at": previous.get("finished_at"),
+                                     "output": os.path.normcase(os.path.abspath(cache_path))}, sort_keys=True)
+            task_id = f"bilibili_transcribe_{bvid}_" + hashlib.sha256(generation.encode()).hexdigest()[:16]
 
         subtitle = _probe_bilibili_subtitle(bvid, output_dir=output_dir, task_id=task_id)
         if subtitle.get("hit"):

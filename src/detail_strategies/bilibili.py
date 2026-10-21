@@ -76,6 +76,7 @@ class BilibiliDetailStrategy:
             trigger="always_bilibili_detail",
             enabled=transcribe_enabled,
             fn=lambda: self._call_transcribe(bvid, request),
+            result_status=self._transcript_status,
         )
         if not transcribe_enabled:
             result["transcript"] = "[transcribe] skipped by KR_BILIBILI_TRANSCRIBE_ON_DETAIL=0"
@@ -87,6 +88,11 @@ class BilibiliDetailStrategy:
                 "missing": [item for item in detail.split("、") if item],
                 "recommended_action": "在本地组件 > 本地媒体理解与转写中完成所需组件安装后重试；字幕和缓存路径不受影响。",
             }
+        if transcribe_enabled and self._transcript_status(result["transcript"]) != "ok":
+            status = self._transcript_status(result["transcript"])
+            result["transcript_status"] = {"status": status, "message": str(result["transcript"] or "empty transcript")[:400]}
+            result["transcript"] = ""
+            result["failure_type"] = "transcript_pending" if status == "pending" else "transcript_failed"
         comments_enabled = bool(request.options.get("include_comments", True))
         comments = self.deps.get_comments(bvid) if comments_enabled else []
         result["comments"] = comments
@@ -130,6 +136,15 @@ class BilibiliDetailStrategy:
 
         result["multimodal_pipeline"] = pipeline.to_dict()
         return self._response(request, result)
+
+    @staticmethod
+    def _transcript_status(value) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return "failed"
+        if text.startswith("[transcribe]"):
+            return "pending" if "后台" in text else "failed"
+        return "ok"
 
     def _call_transcribe(self, bvid: str, request: DetailRequest) -> str:
         try:

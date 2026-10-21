@@ -121,3 +121,36 @@ def test_bilibili_asr_missing_components_returns_before_queuing_worker(monkeypat
 
     assert message.startswith("[transcribe] INSTALL_COMPONENT_MISSING:")
     assert bili.get_task_store().get_task("bilibili_transcribe_BVmissing") is None
+
+
+def test_invalid_cache_reexecutes_without_rewriting_completed_history(monkeypatch, tmp_path, isolated_runtime):
+    import sys
+    from types import SimpleNamespace
+
+    output = tmp_path / "transcripts"
+    output.mkdir()
+    cache = output / "BVstale_transcript.txt"
+    cache.write_text("old unverified transcript", encoding="utf-8")
+    (output / "BVstale.m4a").write_bytes(b"isolated audio")
+    original = "bilibili_transcribe_BVstale"
+    isolated_runtime.upsert_task(original, "bilibili_transcribe", "B站", result_path=str(cache))
+    isolated_runtime.mark_completed(original, metadata={"historical": True})
+    before = isolated_runtime.get_task(original)
+    monkeypatch.setenv("KR_DURABLE_WORKER", "1")
+    monkeypatch.setattr(bili, "_probe_bilibili_subtitle", lambda *a, **kw: {"hit": False})
+    monkeypatch.setattr(bili, "_missing_transcription_components", lambda: [])
+    calls = []
+    def transcribe(*a, **kw):
+        calls.append(1)
+        return {"txt": "new usable transcript"}
+    monkeypatch.setitem(sys.modules, "transcribe_bilibili", SimpleNamespace(transcribe=transcribe))
+
+    assert bili.transcribe_bilibili("BVstale", output_dir=str(output)) == "new usable transcript"
+    assert isolated_runtime.get_task(original) == before
+    assert len(calls) == 1
+    assert bili.transcribe_bilibili("BVstale", output_dir=str(output)) == "new usable transcript"
+    assert len(calls) == 1
+    # Deleting output after a completed regeneration must also be recoverable.
+    cache.unlink()
+    assert bili.transcribe_bilibili("BVstale", output_dir=str(output)) == "new usable transcript"
+    assert len(calls) == 2

@@ -942,8 +942,8 @@
     },
     {
       "case_id": "task.durable",
-      "version": 2,
-      "oracle_version": 2,
+      "version": 3,
+      "oracle_version": 3,
       "capabilities": [
         "task.lifecycle"
       ],
@@ -951,7 +951,9 @@
       "nodes": [
         "tests/test_mcp_observability.py",
         "tests/evaluation/test_durable_tasks.py",
-        "tests/evaluation/test_p2_execution.py"
+        "tests/evaluation/test_p2_execution.py",
+        "tests/evaluation/test_transcript_result_contract.py",
+        "tests/test_bilibili_asr_policy.py"
       ],
       "layer": "integration",
       "auto": true,
@@ -967,10 +969,15 @@
         "src/server.py",
         "tests/test_mcp_observability.py",
         "src/generic_web/url_policy.py",
-        "src/runtime/mcp_runtime.py"
+        "src/runtime/mcp_runtime.py",
+        "src/collectors/platform/bilibili.py",
+        "src/detail_strategies/bilibili.py",
+        "src/multimodal/pipeline.py",
+        "tests/evaluation/test_transcript_result_contract.py",
+        "tests/test_bilibili_asr_policy.py"
       ],
-      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞",
-      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。",
+      "change_reason": "真实原生补验发现B站转写失败假完成；固定缓存失效重执行、失败不作正文、自身不阻塞且真实子依赖不丢失"
     },
     {
       "case_id": "account.facts",

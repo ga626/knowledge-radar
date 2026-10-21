@@ -98,7 +98,7 @@ class TaskService:
                 return
             if (self.store.get_task(task_id) or {}).get("status") in TERMINAL_STATUSES:
                 return
-            env = dict(os.environ, KR_DURABLE_WORKER="1", KR_TASK_INPUT_STDIN="1", KR_TASK_DB_PATH=self.store.db_path, PYTHONIOENCODING="utf-8")
+            env = dict(os.environ, KR_DURABLE_WORKER="1", KR_DURABLE_TASK_ID=task_id, KR_TASK_INPUT_STDIN="1", KR_TASK_DB_PATH=self.store.db_path, PYTHONIOENCODING="utf-8")
             script = Path(__file__).with_name("task_process.py")
             with (folder / "stdout.txt").open("a", encoding="utf-8") as out, (folder / "stderr.txt").open("a", encoding="utf-8") as err:
                 proc = silent_subprocess_popen([sys.executable, "-X", "utf8", str(script), str(folder / "input.json")], env=env, stdin=subprocess.PIPE, stdout=out, stderr=err)

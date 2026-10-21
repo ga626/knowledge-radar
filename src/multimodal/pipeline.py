@@ -12,7 +12,8 @@ class MultimodalPipeline:
     platform: str
     events: List[Dict[str, Any]] = field(default_factory=list)
 
-    def run(self, name: str, *, trigger: str, enabled: bool, fn: Callable[[], Any]) -> Any:
+    def run(self, name: str, *, trigger: str, enabled: bool, fn: Callable[[], Any],
+            result_status: Callable[[Any], str] | None = None) -> Any:
         started = time.time()
         if not enabled:
             self.events.append({
@@ -27,7 +28,7 @@ class MultimodalPipeline:
             self.events.append({
                 "name": name,
                 "trigger": trigger,
-                "status": "ok",
+                "status": result_status(value) if result_status else "ok",
                 "elapsed_s": round(time.time() - started, 3),
                 "summary": summarize_value(value),
             })

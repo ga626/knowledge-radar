@@ -4036,6 +4036,9 @@ def _attach_research_session_tasks(result: Dict, research_session_id: str, scope
         )
         if not tasks and research_session_id:
             tasks = store.tasks_for_session(research_session_id, blocking_only=False, include_terminal=True, limit=20)
+        if os.environ.get("KR_DURABLE_WORKER") == "1":
+            current_task_id = os.environ.get("KR_DURABLE_TASK_ID", "")
+            tasks = [task for task in tasks if task.get("task_id") != current_task_id]
         pending = [task for task in tasks if str(task.get("status") or "") in {"queued", "running"}]
         blocking = [
             task

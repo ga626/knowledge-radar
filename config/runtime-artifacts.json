@@ -2,7 +2,7 @@
   "schema": "knowledgeradar-runtime-artifacts/v1",
   "target": "win_amd64-cpython-3.12",
   "lock_sha256": "e7aecb8d76f457ad780802473263ac59df2cbc89785ad2ca9cb34f97c7c82e49",
-  "pyproject_sha256": "038f81da519db8bafe6414944be1d51afda2335c94b3101ba33b1c4b5ea70c56",
+  "pyproject_sha256": "1d60f00250b687b0e4f6e3fd3f23c65fb351010545f550c58f3b07f1f748477b",
   "wheels": [
     {
       "file": "aiofiles-23.2.1-py3-none-any.whl",

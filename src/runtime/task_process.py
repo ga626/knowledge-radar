@@ -58,6 +58,12 @@ def execute_job(input_path):
         else:
             raise ValueError("unsupported worker operation")
         phase("detail_execute_end")
+        if isinstance(result, dict):
+            # scope快照在本任务运行期间生成；自身不是自己的依赖。
+            result = dict(result)
+            for key in ("pending_tasks", "blocking_tasks"):
+                if isinstance(result.get(key), list):
+                    result[key] = [ref for ref in result[key] if ref.get("task_id") != task_id]
         if (store.get_task(task_id) or {}).get("status") in TERMINAL_STATUSES:
             return
         if isinstance(result, dict) and (result.get("manual_action_required") or result.get("status") == "needs_interaction"):
@@ -65,6 +71,10 @@ def execute_job(input_path):
             return
         if isinstance(result, dict) and (result.get("error") or result.get("failure_type") or result.get("status") in {"failed", "error", "empty"}):
             store.mark_failed(task_id, "detail returned structured error", error_code=str(result.get("failure_type") or "detail_failed"), metadata={"phase": "failed"})
+            return
+        if isinstance(result, dict) and result.get("blocking_tasks"):
+            store.mark_failed(task_id, "required child tasks remain pending", error_code="dependency_pending",
+                              metadata={"phase": "failed", "blocking_task_ids": [ref["task_id"] for ref in result["blocking_tasks"]]})
             return
         from generic_web.url_policy import public_evidence_payload
         artifact = {"schema": "knowledgeradar-task-artifact/v1", "task_id": task_id, "attempt_id": job["attempt_id"], "identity": job["identity"], "result": public_evidence_payload(result)}
