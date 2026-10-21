@@ -974,15 +974,16 @@
     },
     {
       "case_id": "account.facts",
-      "version": 2,
-      "oracle_version": 2,
+      "version": 3,
+      "oracle_version": 3,
       "capabilities": [
         "account.rotation"
       ],
       "executor": "pytest",
       "nodes": [
         "tests/test_account_alerts.py",
-        "tests/evaluation/test_account_observations.py"
+        "tests/evaluation/test_account_observations.py",
+        "tests/test_installed_business_routes.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -996,15 +997,21 @@
         "src/runtime/xhs_auth_watcher.py",
         "tests/test_account_alerts.py",
         "src/runtime/account_business.py",
-        "src/runtime/xhs_task_failover.py"
+        "src/runtime/xhs_task_failover.py",
+        "tests/test_installed_business_routes.py",
+        "src/collectors/platform/zhihu.py",
+        "src/runtime/login_state.py",
+        "src/media_platform/xhs/scrapling_adapter.py",
+        "src/detail_strategies/zhihu.py",
+        "src/understanding/text.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "历史考古行动修复：单一证据转换、真实SDK生命周期、账号CAS/outbox、GET会话及逐账号空间合同；旧结果必须重新判定"
+      "change_reason": "安装后真实业务发现：公开包无签名脚本路径、网页就绪、账号未知态轮换及临时URL恢复回归"
     },
     {
       "case_id": "content.contracts",
-      "version": 2,
-      "oracle_version": 2,
+      "version": 3,
+      "oracle_version": 3,
       "capabilities": [
         "mcp.get_content_detail"
       ],
@@ -1012,7 +1019,8 @@
       "nodes": [
         "tests/evaluation/test_content_contracts.py",
         "tests/test_bilibili_asr_policy.py",
-        "tests/test_xiaohongshu_detail_regressions.py"
+        "tests/test_xiaohongshu_detail_regressions.py",
+        "tests/test_installed_business_routes.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1024,10 +1032,16 @@
         "src/kr_core/content_contracts.py",
         "src/collectors/platform/xiaohongshu.py",
         "src/collectors/platform/liepin.py",
-        "src/detail_strategies/xiaohongshu.py"
+        "src/detail_strategies/xiaohongshu.py",
+        "tests/test_installed_business_routes.py",
+        "src/collectors/platform/zhihu.py",
+        "src/runtime/login_state.py",
+        "src/media_platform/xhs/scrapling_adapter.py",
+        "src/detail_strategies/zhihu.py",
+        "src/understanding/text.py"
       ],
       "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
-      "change_reason": "自然语音金标绑定音频及转写哈希，数字、专名和语义单列；受保护URL在任务管道中传递且不落盘"
+      "change_reason": "安装后真实业务发现：公开包无签名脚本路径、网页就绪、账号未知态轮换及临时URL恢复回归"
     },
     {
       "case_id": "storage.lifecycle",

@@ -3393,7 +3393,7 @@ def health_check(
             cleanup_chrome_platform=_cleanup_managed_chrome_platform,
             read_zhihu_cookies_from_cdp=zhihu_collectors.read_zhihu_cookies_from_cdp,
             read_zhihu_cookies_from_profile=zhihu_collectors.read_zhihu_cookies_from_profile,
-            zhihu_sign=zhihu_collectors.zhihu_sign,
+            zhihu_sign=zhihu_collectors.zhihu_sign if os.path.isfile(os.path.join(zhihu_collectors.PROJECT_ROOT, "libs", "zhihu.js")) else None,
             zhihu_search_api=zhihu_collectors.zhihu_search_api,
             inspect_zhihu_cookie_health=zhihu_collectors.inspect_zhihu_cookie_health,
             inspect_xhs_login_health=lambda cdp_url, warn_within_hours=72: xhs_scrapling_adapter.inspect_xhs_login_health(cdp_url, warn_within_hours),

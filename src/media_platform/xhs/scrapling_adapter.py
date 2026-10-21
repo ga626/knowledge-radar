@@ -224,7 +224,7 @@ def probe_login_state(cdp_url: Optional[str] = None) -> Dict:
       const result = {
         ok: false,
         ui_authenticated: false,
-        guest: true,
+        guest: null,
         status: 0,
         code: null,
         msg: '',
@@ -242,9 +242,13 @@ def probe_login_state(cdp_url: Optional[str] = None) -> Dict:
         result.code = data.code;
         result.msg = data.msg || '';
         const user = data.data || {};
-        result.guest = Boolean(user.guest);
+        result.guest = typeof user.guest === 'boolean' ? user.guest : null;
         result.nickname = user.nickname || '';
         result.user_id = user.user_id || '';
+        result.ok = data.code === 0 && Boolean(result.user_id);
+      } catch (error) {
+        result.error = String(error);
+      }
         const text = document.body ? (document.body.innerText || '') : '';
         const has_login_prompt = /登录后查看搜索结果|请先登录|扫码登录|手机号登录|微信登录|验证后可见|登录后可见|登录后浏览/i.test(text);
         const has_verify_prompt = /APP扫码查看|扫码查看|打开小红书APP|小红书App扫码|小红书APP扫码|请使用小红书|请用小红书|验证|滑块|安全|异常|captcha|verify/i.test(text);
@@ -265,10 +269,6 @@ def probe_login_state(cdp_url: Optional[str] = None) -> Dict:
         result.ui_authenticated = Boolean(
           has_profile_route && has_signed_in_controls && !has_login_prompt && !has_verify_prompt
         );
-        result.ok = data.code === 0 && Boolean(result.user_id);
-      } catch (error) {
-        result.error = String(error);
-      }
       return JSON.stringify(result);
     })()
     """

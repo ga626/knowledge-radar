@@ -161,18 +161,6 @@ def extract_zhihu_article_via_cdp(url: str) -> Optional[Dict]:
                 .map(node => clean(node.innerText || node.textContent || ''))
                 .filter(text => text.length > 80);
               let content = candidates.sort((a, b) => b.length - a.length)[0] || '';
-              if (!content) {
-                const body = clean(document.body ? document.body.innerText || '' : '');
-                const markers = ['发布于', '编辑于', '赞同', '添加评论'];
-                content = body;
-                for (const marker of markers) {
-                  const idx = content.indexOf(marker);
-                  if (idx > 120) {
-                    content = content.slice(0, idx);
-                    break;
-                  }
-                }
-              }
               return JSON.stringify({
                 title,
                 desc: content.slice(0, 300),

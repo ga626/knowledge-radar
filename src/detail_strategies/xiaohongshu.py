@@ -161,6 +161,12 @@ class XiaohongshuDetailStrategy:
                 if not xhs._ensure_chrome_debugging(resource, target_profile_id=profile_id):
                     return {"error": "该账号CDP不可用", "failure_type": "cdp_unavailable"}
                 state = xhs.xiaohongshu_account_state(xhs._chrome_debug_url(resource))
+                # Newly opened pages may not have rendered account controls yet.
+                # Retry only uncertainty; explicit login/verification still stops.
+                if not xhs._xhs_login_state_ok(state) and not xhs._xhs_manual_auth_evidence(state)[0]:
+                    import time
+                    time.sleep(1.2)
+                    state = xhs.xiaohongshu_account_state(xhs._chrome_debug_url(resource))
                 if not xhs._xhs_login_state_ok(state):
                     return xhs._xhs_login_preflight_result(CollectionTrace("小红书", ["detail_login_preflight"]), state, profile_id_override=profile_id)
                 data = self._extract_single(url, dict(result), request=request, auto_multimodal=auto_multimodal)
