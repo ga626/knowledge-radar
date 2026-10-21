@@ -40,6 +40,14 @@ jobs:
       - name: Verify account recovery and result evidence
         run: python -m pytest -q tests/test_xhs_task_failover.py tests/test_account_alerts.py tests/test_mcp_observability.py tests/test_boss_search_url.py tests/test_academic_provider_profiles.py tests/test_xiaohongshu_detail_regressions.py
 
+      - name: Prepare hash-locked offline runtime
+        run: |
+          python -m pip download --only-binary=:all: --require-hashes -r config/runtime-win-py312.lock -d local/runtime-wheelhouse
+          python -c "import hashlib,json,pathlib; r=pathlib.Path('.'); m=json.loads((r/'config/runtime-artifacts.json').read_text(encoding='utf-8')); assert all((p:=r/'local/runtime-wheelhouse'/x['file']).is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256'] for x in m['wheels']), 'frozen runtime wheel mismatch'"
+
+      - name: Verify continuous evaluation contracts
+        run: python -m pytest -q tests/evaluation
+
       - name: Build immutable release candidate
         run: python scripts/build_product_lite_package.py --candidate
 

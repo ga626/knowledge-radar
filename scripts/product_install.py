@@ -18,6 +18,7 @@ import sys
 import tempfile
 import time
 import tomllib
+import zipfile
 from typing import Any
 from uuid import uuid4
 
@@ -73,11 +74,32 @@ def run_runtime_check(command: list[str], *, cwd: Path, action: str, env: dict[s
 
 def ensure_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
     require_python_312(base_python)
+    lock = program_root / "config/runtime-win-py312.lock"
+    artifacts = program_root / "config/runtime-artifacts.json"
+    if not lock.is_file() or not artifacts.is_file():
+        raise RuntimeError("locked runtime inputs are missing")
+    artifact_identity = json.loads(artifacts.read_text(encoding="utf-8"))
+    if artifact_identity.get("lock_sha256") != sha256_file(lock) or artifact_identity.get("pyproject_sha256") != sha256_file(program_root / "pyproject.toml"):
+        raise RuntimeError("runtime lock identity mismatch")
+    wheels = program_root / "runtime-wheelhouse"
+    for row in artifact_identity["wheels"]:
+        path = wheels / row["file"]
+        if path.name != row["file"] or not path.is_file() or sha256_file(path) != row["sha256"]:
+            raise RuntimeError("runtime wheel identity mismatch")
     runtime_root = install_root / "runtime" / version
     executable = runtime_python(runtime_root)
     runtime_env = dict(os.environ)
     runtime_env["PYTHONPATH"] = str(program_root / "src")
+    runtime_env["KR_DATA_ROOT"] = str(install_root / "runtime-check-data")
+    runtime_env["KR_STATE_DIR"] = str(install_root / "runtime-check-data/state")
+    runtime_env["KR_DESKTOP_NOTIFICATIONS_DISABLED"] = "1"
+    runtime_env['PYTHONDONTWRITEBYTECODE']='1'
+    receipt_identity = {"schema": "knowledgeradar-locked-runtime/v1", "lock_sha256": sha256_file(lock),
+                        "artifacts_sha256": sha256_file(artifacts), "python_target": "3.12"}
+    runtime_receipt = runtime_root / "runtime-receipt.json"
     if executable.is_file():
+        if not runtime_receipt.is_file() or json.loads(runtime_receipt.read_text(encoding="utf-8")) != receipt_identity:
+            raise RuntimeError("existing runtime has a different or unrecorded dependency identity")
         run_runtime_check([str(executable), "-c", "import mcp; import server"], cwd=program_root, action="checking the existing runtime", env=runtime_env)
         return executable
     runtime_parent = runtime_root.parent
@@ -87,13 +109,19 @@ def ensure_runtime(program_root: Path, install_root: Path, version: str, base_py
         run_runtime_check([str(base_python), "-m", "venv", str(staging)], cwd=program_root, action="creating the product runtime")
         staged_python = runtime_python(staging)
         run_runtime_check(
-            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", str(program_root)],
+            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-index", "--find-links", str(wheels), "--require-hashes", "-r", str(lock)],
             cwd=program_root,
             action="installing product dependencies",
         )
+        # setuptools的元数据/构建输出只写临时副本，程序目录始终保留制品原字节。
+        with tempfile.TemporaryDirectory(prefix='.source-build-',dir=runtime_parent) as source_temp:
+            build_input=Path(source_temp)/'payload'
+            shutil.copytree(program_root,build_input,ignore=shutil.ignore_patterns('runtime-wheelhouse','__pycache__','*.pyc','*.egg-info'))
+            run_runtime_check([str(staged_python), "-m", "pip", "install", "--no-index", "--no-deps", "--no-build-isolation", str(build_input)], cwd=build_input, action="installing the bound product source")
         run_runtime_check([str(staged_python), "-c", "import mcp; import server"], cwd=program_root, action="checking the product runtime", env=runtime_env)
         if runtime_root.exists():
             raise RuntimeError("existing product runtime is incomplete; remove it explicitly before retrying")
+        write_json_atomic(staging / "runtime-receipt.json", receipt_identity)
         staging.replace(runtime_root)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -857,6 +885,17 @@ def verify_product_package(package_root: Path) -> dict[str, Any]:
         raise RuntimeError("product package is not bound to a clean source commit")
     if "source_root" in provenance:
         raise RuntimeError("product package provenance exposes a source path")
+    for row in provenance.get("files", []):
+        path = safe_child(package_root, package_root / row["path"])
+        if not path.is_file() or sha256_file(path) != row["sha256"]:
+            raise RuntimeError("product file identity mismatch: " + row["path"])
+    listed=[row['path'] for row in provenance.get('files',[])]
+    if not listed or len(set(listed))!=len(listed):
+        raise RuntimeError('empty or duplicate product inventory')
+    expected=set(listed)|{'package-provenance.json','SBOM.json','GENERATED_FROM.md'}
+    actual={p.relative_to(package_root).as_posix() for p in package_root.rglob('*') if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('.pyc')}
+    if actual-set(expected) or set(listed)-actual:
+        raise RuntimeError('product file inventory differs from provenance')
     return provenance
 
 
@@ -869,7 +908,48 @@ def verify_artifact_receipt(package_root: Path, archive: Path, receipt_path: Pat
     provenance = verify_product_package(package_root)
     if receipt.get("source_commit") != provenance.get("source_commit"):
         raise RuntimeError("receipt and extracted package source identity do not match")
+    if receipt.get("package_provenance_sha256") != sha256_file(package_root / "package-provenance.json") or receipt.get("sbom_sha256") != sha256_file(package_root / "SBOM.json"):
+        raise RuntimeError("receipt metadata identity mismatch")
+    with zipfile.ZipFile(archive) as bundle:
+        expected = {"KnowledgeRadar/" + p.relative_to(package_root).as_posix(): p for p in package_root.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(".pyc")}
+        members = [n for n in bundle.namelist() if not n.endswith("/")]
+        if len(members) != len(set(members)) or set(members) != set(expected):
+            raise RuntimeError("archive and extracted file inventory differ")
+        for name, path in expected.items():
+            if hashlib.sha256(bundle.read(name)).hexdigest() != sha256_file(path):
+                raise RuntimeError("archive content differs from extracted package")
     return receipt
+
+
+def stage_verified_package(package_root: Path, install_root: Path, data_root: Path, python_exe: Path, archive: Path, receipt_path: Path) -> dict[str, Any]:
+    """只安装已核验内容；不注册宿主、不写active.json。"""
+    install_root=install_root.resolve()
+    data_root=data_root.resolve()
+    if data_root.is_relative_to(install_root/'app') or data_root.is_relative_to(install_root/'runtime'):
+        raise RuntimeError('data root must not be inside immutable app or runtime directory')
+    receipt = verify_artifact_receipt(package_root, archive, receipt_path)
+    plan = build_plan(package_root, install_root, data_root, python_exe)
+    program = Path(plan["program_root"])
+    if program.exists():
+        if not (program / "package-provenance.json").is_file() or sha256_file(program / "package-provenance.json") != sha256_file(package_root / "package-provenance.json"):
+            raise RuntimeError("same-version program identity differs; use a separate install root")
+        verify_product_package(program)
+    else:
+        program.parent.mkdir(parents=True, exist_ok=True)
+        staging = Path(tempfile.mkdtemp(prefix=".verified-staging-", dir=program.parent))
+        try:
+            shutil.copytree(package_root, staging / "payload", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
+            verify_product_package(staging / "payload")
+            (staging / "payload").replace(program)
+        finally:
+            shutil.rmtree(staging, ignore_errors=True)
+    runtime = ensure_runtime(program, install_root, plan["version"], python_exe)
+    initialize_data(data_root, package_root)
+    result = {"status": "STAGED", "version": plan["version"], "program_root": str(program), "runtime_python": str(runtime),
+              "data_root": str(data_root), "source_commit": receipt["source_commit"], "archive_sha256": receipt["archive_sha256"],
+              "activated": False, "host_registered": False}
+    write_json_atomic(install_root / "staged-install.json", result)
+    return result
 
 
 def apply_install(
@@ -899,15 +979,8 @@ def apply_install(
         raise RuntimeError("data root must not be inside the immutable app directory")
     program_root = Path(plan["program_root"])
     app_root.mkdir(parents=True, exist_ok=True)
-    if not program_root.exists():
-        staging = Path(tempfile.mkdtemp(prefix=".staging-", dir=app_root))
-        try:
-            shutil.copytree(package_root, staging / "payload", dirs_exist_ok=True, ignore=shutil.ignore_patterns(".git", ".codex", "dist", "release", "__pycache__", "*.pyc", "*.egg-info"))
-            (staging / "payload").replace(program_root)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
-    product_python = ensure_runtime(program_root, install_root, plan["version"], python_exe)
-    initialize_data(data_root, package_root)
+    staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
+    product_python = Path(staged["runtime_python"])
     restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
     active = {
         "schema": ACTIVE_SCHEMA,
@@ -956,15 +1029,40 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         raise RuntimeError("no previous active installation is available")
     previous = json.loads(backup.read_text(encoding="utf-8"))
     safe_child(install_root / "app", Path(str(previous.get("program_root") or "")))
-    write_json_atomic(install_root / "active.json", previous)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
     previous_runtime = runtime_python(install_root / "runtime" / str(previous.get("version") or ""))
     if not previous_runtime.is_file():
         raise RuntimeError("previous product runtime is unavailable")
-    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime))), encoding="utf-8")
-    wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
-    refresh_console_autostart(install_root, previous_runtime)
+    verify_product_package(Path(previous["program_root"]))
+    # active最后提交。失败时恢复被覆盖的配置与plugin，不留下半切换身份。
+    plugin=codex_home/'plugins'/PLUGIN_NAME
+    marketplace=codex_home/'.agents/plugins/marketplace.json'
+    files=[config,marketplace,*(install_root/name for name in ['console_product.py','console.cmd','configure.cmd'])]
+    snapshots={p:p.read_bytes() if p.is_file() else None for p in files}
+    with tempfile.TemporaryDirectory(prefix='kr-rollback-') as temp:
+        backup_plugin=Path(temp)/'plugin'
+        had_plugin=plugin.is_dir()
+        if had_plugin:
+            shutil.copytree(plugin,backup_plugin)
+        try:
+            copy_plugin(Path(previous["program_root"]), codex_home)
+            config.parent.mkdir(parents=True,exist_ok=True)
+            config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime))), encoding="utf-8")
+            wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
+            refresh_console_autostart(install_root, previous_runtime)
+            write_json_atomic(install_root / "active.json", previous)
+        except Exception:
+            for path,content in snapshots.items():
+                if content is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(content)
+            if plugin.exists():
+                shutil.rmtree(plugin)
+            if had_plugin:
+                shutil.copytree(backup_plugin,plugin)
+            raise
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
 
 
@@ -972,7 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
     parser.add_argument(
         "command",
-        choices=("plan", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply"),
+        choices=("plan", "verify-install", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply"),
     )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
@@ -1019,6 +1117,10 @@ def main(argv: list[str] | None = None) -> int:
             result = data_root_move_rollback(install_root)
         elif args.command == "plan":
             result = build_plan(package_root, install_root, data_root, python_exe)
+        elif args.command == "verify-install":
+            if not args.archive or not args.receipt:
+                raise RuntimeError("verify-install requires --archive and --receipt")
+            result = stage_verified_package(package_root, install_root, data_root, python_exe, Path(args.archive), Path(args.receipt))
         elif args.command == "apply":
             result = apply_install(
                 package_root,

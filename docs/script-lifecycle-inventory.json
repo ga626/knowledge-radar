@@ -1,0 +1,245 @@
+{
+  "schema": "knowledgeradar-script-lifecycle-inventory/v1",
+  "generated_at": "2026-10-21T10:28:37.565347+00:00",
+  "generator": "scripts/generate_script_lifecycle_inventory.py",
+  "entries": [
+    {
+      "path": "scripts/build_product_lite_package.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 32,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/build_public_source_projection.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 18,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/check_doc_drift.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 17,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/check_docs_governance.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 19,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/check_structure_docs.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 9,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate-mcp-config.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 78,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate_docs_index.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 48,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate_process_docs_index.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 36,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate_script_lifecycle_inventory.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 44,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate_structure_docs.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 16,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/install.bat",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 16,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/kr_browser_acceptance.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 12,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/kr_candidate_acceptance.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 12,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/kr_evaluate.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 63,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/kr_freeze_runtime.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 9,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/kr_mcp_continuity.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 25,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/kr_natural_calling_eval.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 25,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/kr_source_ecology_eval.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 16,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/kr_test_selector.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 24,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/open_academic_login_profiles.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 5,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/product_console_launcher.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 18,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/product_install.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 100,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/setup_accounts.bat",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 20,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/setup_agent.bat",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 21,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/setup_codex_product.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 16,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/setup_product_wizard.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 15,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/setup_wizard.bat",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 53,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/start_setup_wizard.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 12,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_all_capabilities.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 28,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_api_keys.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 24,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_codex_product.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 13,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_package_integrity.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 30,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_release_candidate.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 31,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    }
+  ],
+  "counts": {
+    "S0": 0,
+    "S1": 28,
+    "S2": 5,
+    "S3": 0,
+    "S4": 0
+  }
+}

@@ -29,6 +29,8 @@ def xhs_account_pool_summary(registry: Dict[str, Any] | None = None) -> Dict[str
         if isinstance(row, dict)
     }
     profile_by_slot = _profile_by_slot(profiles)
+    from .account_observations import AccountObservationStore
+    observations = AccountObservationStore()
 
     account_rows: List[Dict[str, Any]] = []
     for account in accounts:
@@ -37,9 +39,22 @@ def xhs_account_pool_summary(registry: Dict[str, Any] | None = None) -> Dict[str
         slot = str(account.get("account_slot") or "")
         profile = profile_by_slot.get(slot, {})
         runtime = state_by_profile.get(str(profile.get("profile_id") or ""), {})
+        observation = observations.get(str(profile.get("profile_id") or ""))
+        if observation.get("observed_at"):
+            # 旧状态只兼容读；过期事实回到未知，不永久污染账号路由。
+            runtime = {**runtime, "state": observation["state"],
+                       "manual_action_required": observation["needs_action"],
+                       "cooldown_active": observation["state"] == "cooldown",
+                       "recent_events": [], "reason_code": observation.get("reason", "") if observation["fresh"] else ""}
+        risk_account = account
+        risk_profile = profile
+        if observation.get("observed_at"):
+            risk_account = {k: v for k, v in account.items() if k not in {"status", "notes", "risk_score", "cooldown_until"}}
+            risk_account["status"] = "healthy" if observation["verified"] else "unknown"
+            risk_profile = {k: v for k, v in profile.items() if k not in {"status", "notes"}}
         risk = score_account_risk(
-            account,
-            profile=profile,
+            risk_account,
+            profile=risk_profile,
             runtime_state=runtime,
             events=runtime.get("recent_events", []),
         )
@@ -57,6 +72,7 @@ def xhs_account_pool_summary(registry: Dict[str, Any] | None = None) -> Dict[str
                 "risk": risk,
                 "priority": int(account.get("priority") or 100),
                 "capability_matrix": _compact_capability_matrix(account.get("capability_matrix")),
+                "observation": observation,
             }
         )
     account_rows.sort(key=lambda row: (row.get("priority", 100), row["risk"]["risk_score"], row.get("account_slot", "")))

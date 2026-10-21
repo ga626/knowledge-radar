@@ -5,10 +5,9 @@ from __future__ import annotations
 import json
 import os
 import re
+from generic_web.url_policy import guarded_fetch
 from dataclasses import dataclass
 from typing import Callable, Dict, Optional
-
-import httpx
 
 from kr_core import DetailRequest, DetailResponse, EvidenceItem
 
@@ -85,7 +84,7 @@ class ZhihuDetailStrategy:
         if short_answer_match:
             return self._extract_short_answer(short_answer_match.group(1), headers, profile_ok, url, result)
 
-        resp = httpx.get(api_url, headers=headers, timeout=20, follow_redirects=True)
+        resp = guarded_fetch(api_url, headers=headers, timeout=20)
         html = resp.text
         if "登录后查看" in html or resp.status_code in (401, 403):
             if "/p/" in api_url:
@@ -157,7 +156,7 @@ class ZhihuDetailStrategy:
         return clean_url, clean_url
 
     def _extract_short_answer(self, answer_id: str, headers: Dict[str, str], profile_ok: bool, url: str, result: Dict) -> Dict:
-        api_resp = httpx.get(
+        api_resp = guarded_fetch(
             f"https://www.zhihu.com/api/v4/answers/{answer_id}?include=content,excerpt,voteup_count,comment_count",
             headers={
                 **headers,
@@ -169,7 +168,6 @@ class ZhihuDetailStrategy:
                 "Referer": "https://www.zhihu.com/",
             },
             timeout=20,
-            follow_redirects=True,
         )
         if api_resp.status_code in (401, 403):
             hint = "登录态过期，请重新扫码" if profile_ok else "首次使用需扫码登录"

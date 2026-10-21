@@ -70,6 +70,7 @@ class BilibiliDetailStrategy:
             result["video_comment"] = info.get("video_comment", 0)
 
         transcribe_enabled = os.environ.get("KR_BILIBILI_TRANSCRIBE_ON_DETAIL", "1").strip().lower() not in {"0", "false", "no", "off"}
+        transcribe_enabled = bool(request.options.get("include_transcript", transcribe_enabled))
         result["transcript"] = pipeline.run(
             "video_transcript",
             trigger="always_bilibili_detail",
@@ -86,13 +87,14 @@ class BilibiliDetailStrategy:
                 "missing": [item for item in detail.split("、") if item],
                 "recommended_action": "在本地组件 > 本地媒体理解与转写中完成所需组件安装后重试；字幕和缓存路径不受影响。",
             }
-        comments = self.deps.get_comments(bvid)
+        comments_enabled = bool(request.options.get("include_comments", True))
+        comments = self.deps.get_comments(bvid) if comments_enabled else []
         result["comments"] = comments
 
         filtered_comments = pipeline.run(
             "comment_filtering",
             trigger="enable_comment_filtering",
-            enabled=request.enable_comment_filtering,
+            enabled=request.enable_comment_filtering and comments_enabled,
             fn=lambda: self._call_filter_comments(comments, bvid, request),
         )
         if request.enable_comment_filtering:

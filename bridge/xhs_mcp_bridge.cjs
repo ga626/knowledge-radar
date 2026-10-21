@@ -4,7 +4,7 @@ const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio
 
 const chromeDebugPort = process.env.KR_XHS_CHROME_DEBUG_PORT || process.env.KR_CHROME_DEBUG_PORT || "12733";
 const chromeBrowserUrl = "http://127.0.0.1:" + chromeDebugPort;
-const selectorBundleVersion = "xhs-selector-bundle-20260613-v1";
+const selectorBundleVersion = "xhs-selector-bundle-20261020-v2";
 
 const sleep = function(ms) { return new Promise(function(r) { setTimeout(r, ms); }); };
 const humanDelay = function() { return sleep(800 + Math.random() * 1200); };
@@ -186,29 +186,38 @@ function cmdDetail(noteId, xsecToken, xsecSource) {
         "  info.author = firstText('author', ['[class*=\"author\"] span', '[class*=\"user\"] span', '.username', '[class*=\"author\"]', '[class*=\"user\"]']);",
         "",
         "  // 提取图片 URL",
-        "  var imgs = [], seen = {};",
-        "  function addImage(src) {",
+        "  var imgs = [], assets = [], seen = {};",
+        "  function addImage(src, node) {",
         "    src = (src || '').trim();",
         "    if (!src || src.indexOf('data:') === 0) return;",
         "    if (src.indexOf('//') === 0) src = 'https:' + src;",
         "    if (!/^https?:\\/\\//.test(src)) return;",
         "    if (!/(xhscdn|sns-img|xiaohongshu|ci\\.xiaohongshu|xhs)/i.test(src)) return;",
-        "    if (!seen[src]) { seen[src] = true; imgs.push(src); }",
+        "    if (!seen[src]) {",
+        "      seen[src] = true; imgs.push(src);",
+        "      var context = '', parent = node;",
+        "      for (var depth = 0; parent && depth < 6; depth++, parent = parent.parentElement) context += ' ' + String(parent.className || '');",
+        "      var noise = /avatar|comment|reply|author|user|emoji|icon|toolbar|qrcode|recommend|related|feed-card/i.test(context);",
+        "      var owned = !noise && node && node.closest('.note-container, .note-detail-mask, #noteContainer') && /swiper|carousel|image-container|note-content/i.test(context);",
+        "      var pageId = (location.pathname.match(/\\/(?:explore|discovery\\/item)\\/([a-zA-Z0-9]+)/) || [])[1] || '';",
+        "      assets.push({url: src, role: noise ? 'noise' : owned ? 'content' : 'unknown', owner_note_id: owned ? pageId : ''});",
+        "    }",
         "  }",
         "  var imgEls = document.querySelectorAll('img');",
         "  for (var i = 0; i < imgEls.length; i++) {",
         "    var el = imgEls[i];",
-        "    addImage(el.currentSrc || el.src || el.getAttribute('data-src') || el.getAttribute('data-original') || '');",
+        "    addImage(el.currentSrc || el.src || el.getAttribute('data-src') || el.getAttribute('data-original') || '', el);",
         "    var srcset = el.getAttribute('srcset') || '';",
-        "    if (srcset) srcset.split(',').forEach(function(part) { addImage(part.trim().split(/\\s+/)[0]); });",
+        "    if (srcset) srcset.split(',').forEach(function(part) { addImage(part.trim().split(/\\s+/)[0], el); });",
         "  }",
         "  var styled = document.querySelectorAll('[style*=\"background-image\"]');",
         "  for (var j = 0; j < styled.length; j++) {",
         "    var bg = styled[j].style && styled[j].style.backgroundImage || '';",
         "    var m = bg.match(/url\\([\"']?([^\"')]+)[\"']?\\)/);",
-        "    if (m) addImage(m[1]);",
+        "    if (m) addImage(m[1], styled[j]);",
         "  }",
         "  info.images = imgs;",
+        "  info.image_assets = assets;",
         "  selectorHitsByField.title += info.title ? 1 : 0;",
         "  info.selector_hits_by_field = selectorHitsByField;",
         "  info.selector_hit_count = Object.keys(selectorHitsByField).reduce(function(sum, key) { return sum + Number(selectorHitsByField[key] || 0); }, 0);",

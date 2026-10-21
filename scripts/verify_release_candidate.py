@@ -107,7 +107,7 @@ def stdio_probe(package_root: Path) -> list[str]:
             "KR_PROJECT_ROOT": str(package_root), "KR_SOURCE_ROOT": str(package_root / "src"),
             "KR_STATE_DIR": state, "KR_LOG_DIR": str(Path(state) / "logs"),
         })
-        process = subprocess.Popen([sys.executable, "-X", "utf8", str(package_root / "src" / "server.py")], cwd=package_root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
+        process = subprocess.Popen([sys.executable, "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(package_root / "src")) + ");runpy.run_path(" + repr(str(package_root / "src/server.py")) + ",run_name='__main__')"], cwd=package_root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
         lines: queue.Queue[str] = queue.Queue()
         errors: queue.Queue[str] = queue.Queue()
         readers: list[threading.Thread] = []

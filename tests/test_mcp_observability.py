@@ -46,6 +46,24 @@ def test_tool_fingerprint_is_order_independent() -> None:
     assert observability.tool_list_fingerprint(["b", "a", "a"]) == observability.tool_list_fingerprint(["a", "b"])
 
 
+def test_same_transport_processes_keep_their_own_session(tmp_path, monkeypatch):
+    monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
+    monkeypatch.setattr(observability, "_pid_is_running", lambda _: True)
+    monkeypatch.setattr(observability, "process_identity", lambda: "fixture")
+    for pid in range(100, 140):
+        monkeypatch.setattr(observability.os, "getpid", lambda pid=pid: pid)
+        observability.record_server_started(transport="stdio", tool_names=["tool"], source_fingerprint=str(pid))
+        observability.record_tool_list(transport="stdio", tool_names=["tool"], session_id=f"session-{pid}")
+    monkeypatch.setattr(observability.os, "getpid", lambda: 100)
+    result = observability.snapshot(transport="stdio", tool_names=["tool"])
+    assert result["response_process"]["registration_matches_response"]
+    assert result["server_process"]["source_fingerprint"] == "100"
+    assert result["mcp_session"]["status"] == "observed"
+    observability.record_server_stopped(transport="stdio")
+    monkeypatch.setattr(observability.os, "getpid", lambda: 139)
+    assert observability.snapshot(transport="stdio", tool_names=["tool"])["server_process"]["status"] == "running"
+
+
 def test_another_process_record_is_history_not_current_response(tmp_path, monkeypatch):
     monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
     observability.record_server_started(transport="stdio", tool_names=["native"], source_fingerprint="old")
@@ -57,6 +75,29 @@ def test_another_process_record_is_history_not_current_response(tmp_path, monkey
     assert result["recorded_server_process"]["pid"] == old_pid
     assert result["mcp_session"]["status"] == "unobserved"
     assert not result["response_process"]["registration_matches_response"]
+
+
+def test_imported_product_sdk_lifespan_registers_real_list_session(tmp_path, monkeypatch):
+    import asyncio
+    from mcp.shared.memory import create_connected_server_and_client_session
+    from runtime import env_loader
+    monkeypatch.setattr(env_loader, "load_runtime_env", lambda: None)
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("KR_LOG_DIR", str(tmp_path / "logs"))
+    monkeypatch.setenv("KR_DESKTOP_NOTIFICATIONS_DISABLED", "1")
+    monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
+    import server
+    async def scenario():
+        async with create_connected_server_and_client_session(server.mcp) as client:
+            tools = await client.list_tools()
+            current = observability.snapshot(transport=server.MCP_TRANSPORT, tool_names=server.ACTUAL_MCP_TOOLS)
+            assert len(tools.tools) == 22
+            assert current["response_process"]["registration_matches_response"]
+            assert current["mcp_session"]["status"] == "observed"
+            assert current["server_process"]["source_fingerprint"]
+    asyncio.run(scenario())
+    stopped = observability.snapshot(transport=server.MCP_TRANSPORT, tool_names=server.ACTUAL_MCP_TOOLS)
+    assert stopped["server_process"]["status"] == "stopped"
 
 
 def test_concurrent_transactions_keep_json_state_and_leave_no_fixed_tmp(tmp_path, monkeypatch) -> None:

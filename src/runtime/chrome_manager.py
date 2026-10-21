@@ -39,6 +39,7 @@ SRC_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 REPO_ROOT = os.path.dirname(SRC_ROOT)
 
 log = logging.getLogger("mcp-server")
+CHROMIUM_MODEL_POLICY_ARGS = ["--disable-features=OptimizationGuideOnDeviceModel,OnDeviceModelExecution,OptimizationHints"]
 
 MCP_TRANSPORT = os.environ.get("KR_MCP_TRANSPORT", "streamable-http").strip().lower()
 
@@ -1347,6 +1348,12 @@ def request_user_login(
             "active_interaction": lease.holder,
             "next_step": "等待现有交互完成后重试，或调用 health_check(mode='browser_sessions') 查看当前状态。",
         }
+    from .account_observations import observe_account
+    observation = observe_account(profile_meta.get("profile_id") or resource_key, platform, "needs_login" if "login" in reason.lower() else "needs_verification",
+                                  source=source or "request_user_login", reason=reason)
+    if not observation.get("accepted"):
+        get_runtime_lease_coordinator().release(lease.lease_id)
+        return {"status": "superseded", "profile_id": profile_meta.get("profile_id"), "reason": "stale_observation"}
     _CHROME_MANUAL_INTERACTION_LEASES[resource_key] = lease.lease_id
     session = upsert_browser_session(
         platform=resource_key,
@@ -1372,8 +1379,7 @@ def request_user_login(
         event="user_login_requested",
     )
     from .desktop_notification import notify_account_failure
-
-    notification = notify_account_failure(manual_action_request_from_session(session, reason_code=reason))
+    notification = notify_account_failure({**manual_action_request_from_session(session, reason_code=reason), "event_id": observation["event_id"]})
     session = transition_browser_session(
         resource_key, "NEEDS_USER", desired_visibility="attention", reason=reason,
         metadata={"desktop_notification": notification}, event="account_failure_notification_dispatched",
@@ -1580,8 +1586,19 @@ def complete_browser_interaction(
     *,
     profile_id: str = "",
     profile_dir: str = "",
+    recovery_session: Optional[Dict] = None,
 ) -> Dict:
     """Mark a human-interaction browser session complete and restore silent mode."""
+    probe_ok = bool(probe_result and probe_result.get("status") == "ok" and not probe_result.get("manual_action_required"))
+    if probe_result is not None and (not probe_ok or (probe_result.get("profile_id") and probe_result["profile_id"] != profile_id)):
+        return {"status": "not_verified", "profile_id": profile_id, "reason": "auth_probe_or_profile_mismatch"}
+    if recovery_session:
+        if recovery_session.get("profile_id") != profile_id or not probe_ok:
+            return {"status": "not_verified", "profile_id": profile_id, "reason": "recovery_profile_mismatch"}
+        from .account_observations import AccountObservationStore
+        restored = AccountObservationStore().complete_recovery(recovery_session, platform)
+        if not restored.get("accepted"):
+            return {"status": "stale_recovery", "profile_id": profile_id, "reason": restored.get("write_rejected")}
     resource_key = _browser_resource_key(platform, profile_id)
     result = complete_user_login(resource_key, profile_id=profile_id, profile_dir=profile_dir)
     if probe_result is not None:
@@ -1604,13 +1621,16 @@ def complete_browser_interaction(
             profile_dir=profile_dir,
         )
         if probe_ok:
+            from .account_observations import observe_account
+            if not recovery_session:
+                observe_account(profile_id or resource_key, platform, "auth_verified", source="complete_browser_interaction", reason="auth_probe_passed")
             result["manual_state_auto_recovered"] = True
             result["recovery_probe_status"] = probe_result.get("status")
             # Browser-session recovery and XHS account-pool recovery are two
             # different states.  Only bind them after a successful probe for
             # the explicitly selected profile; never clear a risk state merely
             # because a user closed a browser window.
-            if platform.strip().lower() in {"xhs", "xiaohongshu", "小红书"} and profile_id:
+            if platform.strip().lower() in {"xhs", "xiaohongshu", "小红书"} and profile_id and not recovery_session:
                 account_recovery = record_xhs_account_event(
                     profile_id,
                     "OK",
@@ -2647,6 +2667,7 @@ def _ensure_chrome_debugging_locked(
         "--no-session-restore",
         "--no-first-run",
         "--no-default-browser-check",
+        *CHROMIUM_MODEL_POLICY_ARGS,
         startup_url,
     ]
     for flag in reversed(_chrome_stealth_flags_for_platform(platform)):

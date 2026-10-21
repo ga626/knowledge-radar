@@ -21,7 +21,7 @@ from runtime.recruitment_city import resolve_recruitment_city
 
 log = logging.getLogger("mcp-server")
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 SELECTORS_PATH = os.path.join(PROJECT_ROOT, "config", "selectors.json")
 
 def _load_selectors(platform: str = "zhilian") -> Dict:
@@ -249,10 +249,11 @@ def zhilian_search_via_cdp_state(keyword: str, city: str = "", limit: int = 10) 
           };
           const selectorPayload = ${JSON.stringify(selectors)};
           const cards = Array.from(new Set((selectorPayload.card || []).flatMap(sel => Array.from(document.querySelectorAll(sel)))));
+          if (!cards.length) for (const anchor of document.querySelectorAll('a[href*="jobs.zhaopin.com/"]')) cards.push(anchor.closest('article,section,[class*="job"],[class*="position"]') || anchor.parentElement);
 
           for (const card of cards) {
             try {
-              const title = pickText(card, selectorPayload.title || []);
+              const title = pickText(card, selectorPayload.title || []) || pickText(card, ['a[href*="jobs.zhaopin.com/"]']);
               const salary = pickText(card, selectorPayload.salary || []);
               const company = pickText(card, selectorPayload.company || []);
               const area = pickText(card, selectorPayload.area || []);
@@ -357,7 +358,9 @@ def zhilian_search_via_cdp_state(keyword: str, city: str = "", limit: int = 10) 
                 "error": str(exc),
                 "raw_stdout_sample": raw_stdout[:500],
             }
-        items = data.get("items", [])
+        from .zhilian_parser import normalize_jobs
+        items = normalize_jobs(data.get("items", []), limit)
+        data["items"] = items
         diagnostics = {
             "schema": "knowledgeradar-recruitment-diagnostics/v1",
             "platform": "zhilian",

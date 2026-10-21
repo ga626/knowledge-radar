@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from .profile_registry import profile_registry_internal, record_profile_state
+from .profile_registry import profile_registry_internal
 from .xhs_account_pool import DEFAULT_PURPOSES, select_account, xhs_account_pool_summary
 
 
@@ -58,17 +58,15 @@ def record_xhs_account_event(
     never switches accounts.
     """
     event = classify_account_event(reason_code)
-    return record_profile_state(
-        profile_id,
-        platform="xiaohongshu",
-        state=str(event.get("state") or "degraded"),
-        reason_code=str(event.get("reason_code") or ""),
-        cooldown_seconds=int(event.get("cooldown_seconds") or 0),
-        manual_action_required=bool(event.get("manual")),
-        safe_to_switch_account=bool(event.get("safe_to_switch_account")),
-        last_tool=last_tool,
-        notes=notes or [f"event:{event.get('reason_code')}"],
-    )
+    from .account_observations import observe_account
+    state = ("auth_verified" if last_tool == "complete_browser_interaction" else "business_verified") if reason_code == "OK" else (
+        "needs_login" if reason_code in {"LOGIN_REQUIRED", "COOKIE_MISSING"} else
+        "needs_verification" if event.get("manual") else "cooldown" if event.get("cooldown_seconds") else "degraded")
+    fact = observe_account(profile_id, "xiaohongshu", state, source=last_tool or "account_event", reason=reason_code,
+                           ttl_s=int(event.get("cooldown_seconds") or 0) or None)
+    return {"status": "ok", "profile_id": profile_id, "state": event["state"], "observation": fact,
+            "write_target": "AccountObservation"}
+
 
 
 def xhs_account_admission(

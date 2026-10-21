@@ -9,7 +9,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 _URL_RE = re.compile(r"https?://[^\s'\"<>]+", re.IGNORECASE)
 _KEY_VALUE_RE = re.compile(
-    r"(?i)\b(authorization|bearer|token|secret|password|api[_-]?key|cookie|session|web_session|a1|b1|webid|x-s|x-t)\b"
+    r"(?i)\b(authorization|bearer|xsec_token|access_token|refresh_token|token|secret|password|api[_-]?key|cookie|session|web_session|a1|b1|webid|x-s|x-t)\b"
     r"\s*([:=])\s*([^\s,;]+)"
 )
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9._~+/-]{6,}")

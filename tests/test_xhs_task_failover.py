@@ -77,12 +77,12 @@ def test_zero_risk_and_excluded_current_select_next_account():
     assert result["switch_decision"]["allowed"]
 
 
-def test_policy_limit_is_not_account_exhaustion():
+def test_legacy_switch_limit_does_not_truncate_readonly_exhaustion():
     registry, pool = fixture()
     registry["raw"]["policy"]["max_switches_per_task"] = 1
     _, receipt = run_browser_accounts(registry, pool, "C", lambda _: {"error": {"type": "login_required"}}, lambda *_: None)
-    assert len(receipt["attempts"]) == 2
-    assert not _browser_pool_unavailable(receipt, {})
+    assert len(receipt["attempts"]) == 3
+    assert _browser_pool_unavailable(receipt, {})
 
 
 def test_cooldown_account_is_not_probed_and_is_explicit_in_receipt():
@@ -91,7 +91,7 @@ def test_cooldown_account_is_not_probed_and_is_explicit_in_receipt():
     _, receipt = run_browser_accounts(registry, pool, "B", lambda _: {"error": {"type": "login_required"}}, lambda *_: None)
     assert [item["profile_id"] for item in receipt["attempts"]] == ["A", "C"]
     assert receipt["policy_excluded_profile_ids"] == ["B"]
-    assert _browser_pool_unavailable(receipt, {})
+    assert not _browser_pool_unavailable(receipt, {})
 
 
 def test_detail_wrapper_rebinds_entire_attempt_and_does_not_use_paid(monkeypatch):

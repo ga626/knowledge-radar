@@ -50,7 +50,8 @@ def test_mcp_dependency_stays_on_the_fastmcp_compatibility_line() -> None:
     assert '"mcp>=1.9,<2.0"' in pyproject
 
 
-def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path) -> None:
+def test_candidate_provenance_has_no_absolute_source_path(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(builder, "git_value", lambda *args: "")
     output = tmp_path / "package"
     output.mkdir()
     manifest = ROOT / "config" / "package-manifest.product-lite.json"

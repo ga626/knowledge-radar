@@ -95,7 +95,8 @@ class SearchResultItem:
             data["published_at"] = self.published_at
         if self.stats:
             data["stats"] = dict(self.stats)
-        return attach_result_affordance(self.platform, data)
+        from generic_web.url_policy import public_evidence_payload
+        return public_evidence_payload(attach_result_affordance(self.platform, data))
 
 
 @dataclass(frozen=True)
@@ -138,7 +139,7 @@ class EvidenceItem:
     summary: str = ""
     credibility: str = "medium"
     freshness: str = "unknown"
-    verification_status: str = "已验证"
+    verification_status: str = "待核验"
     metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_mcp_dict(self) -> Dict[str, Any]:
@@ -154,6 +155,8 @@ class EvidenceItem:
         }
         if self.metadata:
             data["metadata"] = dict(self.metadata)
+        if self.metadata.get("legacy_verification_enabled") is False:
+            data.pop("verification_status", None)
         return data
 
 
@@ -200,6 +203,12 @@ class DetailResponse:
 
     def to_legacy_dict(self) -> Dict[str, Any]:
         data = dict(self.data)
+        if "duration" in data or "duration_original" in data:
+            from .content_contracts import duration_seconds
+            original = data.get("duration_original", data.get("duration"))
+            data["duration_original"] = original
+            data["duration"] = duration_seconds(original)
+            data["duration_unit"] = "seconds"
         if self.error:
             data["error"] = self.error.message
             data["error_detail"] = self.error.to_mcp_dict()
@@ -209,7 +218,8 @@ class DetailResponse:
             data["evidence"] = self.evidence.to_mcp_dict()
         if self.metadata:
             data.setdefault("detail_metadata", {}).update(dict(self.metadata))
-        return data
+        from generic_web.url_policy import public_evidence_payload
+        return public_evidence_payload(data)
 
 
 @dataclass(frozen=True)

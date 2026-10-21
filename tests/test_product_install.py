@@ -8,6 +8,7 @@ import shutil
 import sys
 import types
 import tomllib
+import zipfile
 
 import pytest
 
@@ -74,9 +75,17 @@ def package_fixture(tmp_path: Path, version: str) -> Path:
 
 def artifact_fixture(tmp_path: Path, package: Path) -> tuple[Path, Path]:
     archive = tmp_path / f"{package.name}.zip"
-    archive.write_bytes(package.name.encode("utf-8"))
+    provenance = package / "package-provenance.json"
+    payload = json.loads(provenance.read_text(encoding="utf-8"))
+    payload["files"] = [{"path": p.relative_to(package).as_posix(), "sha256": installer.sha256_file(p)} for p in package.rglob("*") if p.is_file() and p.name not in {"package-provenance.json", "SBOM.json"}]
+    provenance.write_text(json.dumps(payload), encoding="utf-8")
+    (package / "SBOM.json").write_text("{}", encoding="utf-8")
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for p in package.rglob("*"):
+            if p.is_file():
+                bundle.write(p, "KnowledgeRadar/" + p.relative_to(package).as_posix())
     receipt = tmp_path / f"{package.name}.receipt.json"
-    receipt.write_text(json.dumps({"source_commit": "a" * 40, "archive_sha256": installer.sha256_file(archive)}), encoding="utf-8")
+    receipt.write_text(json.dumps({"source_commit": "a" * 40, "archive_sha256": installer.sha256_file(archive), "package_provenance_sha256": installer.sha256_file(provenance), "sbom_sha256": installer.sha256_file(package / "SBOM.json")}), encoding="utf-8")
     return archive, receipt
 
 

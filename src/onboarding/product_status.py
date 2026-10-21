@@ -494,25 +494,11 @@ def _dashboard_trace_activity(since: float) -> dict[str, Any]:
     trace_path = Path(default_tool_trace_path())
     if not trace_path.is_file():
         return {"available": False, "successful": 0, "top_tools": []}
-    successes = 0
-    by_tool: dict[str, int] = {}
+    from runtime.activity_index import trace_activity
     try:
-        with trace_path.open("r", encoding="utf-8") as stream:
-            for raw in stream:
-                try:
-                    row = json.loads(raw)
-                    timestamp = str(row.get("timestamp") or "")
-                    event_time = __import__("datetime").datetime.fromisoformat(timestamp.replace("Z", "+00:00")).timestamp()
-                except (ValueError, TypeError, json.JSONDecodeError):
-                    continue
-                if event_time < since or str(row.get("parent_trace_id") or "") or row.get("status") != "ok":
-                    continue
-                name = str(row.get("tool_name") or "unknown")[:80]
-                successes += 1
-                by_tool[name] = by_tool.get(name, 0) + 1
-    except OSError:
+        return trace_activity(trace_path, since)
+    except (OSError, sqlite3.Error):
         return {"available": False, "successful": 0, "top_tools": []}
-    return {"available": True, "successful": successes, "top_tools": [{"label": name, "count": count} for name, count in sorted(by_tool.items(), key=lambda item: (-item[1], item[0]))[:3]]}
 
 
 def _dashboard_usage_activity(since: float) -> dict[str, Any]:
@@ -622,14 +608,20 @@ def console_configuration_snapshot() -> dict[str, Any]:
 
 
 def _tree_bytes(path: Path, *, excluded: tuple[Path, ...] = ()) -> int:
-    if not path.exists():
+    if not path.exists() or path.is_symlink() or path.is_junction():
         return 0
     try:
-        return sum(
-            item.stat().st_size
-            for item in path.rglob("*")
-            if item.is_file() and not any(excluded_root == item or excluded_root in item.parents for excluded_root in excluded)
-        )
+        total = 0
+        for root, directories, files in os.walk(path, followlinks=False):
+            base = Path(root)
+            directories[:] = [name for name in directories if not (base / name).is_symlink()
+                              and not (base / name).is_junction()
+                              and not any(item == base / name or item in (base / name).parents for item in excluded)]
+            for name in files:
+                item = base / name
+                if not item.is_symlink() and not any(item == skip or skip in item.parents for skip in excluded):
+                    total += item.stat().st_size
+        return total
     except OSError:
         return 0
 
@@ -653,6 +645,7 @@ def storage_summary() -> dict[str, Any]:
             "schema": "knowledgeradar-local-storage-summary/v1",
             "available": False,
             "categories": [],
+            "per_profile": [],
             "total_bytes": 0,
             "cleanup_scope": "源码兼容模式不会扫描工作区；安装产品后可在此查看产品数据根的空间摘要。",
         }
@@ -664,10 +657,41 @@ def storage_summary() -> dict[str, Any]:
         path = media_cache_root() if category["id"] == "media_cache" else data_root / relative
         excluded = tuple(data_root / str(item) for item in category.get("exclude_relative_paths", []))
         rows.append({"id": category["id"], "label": category["label"], "policy": category["policy"], "bytes": _tree_bytes(path, excluded=excluded)})
+    from runtime.profile_registry import profile_registry_internal, _resolve_profile_dir
+    browser_root = (data_root / "browser_data").resolve()
+    registered = (profile_registry_internal().get("raw") or {}).get("profiles") or []
+    candidates = []
+    for profile in registered:
+        raw_path = _resolve_profile_dir(str(profile.get("profile_dir") or ""))
+        path = Path(raw_path) if raw_path else None
+        safe = bool(path and path.resolve().is_relative_to(browser_root) and path.resolve() != browser_root
+                    and not any(parent.is_symlink() or parent.is_junction() for parent in [path, *path.parents]))
+        candidates.append((profile, path, safe))
+    counted_paths = []
+    projected = {}
+    # 外层目录先计；同路径优先归当前账号池，实验别名只展示共享关系。
+    ordered = sorted(candidates, key=lambda item: (len(item[1].parts) if item[1] else 999,
+                                                 item[0].get("account_pool_member") is False,
+                                                 item[0].get("role") != "primary"))
+    for profile, path, safe in ordered:
+        shared_with = next((owner for other, owner in counted_paths if safe and path.resolve().is_relative_to(other)), "")
+        present = bool(safe and path.is_dir())
+        status = "outside_managed_browser_root" if not safe else "missing" if not present else "shared_directory" if shared_with else "counted"
+        profile_id = profile.get("profile_id", "")
+        projected[profile_id] = {"profile_id": profile_id, "platform": profile.get("platform", ""),
+                                 "display_label": profile.get("display_label") or profile.get("label") or profile_id,
+                                 "account_slot": profile.get("account_slot", ""), "bytes": _tree_bytes(path) if status == "counted" else 0,
+                                 "status": status, "shared_with_profile_id": shared_with,
+                                 "scope": "browser_data_subset", "policy": "protected"}
+        if status == "counted":
+            counted_paths.append((path.resolve(), profile_id))
+    per_profile = [projected[profile.get("profile_id", "")] for profile, _, _ in candidates]
     return {
         "schema": "knowledgeradar-local-storage-summary/v1",
         "available": True,
         "categories": rows,
+        "per_profile": per_profile,
+        "per_profile_bytes": sum(row["bytes"] for row in per_profile),
         "total_bytes": sum(row["bytes"] for row in rows),
         "cleanup_scope": "只对已登记且过期的媒体缓存生成清理计划；执行时先移入可恢复隔离区。密钥、Profile、浏览器资料、模型、备份和未知文件始终受保护。",
     }
@@ -704,26 +728,15 @@ def expired_media_cleanup(*, apply: bool) -> dict[str, Any]:
             if raw:
                 known.add(Path(raw).resolve())
     eligible = [Path(raw).resolve() for raw in result["deleted"] if Path(raw).resolve() in known]
-    errors: list[str] = []
-    if apply and eligible:
-        quarantine = data_root / "quarantine" / "media-cache" / str(int(time.time()))
-        for path in eligible:
-            try:
-                relative = path.relative_to(cache_root)
-                target = quarantine / relative
-                target.parent.mkdir(parents=True, exist_ok=True)
-                shutil.move(str(path), str(target))
-            except (OSError, ValueError) as error:
-                errors.append(str(error))
-        receipt = data_root / "receipts" / f"media-cache-quarantine-{int(time.time())}.json"
-        receipt.parent.mkdir(parents=True, exist_ok=True)
-        receipt.write_text(
-            '{"schema":"knowledgeradar-media-cache-quarantine/v1","status":"APPLIED","restore_window":"manual until user purges quarantine","file_count":' + str(len(eligible) - len(errors)) + "}\n",
-            encoding="utf-8",
-        )
+    from runtime.storage_lifecycle import quarantine_files, StorageLeases
+    leases = StorageLeases()
+    eligible = [path for path in eligible if not leases.protected(path)]
+    applied = quarantine_files(eligible, cache_root=cache_root, data_root=data_root) if apply else {}
+    errors = [row for row in applied.get("files", []) if row["status"] == "error"]
     return {
         "status": "QUARANTINED" if apply else "PLAN",
-        "expired_file_count": len(eligible),
+        "expired_file_count": applied.get("quarantined_count", len(eligible)),
+        "receipt": applied.get("receipt", ""),
         "kept_file_count": len(result["kept"]),
         "error_count": len(result["errors"]) + len(errors),
         "scope": "只处理 manifest 已登记的过期媒体缓存，并先移入可恢复隔离区；不包含密钥、Profile、浏览器资料、日志、模型、备份或未知文件。",

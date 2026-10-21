@@ -261,7 +261,9 @@ def review_task(*, task_id: str, phase: str) -> dict[str, Any]:
         return {
             "schema": "knowledgeradar-research-gap-review/v1", "status": "reviewed", "research_task_id": task_id,
             "phase": _safe_label(phase), "gaps": gaps,
-            "stop_assessment": "not_ready" if gaps else "no_unrecorded_gap_detected",
+            "stop_assessment": "not_ready" if gaps else "registered_checks_satisfied",
+            "coverage_scope": "registered_items_only",
+            "unregistered_coverage": "unknown",
             "autonomy_boundary": "This is a decision aid. The Agent still chooses sources, queries, languages, tools, and whether marginal evidence justifies more work.",
             "event": receipt.get("event", {}),
         }

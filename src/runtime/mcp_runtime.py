@@ -58,8 +58,9 @@ def _write_state(value: dict[str, Any], root: Path | None = None) -> dict[str, A
 def source_fingerprint(root: Path | None = None) -> str:
     base = Path(root or project_root())
     digest = hashlib.sha256()
-    for relative in ("src/server.py", "src/runtime/mcp_runtime.py"):
-        path = base / relative
+    paths = sorted(path for path in (base / "src").rglob("*.py") if not any(part in {"__pycache__", "data"} for part in path.relative_to(base / "src").parts))
+    for path in paths:
+        relative = path.relative_to(base).as_posix()
         digest.update(relative.encode("utf-8"))
         try:
             digest.update(path.read_bytes())

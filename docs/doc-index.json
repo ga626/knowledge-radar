@@ -1,0 +1,207 @@
+{
+  "schema": "knowledgeradar-doc-index/v1",
+  "generated_at": "2026-10-21T10:12:09.266507+00:00",
+  "generator": "scripts/generate_docs_index.py",
+  "documents": [
+    {
+      "path": "docs/ACCOUNT_SETUP.md",
+      "title": "平台账号与登录恢复",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/ADOPTION_DECISIONS.md",
+      "title": "P4可选技术采用记录",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/AI_WORKING_GUIDE.md",
+      "title": "AI Working Guide",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/API_KEYS.md",
+      "title": "API 与服务商配置",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/CAPABILITY_PACKS.md",
+      "title": "能力包与本地健康台",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/DEVELOPER.md",
+      "title": "开发者指南",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/EVALUATION.md",
+      "title": "持续评测使用说明",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/FAQ.md",
+      "title": "FAQ",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/FIRST_SUCCESS.md",
+      "title": "First success / 首次成功",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/INSTALL.md",
+      "title": "KnowledgeRadar 安装指南",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/LOCAL_CONSOLE.md",
+      "title": "本地控制台",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/MCP_SETUP.md",
+      "title": "MCP Setup",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/P0_P6_IMPLEMENTATION.md",
+      "title": "P0–P6 实现与验收指南",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/PRIVACY_AND_LOCAL_STATE.md",
+      "title": "隐私与本地状态",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/PRODUCT_INSTALL.md",
+      "title": "产品安装与更新",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/reference/KnowledgeRadar-前端视觉与排版规范.md",
+      "title": "KnowledgeRadar 前端视觉与排版规范",
+      "doc_type": "reference",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "docs/reference/KnowledgeRadar-前端视觉与排版规范.evidence.json",
+      "has_evidence": true,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/reference/PLATFORM_TEMPLATE.md",
+      "title": "Platform Template",
+      "doc_type": "reference",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/RELEASE_CANDIDATE.md",
+      "title": "发布候选合同",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/SEARXNG.md",
+      "title": "SearXNG",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/SETUP_WIZARD.md",
+      "title": "本地配置向导（源码 checkout）",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    }
+  ]
+}

@@ -9,9 +9,9 @@ import os
 import random
 import re
 import time
+import threading
+from collections import OrderedDict
 from typing import Dict, List
-
-import httpx
 
 from kr_core.collection import CollectionTrace, format_search_error, format_search_response
 from kr_core.decision_log import DecisionLogger
@@ -55,6 +55,29 @@ XHS_NOTE_URL_RE = re.compile(
     re.IGNORECASE,
 )
 XHS_SEARCH_BRIDGE_BREAKER_KEY = "collector:xhs.search_bridge_fallback"
+_PROTECTED_FETCH = OrderedDict()
+_PROTECTED_FETCH_LOCK = threading.Lock()
+
+
+def _remember_xhs_fetch(note_id, token):
+    if not note_id or not token:
+        return
+    key = (CURRENT_XHS_PROFILE.get(), str(note_id))
+    with _PROTECTED_FETCH_LOCK:
+        _PROTECTED_FETCH[key] = (time.monotonic() + 300, str(token))
+        _PROTECTED_FETCH.move_to_end(key)
+        while len(_PROTECTED_FETCH) > 256:
+            _PROTECTED_FETCH.popitem(last=False)
+
+
+def _cached_xhs_token(note_id):
+    key = (CURRENT_XHS_PROFILE.get(), str(note_id))
+    with _PROTECTED_FETCH_LOCK:
+        value = _PROTECTED_FETCH.get(key)
+        if value and value[0] > time.monotonic():
+            return value[1]
+        _PROTECTED_FETCH.pop(key, None)
+    return ""
 
 
 def _resolve_xhs_cdp_url(chrome_debug_url) -> str:
@@ -854,6 +877,9 @@ def _xhs_detail_needs_fallback(note_data: Dict) -> bool:
 
 def _recover_xhs_xsec_token(note_id: str) -> str:
     """Recover xsec_token from all open XHS search/detail tabs."""
+    cached = _cached_xhs_token(note_id)
+    if cached:
+        return cached
     try:
         resource_key = f"xhs:{CURRENT_XHS_PROFILE.get()}" if CURRENT_XHS_PROFILE.get() else _browser_resource_key("xhs")
         if not _ensure_chrome_debugging(resource_key):
@@ -930,13 +956,23 @@ def _recover_pending_xhs_interaction_if_authenticated(state: Dict, *, profile_id
         )
         if not match:
             return {"recovered": False, "reason": "no_matching_pending_interaction"}
-        complete = complete_browser_interaction(
-            "xhs",
-            probe_result={"status": "ok", "platform_state": "authenticated", "manual_action_required": False},
-            profile_id=profile_id,
-            profile_dir=profile_dir,
-        )
-        return {"recovered": True, "profile_id": profile_id, "complete": {"status": complete.get("status")}}
+        from runtime.account_observations import AccountObservationStore
+        import uuid
+        store = AccountObservationStore()
+        recovery = store.begin_recovery(profile_id, owner_generation=uuid.uuid4().hex)
+        if recovery["status"] != "active":
+            return {"recovered": False, "reason": "recovery_owned_elsewhere"}
+        try:
+            complete = complete_browser_interaction(
+                "xhs",
+                probe_result={"status": "ok", "platform_state": "authenticated", "manual_action_required": False, "profile_id": profile_id},
+                profile_id=profile_id,
+                profile_dir=profile_dir,
+                recovery_session=recovery,
+            )
+            return {"recovered": complete.get("status") == "ok", "profile_id": profile_id, "complete": {"status": complete.get("status")}}
+        finally:
+            store.release_recovery(recovery)
     except Exception as exc:
         log.debug(f"小红书待登录会话自动恢复失败: {exc}")
         return {"recovered": False, "reason": "recovery_error"}
@@ -1012,11 +1048,12 @@ def _ocr_first_xhs_image(images: List[str]) -> Dict:
     try:
         from rapidocr_onnxruntime import RapidOCR
 
-        resp = httpx.get(
+        from generic_web.url_policy import guarded_fetch
+        resp = guarded_fetch(
             image_url,
             headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"},
             timeout=20,
-            follow_redirects=True,
+            max_bytes=12 * 1024 * 1024,
         )
         resp.raise_for_status()
 
@@ -1063,7 +1100,7 @@ def _search_xhs_account_task(keyword: str, limit: int, search_type: str, probe_m
     def attempt(profile_id: str) -> Dict:
         with task_profile(profile_id), chrome_active_operation(f"xhs:{profile_id}"):
             result = _legacy_search_xiaohongshu_impl(keyword, limit, search_type, probe_mode, profile_id=profile_id)
-            if not result.get("error"):
+            if not (result.get("error") or result.get("failure_type") or result.get("status") in {"failed", "error", "empty", "needs_interaction"} or result.get("manual_action_required")):
                 record_xhs_account_event(profile_id, "OK", last_tool="search_xiaohongshu")
             return result
 
@@ -1120,8 +1157,10 @@ def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: 
     )
 
     def _map_item(item: dict, forced_type: str = "") -> dict:
+        from generic_web.url_policy import canonical_url
         note_id = item.get("noteId") or item.get("note_id") or ""
         xsec_token = item.get("xsecToken") or item.get("xsec_token", "")
+        _remember_xhs_fetch(note_id, xsec_token)
         note_url = item.get("url", "")
         if note_id and xsec_token:
             note_url = f"https://www.xiaohongshu.com/explore/{note_id}?xsec_token={xsec_token}&xsec_source=pc_search"
@@ -1133,6 +1172,8 @@ def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: 
             "author": item.get("author", ""),
             "desc": (item.get("desc") or "")[:200],
             "url": note_url,
+            "canonical_url": canonical_url(note_url),
+            "fetch_url": note_url,
             "likes": item.get("likes", 0),
             "note_id": note_id,
             "xsec_token": xsec_token,

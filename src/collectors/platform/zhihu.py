@@ -356,7 +356,7 @@ def _zhihu_http_client() -> httpx.Client:
         if _ZHIHU_HTTP_CLIENT is None:
             _ZHIHU_HTTP_CLIENT = httpx.Client(
                 timeout=httpx.Timeout(15.0),
-                follow_redirects=True,
+                follow_redirects=False,
                 limits=httpx.Limits(max_connections=4, max_keepalive_connections=2, keepalive_expiry=20.0),
                 trust_env=True,
             )

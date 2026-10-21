@@ -1,5 +1,11 @@
 MIT License
 
+Scope notice: This license covers original KnowledgeRadar code only. Third-party
+files retain their own licenses and notices. In particular, historical crawler
+files listed in config/license-source-inventory.json contain use restrictions
+and are excluded from the redistributable product. This notice does not grant
+permission to redistribute those files. See THIRD_PARTY_NOTICES.md.
+
 Copyright (c) 2026 KnowledgeRadar contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

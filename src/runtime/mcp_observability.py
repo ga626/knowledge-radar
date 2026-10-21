@@ -19,9 +19,11 @@ import threading
 import time
 from typing import Any, Iterable
 import uuid
+import sys
 
 from runtime.paths import runtime_state_dir
 from runtime.mcp_continuity import evaluate as evaluate_continuity
+from runtime.process_identity import process_identity
 
 
 SCHEMA = "knowledgeradar-mcp-observability/v1"
@@ -30,6 +32,12 @@ _LOCK = threading.RLock()
 LOCK_WAIT_SECONDS = 5.0
 LOCK_STALE_SECONDS = 30.0
 FALLBACK_HISTORY_LIMIT = 12
+PROCESS_GENERATION = uuid.uuid4().hex
+SESSION_TTL_SECONDS = 3600
+
+
+def _instance_key(transport: str) -> str:
+    return f"{transport or 'unknown'}:{os.getpid()}:{PROCESS_GENERATION}"
 
 
 def _now() -> str:
@@ -208,6 +216,9 @@ def record_server_started(
             "transport": str(transport or "unknown"),
             "started_at": _now(),
             "source_fingerprint": str(source_fingerprint or ""),
+            "instance_id": _instance_key(transport),
+            "process_identity": process_identity(),
+            "launch_entrypoint": Path(sys.argv[0]).name,
         }
         if invocation_kind == "continuity_fallback":
             fallback_processes = dict(current.get("fallback_processes") or {})
@@ -227,10 +238,17 @@ def record_server_started(
         }
         processes = dict(current.get("server_processes") or {})
         processes[str(transport or "unknown")] = server
+        instances = dict(current.get("server_instances") or {})
+        instances[_instance_key(transport)] = server
+        active = {key: value for key, value in instances.items() if isinstance(value, dict)
+                  and value.get("status") == "running" and _pid_is_running(value.get("pid"))}
+        history = {key: value for key, value in instances.items() if key not in active}
+        instances = {**dict(list(history.items())[-12:]), **active}
         return _write({
             **current,
             "server_process": server,
             "server_processes": processes,
+            "server_instances": instances,
             "tool_list": tool_list,
             "tool_lists": {**dict(current.get("tool_lists") or {}), str(transport or "unknown"): tool_list},
             "events": current.get("events", [])[-99:] + [{"kind": "server_started", "at": _now(), "transport": str(transport or "unknown")}],
@@ -270,9 +288,13 @@ def record_tool_list(
             })
         event = {"kind": "tools_list_observed", "at": observed_at, "session_hash": session_hash, "fingerprint": tool_list["fingerprint"], "count": len(names)}
         tool_lists = {**dict(current.get("tool_lists") or {}), str(transport or "unknown"): tool_list}
+        instance_lists = {**dict(current.get("instance_tool_lists") or {}), _instance_key(transport): tool_list}
+        instance_lists = {key: value for key, value in instance_lists.items()
+                          if key in (current.get("server_instances") or {}) or key == _instance_key(transport)}
         active_transport = str((current.get("server_process") or {}).get("transport") or "")
         active_tool_list = tool_list if active_transport == str(transport or "unknown") else (tool_lists.get(active_transport) or current.get("tool_list") or tool_list)
-        return _write({**current, "tool_list": active_tool_list, "tool_lists": tool_lists, "events": current.get("events", [])[-99:] + [event]})
+        return _write({**current, "tool_list": active_tool_list, "tool_lists": tool_lists,
+                       "instance_tool_lists": instance_lists, "events": current.get("events", [])[-99:] + [event]})
 
 
 def record_fallback_server_stopped(*, invocation_id: str, reason: str = "server_exit") -> dict[str, Any]:
@@ -298,6 +320,25 @@ def record_fallback_server_stopped(*, invocation_id: str, reason: str = "server_
         })
 
 
+def record_server_stopped(*, transport: str) -> dict[str, Any]:
+    """只结束当前实例；同transport的其他宿主继续保有独立身份。"""
+    with _transaction():
+        current = _read()
+        instances = dict(current.get("server_instances") or {})
+        key = _instance_key(transport)
+        if key not in instances:
+            return current
+        record = {**instances[key], "status": "stopped", "stopped_at": _now()}
+        instances[key] = record
+        processes = dict(current.get("server_processes") or {})
+        if (processes.get(transport) or {}).get("instance_id") == key:
+            processes[transport] = record
+        latest = current.get("server_process") or {}
+        if latest.get("instance_id") == key:
+            latest = record
+        return _write({**current, "server_instances": instances, "server_processes": processes, "server_process": latest})
+
+
 def snapshot(*, transport: str, tool_names: Iterable[str]) -> dict[str, Any]:
     names = sorted({str(name) for name in tool_names if str(name)})
     with _transaction():
@@ -306,17 +347,25 @@ def snapshot(*, transport: str, tool_names: Iterable[str]) -> dict[str, Any]:
         if fallback_changed:
             current = _write({**current, "fallback_processes": fallback_processes})
     selected_transport = str(transport or "unknown")
-    server = dict((current.get("server_processes") or {}).get(selected_transport) or current.get("server_process") or {})
+    server = dict((current.get("server_instances") or {}).get(_instance_key(transport)) or
+                  (current.get("server_processes") or {}).get(selected_transport) or current.get("server_process") or {})
     recorded_server = dict(server)
-    own_record = server.get("pid") == os.getpid()
+    own_record = server.get("pid") == os.getpid() and server.get("instance_id") == _instance_key(transport)
     if not own_record:
         server = {"status": "running", "pid": os.getpid(), "transport": selected_transport,
                   "source_fingerprint": "", "started_at": "", "registration_status": "not_observed_in_this_process"}
     declared_fingerprint = tool_list_fingerprint(names)
-    observed = dict((current.get("tool_lists") or {}).get(selected_transport) or current.get("tool_list") or {})
+    observed = dict((current.get("instance_tool_lists") or {}).get(_instance_key(transport)) or {})
     if not own_record:
         observed = {}
-    session_status = "observed" if observed.get("status") == "observed" else "unobserved"
+    try:
+        age = (datetime.now(timezone.utc) - datetime.fromisoformat(observed.get("last_observed_at", ""))).total_seconds()
+    except (TypeError, ValueError):
+        age = None
+    fresh = age is not None and 0 <= age <= SESSION_TTL_SECONDS
+    session_status = "observed" if observed.get("status") == "observed" and fresh else "stale" if observed else "unobserved"
+    if observed and not fresh:
+        observed["status"] = "stale"
     continuity = evaluate_continuity(
         config_ok=True,
         service_ok=bool(server.get("status") == "running"),
@@ -331,9 +380,11 @@ def snapshot(*, transport: str, tool_names: Iterable[str]) -> dict[str, Any]:
         "recorded_server_process": recorded_server,
         "response_process": {"pid": os.getpid(), "transport": selected_transport, "registration_matches_response": own_record},
         "server_processes": current.get("server_processes") or {},
+        "server_instances": current.get("server_instances") or {},
         "fallback_processes": current.get("fallback_processes") or {},
         "fallback_tool_lists": current.get("fallback_tool_lists") or {},
-        "mcp_session": {"status": session_status, "last_session_hash": observed.get("last_session_hash", ""), "last_observed_at": observed.get("last_observed_at", "")},
+        "mcp_session": {"status": session_status, "instance_id": _instance_key(transport), "age_s": age,
+                        "ttl_s": SESSION_TTL_SECONDS, "last_session_hash": observed.get("last_session_hash", ""), "last_observed_at": observed.get("last_observed_at", "")},
         "tool_list": {"status": observed.get("status", "declared"), "declared_count": len(names), "declared_fingerprint": declared_fingerprint, "observed_count": observed.get("count"), "observed_fingerprint": observed.get("fingerprint"), "last_observed_at": observed.get("last_observed_at", "")},
         "thread_tool_surface": {"status": "host_observed_only", "native_observed": None, "reason": "MCP server cannot inspect Codex thread tool cards; only the host can prove mcp__knowledgeradar invocation."},
         "access_path": "mcp_server_runtime",

@@ -1,0 +1,8 @@
+{
+  "schema": "knowledgeradar-process-doc-index/v1",
+  "generated_at": "1970-01-01T00:00:00+00:00",
+  "generator": "scripts/generate_process_docs_index.py",
+  "document_count": 0,
+  "sources": [],
+  "documents": []
+}

@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-10-09",
+  "updated_at": "2026-10-21",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -197,6 +197,48 @@
       "role": "公开招聘城市参数表；随产品分发，不含用户状态或凭据。",
       "codex_edit": "allowed",
       "release": "include"
+    },
+    {
+      "path": "scripts/kr_eval/",
+      "area": "dev_runtime",
+      "role": "开发持续评测底座；复用 pytest 与 trace 评分，结果仅写 local/evaluation。",
+      "codex_edit": "allowed",
+      "release": "exclude"
+    },
+    {
+      "path": "config/evaluation/",
+      "area": "dev_runtime",
+      "role": "版本化能力、用例和评测环境合同；不含账号或运行结果。",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "exclude"
+    },
+    {
+      "path": "tests/evaluation/",
+      "area": "dev_runtime",
+      "role": "脱敏评测用例与生命周期回归测试。",
+      "codex_edit": "allowed",
+      "release": "exclude"
+    },
+    {
+      "path": "src/use_cases/",
+      "area": "dev_runtime",
+      "role": "业务用例编排，MCP门面委托单一实现。",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": "src/onboarding/static/",
+      "area": "dev_runtime",
+      "role": "控制台静态样式与脚本；按manifest打包。",
+      "codex_edit": "allowed",
+      "release": "include"
+    },
+    {
+      "path": "runtime/task_artifacts/",
+      "area": "local_state",
+      "role": "持久任务输入、阶段记录和原子结果；实际位于配置数据根。",
+      "codex_edit": "local_only",
+      "release": "exclude"
     }
   ],
   "forbidden_release_patterns": [
@@ -240,7 +282,15 @@
     "**/*.part",
     "**/*.inprogress",
     "**/node_modules/**",
-    ".git/**"
+    ".git/**",
+    "scripts/kr_eval/**",
+    "scripts/kr_evaluate.py",
+    "scripts/kr_test_selector.py",
+    "scripts/kr_natural_calling_eval.py",
+    "scripts/kr_source_ecology_eval.py",
+    "config/evaluation/**",
+    "tests/evaluation/**",
+    "runtime/task_artifacts/**"
   ],
   "package_manifest": "config/package-manifest.product-lite.json",
   "generated_docs": [
@@ -258,22 +308,12 @@
     "browser_data/README.md"
   ],
   "watch_paths": [
-    ".npmrc",
     ".gitignore",
-    "AGENTS.md",
     "STRUCTURE.md",
     "bridge/.npmrc",
-    ".codex/hooks.json",
-    ".codex/hooks/quality_gate_hook.py",
-    ".githooks/pre-commit",
-    ".githooks/pre-push",
     "config/package-manifest.product-lite.json",
     "config/public-source-manifest.json",
-    "config/quality-gates.manifest.json",
-    "config/mcp-approvals.json",
     "config/mcp-config-template.json",
-    "config/mcp.json",
-    "config/delivery-profile.json",
     "config/profile_registry.example.json",
     "config/project-structure.manifest.json",
     "config/storage-ownership.manifest.json",
@@ -305,7 +345,23 @@
     "start-knowledgeradar-server-detached.py",
     "start-knowledgeradar-server-hidden.ps1",
     "pyproject.toml",
-    "config/recruitment_city_registry.json"
+    "config/recruitment_city_registry.json",
+    "config/runtime-win-py312.lock",
+    "config/runtime-artifacts.json",
+    "config/retirement-matrix.json",
+    "config/license-source-inventory.json",
+    "THIRD_PARTY_NOTICES.md",
+    "scripts/generate_structure_docs.py",
+    "scripts/generate_docs_index.py",
+    "scripts/generate_script_lifecycle_inventory.py",
+    "scripts/generate_process_docs_index.py",
+    "scripts/check_structure_docs.py",
+    "scripts/check_doc_drift.py",
+    "scripts/check_docs_governance.py",
+    "scripts/kr_freeze_runtime.py",
+    "scripts/kr_candidate_acceptance.py",
+    "scripts/kr_browser_acceptance.py",
+    "src/onboarding/__init__.py"
   ],
   "watch_path_globs": [
     ".npmrc",
@@ -342,5 +398,42 @@
     "Run python scripts/verify_package_integrity.py.",
     "Do not hand-edit KR-GENERATED blocks."
   ],
-  "release_sync_rule": "One-way only: public source -> generated package -> verified candidate -> same Release ZIP. Never synchronize package output back into source automatically."
+  "release_sync_rule": "One-way only: public source -> generated package -> verified candidate -> same Release ZIP. Never synchronize package output back into source automatically.",
+  "runtime_contracts": {
+    "tasks": "TaskService拥有新详情任务；旧生命周期adapter在独立worker内同步执行。任务状态CAS终态不可回写成功；结果原子提交。",
+    "account_state": "Observation为唯一业务状态；修订号和恢复owner租约阻止迟到写入，问题和通知outbox同事务；浏览器生命周期不代表业务成功。",
+    "mcp_identity": "按transport/PID/进程代际登记，真实SDK生命周期负责启动和结束；session/tool list按实例绑定，不用其他进程的观测冒充本进程。",
+    "console_security": "loopback/Host/Origin/Fetch-Metadata约束全部请求；详细GET和POST校验本页短期token，health仅返回最小监督身份。",
+    "offline_runtime": "Windows x64/Python3.12固定hash lock + wheelhouse；候选可verify-install，不注册宿主、不激活。",
+    "storage": "manifest-known media + active lease + per-file quarantine receipt；per_profile仅统计数据根内已登记且不重叠的profile，作为browser分类子集；不跟随联接、不删除未知文件。",
+    "legacy_accounts": "默认record_profile_state仅转发Observation；旧JSON兼容只读。显式path参数仅历史fixture使用。",
+    "protected_fetch": "公开canonical与内存profile令牌分离，任务输入/结果不落明文访问令牌；XHS复用src/media_platform内既有CDP适配器，不复制受限上游文件。",
+    "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。"
+  },
+  "stable_research_reports": [],
+  "research_report_scope": "Private research reports and their quality sidecars remain in the private source; public product docs use structural governance.",
+  "excluded_private_watch_paths": [
+    ".codex/hooks.json",
+    ".codex/hooks/quality_gate_hook.py",
+    ".githooks/pre-commit",
+    ".githooks/pre-push",
+    ".npmrc",
+    "AGENTS.md",
+    "config/delivery-profile.json",
+    "config/mcp-approvals.json",
+    "config/mcp.json",
+    "config/quality-gates.manifest.json"
+  ],
+  "required_product_includes": [
+    "README.md",
+    "pyproject.toml",
+    "src/**",
+    "config/runtime-win-py312.lock",
+    "config/runtime-artifacts.json",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "required_structure_docs": [
+    "STRUCTURE.md",
+    "docs/AI_WORKING_GUIDE.md"
+  ]
 }

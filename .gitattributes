@@ -1,0 +1,5 @@
+# 固定文本字节，避免Windows换行转换改变依赖锁和候选文件身份。
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf

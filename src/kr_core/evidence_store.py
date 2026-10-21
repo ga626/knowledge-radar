@@ -26,16 +26,18 @@ class EvidenceRecord:
     timestamp: str = field(default_factory=utc_now_iso)
 
     def to_dict(self) -> Dict[str, Any]:
-        key_source = f"{self.record_type}|{self.platform}|{self.url}|{self.query}"
+        from generic_web.url_policy import canonical_url, public_evidence_payload
+        url = canonical_url(self.url)
+        key_source = f"{self.record_type}|{self.platform}|{url}|{self.query}"
         return {
             "schema": "knowledgeradar-evidence-store/v1",
             "id": hashlib.sha256(key_source.encode("utf-8", errors="ignore")).hexdigest()[:24],
             "record_type": self.record_type,
             "platform": self.platform,
-            "url": self.url,
+            "url": url,
             "query": self.query,
             "timestamp": self.timestamp,
-            "payload": self.payload,
+            "payload": public_evidence_payload(self.payload),
         }
 
 
