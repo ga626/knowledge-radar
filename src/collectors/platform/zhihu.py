@@ -271,6 +271,9 @@ def zhihu_search_api(keyword: str, cookie_str: str, limit: int = 20) -> List[Dic
     from urllib.parse import urlencode
 
     uri = "/api/v4/search_v3"
+    if not os.path.isfile(os.path.join(PROJECT_ROOT, "libs", "zhihu.js")):
+        return zhihu_search_via_cdp_page(keyword, limit)
+
     params = {
         "gk_version": "gz-gaokao",
         "t": "general",
@@ -376,107 +379,41 @@ def _reset_zhihu_http_client() -> None:
 
 
 def zhihu_search_via_cdp_page(keyword: str, limit: int = 20) -> List[Dict]:
-    port = int(ZHIHU_CHROME_DEBUG_PORT)
-    js_code = r"""
-    (async () => {
-      const port = process.argv[1];
-      const keyword = process.argv[2];
-      const limit = Number(process.argv[3] || 20);
-      const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-      const version = await fetch(`http://127.0.0.1:${port}/json/version`).then(r => r.json());
-      const ws = new WebSocket(version.webSocketDebuggerUrl);
-      await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-      let seq = 0;
-      const pending = new Map();
-      ws.onmessage = event => {
-        const message = JSON.parse(event.data);
-        if (message.id && pending.has(message.id)) {
-          pending.get(message.id)(message);
-          pending.delete(message.id);
-        }
-      };
-      const send = (method, params, sessionId) => new Promise(resolve => {
-        const id = ++seq;
-        pending.set(id, resolve);
-        const message = { id, method, params };
-        if (sessionId) message.sessionId = sessionId;
-        ws.send(JSON.stringify(message));
-      });
-      let targets = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.json());
-      let page = targets.find(t => t.type === 'page' && (t.url || '').includes('zhihu.com/search'))
-        || targets.find(t => t.type === 'page' && (t.url || '').includes('zhihu.com'))
-        || targets.find(t => t.type === 'page')
-        || targets[0];
-      if (!page) {
-        console.log(JSON.stringify({ items: [] }));
-        ws.close();
-        return;
-      }
-      const attached = await send('Target.attachToTarget', { targetId: page.id, flatten: true });
-      const sessionId = attached.result.sessionId;
-      await send('Page.enable', {}, sessionId);
-      await send('Runtime.enable', {}, sessionId);
-      const url = 'https://www.zhihu.com/search?type=content&q=' + encodeURIComponent(keyword);
-      await send('Page.navigate', { url }, sessionId);
-      await sleep(9000);
-      const expression = `
-        (() => {
-          const seen = new Set();
-          const items = [];
-          const text = document.body ? document.body.innerText || '' : '';
-          const hasLoginPrompt = /登录\/注册|立即登录|登录知乎|扫码登录|验证码登录|密码登录/i.test(text);
-          const anchors = Array.from(document.querySelectorAll('a[href]')).filter(a => {
-            const href = a.href || '';
-            return href.includes('/question/') || href.includes('/answer/') || href.includes('zhuanlan.zhihu.com/p/') || href.includes('/p/') || href.includes('/zvideo/') || href.includes('/people/');
-          });
-          for (const a of anchors) {
-            const href = a.href || '';
-            const text = (a.innerText || a.textContent || a.getAttribute('aria-label') || '').trim().replace(/\\s+/g, ' ');
-            if (!href || !text || text.length < 4 || seen.has(href)) continue;
-            if (href.includes('/search?') || href.includes('/signin')) continue;
-            seen.add(href);
-            const card = a.closest('[class*="SearchResult"], [class*="List-item"], [data-za-detail-view-path-module], article, div') || a.parentElement;
-            const desc = card ? (card.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 220) : '';
-            items.push({ title: text.slice(0, 120), desc, author: '', url: href, platform: '知乎', type: 'web' });
-            if (items.length >= ${limit}) break;
-          }
-          return JSON.stringify({
-            items,
-            hasLoginPrompt,
-            url: location.href,
-            title: document.title || '',
-            textSample: text.slice(0, 800)
-          });
-        })()
-      `;
-      const evaluated = await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true }, sessionId);
-      const raw = evaluated.result && evaluated.result.result ? evaluated.result.result.value : '{"items":[]}';
-      console.log(raw);
-      ws.close();
-    })().catch(error => {
-      console.error(error && error.stack ? error.stack : String(error));
-      process.exit(1);
-    });
-    """
+    """Read real result links from the existing authenticated browser page."""
+    from urllib.parse import quote
+    from playwright.sync_api import sync_playwright
+
+    selector = 'a[href*="/question/"], a[href*="/answer/"], a[href*="/p/"], a[href*="/zvideo/"]'
     try:
-        proc = silent_subprocess_run(
-            ["node", "-e", js_code, str(port), keyword, str(limit)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=25,
-        )
-        if proc.returncode != 0:
-            log.debug(f"Zhihu CDP page search failed: {proc.stderr.strip()}")
-            return []
-        data = json.loads(proc.stdout.strip() or "{}")
-        items = data.get("items", [])
-        if items:
-            log.info(f"Zhihu CDP page search returned {len(items)} items")
-        return items[:limit]
-    except Exception as e:
-        log.debug(f"Zhihu CDP page search failed: {e}")
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{int(ZHIHU_CHROME_DEBUG_PORT)}")
+            context = browser.contexts[0]
+            page = next((page for page in context.pages if "zhihu.com" in page.url), None)
+            if page is None:
+                page = context.new_page()
+            page.goto("https://www.zhihu.com/search?type=content&q=" + quote(keyword), wait_until="domcontentloaded", timeout=20000)
+            page.wait_for_function(
+                "selector => Array.from(document.querySelectorAll(selector)).some(a => (a.innerText || a.textContent || '').trim().length >= 4)",
+                arg=selector, timeout=12000,
+            )
+            return page.evaluate(r"""({selector, limit}) => {
+                const seen = new Set();
+                const items = [];
+                for (const anchor of document.querySelectorAll(selector)) {
+                    const parsed = new URL(anchor.href);
+                    if (!['www.zhihu.com', 'zhihu.com', 'zhuanlan.zhihu.com'].includes(parsed.hostname)) continue;
+                    const title = (anchor.innerText || anchor.textContent || '').trim().replace(/\s+/g, ' ');
+                    if (title.length < 4 || seen.has(parsed.href)) continue;
+                    seen.add(parsed.href);
+                    const card = anchor.closest('[class*="SearchResult"], [class*="List-item"], article') || anchor.parentElement;
+                    items.push({title: title.slice(0, 120), desc: (card?.innerText || '').trim().slice(0, 220),
+                                author: '', url: parsed.href, platform: '知乎', type: 'web'});
+                    if (items.length >= limit) break;
+                }
+                return items;
+            }""", {"selector": selector, "limit": max(1, min(limit, 20))})
+    except Exception as exc:
+        log.debug("Zhihu CDP page search failed: %s", exc)
         return []
 
 
@@ -516,6 +453,10 @@ def legacy_search_zhihu(keyword: str, limit: int = 10) -> Dict:
             }, trace=trace, strategy="persistent_profile_cookie")
         trace.add("persistent_profile_cookie", "ok", detail="cookie_readable")
         try:
+            browser_only = not os.path.isfile(os.path.join(PROJECT_ROOT, "libs", "zhihu.js"))
+            if browser_only:
+                trace.add("signed_api", "skipped", detail="restricted_signer_not_distributed")
+            strategy = "chrome_cdp_page_fallback" if browser_only else "signed_api"
             items = zhihu_search_api(keyword, cookie_str, limit)
             log.info(f"  -> {len(items)} 条结果")
             if not items:
@@ -526,7 +467,7 @@ def legacy_search_zhihu(keyword: str, limit: int = 10) -> Dict:
                     return _format_search_response("知乎", fallback_items, trace=trace)
                 trace.add("chrome_cdp_page_fallback", "failed", detail="empty_results", error_type="empty_results", retryable=True)
                 return format_search_response("知乎", [], trace=trace, metadata={"note": "知乎搜索无结果，可能是关键词未匹配或内容被屏蔽"})
-            trace.add("signed_api", "ok", item_count=len(items))
+            trace.add(strategy, "ok", item_count=len(items))
             return _format_search_response("知乎", items, trace=trace)
         except RuntimeError as e:
             err_msg = str(e)

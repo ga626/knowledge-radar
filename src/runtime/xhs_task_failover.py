@@ -13,7 +13,7 @@ from .xhs_account_pool import select_account
 ACCOUNT_FAILURES = {
     "cdp_unavailable", "login_required", "anti_bot_verification",
     "platform_verification_required", "verification_required", "cookie_missing",
-    "page_load_degraded", "search_page_degraded", "empty_search_page",
+    "page_load_degraded", "search_page_degraded", "empty_search_page", "auth_state_unconfirmed",
 }
 CURRENT_XHS_PROFILE = ContextVar("xhs_task_profile", default="")
 
@@ -109,5 +109,6 @@ def run_browser_accounts(
         with account_observation_attempt(profile, revision=marker["revision"]):
             record_failure(profile, reason)
     # 跳过不等于试过且失败；有任一政策排除时不授权付费兜底。
-    receipt["exhausted"] = bool(registered) and set(registered) == set(receipt["failed_profile_ids"])
+    receipt["exhausted"] = (bool(registered) and set(registered) == set(receipt["failed_profile_ids"])
+                            and not any(item["failure_type"] == "auth_state_unconfirmed" for item in receipt["attempts"]))
     return result, receipt

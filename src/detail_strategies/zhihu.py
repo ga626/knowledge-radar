@@ -80,6 +80,12 @@ class ZhihuDetailStrategy:
         if cookie_str:
             headers["Cookie"] = cookie_str
 
+        if cdp_available and ("/p/" in api_url or "/answer/" in clean_url):
+            browser_content = self.deps.article_via_cdp(api_url)
+            if browser_content and len(str(browser_content.get("content") or "")) >= 80:
+                result.update(browser_content)
+                return self.deps.attach_routing(url, result)
+
         short_answer_match = re.search(r"/answers/(\d+)", clean_url)
         if short_answer_match:
             return self._extract_short_answer(short_answer_match.group(1), headers, profile_ok, url, result)

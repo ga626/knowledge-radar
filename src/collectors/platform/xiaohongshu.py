@@ -905,22 +905,18 @@ def _recover_xhs_xsec_token(note_id: str) -> str:
         ]
         if not page_ws_urls:
             page_ws_urls = [scrapling_adapter._ensure_xhs_page_ws_url(_chrome_debug_url(resource_key))]
-        expression = f"""
-        (() => {{
-          const noteId = {json.dumps(note_id)};
-          const links = Array.from(document.querySelectorAll('a[href*="' + noteId + '"]'));
-          for (const link of links) {{
-            const href = link.href || link.getAttribute('href') || '';
-            const match = href.match(/[?&]xsec_token=([^&#]+)/);
-            if (match) return JSON.stringify({{ token: decodeURIComponent(match[1]) }});
-          }}
-          const html = document.documentElement ? document.documentElement.innerHTML || '' : '';
-          const escaped = noteId.replace(/[.*+?^${{}}()|[\\]\\\\]/g, '\\\\$&');
-          const re = new RegExp(escaped + '[^"\\\\']{{0,500}}[?&]xsec_token=([^&#"\\\\']+)');
-          const match = html.match(re);
-          return JSON.stringify({{ token: match ? decodeURIComponent(match[1]) : '' }});
-        }})()
-        """
+        expression = """
+        (() => {
+          const noteId = __NOTE_ID__;
+          const links = [location.href, ...Array.from(document.querySelectorAll('a[href]'), link => link.href)];
+          for (const href of links) {
+            if (!href.includes(noteId)) continue;
+            const token = new URL(href, location.href).searchParams.get('xsec_token');
+            if (token) return JSON.stringify({token});
+          }
+          return JSON.stringify({token: ''});
+        })()
+        """.replace("__NOTE_ID__", json.dumps(note_id))
         for page_ws in page_ws_urls:
             data = scrapling_adapter._cdp_json(page_ws, expression, timeout=8)
             token = str(data.get("token") or "")

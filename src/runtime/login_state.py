@@ -99,7 +99,7 @@ class LoginProbe:
                     "retryable": True,
                 }
             sign = self.sign_cookie("/api/v4/search_v3?q=health", cookie_str) if self.sign_cookie else {}
-            if not sign.get("x-zse-96"):
+            if self.sign_cookie and not sign.get("x-zse-96"):
                 return {
                     "status": "degraded",
                     "detail": "知乎登录态探针未通过：签名结果缺少 x-zse-96",
