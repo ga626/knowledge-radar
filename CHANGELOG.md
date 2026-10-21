@@ -4,6 +4,11 @@ All notable user-facing changes are recorded here. This project follows an Alpha
 
 ## Unreleased
 
+## 0.1.0a16
+
+- 小红书缺少临时访问参数时，跟随同账号搜索页的可见目标卡取得参数，避免将有效笔记拼成不可浏览链接。
+- 内容要求 App 查看时保留人工处理状态，停止将单条内容限制记成全部账号掉线或付费穷尽。
+
 ## 0.1.0a15
 
 - 知乎公开安装版使用已登录浏览器读取搜索结果，移除对未分发签名脚本的运行依赖；详情优先读取已登录页面的正文区域。

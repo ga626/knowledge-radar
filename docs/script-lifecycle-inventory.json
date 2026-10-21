@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "generated_at": "2026-10-21T11:31:28.588270+00:00",
+  "generated_at": "2026-10-21T11:39:08.194104+00:00",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {

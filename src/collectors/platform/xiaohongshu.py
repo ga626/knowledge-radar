@@ -906,21 +906,43 @@ def _recover_xhs_xsec_token(note_id: str) -> str:
         if not page_ws_urls:
             page_ws_urls = [scrapling_adapter._ensure_xhs_page_ws_url(_chrome_debug_url(resource_key))]
         expression = """
-        (() => {
+        (async () => {
           const noteId = __NOTE_ID__;
-          const links = [location.href, ...Array.from(document.querySelectorAll('a[href]'), link => link.href)];
-          for (const href of links) {
-            if (!href.includes(noteId)) continue;
-            const token = new URL(href, location.href).searchParams.get('xsec_token');
-            if (token) return JSON.stringify({token});
+          const readToken = () => {
+            const links = [location.href, ...Array.from(document.querySelectorAll('a[href]'), link => link.href)];
+            for (const href of links) {
+              const parsed = new URL(href, location.href);
+              if (!parsed.pathname.endsWith('/' + noteId)) continue;
+              const token = parsed.searchParams.get('xsec_token');
+              if (token) return token;
+            }
+            return '';
+          };
+          let token = readToken();
+          if (token) return JSON.stringify({token});
+          // The current site adds the protected parameter in its card click
+          // handler. Follow that exact visible card once in this profile.
+          const card = Array.from(document.querySelectorAll('a[href]')).find(link => {
+            const parsed = new URL(link.href, location.href);
+            return parsed.origin === location.origin && parsed.pathname.endsWith('/' + noteId)
+              && link.getClientRects().length > 0;
+          });
+          if (card) {
+            card.click();
+            for (let i = 0; i < 15; i++) {
+              await new Promise(resolve => setTimeout(resolve, 100));
+              token = readToken();
+              if (token) break;
+            }
           }
-          return JSON.stringify({token: ''});
+          return JSON.stringify({token});
         })()
         """.replace("__NOTE_ID__", json.dumps(note_id))
         for page_ws in page_ws_urls:
             data = scrapling_adapter._cdp_json(page_ws, expression, timeout=8)
             token = str(data.get("token") or "")
             if token:
+                _remember_xhs_fetch(note_id, token)
                 return token
     except Exception as e:
         log.debug(f"小红书 xsec_token 恢复失败: {e}")

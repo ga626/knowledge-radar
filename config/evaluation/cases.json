@@ -974,8 +974,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 3,
-      "oracle_version": 3,
+      "version": 4,
+      "oracle_version": 4,
       "capabilities": [
         "account.rotation"
       ],
@@ -1003,15 +1003,17 @@
         "src/runtime/login_state.py",
         "src/media_platform/xhs/scrapling_adapter.py",
         "src/detail_strategies/zhihu.py",
-        "src/understanding/text.py"
+        "src/understanding/text.py",
+        "src/collectors/platform/xiaohongshu.py",
+        "src/detail_strategies/xiaohongshu.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "安装后真实业务发现：公开包无签名脚本路径、网页就绪、账号未知态轮换及临时URL恢复回归"
+      "change_reason": "真实安装复现：小红书搜索卡点击补临时参数，内容限制与账号失效分离，顶层人工状态一致"
     },
     {
       "case_id": "content.contracts",
-      "version": 3,
-      "oracle_version": 3,
+      "version": 4,
+      "oracle_version": 4,
       "capabilities": [
         "mcp.get_content_detail"
       ],
@@ -1038,10 +1040,11 @@
         "src/runtime/login_state.py",
         "src/media_platform/xhs/scrapling_adapter.py",
         "src/detail_strategies/zhihu.py",
-        "src/understanding/text.py"
+        "src/understanding/text.py",
+        "src/runtime/xhs_task_failover.py"
       ],
       "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
-      "change_reason": "安装后真实业务发现：公开包无签名脚本路径、网页就绪、账号未知态轮换及临时URL恢复回归"
+      "change_reason": "真实安装复现：小红书搜索卡点击补临时参数，内容限制与账号失效分离，顶层人工状态一致"
     },
     {
       "case_id": "storage.lifecycle",
