@@ -457,7 +457,8 @@ def record_profile_state(
         return {"status": "degraded", "error": "profile_id is required"}
     if path is None:
         from .account_observations import observe_account, legacy_projection
-        mapped = "needs_login" if reason_code in {"LOGIN_REQUIRED", "COOKIE_MISSING"} else "needs_verification" if manual_action_required else "cooldown" if cooldown_seconds else "auth_verified" if state in {"healthy", "available"} else "unknown" if state in {"unknown", "unobserved"} else "degraded"
+        normalized_reason = str(reason_code or "").upper()
+        mapped = "needs_login" if normalized_reason in {"LOGIN_REQUIRED", "COOKIE_MISSING"} else "needs_verification" if manual_action_required or normalized_reason in {"PLATFORM_VERIFICATION_REQUIRED", "SECURITY_VERIFICATION", "VERIFICATION_REQUIRED"} else "cooldown" if cooldown_seconds else "auth_verified" if state in {"healthy", "available"} else "unknown" if state in {"unknown", "unobserved"} else "degraded"
         fact = observe_account(profile_id, platform, mapped, source=last_tool or "legacy_state_adapter", reason=reason_code,
                                ttl_s=cooldown_seconds if cooldown_seconds else None)
         return {"status": "ok", "profile": legacy_projection(fact), "write_target": "AccountObservation"}

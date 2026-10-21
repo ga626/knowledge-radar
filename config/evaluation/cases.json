@@ -974,8 +974,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 4,
-      "oracle_version": 4,
+      "version": 5,
+      "oracle_version": 5,
       "capabilities": [
         "account.rotation"
       ],
@@ -983,7 +983,8 @@
       "nodes": [
         "tests/test_account_alerts.py",
         "tests/evaluation/test_account_observations.py",
-        "tests/test_installed_business_routes.py"
+        "tests/test_installed_business_routes.py",
+        "tests/test_browser_recovery_contract.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1005,10 +1006,12 @@
         "src/detail_strategies/zhihu.py",
         "src/understanding/text.py",
         "src/collectors/platform/xiaohongshu.py",
-        "src/detail_strategies/xiaohongshu.py"
+        "src/detail_strategies/xiaohongshu.py",
+        "src/runtime/profile_registry.py",
+        "tests/test_browser_recovery_contract.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "真实安装复现：小红书搜索卡点击补临时参数，内容限制与账号失效分离，顶层人工状态一致"
+      "change_reason": "安装版BOSS恢复与搜索绑定同一登记profile；登录失败事实映射；先恢复窗口再移回屏幕内"
     },
     {
       "case_id": "content.contracts",

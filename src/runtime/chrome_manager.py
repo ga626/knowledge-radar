@@ -431,14 +431,22 @@ def _managed_chrome_profile_dir(platform: str = "xhs", *, target_profile_id: str
     """Return the persistent Chrome profile for the requested platform."""
     platform, embedded_profile_id = _split_browser_resource(platform)
     target_profile_id = target_profile_id or embedded_profile_id
-    if platform == "xhs" and target_profile_id:
-        for row in raw_registry_for_platform("xiaohongshu").get("profiles", []) or []:
+    if target_profile_id:
+        for row in raw_registry_for_platform(_registry_platform(platform)).get("profiles", []) or []:
             if not isinstance(row, dict) or str(row.get("profile_id") or "") != str(target_profile_id):
                 continue
             profile_dir = _resolve_registry_profile_dir(str(row.get("profile_dir") or ""))
             if profile_dir:
                 return profile_dir
         return ""
+    if platform != "xhs":
+        # Authentication eligibility must not change a single account's disk
+        # identity. Recovery and ordinary calls must resolve the same profile
+        # even while that account is blocked pending a scan.
+        registered = [row for row in raw_registry_for_platform(_registry_platform(platform)).get("profiles", []) or []
+                      if isinstance(row, dict) and row.get("main_chain_allowed") and row.get("profile_dir")]
+        if len(registered) == 1:
+            return _resolve_registry_profile_dir(str(registered[0]["profile_dir"]))
     env_specific = os.environ.get(f"KR_{_platform_env_name(platform)}_CHROME_USER_DATA_DIR", "").strip()
     if env_specific:
         return env_specific
@@ -1063,8 +1071,10 @@ def _bring_chrome_windows_to_front(pid: int) -> None:
             proc_id = wintypes.DWORD()
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(proc_id))
             if proc_id.value in target_pids and user32.IsWindowVisible(hwnd):
-                user32.SetWindowPos(hwnd, 0, visible_left, visible_top, width, height, SWP_NOZORDER)
                 user32.ShowWindow(hwnd, SW_RESTORE)
+                # Restore first: SW_RESTORE can otherwise reinstate the saved
+                # offscreen normal position after SetWindowPos has run.
+                user32.SetWindowPos(hwnd, 0, visible_left, visible_top, width, height, SWP_NOZORDER)
                 user32.SetForegroundWindow(hwnd)
                 changed += 1
                 return False
