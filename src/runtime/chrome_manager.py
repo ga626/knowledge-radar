@@ -560,10 +560,36 @@ def _managed_chrome_profile_name(platform: str = "xhs") -> str:
     return MANAGED_CHROME_PROFILE_DIRECTORY or "Default"
 
 
+def _pending_manual_interaction(platform: str) -> Dict:
+    """Read shared recovery ownership; process-local flags cannot authorize cleanup."""
+    platform = _browser_resource_key(platform)
+    try:
+        sessions = browser_sessions_summary(limit=200).get("sessions", [])
+        candidates = [row for row in sessions if row.get("platform") == platform]
+        if candidates:
+            current = max(candidates, key=lambda row: row.get("updated_at") or 0)
+            state = current.get("state")
+            pending = (current.get("metadata") or {}).get("account_recovery_pending")
+            if state in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"} or (
+                pending and state in {"STARTING_SILENT", "READY_SILENT"}
+            ):
+                pid = _find_chrome_with_debug_port(platform) or _MANAGED_CHROME_PIDS.get(platform)
+                if pid and current.get("pid") and current["pid"] != pid:
+                    return {}
+                return current
+            return {}
+    except Exception as exc:
+        # Missing trustworthy state is never permission to destroy a QR prompt.
+        log.warning("无法读取人工交互状态，暂缓浏览器回收: %s", type(exc).__name__)
+        return {"state": "UNCONFIRMED", "platform": platform}
+    return {"state": "USER_INTERACTING", "platform": platform} if _CHROME_KEEP_ALIVE.get(platform) else {}
+
+
 def _cleanup_managed_chrome() -> None:
     """Close every managed Chrome instance while preserving profile folders."""
     global _MANAGED_CHROME_PROCS, _MANAGED_CHROME_PROFILE_DIRS, _MANAGED_CHROME_PIDS, _MANAGED_CHROME_OWNED_PIDS
     for platform, _proc in list(_MANAGED_CHROME_PROCS.items()):
+        record_browser_event(platform, "process_exit_cleanup_requested", {"owner_pid": os.getpid()})
         _cleanup_managed_chrome_platform(platform)
     _MANAGED_CHROME_PROCS = {}
     _MANAGED_CHROME_PROFILE_DIRS = {}
@@ -588,6 +614,11 @@ def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str
         )
         return
     platform = normalized_platform
+    pending = _pending_manual_interaction(platform)
+    if pending:
+        record_browser_event(platform, "cleanup_deferred_manual_interaction",
+                             {"owner_pid": os.getpid(), "manual_state": pending.get("state")})
+        return
     timer = _CHROME_IDLE_TIMERS.pop(platform, None)
     if timer:
         timer.cancel()
@@ -600,10 +631,12 @@ def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str
             _zhihu_refresh_timer = None
     proc = _MANAGED_CHROME_PROCS.pop(platform, None)
     known_pid = _MANAGED_CHROME_PIDS.pop(platform, None)
-    pid = known_pid or _find_chrome_with_debug_port(platform)
+    pid = _find_chrome_with_debug_port(platform) or known_pid
+    if known_pid and pid != known_pid:
+        proc = None
     expected_profile = os.path.abspath(expected_profile_dir or _managed_chrome_profile_dir(platform)).lower()
     actual_profile = _chrome_user_data_dir_for_pid(pid).lower() if pid else ""
-    should_close = bool(pid and (pid in _MANAGED_CHROME_OWNED_PIDS or _same_windows_path(actual_profile, expected_profile)))
+    should_close = bool(pid and _same_windows_path(actual_profile, expected_profile))
     if should_close:
         profile_meta = _profile_metadata_for_platform(platform, profile_dir=actual_profile)
         set_browser_session_deadline(
@@ -651,7 +684,7 @@ def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str
             except Exception:
                 pass
         residual_pid = _find_chrome_with_debug_port(platform)
-        if residual_pid:
+        if residual_pid == pid:
             _force_kill_chrome_tree(platform, residual_pid, "cleanup_residual_port")
         residual_pid = _find_chrome_with_debug_port(platform)
         _MANAGED_CHROME_OWNED_PIDS.discard(pid)
@@ -741,7 +774,7 @@ def _schedule_chrome_idle_cleanup(
         # An explicit manual interaction owns its own absolute deadline.  Do
         # not renew it from the ordinary idle loop: that was the source of
         # abandoned BOSS windows being kept alive forever.
-        if _CHROME_KEEP_ALIVE.get(platform, False):
+        if _pending_manual_interaction(platform):
             log.info(f"Chrome 人工交互窗口等待明确完成或绝对到期: platform={platform}")
             return
         
@@ -863,9 +896,8 @@ def reconcile_stale_xhs_manual_interactions() -> Dict[str, int]:
 
 def finish_chrome_automation(platform: str, reason: str = "operation_end") -> None:
     """Close managed Chrome after an automatic task, unless manual interaction is active."""
-    if _CHROME_KEEP_ALIVE.get(platform, False):
+    if _pending_manual_interaction(platform):
         log.info(f"Chrome keep_alive 模式，保留人工交互窗口: platform={platform}")
-        _schedule_chrome_idle_cleanup(platform)
         return
 
     pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
@@ -1150,6 +1182,19 @@ def _cancel_manual_interaction_expiry(platform: str) -> None:
         timer.cancel()
 
 
+def _release_manual_interaction_lease(platform: str, profile_id: str = "") -> bool:
+    coordinator = get_runtime_lease_coordinator()
+    lease_id = _CHROME_MANUAL_INTERACTION_LEASES.pop(platform, "")
+    released = bool(lease_id and coordinator.release(lease_id))
+    if profile_id:
+        for lease in coordinator.active_leases(limit=200):
+            if (lease["resource_kind"] == "manual_interaction"
+                    and lease["resource_key"].startswith(platform + ":")
+                    and lease["metadata"].get("profile_id") == profile_id):
+                released = coordinator.release(lease["lease_id"]) or released
+    return released
+
+
 def _schedule_manual_interaction_expiry(
     platform: str,
     *,
@@ -1158,10 +1203,10 @@ def _schedule_manual_interaction_expiry(
     profile_id: str = "",
     account_slot: str = "",
 ) -> None:
-    """Persist a reminder deadline without ever closing a XHS recovery window.
+    """Persist a reminder deadline without closing any recovery window.
 
     A QR scan has no predictable duration.  The old TTL cancellation could
-    silently remove the very account prompt the user needed to see.  XHS
+    silently remove the very account prompt the user needed to see. All
     sessions therefore retain a persisted *reminder* deadline only; explicit
     cancellation or a verified authentication probe is required to end them.
     """
@@ -1172,19 +1217,9 @@ def _schedule_manual_interaction_expiry(
         profile_id=profile_id,
         account_slot=account_slot,
         profile_dir=profile_dir,
-        metadata={"manual_interaction_deadline": True, "deadline_is_reminder_only": _split_browser_resource(platform)[0] == "xhs"},
+        metadata={"manual_interaction_deadline": True, "deadline_is_reminder_only": True},
         event="manual_interaction_deadline_scheduled",
     )
-    if _split_browser_resource(platform)[0] != "xhs":
-        delay_s = max(0.05, float(deadline_at) - time.time())
-
-        def _expire() -> None:
-            cancel_browser_interaction(platform, reason="manual_interaction_expired", expected_profile_dir=profile_dir)
-
-        timer = threading.Timer(delay_s, _expire)
-        timer.daemon = True
-        _CHROME_MANUAL_INTERACTION_EXPIRY_TIMERS[platform] = timer
-        timer.start()
 
 
 def cancel_browser_interaction(
@@ -1200,6 +1235,9 @@ def cancel_browser_interaction(
     never marks a platform authenticated or replays the original search.
     """
     platform = _browser_resource_key(platform)
+    if reason == "manual_interaction_expired":
+        record_browser_event(platform, "manual_interaction_reminder_due", {"close_authorized": False})
+        return {"status": "waiting_for_user", "platform": platform, "reason": reason}
     if platform == "xhs" and len(_active_xhs_profile_resources()) > 1:
         return {
             "status": "blocked",
@@ -1211,8 +1249,8 @@ def cancel_browser_interaction(
         }
     _cancel_manual_interaction_expiry(platform)
     _CHROME_KEEP_ALIVE.pop(platform, None)
-    lease_id = _CHROME_MANUAL_INTERACTION_LEASES.pop(platform, "")
-    lease_released = bool(lease_id and get_runtime_lease_coordinator().release(lease_id))
+    pending = _pending_manual_interaction(platform)
+    lease_released = _release_manual_interaction_lease(platform, str(pending.get("profile_id") or ""))
     pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
     profile_dir = os.path.abspath(expected_profile_dir or _idle_cleanup_profile_dir(platform))
     actual_profile = _chrome_user_data_dir_for_pid(pid) if pid else ""
@@ -1348,6 +1386,13 @@ def request_user_login(
         },
     )
     if not lease.acquired:
+        pending = _pending_manual_interaction(resource_key)
+        if running_pid and pending and _same_windows_path(running_profile_dir, profile_dir):
+            foreground = bring_chrome_to_front(resource_key)
+            return {"status": "waiting_for_user", "platform": base_platform,
+                    "profile_id": target_profile_id, "existing_interaction": True,
+                    "manual_action": manual_action_request_from_session(pending, reason_code=reason),
+                    "foreground": foreground, "detail": "已重新显示同账号的现有登录窗口，未新建窗口。"}
         return {
             "status": "busy",
             "validation_status": "EXPECTED_DEGRADED",
@@ -1574,13 +1619,7 @@ def complete_user_login(platform: str, *, profile_id: str = "", profile_dir: str
             profile_dir=profile_dir,
         )
     
-    # 3. 回到普通自动任务生命周期。一次性 CLI 进程里的 idle timer 会随
-    # 进程退出而消失，所以这里直接使用正常的 operation-end cleanup。
-    finish_chrome_automation(platform, reason="user_login_complete")
-    
-    lease_id = _CHROME_MANUAL_INTERACTION_LEASES.pop(platform, "")
-    if lease_id:
-        get_runtime_lease_coordinator().release(lease_id)
+    _release_manual_interaction_lease(platform, profile_id)
 
     return {
         "status": "ok",
@@ -1599,6 +1638,12 @@ def complete_browser_interaction(
     recovery_session: Optional[Dict] = None,
 ) -> Dict:
     """Mark a human-interaction browser session complete and restore silent mode."""
+    pending = _pending_manual_interaction(_browser_resource_key(platform, profile_id))
+    if profile_id and pending.get("profile_id") and profile_id != pending["profile_id"]:
+        return {"status": "not_verified", "profile_id": profile_id, "reason": "pending_profile_mismatch"}
+    if probe_result is None:
+        profile_id = profile_id or str(pending.get("profile_id") or "")
+        probe_result = probe_browser_auth(_split_browser_resource(platform)[0], target_profile_id=profile_id)
     probe_ok = bool(probe_result and probe_result.get("status") == "ok" and not probe_result.get("manual_action_required"))
     if probe_result is not None and (not probe_ok or (probe_result.get("profile_id") and probe_result["profile_id"] != profile_id)):
         return {"status": "not_verified", "profile_id": profile_id, "reason": "auth_probe_or_profile_mismatch"}
@@ -1631,6 +1676,9 @@ def complete_browser_interaction(
             profile_dir=profile_dir,
         )
         if probe_ok:
+            # Publish the successful shared transition before ordinary cleanup;
+            # another client's memory may still say keep_alive=True.
+            finish_chrome_automation(resource_key, reason="user_login_complete")
             from .account_observations import observe_account
             if not recovery_session:
                 observe_account(profile_id or resource_key, platform, "auth_verified", source="complete_browser_interaction", reason="auth_probe_passed")
@@ -1670,6 +1718,8 @@ def complete_browser_interaction(
 
 
 def background_chrome(platform: str = "xhs") -> Dict:
+    if _pending_manual_interaction(platform):
+        return {"status": "waiting_for_user", "platform": platform, "detail": "扫码或验证尚未完成，保留前台窗口。"}
     pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
     if not pid:
         return {"status": "skipped", "detail": "Chrome CDP 进程未运行", "platform": platform}
@@ -2191,6 +2241,9 @@ def _ensure_chrome_debugging(
 
 def _cleanup_stale_chrome(platform: str) -> None:
     """Kill any stale Chrome process using the platform's debug port or profile dir."""
+    if _pending_manual_interaction(platform):
+        record_browser_event(platform, "stale_cleanup_deferred_manual_interaction", {})
+        return
     debug_port = _chrome_debug_port(platform)
     profile_dir = os.path.abspath(_managed_chrome_profile_dir(platform)).lower()
 
@@ -2235,6 +2288,9 @@ def _cleanup_stale_chrome(platform: str) -> None:
 def _force_kill_chrome_tree(platform: str, pid: int, reason: str) -> bool:
     """Force-close a verified managed Chrome process tree and record the action."""
     if not pid:
+        return False
+    if _pending_manual_interaction(platform):
+        record_browser_event(platform, "force_kill_deferred_manual_interaction", {"reason": reason, "pid": pid})
         return False
     record_browser_event(platform, "cleanup_force_kill", {"pid": pid, "reason": reason})
     try:
@@ -2282,6 +2338,9 @@ def _handle_same_platform_profile_switch(
         return False
     if not _xhs_safe_profile_switch_allowed(actual_profile, expected_profile):
         return False
+    if _pending_manual_interaction(platform):
+        record_browser_event(platform, "profile_switch_deferred_manual_interaction", {"pid": pid})
+        return False
     log.info(
         f"小红书账号池需要切换 profile，正在安全关闭旧 CDP: "
         f"pid={pid}, actual={actual_profile}, expected={expected_profile}"
@@ -2327,6 +2386,8 @@ def _retire_legacy_edge_session(platform: str, pid: int, expected_profile: str) 
     for, or closes, ordinary user Edge windows.
     """
 
+    if _pending_manual_interaction(platform):
+        return False
     actual_profile = _chrome_user_data_dir_for_pid(pid)
     if not actual_profile:
         return False
@@ -2437,6 +2498,7 @@ def _ensure_chrome_debugging_locked(
     import urllib.request
 
     global _MANAGED_CHROME_PROCS, _MANAGED_CHROME_PROFILE_DIRS, _MANAGED_CHROME_PIDS, _MANAGED_CHROME_OWNED_PIDS
+    visible = visible or bool(_pending_manual_interaction(platform))
     base_platform, embedded_profile_id = _split_browser_resource(platform)
     target_profile_id = target_profile_id or embedded_profile_id
     profile_dir = _managed_chrome_profile_dir(platform, target_profile_id=target_profile_id)
@@ -2644,6 +2706,9 @@ def _ensure_chrome_debugging_locked(
             except Exception:
                 time.sleep(0.25)
         log.warning(f"Chrome 调试进程疑似僵死，快速清理后重启: platform={platform}, pid={existing}")
+        if _pending_manual_interaction(platform):
+            record_browser_event(platform, "restart_deferred_manual_interaction", {"pid": existing})
+            return False
         try:
             silent_subprocess_run(
                 ["taskkill", "/PID", str(existing), "/T", "/F"],

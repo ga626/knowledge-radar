@@ -974,8 +974,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 5,
-      "oracle_version": 5,
+      "version": 6,
+      "oracle_version": 6,
       "capabilities": [
         "account.rotation"
       ],
@@ -984,7 +984,8 @@
         "tests/test_account_alerts.py",
         "tests/evaluation/test_account_observations.py",
         "tests/test_installed_business_routes.py",
-        "tests/test_browser_recovery_contract.py"
+        "tests/test_browser_recovery_contract.py",
+        "tests/test_manual_browser_lifetime.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1008,10 +1009,11 @@
         "src/collectors/platform/xiaohongshu.py",
         "src/detail_strategies/xiaohongshu.py",
         "src/runtime/profile_registry.py",
-        "tests/test_browser_recovery_contract.py"
+        "tests/test_browser_recovery_contract.py",
+        "tests/test_manual_browser_lifetime.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "安装版BOSS恢复与搜索绑定同一登记profile；登录失败事实映射；先恢复窗口再移回屏幕内"
+      "change_reason": "扫码窗口跨进程保护、所有平台超时只提醒、未验证完成不收尾；进程退出和其他客户端清理回归"
     },
     {
       "case_id": "content.contracts",
