@@ -40,7 +40,7 @@
     const cases = rows(evaluation.cases);
     const gate = display(evaluation.gate, 'INCOMPLETE');
     text('developer-role', display(health.role, '未知角色'));
-    text('developer-role-note', `generation ${display(health.generation, '—')} · ${display(installation.version, '源码候选')}`);
+    text('developer-role-note', `运行代际 ${display(health.generation, '—')} · ${health.role === 'dev' ? '开发源码预览' : `已安装 ${display(installation.version)}`}`);
     text('developer-research', active ? `${active} 项运行中` : `${recent.length} 项后台任务`);
     text('developer-research-note', recent.length
       ? `${compactNumber(tools.successful)} 次成功工具调用 · ${compactNumber(tasks.completed)} 项完成任务`
@@ -54,8 +54,10 @@
     definitionList('developer-runtime-list', [
       ['控制台角色', health.role],
       ['运行代际', health.generation],
-      ['源码/安装版本', installation.version || '源码候选'],
-      ['渠道', installation.channel || 'development_evidence_only'],
+      ['当前运行方式', health.role === 'dev' ? '开发源码预览' : '已安装程序'],
+      ['运行指纹', health.fingerprint],
+      ['已安装稳定版', installation.version || '未安装'],
+      ['已安装渠道', installation.channel || '未安装'],
       ['数据根', installation.data_root_present ? '存在且可读' : '未识别'],
       ['能力接入', `${dashboard.control_plane?.connected_count ?? 0}/${(dashboard.control_plane?.capabilities || []).length}`],
     ]);
