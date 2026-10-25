@@ -94,6 +94,8 @@
   };
 
   $('developer-refresh')?.addEventListener('click', () => void refresh());
+  // 侧栏用 replaceState 切换页面，不会触发 hashchange。
+  nav?.addEventListener('click', () => void refresh());
   window.addEventListener('hashchange', () => {
     if (location.hash === '#developer') void refresh();
   });

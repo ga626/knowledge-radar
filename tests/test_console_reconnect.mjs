@@ -38,3 +38,50 @@ test('network loss retains the offline notice and never reloads',async()=>{
   const h=harness('ready',[new Error('offline')]);await h.probe();
   assert.equal(h.bar.hidden,false);assert.equal(h.bar.dataset.state,'offline');assert.equal(h.reloads,0);
 });
+
+// 执行开发者面板原脚本，覆盖侧栏 replaceState 不产生 hashchange 的真实入口。
+const developerCode=readFileSync(new URL('../src/onboarding/static/developer_console.js',import.meta.url),'utf8');
+function developerHarness({developer=true,hash='#overview',failure=false}={}){
+  const nodes=new Map(),calls=[],nav=new EventTarget();
+  const node=id=>{
+    if(!nodes.has(id))nodes.set(id,Object.assign(new EventTarget(),{textContent:'',replaceChildren(){},append(){}}));
+    return nodes.get(id);
+  };
+  const responses={
+    '/api/dashboard':{installation:{version:'0.1.0a20'},activity:{tasks:{recent_tasks:[]}}},
+    '/api/evaluation':{gate:'INCOMPLETE',availability:'missing',cases:[]},
+    '/api/health':{status:'ready',role:'stable',generation:2},
+    '/api/status':{},
+  };
+  runInNewContext(developerCode,{
+    document:{body:{dataset:{developerView:String(developer)}},querySelector:()=>nav,
+      querySelectorAll:()=>[],getElementById:node,createElement:()=>({textContent:''})},
+    location:{hash},window:{addEventListener(){},api:async path=>{
+      calls.push(path);if(failure)throw Error('offline');return responses[path];
+    }},
+  });
+  return {nodes,calls,nav,node};
+}
+test('sidebar developer navigation loads real data without a hashchange',async()=>{
+  const h=developerHarness();assert.equal(h.calls.length,0);
+  h.nav.dispatchEvent(new Event('click'));
+  h.nav.dispatchEvent(new Event('click'));
+  await new Promise(setImmediate);
+  assert.deepEqual(h.calls,['/api/dashboard','/api/evaluation','/api/health','/api/status']);
+  assert.equal(h.node('developer-role').textContent,'stable');
+  assert.match(h.node('developer-role-note').textContent,/0.1.0a20/);
+  assert.equal(h.node('developer-evaluation').textContent,'INCOMPLETE');
+  assert.match(h.node('developer-message').textContent,/已读取/);
+});
+test('a direct developer link loads and reports an actual fetch failure',async()=>{
+  const h=developerHarness({hash:'#developer',failure:true});
+  await new Promise(setImmediate);
+  assert.equal(h.calls.length,4);
+  assert.equal(h.node('developer-message').textContent,'offline');
+});
+test('ordinary users do not fetch developer information',async()=>{
+  const h=developerHarness({developer:false,hash:'#developer'});
+  h.nav.dispatchEvent(new Event('click'));
+  await new Promise(setImmediate);
+  assert.deepEqual(h.calls,[]);
+});
