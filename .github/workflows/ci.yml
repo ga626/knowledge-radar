@@ -45,12 +45,26 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         run: python -m compileall -q src
 
+      - name: Set up console build runtime
+        if: steps.scope.outputs.docs_only != 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Check console source and reconnect behavior
+        if: steps.scope.outputs.docs_only != 'true'
+        run: |
+          node scripts/build_console.mjs --check
+          node --check src/onboarding/static/console.js
+          node --check src/onboarding/static/research_workspace.js
+          node --test tests/test_console_reconnect.mjs
+
       - name: Verify public package plan
         if: steps.scope.outputs.docs_only != 'true'
         run: python scripts/build_product_lite_package.py --dry-run
 
       - name: Evaluate existing contracts once and record unified ledger
-        run: python scripts/kr_evaluate.py --store local/evaluation ci --changed-from "${{ github.event.pull_request.base.sha || github.event.before }}" --extra-node tests/test_product_install.py --extra-node tests/test_product_console_launcher.py --extra-node tests/test_setup_wizard.py --extra-node tests/test_privacy_boundaries.py --extra-node tests/test_codex_stdio_contract.py --extra-node tests/test_capabilities_runtime_environment.py --extra-node tests/test_recruitment_configuration_gate.py --extra-node tests/test_xhs_cdp_dependency_boundary.py --extra-node tests/test_recruitment_city_registry.py --extra-node tests/test_managed_chrome_resolution.py --extra-node tests/test_release_candidate_contract.py --extra-node tests/test_xhs_task_failover.py --extra-node tests/test_account_alerts.py --extra-node tests/test_mcp_observability.py --extra-node tests/test_boss_search_url.py --extra-node tests/test_academic_provider_profiles.py --extra-node tests/test_xiaohongshu_detail_regressions.py --extra-node tests/test_installed_business_routes.py --extra-node tests/test_browser_recovery_contract.py --extra-node tests/test_manual_browser_lifetime.py --extra-node tests/evaluation --extra-node tests/test_bilibili_asr_policy.py --extra-node tests/test_detail_direct_media.py --extra-node tests/test_runtime_task_fanin.py
+        run: python scripts/kr_evaluate.py --store local/evaluation ci --changed-from "${{ github.event.pull_request.base.sha || github.event.before }}" --extra-node tests/test_product_install.py --extra-node tests/test_product_console_launcher.py --extra-node tests/test_setup_wizard.py --extra-node tests/test_privacy_boundaries.py --extra-node tests/test_codex_stdio_contract.py --extra-node tests/test_capabilities_runtime_environment.py --extra-node tests/test_recruitment_configuration_gate.py --extra-node tests/test_xhs_cdp_dependency_boundary.py --extra-node tests/test_recruitment_city_registry.py --extra-node tests/test_managed_chrome_resolution.py --extra-node tests/test_release_candidate_contract.py --extra-node tests/test_xhs_task_failover.py --extra-node tests/test_account_alerts.py --extra-node tests/test_mcp_observability.py --extra-node tests/test_boss_search_url.py --extra-node tests/test_academic_provider_profiles.py --extra-node tests/test_xiaohongshu_detail_regressions.py --extra-node tests/test_installed_business_routes.py --extra-node tests/test_browser_recovery_contract.py --extra-node tests/test_manual_browser_lifetime.py --extra-node tests/evaluation --extra-node tests/test_bilibili_asr_policy.py --extra-node tests/test_detail_direct_media.py --extra-node tests/test_runtime_task_fanin.py --extra-node tests/test_completion_paths.py --extra-node tests/test_evidence_assets.py --extra-node tests/test_evidence_export.py --extra-node tests/test_research_workspace.py --extra-node tests/test_research_workspace_integration.py --extra-node tests/test_w1w8_contracts.py --extra-node tests/test_console_access.py --extra-node tests/test_resource_concurrency_leases.py
 
       - name: Upload evaluation evidence even on failure
         if: always()
