@@ -117,7 +117,10 @@ def copy_files(files: Iterable[Path], output: Path, *, commit: str = '') -> list
         relative = source.relative_to(ROOT)
         target = output / relative
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(tracked_bytes(source,commit) if commit else source.read_bytes())
+        data = tracked_bytes(source,commit) if commit else source.read_bytes()
+        if normalize(relative) in {"pyproject.toml", "config/runtime-win-py312.lock"}:
+            data = data.replace(b"\r\n", b"\n")
+        target.write_bytes(data)
         records.append({"path": normalize(relative), "sha256": sha256_file(target), "size": target.stat().st_size})
     return records
 
@@ -128,7 +131,6 @@ def package_version() -> str:
 
 
 def write_metadata(output: Path, manifest_path: Path, files: list[dict[str, object]], commit: str, *, candidate=False) -> None:
-    manifest = load_json(manifest_path)
     provenance = {
         "schema": "knowledgeradar-package-provenance/v2",
         "source_commit": commit,
@@ -193,8 +195,8 @@ def build(manifest_path: Path, output: Path, *, dry_run: bool, candidate: bool) 
         shutil.rmtree(output)
     output.mkdir(parents=True)
     records = copy_files(files, output,commit=commit if candidate else '')
-    runtime_inputs = load_json(ROOT / "config/runtime-artifacts.json")
-    if runtime_inputs.get("lock_sha256") != sha256_file(ROOT / "config/runtime-win-py312.lock") or runtime_inputs.get("pyproject_sha256") != sha256_file(ROOT / "pyproject.toml"):
+    runtime_inputs = load_json(output / "config/runtime-artifacts.json")
+    if runtime_inputs.get("lock_sha256") != sha256_file(output / "config/runtime-win-py312.lock") or runtime_inputs.get("pyproject_sha256") != sha256_file(output / "pyproject.toml"):
         raise RuntimeError("frozen runtime inputs no longer match source")
     for row in runtime_inputs["wheels"]:
         source = ROOT / "local/runtime-wheelhouse" / row["file"]
