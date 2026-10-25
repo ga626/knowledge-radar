@@ -2,7 +2,12 @@
 
 All notable user-facing changes are recorded here. This project follows an Alpha release channel; a version is delivered only when its immutable candidate artifact has passed its release checks.
 
-## 0.1.0a19 (Unreleased)
+## 0.1.0a20 (Unreleased)
+
+- 修复从侧栏进入开发者中心后一直停在“读取中”的问题，进入页面即读取真实数据；失败仍保留可重试提示。
+- 安装包与研究插件版本统一标记为 a20。研究和模型执行语义、依赖锁及权重保持 a19 的既定方案。
+
+## 0.1.0a19 (maintainer-main)
 
 - 研究记录沿用Codex任务账本，新增来源、耗时、问题、固定证据与成果导出；普通用户与本机维护者分层查看。
 - 证据增加真实PDF页码、字幕切片、结构化资料定位、物理容量准入与SHA绑定的历史部分资料迁移；不将旧摘要标为完整原件。
