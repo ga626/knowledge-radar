@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import sys
 import time
+import socket
 
 import pytest
 
@@ -85,6 +86,49 @@ def test_stable_task_definition_uses_bounded_recovery_and_ignores_duplicates(tmp
     assert "MultipleInstances IgnoreNew" in script
     assert "--role stable --port 18882" in script
     assert "--program-root" not in script
+    assert "-ExecutionTimeLimit ([TimeSpan]::Zero)" in script
+    assert "-AllowStartIfOnBatteries" in script
+    assert "-DontStopIfGoingOnBatteries" in script
+    assert '-RepetitionInterval (New-TimeSpan -Minutes 1)' in script
+
+
+def test_dev_task_has_one_fixed_name_and_logon_trigger(tmp_path):
+    launcher = load_launcher()
+    candidate = context(launcher, tmp_path)
+    script = launcher._task_script(context=candidate, enabled=True)
+    assert 'KnowledgeRadar Development Local Console' in script
+    assert 'New-ScheduledTaskTrigger -AtLogOn' in script
+    assert str(candidate.program) in script
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows Task Scheduler contract')
+def test_explicit_stop_pauses_registered_task_and_open_resumes_it(tmp_path, monkeypatch):
+    launcher = load_launcher()
+    candidate = context(launcher, tmp_path)
+    candidate.state_dir.mkdir(parents=True)
+    (candidate.state_dir / 'autostart.json').write_text('{}', encoding='utf-8')
+    calls = []
+    monkeypatch.setattr(launcher, '_run_task_script', calls.append)
+    launcher.request_supervisor_shutdown(candidate)
+    assert 'Disable-ScheduledTask' in calls[-1]
+    assert candidate.shutdown_path.is_file()
+    launcher._start_background(candidate)
+    assert 'Enable-ScheduledTask' in calls[-1]
+    assert 'Start-ScheduledTask' in calls[-1]
+
+
+def test_dev_writes_are_isolated_from_stable_data(tmp_path, monkeypatch):
+    launcher = load_launcher()
+    candidate = context(launcher, tmp_path)
+    with monkeypatch.context() as env:
+        env.setattr(os, 'environ', dict(os.environ))
+        env.setattr(sys, 'path', list(sys.path))
+        for key in ('KR_DATA_ROOT', 'KR_STATE_DIR', 'KR_RUNTIME_ENV_PATH', 'KR_LOG_DIR', 'KR_BROWSER_DATA_DIR', 'KR_PROFILE_REGISTRY_PATH', 'KR_EVIDENCE_ROOT', 'KR_MEDIA_CACHE_DIR', 'KR_RESEARCH_READ_ROOT'):
+            env.setenv(key, '')
+        launcher._configure_environment(candidate, generation=1)
+        for key in ('KR_DATA_ROOT', 'KR_STATE_DIR', 'KR_RUNTIME_ENV_PATH', 'KR_LOG_DIR', 'KR_BROWSER_DATA_DIR', 'KR_PROFILE_REGISTRY_PATH', 'KR_EVIDENCE_ROOT', 'KR_MEDIA_CACHE_DIR'):
+            assert Path(os.environ[key]).is_relative_to(candidate.supervisor_root), key
+        assert Path(os.environ['KR_RESEARCH_READ_ROOT']) == candidate.data / 'state'
 
 
 def test_dev_background_launch_is_detached_and_bound_to_its_candidate_identity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,19 +179,67 @@ def test_autostart_migrates_legacy_startup_file_to_stable_task(tmp_path: Path, m
     assert not legacy.exists()
 
 
-def test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable(tmp_path: Path) -> None:
-    launcher = load_launcher()
-    if launcher._health_details(launcher.DEV_CONSOLE_PORT)["state"] != "absent":
-        pytest.skip("18883 is already reserved by an interactive development preview")
-    candidate = context(launcher, tmp_path)
-    helper = candidate.install_root / "console_product.py"
-    shutil.copyfile(ROOT / "scripts" / "product_console_launcher.py", helper)
-    command = [sys.executable, str(helper), "--role", "dev", "--port", str(candidate.port), "--program-root", str(ROOT), "--no-open"]
+@pytest.mark.parametrize('hang_first_worker,orphan_supervisor', [(False, False), (True, False), (False, True)])
+def test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable(tmp_path: Path, hang_first_worker: bool, orphan_supervisor: bool) -> None:
+    # 仅测试副本更换端口；真实stable/dev入口不探测、不停止、不抢占。
+    with socket.socket() as reservation:
+        reservation.bind(('127.0.0.1', 0))
+        port = reservation.getsockname()[1]
+    original = load_launcher()
+    helper = tmp_path / "console_product.py"
+    source = (ROOT / "scripts/product_console_launcher.py").read_text(encoding="utf-8-sig")
+    if hang_first_worker:
+        # 第一代自有进程真实占用 TCP 但不提供 HTTP 响应；后续代际运行真实服务。
+        source = source.replace('WORKER_HEALTH_GRACE_SECONDS = 20.0', 'WORKER_HEALTH_GRACE_SECONDS = 2.0')
+        source = source.replace('    run_wizard(port=context.port, open_browser=False)', "    if generation == 1:\n        import socket\n        with socket.socket() as stuck:\n            stuck.bind((CONSOLE_HOST, context.port))\n            stuck.listen()\n            time.sleep(60)\n    run_wizard(port=context.port, open_browser=False)")
+    helper.write_text(source.replace('DEV_CONSOLE_PORT = 18883', f'DEV_CONSOLE_PORT = {port}').replace('KnowledgeRadarConsoleSupervisor-', f'KnowledgeRadarConsoleSupervisor-test-{port}-'), encoding="utf-8")
+    spec = importlib.util.spec_from_file_location('isolated_supervisor_test', helper)
+    launcher = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = launcher
+    spec.loader.exec_module(launcher)
+    candidate = context(launcher, tmp_path, port=port)
+    assert original.DEV_CONSOLE_PORT == 18883 and port not in {18882, 18883}
+    command = [sys.executable, str(helper), "--role", "dev", "--port", str(candidate.port), "--program-root", str(ROOT), "--install-root", str(candidate.install_root), "--no-open"]
     try:
         first = subprocess.run(command, text=True, encoding="utf-8", capture_output=True, check=False, timeout=20)
         assert first.returncode == 0, first.stderr
         assert launcher._wait_until_ready(candidate, timeout=12)
         generation = launcher._health_details(candidate.port)["generation"]
+        if orphan_supervisor:
+            snapshot = launcher.status_snapshot(candidate)
+            old_supervisor = snapshot['supervisor']['supervisor_pid']
+            old_worker = snapshot['supervisor']['worker_pid']
+            assert old_supervisor != os.getpid()
+            if os.name == 'nt':
+                # Deliberately leave the worker alive: this is the orphan bug.
+                killed = subprocess.run(['taskkill.exe', '/PID', str(old_supervisor), '/F'], capture_output=True)
+                assert killed.returncode == 0
+            else:
+                import signal
+                os.kill(old_supervisor, signal.SIGKILL)
+                (candidate.state_dir / 'supervisor.lock').unlink(missing_ok=True)
+            assert launcher._health_details(candidate.port)['state'] == 'ready'
+            launcher._spawn(command + ['--supervise'], log_path=candidate.log_path)
+            assert launcher._wait_until_ready(candidate, timeout=12, generation_after=generation)
+            generation = launcher._health_details(candidate.port)['generation']
+            deadline = time.monotonic() + 3
+            while time.monotonic() < deadline and launcher.status_snapshot(candidate)['supervisor'].get('worker_pid') == old_worker:
+                time.sleep(0.1)
+            assert launcher.status_snapshot(candidate)['supervisor']['worker_pid'] != old_worker
+        if hang_first_worker:
+            assert generation >= 2
+            assert 'worker_health_timeout' in candidate.log_path.read_text(encoding='utf-8')
+        else:
+            snapshot = launcher.status_snapshot(candidate)
+            worker = snapshot['supervisor']['worker_pid']
+            if os.name == 'nt':
+                crashed = subprocess.run(['taskkill.exe', '/PID', str(worker), '/T', '/F'], capture_output=True)
+                assert crashed.returncode == 0
+            else:
+                import signal
+                os.kill(worker, signal.SIGKILL)
+            assert launcher._wait_until_ready(candidate, timeout=15, generation_after=generation)
+            generation = launcher._health_details(candidate.port)['generation']
 
         restarted = subprocess.run(command + ["--restart"], text=True, encoding="utf-8", capture_output=True, check=False, timeout=20)
         assert restarted.returncode == 0, restarted.stderr
@@ -158,6 +250,8 @@ def test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable(t
         assert launcher.status_snapshot(candidate)["supervisor"]["state"] == "READY"
     finally:
         subprocess.run(command + ["--stop-supervisor"], text=True, encoding="utf-8", capture_output=True, check=False, timeout=20)
+        if launcher._health(candidate.port, candidate) == 'ready':
+            launcher._request_stop(candidate)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and launcher._health_details(candidate.port)["state"] != "absent":
             time.sleep(0.2)

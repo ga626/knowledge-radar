@@ -436,7 +436,7 @@ def _bring_zhihu_to_front_for_login() -> None:
 
 
 def legacy_search_zhihu(keyword: str, limit: int = 10) -> Dict:
-    log.info(f"search_zhihu: {keyword}, limit={limit}")
+    log.info("search_zhihu: request received; limit=%s", limit)
     limit = min(limit, 20)
     trace = CollectionTrace("知乎", ["persistent_profile_cookie", "signed_api", "chrome_cdp_page_fallback"])
     try:

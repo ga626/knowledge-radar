@@ -18,6 +18,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -25,39 +27,55 @@ jobs:
           python-version: "3.12"
           cache: pip
 
+      - name: Determine evaluation scope
+        id: scope
+        env:
+          KR_EVAL_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: python -c "import os,pathlib; from scripts.kr_eval.ci import docs_only_change; value=str(docs_only_change(pathlib.Path.cwd(),os.environ.get('KR_EVAL_BASE'))).lower(); open(os.environ['GITHUB_OUTPUT'],'a').write('docs_only='+value+'\n')"
+
+      - name: Check documentation text
+        if: steps.scope.outputs.docs_only == 'true'
+        run: python -c "import pathlib; files=[*pathlib.Path('docs').rglob('*.md'),*pathlib.Path('.').glob('*.md')]; assert all('\x00' not in p.read_text(encoding='utf-8-sig') for p in files)"
+
       - name: Install package and test tools
+        if: steps.scope.outputs.docs_only != 'true'
         run: python -m pip install --upgrade pip; python -m pip install -e . pytest
 
       - name: Compile public source
+        if: steps.scope.outputs.docs_only != 'true'
         run: python -m compileall -q src
 
       - name: Verify public package plan
+        if: steps.scope.outputs.docs_only != 'true'
         run: python scripts/build_product_lite_package.py --dry-run
 
-      - name: Collect and run public product contracts
-        run: python -m pytest -q tests/test_product_install.py tests/test_product_console_launcher.py tests/test_setup_wizard.py tests/test_privacy_boundaries.py tests/test_codex_stdio_contract.py tests/test_capabilities_runtime_environment.py tests/test_recruitment_configuration_gate.py tests/test_xhs_cdp_dependency_boundary.py tests/test_recruitment_city_registry.py tests/test_managed_chrome_resolution.py tests/test_release_candidate_contract.py
+      - name: Evaluate existing contracts once and record unified ledger
+        run: python scripts/kr_evaluate.py --store local/evaluation ci --changed-from "${{ github.event.pull_request.base.sha || github.event.before }}" --extra-node tests/test_product_install.py --extra-node tests/test_product_console_launcher.py --extra-node tests/test_setup_wizard.py --extra-node tests/test_privacy_boundaries.py --extra-node tests/test_codex_stdio_contract.py --extra-node tests/test_capabilities_runtime_environment.py --extra-node tests/test_recruitment_configuration_gate.py --extra-node tests/test_xhs_cdp_dependency_boundary.py --extra-node tests/test_recruitment_city_registry.py --extra-node tests/test_managed_chrome_resolution.py --extra-node tests/test_release_candidate_contract.py --extra-node tests/test_xhs_task_failover.py --extra-node tests/test_account_alerts.py --extra-node tests/test_mcp_observability.py --extra-node tests/test_boss_search_url.py --extra-node tests/test_academic_provider_profiles.py --extra-node tests/test_xiaohongshu_detail_regressions.py --extra-node tests/test_installed_business_routes.py --extra-node tests/test_browser_recovery_contract.py --extra-node tests/test_manual_browser_lifetime.py --extra-node tests/evaluation --extra-node tests/test_bilibili_asr_policy.py --extra-node tests/test_detail_direct_media.py --extra-node tests/test_runtime_task_fanin.py
 
-      - name: Verify account recovery and result evidence
-        run: python -m pytest -q tests/test_xhs_task_failover.py tests/test_account_alerts.py tests/test_mcp_observability.py tests/test_boss_search_url.py tests/test_academic_provider_profiles.py tests/test_xiaohongshu_detail_regressions.py tests/test_installed_business_routes.py tests/test_browser_recovery_contract.py tests/test_manual_browser_lifetime.py
+      - name: Upload evaluation evidence even on failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: knowledgeradar-evaluation-${{ github.sha }}
+          path: local/evaluation
+          if-no-files-found: error
 
       - name: Prepare hash-locked offline runtime
+        if: steps.scope.outputs.docs_only != 'true'
         run: |
           python -m pip download --only-binary=:all: --require-hashes -r config/runtime-win-py312.lock -d local/runtime-wheelhouse
           python -c "import hashlib,json,pathlib; r=pathlib.Path('.'); m=json.loads((r/'config/runtime-artifacts.json').read_text(encoding='utf-8')); assert all((p:=r/'local/runtime-wheelhouse'/x['file']).is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256'] for x in m['wheels']), 'frozen runtime wheel mismatch'"
 
-      - name: Verify continuous evaluation contracts
-        run: python -m pytest -q tests/evaluation
-
-      - name: Verify transcript cache and detail contracts
-        run: python -m pytest -q tests/test_bilibili_asr_policy.py tests/test_detail_direct_media.py tests/test_runtime_task_fanin.py
-
       - name: Build immutable release candidate
+        if: steps.scope.outputs.docs_only != 'true'
         run: python scripts/build_product_lite_package.py --candidate
 
       - name: Verify the generated candidate
+        if: steps.scope.outputs.docs_only != 'true'
         run: python scripts/verify_release_candidate.py --candidate-dir (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
 
       - name: Upload verified candidate
+        if: steps.scope.outputs.docs_only != 'true'
         uses: actions/upload-artifact@v4
         with:
           name: knowledgeradar-candidate-${{ github.sha }}

@@ -2,7 +2,14 @@
 
 All notable user-facing changes are recorded here. This project follows an Alpha release channel; a version is delivered only when its immutable candidate artifact has passed its release checks.
 
-## Unreleased
+## 0.1.0a19 (Unreleased)
+
+- 研究记录沿用Codex任务账本，新增来源、耗时、问题、固定证据与成果导出；普通用户与本机维护者分层查看。
+- 证据增加真实PDF页码、字幕切片、结构化资料定位、物理容量准入与SHA绑定的历史部分资料迁移；不将旧摘要标为完整原件。
+- 新增显式Obsidian Inbox导出，保留ZIP独立留存；重复内容复用，用户修改后的文件拒绝覆盖，不自动同步。
+- 控制台收敛为显式模板和原生TypeScript模块，移除11份旧页面片段；Windows开发/正式入口按角色隔离并恢复断连。
+- 接入隔离的原生Transformers Qwen3-ASR主路径与可选文档解析工具；未获批安装的模型保持不可用，实际模型质量待独立验证。
+- 清除已退役爬虫的无效依赖元数据，持续评测沿用已有账本并增量收集故障候选；这些改动尚未发布。
 
 ## 0.1.0a18
 

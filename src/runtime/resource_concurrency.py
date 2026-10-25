@@ -8,6 +8,7 @@ without introducing Celery, Prefect, or another worker runtime.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import os
 import threading
@@ -149,6 +150,7 @@ _SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
 _SEMAPHORE_LIMITS: dict[str, int] = {}
 _RESOURCE_STATS: dict[str, dict[str, float]] = {}
 _LOCK = threading.RLock()
+_HELD_RESOURCES = ContextVar('kr_held_resources', default={})
 
 
 def _stats_for(resource: str) -> dict[str, float]:
@@ -185,6 +187,11 @@ def _semaphore_for(resource: str, policy: ResourceConcurrencyPolicy) -> threadin
 def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = None) -> Iterator[dict[str, object]]:
     selected_policy = policy or ResourceConcurrencyPolicy.from_env()
     normalized = normalize_resource(resource)
+    held = _HELD_RESOURCES.get()
+    if normalized in held:
+        # 同一调用链复用外层租约，避免单 GPU 路径再次申请自己的槽位。
+        yield {**held[normalized], 'reused_outer_lease': True}
+        return
     sem = _semaphore_for(normalized, selected_policy)
     if sem is None:
         yield {"resource_kind": normalized, "limit": None, "limited": False, "wait_s": 0.0}
@@ -211,8 +218,9 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
         stats["active"] += 1
         stats["wait_total_s"] += wait_s
         stats["wait_max_s"] = max(float(stats.get("wait_max_s") or 0.0), wait_s)
+    token = None
     try:
-        yield {
+        resource_meta = {
             "resource_kind": normalized,
             "limit": limit,
             "limited": True,
@@ -221,7 +229,11 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
             "lease_wait_s": lease_wait_s,
             "lease_backed": True,
         }
+        token = _HELD_RESOURCES.set({**held, normalized: resource_meta})
+        yield resource_meta
     finally:
+        if token is not None:
+            _HELD_RESOURCES.reset(token)
         try:
             sem.release()
         finally:

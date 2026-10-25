@@ -47,6 +47,10 @@ def execute_job(input_path):
             phase("worker_imports_end")
             phase("detail_execute_begin")
             result = server._execute_detail_request(DetailRequest(**payload))
+        elif operation == "optional_media":
+            from runtime.optional_media import run_optional
+            phase("isolated_optional_begin")
+            result = run_optional(payload)
         elif operation in {"fixture_echo", "fixture_sleep"} and os.environ.get("KR_TASK_TEST_MODE") == "1":
             phase("fixture_begin")
             time.sleep(float(payload.get("sleep", 0)))

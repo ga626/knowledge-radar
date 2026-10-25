@@ -48,7 +48,10 @@ def _missing_transcription_components() -> list[str]:
     missing: list[str] = []
     if importlib.util.find_spec("yt_dlp") is None:
         missing.append("媒体下载器（yt-dlp）")
-    if importlib.util.find_spec("faster_whisper") is None:
+    from runtime.optional_media import receipt_root
+    selected = os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b')
+    native_available = selected in {'qwen3-asr-1.7b','qwen3-asr-0.6b'} and (receipt_root() / (selected + '.json')).is_file()
+    if not native_available and importlib.util.find_spec("faster_whisper") is None:
         missing.append("本地转写运行时（faster-whisper）")
     if not _ffmpeg_path():
         missing.append("FFmpeg")
@@ -80,7 +83,7 @@ def extract_bvid(url: str) -> Optional[str]:
 
 
 def legacy_search_bilibili(keyword: str, page_size: int = 10) -> Dict:
-    log.info(f"search_bilibili: {keyword}, page_size={page_size}")
+    log.info("search_bilibili: request received; page_size=%s", page_size)
     trace = CollectionTrace("B站", ["http_api", "wbi_signature"])
     try:
         resp = httpx.get(
@@ -236,9 +239,10 @@ def _asr_task_metadata(
     source_url: str = "",
     result_path: str = "",
     timing: Dict[str, float] | None = None,
+    policy: AsrPolicy | None = None,
     **extra: object,
 ) -> Dict:
-    policy = AsrPolicy.from_env()
+    policy = policy or AsrPolicy.from_env()
     metadata: Dict[str, object] = {
         "bvid": bvid,
         "source_url": source_url or f"https://www.bilibili.com/video/{bvid}",
@@ -264,7 +268,7 @@ def _asr_task_metadata(
     return metadata
 
 
-def _write_transcript_cache(path: str, text: str, *, kind="subtitle", audio_path="") -> None:
+def _write_transcript_cache(path: str, text: str, *, kind="subtitle", audio_path="", policy=None, segments=None, locators=None, engine=None, fallback_reason=None) -> None:
     import hashlib
     import json
     from pathlib import Path
@@ -274,16 +278,23 @@ def _write_transcript_cache(path: str, text: str, *, kind="subtitle", audio_path
     temporary.write_text(text, encoding="utf-8")
     temporary.replace(destination)
     from runtime.asset_identity import file_identity, model_identity
-    policy = AsrPolicy.from_env()
+    policy = policy or AsrPolicy.from_env()
     receipt = {"schema": "knowledgeradar-transcript-cache/v3", "policy": policy.compact(),
                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(), "source_id": destination.stem,
                "kind": kind, "claim_accuracy": "unmeasured",
                "audio": file_identity(audio_path) if audio_path else None,
                "model_identity": model_identity(policy) if kind == "asr" else None}
+    from kr_core.evidence_locators import transcript_locators
+    receipt["locators"] = transcript_locators(text, segments)
+    if locators:
+        from kr_core.evidence_locators import validate_locators
+        receipt['locators'] = {'status':'aligned', 'segments':validate_locators(text, locators), 'precision':'input_chunk_only'}
+    receipt['engine'] = engine
+    receipt['fallback_reason'] = fallback_reason
     destination.with_suffix(destination.suffix + ".identity.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
 
 
-def _read_transcript_cache(path: str) -> str:
+def _read_transcript_cache(path: str, *, policy=None) -> str:
     if not os.path.exists(path):
         return ""
     try:
@@ -295,19 +306,38 @@ def _read_transcript_cache(path: str) -> str:
             return ""
         with open(path, "r", encoding="utf-8") as f:
             text = f.read()
-        if receipt.get("policy") != AsrPolicy.from_env().compact() or receipt.get("sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest():
+        policy = policy or AsrPolicy.from_env()
+        if receipt.get("policy") != policy.compact() or receipt.get("sha256") != hashlib.sha256(text.encode("utf-8")).hexdigest():
             return ""
         if receipt.get("kind") == "asr":
             from runtime.asset_identity import file_identity, model_identity
             audio = receipt.get("audio") or {}
-            if not audio.get("name") or file_identity(Path(path).parent / audio["name"]) != audio or model_identity(AsrPolicy.from_env()) != receipt.get("model_identity"):
+            if not audio.get("name") or file_identity(Path(path).parent / audio["name"]) != audio or model_identity(policy) != receipt.get("model_identity"):
                 return ""
         return text
     except Exception:
         return ""
 
 
-def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str) -> Dict:
+
+
+def get_bilibili_transcript_metadata(bvid, language=None):
+    policy = AsrPolicy.for_request(language)
+    for task in get_task_store().tasks_for_source(content_id=bvid, include_terminal=True, limit=100):
+        if task.get('task_type') != 'bilibili_transcribe' or task.get('status') != 'completed':
+            continue
+        path = task.get('result_path') or ''
+        if not path or not _read_transcript_cache(path, policy=policy):
+            continue
+        try:
+            from pathlib import Path
+            receipt = json.loads(Path(path + '.identity.json').read_text(encoding='utf-8'))
+            return {'source_kind': receipt.get('kind', 'unknown'), 'engine':receipt.get('engine'), 'fallback_reason':receipt.get('fallback_reason'), 'policy': receipt['policy'], 'text_sha256': receipt['sha256'], 'locators': receipt.get('locators') or {'status': 'missing', 'reason': 'legacy_cache_has_no_timed_segments'}}
+        except (OSError, ValueError, KeyError):
+            continue
+    return {'source_kind': 'unknown', 'locators': {'status': 'missing', 'reason': 'matching_verified_cache_not_found'}}
+
+def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, language: str | None = None) -> Dict:
     started = time.time()
     info = get_bilibili_info(bvid) or {}
     cid = info.get("cid")
@@ -324,7 +354,10 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str) -> Dic
         subtitles = (((player.get("data") or {}).get("subtitle") or {}).get("subtitles") or [])
         if not subtitles:
             return {"hit": False, "duration_s": round(time.time() - started, 3), "reason": "no_subtitles"}
-        subtitle = subtitles[0] or {}
+        matching = [row for row in subtitles if str(row.get("lan") or "").lower().split("-")[0] == language] if language else subtitles
+        if not matching:
+            return {"hit": False, "duration_s": round(time.time() - started, 3), "reason": "no_subtitle_for_requested_language"}
+        subtitle = matching[0] or {}
         subtitle_url = str(subtitle.get("subtitle_url") or "")
         if subtitle_url.startswith("//"):
             subtitle_url = "https:" + subtitle_url
@@ -361,6 +394,7 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str) -> Dic
         return {
             "hit": True,
             "text": text,
+            "timestamped_segments": [{"text": str(row.get("content") or "").strip(), "start_s": row.get("from"), "end_s": row.get("to")} for row in subtitle_data.get("body") or [] if str(row.get("content") or "").strip()],
             "duration_s": round(time.time() - started, 3),
             "subtitle_url": subtitle_url,
             "line_count": len(lines),
@@ -378,14 +412,21 @@ def transcribe_bilibili(
     output_dir: str = "",
     research_session_id: str = "",
     scope_metadata: Dict | None = None,
+    language: str | None = None,
 ) -> str:
     """B站视频语音转写，返回文本（下载和转录都后台执行，避免 MCP 超时）"""
     try:
         started_total = time.time()
         task_store = get_task_store()
+        policy = AsrPolicy.for_request(language)
+        policy_key = hashlib.sha256(json.dumps(policy.compact(), sort_keys=True).encode()).hexdigest()[:16]
         task_id = f"bilibili_transcribe_{bvid}"
+        if language is not None:
+            task_id += '_' + policy_key
         if not output_dir:
             output_dir = str(media_cache_subdir("transcripts", content_id=bvid, task_id=task_id))
+        elif language is not None:
+            output_dir = os.path.join(output_dir, policy_key)
         os.makedirs(output_dir, exist_ok=True)
         cache_path = os.path.join(output_dir, f"{bvid}_transcript.txt")
         cache_m4a = os.path.join(output_dir, f"{bvid}.m4a")
@@ -402,7 +443,7 @@ def transcribe_bilibili(
                 return p1_audio
             return existing[0]
 
-        cached_text = _read_transcript_cache(cache_path)
+        cached_text = _read_transcript_cache(cache_path, policy=policy)
         if cached_text:
             timing = _empty_asr_timing()
             timing["total_s"] = round(time.time() - started_total, 3)
@@ -427,6 +468,7 @@ def transcribe_bilibili(
                 result_path=cache_path,
                 metadata=_asr_task_metadata(
                     bvid,
+                    policy=policy,
                     research_session_id=research_session_id,
                     scope_metadata=scope_metadata,
                     result_path=cache_path,
@@ -446,10 +488,10 @@ def transcribe_bilibili(
                                      "output": os.path.normcase(os.path.abspath(cache_path))}, sort_keys=True)
             task_id = f"bilibili_transcribe_{bvid}_" + hashlib.sha256(generation.encode()).hexdigest()[:16]
 
-        subtitle = _probe_bilibili_subtitle(bvid, output_dir=output_dir, task_id=task_id)
+        subtitle = _probe_bilibili_subtitle(bvid, output_dir=output_dir, task_id=task_id, language=policy.language)
         if subtitle.get("hit"):
             txt = str(subtitle.get("text") or "")
-            _write_transcript_cache(cache_path, txt)
+            _write_transcript_cache(cache_path, txt, policy=policy, segments=subtitle.get("timestamped_segments"))
             timing = _empty_asr_timing()
             timing["subtitle_probe_s"] = float(subtitle.get("duration_s") or 0)
             timing["total_s"] = round(time.time() - started_total, 3)
@@ -471,6 +513,7 @@ def transcribe_bilibili(
                 result_path=cache_path,
                 metadata=_asr_task_metadata(
                     bvid,
+                    policy=policy,
                     research_session_id=research_session_id,
                     scope_metadata=scope_metadata,
                     result_path=cache_path,
@@ -527,6 +570,7 @@ def transcribe_bilibili(
                         result_path=cache_path,
                         metadata=_asr_task_metadata(
                             bvid,
+                            policy=policy,
                             research_session_id=research_session_id,
                             scope_metadata=scope_metadata,
                             result_path=cache_path,
@@ -554,6 +598,7 @@ def transcribe_bilibili(
             result_path=cache_path,
             metadata=_asr_task_metadata(
                 bvid,
+                policy=policy,
                 research_session_id=research_session_id,
                 scope_metadata=scope_metadata,
                 result_path=cache_path,
@@ -569,7 +614,6 @@ def transcribe_bilibili(
             timing["subtitle_probe_s"] = float(subtitle.get("duration_s") or 0)
             task_started = time.time()
             try:
-                policy = AsrPolicy.from_env()
                 task_store.mark_running(task_id, metadata={**policy.compact(), **timing, "phase": "running"})
                 task_store.heartbeat(task_id, metadata={"phase": "download"})
                 with open(in_progress_path, "w", encoding="utf-8") as f:
@@ -624,7 +668,7 @@ def transcribe_bilibili(
                 timing["transcribe_s"] = round(float(result.get("transcribe_s") or result.get("duration_s") or 0), 3)
                 timing["total_s"] = round(time.time() - task_started, 3)
                 if txt:
-                    _write_transcript_cache(cache_path, txt, kind="asr", audio_path=existing_audio)
+                    _write_transcript_cache(cache_path, txt, kind="asr", audio_path=existing_audio, policy=policy, segments=result.get("timestamped_segments"), locators=result.get('content_locators'), engine=result.get('engine'), fallback_reason=result.get('fallback_reason'))
                 srt = result.get("srt", "")
                 if srt:
                     with open(os.path.join(output_dir, f"{bvid}_transcript.srt"), "w", encoding="utf-8") as f:
@@ -675,6 +719,7 @@ def transcribe_bilibili(
                 timeout_s=float(os.environ.get("KR_ASR_TASK_TIMEOUT_SECONDS", "900")),
                 metadata=_asr_task_metadata(
                     bvid,
+                    policy=policy,
                     research_session_id=research_session_id,
                     scope_metadata=scope_metadata,
                     result_path=cache_path,
@@ -689,7 +734,7 @@ def transcribe_bilibili(
 
         if os.environ.get("KR_DURABLE_WORKER") == "1":
             finished = task_store.get_task(task_id) or {}
-            cached = _read_transcript_cache(cache_path)
+            cached = _read_transcript_cache(cache_path, policy=policy)
             if cached and finished.get("status") == "completed":
                 return cached
             return "[transcribe] failed: " + str(finished.get("error_code") or finished.get("status") or "no_result")

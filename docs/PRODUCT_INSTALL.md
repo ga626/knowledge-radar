@@ -37,7 +37,7 @@ python scripts\product_install.py data-move-rollback
 
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。
 
-首次填写配置、查看能力包状态或清理过期媒体缓存，请运行安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 保留为兼容别名），并阅读[本地控制台](LOCAL_CONSOLE.md)、[首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。控制台固定为 `http://127.0.0.1:18882/`：安装默认在当前用户登录时启动它；可用 `--no-console-autostart` 禁用。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
+首次填写配置、查看能力包状态或清理过期媒体缓存，可直接打开 `http://localhost:18882/`。Windows 同一安装用户无需浏览器票据或 Cookie；安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 为兼容别名）保留为手动恢复入口。阅读[本地控制台](LOCAL_CONSOLE.md)、[首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。安装默认注册当前用户登录启动及同任务补启动，可用 `--no-console-autostart` 禁用。开发端口 `18883` 仅维护者显式启用，不随普通安装创建。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
 
 ## 可选浏览器与 bridge 依赖
 
@@ -69,3 +69,7 @@ python scripts/product_install.py verify-install --package-root <extracted-packa
 ```
 
 浏览器/模型/下载器为可选资产；核心依赖安装成功不等于账号、浏览器、模型已就绪。其实际身份须在能力与候选回执中读取。
+
+维护者可在自己的安装执行 `python scripts/product_install.py developer-view --install-root <install-root> --developer-view enable`，为该安装的数据根写入本地维护者标记；disable关闭。下一次加载页面生效，不改MCP、账号或active身份。普通用户默认没有开发者界面，服务端同时限制评测明细和原始研究账本下发。
+
+研究成果在同一任务中选择固定证据和报告后可下载ZIP；Obsidian是可选目标，只显式写入用户指定Vault的KnowledgeRadar Inbox。同一内容重复导出复用同一目录，已被用户修改的内容不会覆盖。没有Obsidian/MensLink时仍能保存、回读和下载成果。

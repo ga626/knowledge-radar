@@ -29,6 +29,22 @@ def _load():
 installer = _load()
 
 
+def test_maintainer_marker_is_per_install_and_keeps_active_identity(tmp_path,monkeypatch):
+    root=tmp_path/'install';data=tmp_path/'data'
+    active={'data_root':str(data),'version':'fixture-version','program_root':str(tmp_path/'program')}
+    monkeypatch.setattr(installer,'load_active',lambda path:active.copy())
+    from onboarding.console_page import _developer_view_enabled
+    monkeypatch.setenv('KR_DATA_ROOT',str(data))
+    monkeypatch.setenv('KR_CONSOLE_ROLE','stable')
+    monkeypatch.delenv('KR_DEVELOPER_VIEW',raising=False)
+    assert not _developer_view_enabled()
+    installer.set_developer_view(root,True)
+    assert _developer_view_enabled()
+    installer.set_developer_view(root,False)
+    assert not _developer_view_enabled()
+    assert active['version']=='fixture-version'
+
+
 def test_upgrade_restores_only_previously_selected_components(tmp_path, monkeypatch):
     data_root = tmp_path / "data"
     installer.write_json_atomic(installer.capability_state_path(data_root), {
@@ -275,13 +291,14 @@ def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: p
     try:
         spec.loader.exec_module(module)
         captured: dict[str, object] = {}
-        wizard = types.ModuleType("onboarding.setup_wizard")
-        wizard.run_wizard = lambda **kwargs: captured.update(kwargs)
-        monkeypatch.setitem(sys.modules, "onboarding.setup_wizard", wizard)
+        def delegated(command, **kwargs):
+            captured.update(command=command, **kwargs)
+            return types.SimpleNamespace(returncode=0)
+        monkeypatch.setattr(module.subprocess, 'run', delegated)
         assert module.main(["--install-root", str(install_root), "--no-open"]) == 0
-        assert captured == {"port": 18882, "open_browser": False}
-        assert Path(os.environ["KR_RUNTIME_ENV_PATH"]) == data_root / "config" / "runtime.env"
-        assert Path(os.environ["KR_DATA_ROOT"]) == data_root
+        assert captured['command'] == [sys.executable, str(install_root / 'console_product.py'), '--role', 'stable', '--port', '18882', '--install-root', str(install_root), '--no-open']
+        with pytest.raises(SystemExit):
+            module.main(['--port', '0'])
     finally:
         sys.path[:] = previous_path
 

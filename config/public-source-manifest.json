@@ -106,7 +106,10 @@
     "docs/process-doc-index.json",
     "docs/过程文档索引.md",
     "runtime/README.md",
-    "archive/INDEX.md"
+    "archive/INDEX.md",
+    "scripts/kr_workspace.py",
+    "scripts/kr_optional_media.py",
+    "scripts/build_console.mjs"
   ],
   "exclude": [
     ".codex/**",

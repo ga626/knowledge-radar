@@ -1066,11 +1066,19 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
 
 
+def set_developer_view(install_root: Path, enabled: bool) -> dict[str, Any]:
+    """同一稳定安装的本机维护者标记；不修改账号、MCP或安装身份。"""
+    active = load_active(install_root.resolve())
+    marker = Path(active['data_root']) / 'config' / 'developer-console.json'
+    write_json_atomic(marker, {'schema':'knowledgeradar-developer-console/v1', 'enabled':enabled, 'audience':'maintainer'})
+    return {'status':'APPLIED', 'developer_view':enabled, 'effective':'next_console_page_load', 'mcp_changed':False}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
     parser.add_argument(
         "command",
-        choices=("plan", "verify-install", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply"),
+        choices=("plan", "verify-install", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply", "developer-view"),
     )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
@@ -1083,13 +1091,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
     parser.add_argument("--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install")
     parser.add_argument("--no-console-autostart", action="store_true", help="do not create the per-user local-console startup entry")
+    parser.add_argument('--developer-view', choices=('enable','disable'), help='local maintainer view; no account or MCP changes')
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
         install_root = Path(args.install_root).resolve()
         data_root = Path(args.data_root).resolve() if args.data_root else install_root / "data"
         python_exe = Path(args.python).resolve()
-        if args.command == "capability-plan":
+        if args.command == 'developer-view':
+            if not args.developer_view: raise ValueError('developer-view requires --developer-view enable|disable')
+            result = set_developer_view(install_root, args.developer_view == 'enable')
+        elif args.command == "capability-plan":
             if not args.capability:
                 raise RuntimeError("capability-plan requires --capability")
             result = capability_plan(install_root, args.capability)

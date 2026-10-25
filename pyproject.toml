@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "knowledgeradar"
-version = "0.1.0a18"
+version = "0.1.0a19"
 description = "KnowledgeRadar MCP perception and search server."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -47,7 +47,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-legacy-crawler = ["aiomysql>=0.2", "redis>=5", "numpy>=1.26", "pandas>=2.2"]
 media = ["yt-dlp>=2025.1", "faster-whisper>=1.1,<2", "av>=11,<19"]
 dev = ["pytest>=8", "ruff>=0.9"]
 
@@ -62,9 +61,7 @@ knowledgeradar = "server:main"
 [tool.setuptools]
 package-dir = { "" = "src" }
 py-modules = [
-  "async_db",
   "capabilities",
-  "db",
   "expand_keywords",
   "filter_comments",
   "research_planner",

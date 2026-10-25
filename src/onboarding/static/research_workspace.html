@@ -1,0 +1,33 @@
+<section class="view" data-view-panel="research" hidden>
+  <div class="heading research-heading"><div><h2>研究记录</h2><p>在 Codex 中提出调研目标，这里自动记录过程和成果。</p></div><button class="button" type="button" id="research-refresh">刷新记录</button></div>
+  <div id="research-message" role="status" aria-live="polite"></div>
+  <div class="research-layout">
+    <aside class="research-index panel" aria-label="历史研究"><div class="research-index-head"><h3>历史研究</h3><span id="research-task-count"></span></div><div class="research-history-switch" role="group" aria-label="历史研究排序"><button class="button is-active" type="button" id="research-history-time" aria-pressed="true">按时间</button><button class="button" type="button" id="research-history-project" aria-pressed="false">按项目</button></div><label class="research-filter" for="research-filter"><span class="sr-only">筛选历史研究</span><input id="research-filter" type="search" placeholder="搜索研究主题" maxlength="200"></label><div id="research-tasks" class="research-task-list"></div></aside>
+    <div class="research-main"><section id="research-detail" hidden aria-label="所选研究">
+      <header class="research-detail-head"><div class="research-detail-copy"><h3 id="research-title"></h3><p id="research-state-detail"></p></div><span id="research-state" class="research-status-badge"></span></header>
+      <details class="research-objective"><summary>原始调研目标与名称来源</summary><p id="research-title-subtitle"></p><p id="research-title-origin"></p></details>
+      <div id="research-facts" class="research-facts" aria-label="研究摘要"></div>
+      <div class="research-view-switch" role="group" aria-label="研究记录查看方式"><button class="button is-active" type="button" id="research-view-task" aria-pressed="true">研究概况</button><button class="button" type="button" id="research-view-file" aria-pressed="false">本次成果</button></div>
+      <div id="research-task-view">
+        <section class="research-section research-result-section"><div class="research-section-head"><h3 class="research-section-title">研究结果</h3><span class="research-section-note">以完成检查和已留存成果为准</span></div><div id="research-closeout" class="research-closeout"></div></section>
+        <section class="research-section"><div class="research-section-head"><h3 class="research-section-title">调研路径</h3><span class="research-section-note">只显示真实记录过的阶段和来源</span></div><div id="research-progress" class="research-progress-grid"></div><div id="research-rounds" class="research-rounds"></div></section>
+        <details class="research-section research-process-details" data-developer-only hidden><summary>查看完整调研经过</summary><div id="research-events" class="research-events"></div></details>
+        <details class="research-section research-technical-details" data-developer-only hidden><summary>查看工具使用与技术明细</summary><p class="research-help">次数仅统计已写入记录的调用；费用未记录时无法核算。</p><div id="research-metrics" class="research-metrics"></div><details class="research-raw"><summary>原始工具记录</summary><pre id="research-receipts"></pre></details><details class="research-raw"><summary>原始完成检查</summary><pre id="research-closeout-raw"></pre></details></details>
+      </div>
+      <div id="research-file-view" hidden><section class="research-section"><div class="research-section-head"><h3 class="research-section-title">本次研究留下的文件</h3><span id="research-files-count"></span></div><p class="research-help">仅显示左侧所选研究的成果。勾选需要留存的原文，可与报告一起下载或交给 Obsidian。</p><div id="research-files" class="research-files"></div>
+      <details class="research-export"><summary>导出研究成果</summary><label class="research-check"><input id="research-export-report" type="checkbox" checked>包含已登记的调研报告</label><label class="research-check"><input id="research-export-ack" type="checkbox">确认所选内容允许导出</label><div class="research-actions"><button class="button" id="research-export-download" type="button">下载报告与所选原文</button></div><label class="research-filter" for="research-vault">Obsidian 仓库文件夹<input id="research-vault" type="text" placeholder="填写本机已有仓库的完整路径" autocomplete="off"></label><p class="research-help">仅在点击后写入仓库的 KnowledgeRadar Inbox 新目录，不覆盖笔记，不会自动同步。未安装 Obsidian 也可下载文件包。</p><button class="button" id="research-export-obsidian" type="button">保存到 Obsidian 收件箱</button><p id="research-export-message" role="status" aria-live="polite"></p><a id="research-open-obsidian" hidden>在 Obsidian 中打开报告</a></details>
+      </section></div>
+    </section></div>
+  </div>
+  <details id="research-components-details" data-developer-only hidden><summary>高级：本地媒体组件</summary><div id="research-components"></div></details>
+</section>
+<section class="view" data-view-panel="library" hidden>
+  <div class="heading research-heading"><div><h2>已保存原文</h2><p>核对本次调研采集时留下的正文或字幕。保存内容的范围取决于采集结果。</p></div><button class="button" type="button" id="evidence-back">返回研究记录</button></div>
+  <p class="research-help">当前仅供回看与下载，没有独立知识库；不会自动写入 Obsidian。</p>
+  <form id="evidence-search-form" class="research-search"><label for="evidence-query"><span>查找已保存的原文</span><input id="evidence-query" maxlength="500" placeholder="输入正文关键词；留空查看最近保存内容"></label><button class="button" type="submit">查找原文</button></form>
+  <div class="evidence-toolbar"><div id="evidence-message" role="status" aria-live="polite"></div><span id="evidence-summary"></span></div>
+  <div class="evidence-layout">
+    <section class="evidence-list-panel panel" aria-label="已保存内容"><div class="panel-head"><h3>已保存内容</h3></div><div id="evidence-list" class="evidence-list"></div><details class="evidence-export"><summary>下载所选原文</summary><label class="research-check"><input id="evidence-export-ack" type="checkbox">确认所选来源允许导出</label><button class="button" type="button" id="evidence-export">下载原文包</button><p class="research-help">生成文件包，不会自动同步到笔记软件。</p></details></section>
+    <section class="evidence-reader panel" aria-label="原文阅读"><div class="evidence-reader-head"><h3 id="evidence-title">选择一份原文</h3><span id="evidence-coverage" class="research-status-badge"></span></div><p id="evidence-locators" class="research-help"></p><details class="research-raw"><summary>来源与版本信息</summary><p id="evidence-identity" class="evidence-identity"></p></details><pre id="evidence-text">选择已保存内容后在这里阅读。</pre><div class="research-actions"><button class="button" id="evidence-prev" type="button" disabled>上一段</button><button class="button" id="evidence-next" type="button" disabled>下一段</button></div></section>
+  </div>
+</section>

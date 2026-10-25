@@ -37,7 +37,9 @@
     "config/runtime-win-py312.lock",
     "config/runtime-artifacts.json",
     "THIRD_PARTY_NOTICES.md",
-    "config/license-source-inventory.json"
+    "config/license-source-inventory.json",
+    "scripts/kr_workspace.py",
+    "scripts/kr_optional_media.py"
   ],
   "exclude": [
     ".git/**",

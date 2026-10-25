@@ -15,6 +15,8 @@ def execute_detail_request(request: DetailRequest, *, failure_cache, handle, bin
     cached_failure = failure_cache.get(failure_cache_key)
     if cached_failure is not None:
         cached_failure = bind_tasks(cached_failure, session_id, scope_data)
+        from kr_core.evidence_coverage import content_coverage
+        cached_failure["content_coverage"] = content_coverage(cached_failure, request.options)
         record_evidence(str(cached_failure.get("platform") or request.platform), request.url, cached_failure)
         return cached_failure
     if request.platform == "小红书":
@@ -28,6 +30,8 @@ def execute_detail_request(request: DetailRequest, *, failure_cache, handle, bin
         from runtime.chrome_manager import _managed_chrome_profile_dir
         result = observe_business(platform, result, profile_dir=_managed_chrome_profile_dir(platform), source=platform + "_detail_business")
     result = bind_tasks(result, session_id, scope_data)
+    from kr_core.evidence_coverage import content_coverage
+    result["content_coverage"] = content_coverage(result, request.options)
     if isinstance(result, dict) and result.get("error"):
         failure_type = str(result.get("failure_type") or result.get("error_type") or "")
         cacheable_failures = {"empty_detail", "dead_link", "unsupported_url", "anti_bot_verification", "login_required"}

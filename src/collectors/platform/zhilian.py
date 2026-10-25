@@ -439,7 +439,7 @@ def zhilian_search_via_cdp(keyword: str, city: str = "", limit: int = 10) -> Lis
 
 def legacy_search_zhilian(keyword: str, city: str = "", limit: int = 10) -> Dict:
     """智联招聘搜索入口函数。"""
-    log.info(f"search_zhilian: {keyword}, city={city}, limit={limit}")
+    log.info("search_zhilian: request received; limit=%s", limit)
     limit = min(limit, 20)
     trace = CollectionTrace("智联招聘", ["chrome_cdp_page"])
 

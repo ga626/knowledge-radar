@@ -47,4 +47,6 @@ class GenericWebResponse:
         }
         if self.error:
             data["error"] = dict(self.error)
+        if isinstance(self.metadata.get('document_blocks'), list):
+            data['document_blocks'] = self.metadata['document_blocks']
         return data

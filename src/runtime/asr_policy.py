@@ -6,21 +6,17 @@ and normalizes faster-whisper options, but does not load models or touch media.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import os
+import re
 from pathlib import Path
 
 from runtime.paths import whisper_model_cache_dir
 
 
 DEFAULT_ASR_MODELS = ("local:faster-whisper/base", "local:faster-whisper/tiny")
-P2_ASR_ENGINE_CANDIDATES = (
-    "local:faster-whisper/base",
-    "local:faster-whisper/tiny",
-    "local:funasr/sensevoice-small",
-    "local:sherpa-onnx/sensevoice-int8",
-)
+P2_ASR_ENGINE_CANDIDATES = ('local:qwen3-asr/1.7b-hf', 'local:qwen3-asr/0.6b-hf', 'local:faster-whisper/base')
 
 
 def _split_models(value: str | None) -> tuple[str, ...]:
@@ -131,8 +127,21 @@ class AsrPolicy:
     def primary_model(self) -> str:
         return faster_whisper_model_name(self.models[0] if self.models else DEFAULT_ASR_MODELS[0])
 
+    @classmethod
+    def for_request(cls, language: str | None = None) -> "AsrPolicy":
+        policy = cls.from_env()
+        if language is None:
+            return policy
+        normalized = str(language).strip().lower()
+        if normalized == 'auto':
+            normalized = ''
+        if normalized and not re.fullmatch('[a-z]{2,3}', normalized):
+            raise ValueError('invalid_asr_language')
+        return replace(policy, language=normalized)
+
     def compact(self) -> dict[str, object]:
         return {
+            'selected_component': os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b'),
             "models": list(self.models),
             "model": self.primary_model,
             "engine_candidates": list(P2_ASR_ENGINE_CANDIDATES),

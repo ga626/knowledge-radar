@@ -1,0 +1,53 @@
+<section class="view developer-view" data-view-panel="developer" hidden>
+  <div class="heading">
+    <div>
+      <p class="eyebrow"><i></i>MAINTAINER VIEW</p>
+      <h2>开发者中心</h2>
+      <p>这里集中显示运行身份、研究账本、评测边界、证据留存和恢复信号。普通用户不会看到这层信息。</p>
+    </div>
+    <button class="button" type="button" id="developer-refresh">刷新开发者信息</button>
+  </div>
+  <p id="developer-message" class="notice" role="status" aria-live="polite"></p>
+  <section class="developer-summary-grid" aria-label="开发者摘要">
+    <article class="panel developer-card">
+      <span class="developer-label">运行身份</span>
+      <strong id="developer-role">读取中</strong>
+      <small id="developer-role-note">验证当前控制台角色与候选身份</small>
+    </article>
+    <article class="panel developer-card">
+      <span class="developer-label">研究账本</span>
+      <strong id="developer-research">读取中</strong>
+      <small id="developer-research-note">读取任务、工具和后台状态</small>
+    </article>
+    <article class="panel developer-card">
+      <span class="developer-label">持续评测</span>
+      <strong id="developer-evaluation">读取中</strong>
+      <small id="developer-evaluation-note">开发证据与正式验收分开显示</small>
+    </article>
+    <article class="panel developer-card">
+      <span class="developer-label">证据留存</span>
+      <strong id="developer-evidence">读取中</strong>
+      <small id="developer-evidence-note">以研究记录中的固定版本为准</small>
+    </article>
+  </section>
+  <div class="developer-grid">
+    <section class="panel developer-panel">
+      <div class="panel-head"><h3>当前运行与版本边界</h3><span id="developer-runtime-state">读取中</span></div>
+      <dl class="developer-definition-list" id="developer-runtime-list"></dl>
+    </section>
+    <section class="panel developer-panel">
+      <div class="panel-head"><h3>研究与评测信号</h3><span id="developer-quality-state">读取中</span></div>
+      <dl class="developer-definition-list" id="developer-quality-list"></dl>
+    </section>
+  </div>
+  <section class="panel developer-panel">
+    <div class="panel-head"><h3>开发者可见的信息范围</h3><span>同一数据链的详细投影</span></div>
+    <div class="developer-scope-grid">
+      <article><b>研究过程</b><p>查询族、来源生态、波次、候选、详情、反例、缺口和停止理由。</p></article>
+      <article><b>证据链</b><p>固定版本、SHA、locator、覆盖状态、缺失原因、报告主张和工具回执。</p></article>
+      <article><b>质量与评测</b><p>U0 case/run、L0-L4 判定、质量回执、人工介入和未验证边界。</p></article>
+      <article><b>运行与恢复</b><p>开发/正式角色、版本指纹、连接状态、后台任务、组件和数据隔离。</p></article>
+    </div>
+  </section>
+  <p class="developer-boundary">这里的详细信息来自现有本地记录和只读接口；不会显示 Cookie、密钥、完整查询隐私或隐藏思维，也不会创建新的研究任务。</p>
+</section>

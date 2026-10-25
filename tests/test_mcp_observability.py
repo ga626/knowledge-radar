@@ -91,7 +91,11 @@ def test_imported_product_sdk_lifespan_registers_real_list_session(tmp_path, mon
         async with create_connected_server_and_client_session(server.mcp) as client:
             tools = await client.list_tools()
             current = observability.snapshot(transport=server.MCP_TRANSPORT, tool_names=server.ACTUAL_MCP_TOOLS)
-            assert len(tools.tools) == 22
+            assert len(tools.tools) == 23
+            local_tool=next(tool for tool in tools.tools if tool.name=='process_local_evidence')
+            assert {'input_path','approved_input_root','input_sha256','task_id'}.issubset(local_tool.inputSchema['properties'])
+            assert not local_tool.inputSchema.get('required')
+            assert local_tool.inputSchema['properties']['input_sha256']['pattern']=='^$|^[a-f0-9]{64}$'
             assert current["response_process"]["registration_matches_response"]
             assert current["mcp_session"]["status"] == "observed"
             assert current["server_process"]["source_fingerprint"]

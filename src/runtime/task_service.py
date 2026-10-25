@@ -39,7 +39,7 @@ class TaskService:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def submit(self, operation, payload, *, timeout_s=600, scope=None, retry_of=""):
-        if operation not in {"content_detail", "fixture_echo", "fixture_sleep"}:
+        if operation not in {"content_detail", "optional_media", "fixture_echo", "fixture_sleep"}:
             raise ValueError("unsupported durable operation")
         if operation.startswith("fixture_") and os.environ.get("KR_TASK_TEST_MODE") != "1":
             raise ValueError("fixture worker is disabled outside isolated tests")
@@ -57,7 +57,11 @@ class TaskService:
         if operation == "content_detail" and payload.get("options", {}).get("include_transcript"):
             from runtime.asset_identity import model_identity
             from runtime.asr_policy import AsrPolicy
-            identity["asr_asset"] = model_identity(AsrPolicy.from_env())
+            identity["asr_asset"] = model_identity(AsrPolicy.for_request(payload.get("options", {}).get("language")))
+        if operation == "optional_media":
+            from runtime.optional_media import validate_receipt, file_sha, receipt_root
+            validate_receipt(payload.get("component"))
+            identity["optional_install"] = file_sha(receipt_root() / (payload["component"] + ".json"))
         # 宿主代际属于运行证据，不属于业务输入；同一完成请求可跨server重启复用。
         canonical_payload = json.loads(json.dumps(payload))
         canonical_payload.get("options", {}).get("task_scope", {}).pop("server_run_id", None)

@@ -50,6 +50,7 @@ BASE_MCP_TOOLS = [
     "search_academic",
     "extract_web_page",
     "extract_dynamic_page",
+    "process_local_evidence",
     "search_bilibili",
     "search_xiaohongshu",
     "search_zhihu",

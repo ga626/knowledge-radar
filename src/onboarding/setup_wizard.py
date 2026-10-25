@@ -16,6 +16,8 @@ from typing import Any
 from onboarding.configuration import apply_updates, public_snapshot
 from runtime.account_alerts import account_alert_snapshot, recover_account
 from onboarding.console_page import render_console_page
+from onboarding.console_access import ConsoleAccess
+from runtime.evaluation_view import evaluation_summary
 from onboarding.product_status import (
     capability_packs,
     console_configuration_snapshot,
@@ -35,8 +37,10 @@ from onboarding.product_status import (
 class WizardServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
-    def __init__(self, server_address: tuple[str, int]):
-        self.setup_token = secrets.token_urlsafe(32)
+    def __init__(self, server_address: tuple[str, int], *, access: ConsoleAccess | None = None):
+        self.access = access
+        self.setup_token = access.csrf_token if access else secrets.token_urlsafe(32)
+        self.gate_nonce = secrets.token_urlsafe(32)
         self.setup_token_created_at = time.monotonic()
         super().__init__(server_address, _handler_factory(self))
 
@@ -57,20 +61,23 @@ def _handler_factory(server: WizardServer):
         def log_message(self, format: str, *args: Any) -> None:
             return
 
-        def _send_json(self, status: HTTPStatus, payload: dict[str, Any]) -> None:
+        def _send_json(self, status: HTTPStatus, payload: dict[str, Any], *, cookie: str = '') -> None:
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
             self._security_headers()
+            if cookie:
+                self.send_header('Set-Cookie', cookie)
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
 
         def _security_headers(self) -> None:
+            nonce = server.setup_token if (self.path != '/api/health' and self._local_request_allowed() and self._session_authenticated()) else server.gate_nonce
             self.send_header("Cache-Control", "no-store")
             self.send_header(
                 "Content-Security-Policy",
-                f"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-{server.setup_token}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+                f"default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'nonce-{nonce}'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
             )
             self.send_header("Referrer-Policy", "no-referrer")
             self.send_header("X-Content-Type-Options", "nosniff")
@@ -80,11 +87,37 @@ def _handler_factory(server: WizardServer):
             if not self._local_request_allowed():
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "local_origin_required"})
                 return
+            if server.access and self.path != '/api/health' and self._peer_identity() is False:
+                self._send_json(HTTPStatus.FORBIDDEN, {'ok': False, 'error': '无法确认当前 Windows 账号的本机连接。请在安装此版本的账号中刷新页面。'})
+                return
+            if server.access and self.path != '/api/health' and not self._session_authenticated():
+                if self.path == '/':
+                    body = server.access.gate_page(server.gate_nonce).encode('utf-8')
+                    self.send_response(HTTPStatus.OK)
+                    # 门页不能通过 CSP 泄露有效 CSRF 令牌。
+                    self.send_header('Content-Security-Policy', f"default-src 'none'; script-src 'nonce-{server.gate_nonce}'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'")
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Referrer-Policy', 'no-referrer')
+                    self.send_header('X-Content-Type-Options', 'nosniff')
+                    self.send_header('Content-Type', 'text/html; charset=utf-8')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                else:
+                    self._send_json(HTTPStatus.FORBIDDEN, {'ok': False, 'error': '请从本机 KnowledgeRadar 启动入口打开。'})
+                return
             if self.path.startswith("/api/") and self.path != "/api/health" and not self._valid_page_token():
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
                 return
             if self.path == "/api/account-alerts":
                 self._send_json(HTTPStatus.OK, {**account_alert_snapshot(), "read_only": os.environ.get("KR_CONSOLE_READ_ONLY") == "1"})
+                return
+            if self.path == "/api/evaluation":
+                from onboarding.console_page import _developer_view_enabled
+                if not _developer_view_enabled():
+                    self._send_json(HTTPStatus.FORBIDDEN, {'error':'maintainer_view_required'})
+                    return
+                self._send_json(HTTPStatus.OK, evaluation_summary())
                 return
             if self.path == "/favicon.ico":
                 # Keep the browser console quiet without adding a static-file
@@ -126,6 +159,7 @@ def _handler_factory(server: WizardServer):
                         "role": os.environ.get("KR_CONSOLE_ROLE", "unmanaged"),
                         "fingerprint": os.environ.get("KR_CONSOLE_FINGERPRINT", ""),
                         "generation": int(os.environ.get("KR_CONSOLE_GENERATION", "0") or 0),
+                        **({'challenge': server.access.challenge} if server.access else {}),
                     },
                 )
                 return
@@ -144,7 +178,7 @@ def _handler_factory(server: WizardServer):
             if self.path != "/":
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            if time.monotonic() - server.setup_token_created_at >= 1800:
+            if not server.access and time.monotonic() - server.setup_token_created_at >= 1800:
                 server.setup_token = secrets.token_urlsafe(32)
                 server.setup_token_created_at = time.monotonic()
             body = _page(server.setup_token, {}).encode("utf-8")
@@ -160,10 +194,32 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "local_origin_required"})
                 return
             expected_origin = "http://" + self.headers.get("Host", "").lower()
-            if self.headers.get("Origin") != expected_origin or not self._valid_page_token():
+            if server.access and self._peer_identity() is False:
+                self._send_json(HTTPStatus.FORBIDDEN, {'ok': False, 'error': 'local_user_required'})
+                return
+            if server.access and self.path == '/api/session':
+                if self.headers.get('Origin') != expected_origin:
+                    self._send_json(HTTPStatus.FORBIDDEN, {'ok': False, 'error': 'local_origin_required'})
+                    return
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if not 0 < length <= 4096:
+                        raise ValueError()
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict) or not isinstance(payload.get('ticket'), str) or not server.access.redeem(payload['ticket']):
+                        raise ValueError()
+                except (ValueError, UnicodeError):
+                    self._send_json(HTTPStatus.FORBIDDEN, {'ok': False, 'error': '启动凭证无效或已过期。'})
+                    return
+                self._send_json(HTTPStatus.OK, {'ok': True}, cookie=server.access.session_cookie())
+                return
+            control = bool(server.access and self.path == '/api/console/stop' and server.access.valid_control(self.headers.get('X-KR-Control', '')))
+            session = self._session_authenticated()
+            if self.headers.get("Origin") != expected_origin or not (control or (session and self._valid_page_token())):
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
                 return
             allowed = {
+                "/api/research",
                 "/api/account-recovery",
                 "/api/config",
                 "/api/media-cleanup",
@@ -175,7 +231,7 @@ def _handler_factory(server: WizardServer):
             if self.path not in allowed:
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "不存在的操作。"})
                 return
-            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path != "/api/console/stop":
+            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"}:
                 self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "开发预览只读复用稳定数据；请在 stable 控制台执行配置或维护操作。"})
                 return
             try:
@@ -183,7 +239,14 @@ def _handler_factory(server: WizardServer):
                 if length < 1 or length > 65536:
                     raise ValueError("请求大小无效。")
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
-                if self.path == "/api/console/stop":
+                if not isinstance(payload, dict):
+                    raise ValueError("请求必须是JSON对象。")
+                if self.path == "/api/research":
+                    from runtime.research_workspace import workspace_for_console
+                    from onboarding.research_api import workspace_api
+                    from onboarding.console_page import _developer_view_enabled
+                    response = workspace_api(workspace_for_console(), payload, developer=_developer_view_enabled())
+                elif self.path == "/api/console/stop":
                     # Only the local page session can stop the host.  The
                     # version-neutral launcher uses this during an explicit
                     # product update/restart, then starts the active version.
@@ -206,9 +269,20 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)})
 
         def _valid_page_token(self) -> bool:
-            return time.monotonic() - server.setup_token_created_at < 1800 and secrets.compare_digest(
+            return (bool(server.access) or time.monotonic() - server.setup_token_created_at < 1800) and secrets.compare_digest(
                 self.headers.get("X-KR-Setup-Token", ""), server.setup_token
             )
+
+        def _peer_identity(self) -> bool | None:
+            if not hasattr(self, '_verified_peer'):
+                self._verified_peer = server.access.connection_identity(self.connection) if server.access else None
+            return self._verified_peer
+
+        def _session_authenticated(self) -> bool:
+            if not server.access:
+                return True
+            peer = self._peer_identity()
+            return peer is True or (peer is None and server.access.valid_cookie(self.headers.get('Cookie', '')))
 
         def _local_request_allowed(self) -> bool:
             allowed = {f"127.0.0.1:{server.server_port}", f"localhost:{server.server_port}"}
@@ -223,10 +297,12 @@ def _handler_factory(server: WizardServer):
 
 
 def run_wizard(*, port: int = 0, open_browser: bool = True) -> str:
-    server = WizardServer(("127.0.0.1", port))
-    url = f"http://127.0.0.1:{server.server_port}/"
+    access_root = Path(os.environ.get('KR_CONSOLE_ACCESS_ROOT') or Path(os.environ.get('LOCALAPPDATA', Path.home() / 'AppData/Local')) / 'KnowledgeRadar' / 'console-access')
+    access = ConsoleAccess(access_root, os.environ.get('KR_CONSOLE_ROLE', 'stable'))
+    server = WizardServer(("127.0.0.1", port), access=access)
+    url = f"http://localhost:{server.server_port}/"
     if open_browser:
-        webbrowser.open(url)
+        webbrowser.open(url if os.name == 'nt' else url + '#launch=' + access.issue_ticket(access.challenge))
     print(f"KnowledgeRadar 本地配置向导：{url}")
     print("只监听 127.0.0.1；按 Ctrl+C 关闭。")
     try:

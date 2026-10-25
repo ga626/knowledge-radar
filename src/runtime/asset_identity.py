@@ -22,6 +22,14 @@ def file_identity(path):
 
 
 def model_identity(policy):
+    import os
+    from runtime.optional_media import receipt_root, file_sha
+    component = os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b')
+    receipt = receipt_root() / (component + '.json')
+    if component != 'faster-whisper' and receipt.is_file():
+        from runtime.optional_media import validate_receipt
+        identity = validate_receipt(component)
+        return {'model':component, 'engine':'transformers_native', 'status':'recorded', 'install_receipt_sha256':file_sha(receipt), 'weight_revision':identity['weight_revision'], 'model_files':identity['model_files']}
     root = Path(policy.model_cache_dir)
     direct = Path(policy.primary_model)
     if direct.is_dir():

@@ -36,7 +36,7 @@ def freeze(root: Path, wheelhouse: Path):
                                    "model": "separately provisioned; model identity is required by transcription cache"}}
     (root / "config/runtime-artifacts.json").write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     notices = ["# 第三方组件与许可\n", "离线 wheel 保留上游原始许可文件。本清单是来源记录，不扩大任何组件的授权范围。",
-               "带用途限制且来源提交尚未确认的历史爬虫文件保留在源码中，但已逐路径排除于产品包；见 config/license-source-inventory.json。\n",
+               "带用途限制且来源提交尚未确认的 69 个历史爬虫文件已从当前源码退役；逐路径排除清单保留为防止重新引入的门禁，见 config/license-source-inventory.json。退役不代表历史来源已经获得重新许可。\n",
                "| 组件 | 版本 | 上游许可元数据 | wheel 内许可文件 |", "|---|---|---|---|"]
     for row in rows:
         license_text = (row["license_expression"] or row["license_metadata"] or "未声明，需人工核对").splitlines()[0].replace("|", "/")[:140]

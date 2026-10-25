@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-10-21",
+  "updated_at": "2026-10-25",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -47,7 +47,7 @@
     {
       "path": "src/onboarding/",
       "area": "dev_runtime",
-      "role": "Loopback-only local console: task-oriented configuration guides, dashboard summaries, capability readiness, and sanitized storage/recovery status.",
+      "role": "同一显式 HTML 页面壳、原生 TypeScript 构建；研究账本只读投影、维护者身份门禁和显式成果导出。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
@@ -145,7 +145,7 @@
     {
       "path": "local/",
       "area": "local_state",
-      "role": "Machine-local profiles, user-specific config, and migration scratch state.",
+      "role": "Machine-local state; local/evaluation is the canonical development ledger when explicitly configured. History is imported with evidence hashes; evaluation summaries never assert installed-product acceptance.",
       "codex_edit": "local_only",
       "release": "exclude"
     },
@@ -201,21 +201,21 @@
     {
       "path": "scripts/kr_eval/",
       "area": "dev_runtime",
-      "role": "开发持续评测底座；复用 pytest 与 trace 评分，结果仅写 local/evaluation。",
+      "role": "既有持续评测引擎：追加账本、受控历史/真实回执导入、一次CI执行及摘要投影；开发治理不随产品打包。",
       "codex_edit": "allowed",
       "release": "exclude"
     },
     {
       "path": "config/evaluation/",
       "area": "dev_runtime",
-      "role": "版本化能力、用例和评测环境合同；不含账号或运行结果。",
+      "role": "版本化能力与用例合同；报告不创建新数据集，新增能力或故障仅增量维护。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "exclude"
     },
     {
       "path": "tests/evaluation/",
       "area": "dev_runtime",
-      "role": "脱敏评测用例与生命周期回归测试。",
+      "role": "评测机制与产品离线合同的定向回归。",
       "codex_edit": "allowed",
       "release": "exclude"
     },
@@ -229,7 +229,7 @@
     {
       "path": "src/onboarding/static/",
       "area": "dev_runtime",
-      "role": "控制台静态样式与脚本；按manifest打包。",
+      "role": "本地控制台静态样式和脚本，含只读持续评测摘要；读取不运行评测。",
       "codex_edit": "allowed",
       "release": "include"
     },
@@ -237,6 +237,13 @@
       "path": "runtime/task_artifacts/",
       "area": "local_state",
       "role": "持久任务输入、阶段记录和原子结果；实际位于配置数据根。",
+      "codex_edit": "local_only",
+      "release": "exclude"
+    },
+    {
+      "path": "local/evaluation/",
+      "area": "local_state",
+      "role": "项目持续评测账本：不可覆盖run与基线、去重资产和数据集快照、只读摘要及待审核候选；开发治理数据不打包。",
       "codex_edit": "local_only",
       "release": "exclude"
     }
@@ -329,6 +336,7 @@
     "scripts/product_console_launcher.py",
     "src/onboarding/configuration.py",
     "src/onboarding/console_page.py",
+    "src/onboarding/console_access.py",
     "src/onboarding/product_status.py",
     "src/onboarding/setup_wizard.py",
     "scripts/build_product_lite_package.py",
@@ -361,7 +369,8 @@
     "scripts/kr_freeze_runtime.py",
     "scripts/kr_candidate_acceptance.py",
     "scripts/kr_browser_acceptance.py",
-    "src/onboarding/__init__.py"
+    "src/onboarding/__init__.py",
+    "src/onboarding/research_api.py"
   ],
   "watch_path_globs": [
     ".npmrc",
@@ -400,15 +409,20 @@
   ],
   "release_sync_rule": "One-way only: public source -> generated package -> verified candidate -> same Release ZIP. Never synchronize package output back into source automatically.",
   "runtime_contracts": {
+    "evidence_assets": "完整证据以不可变SHA资产保存于独立数据根；固定版本回读、覆盖缺口、撤销与引用保护统一到证据库，不混入可再生缓存。",
+    "research_workspace": "Codex对话直接驱动kr_research与普通MCP工具；research_ledger为唯一研究真值，finalize_research_task统一完成检查。网页和CLI只读投影同一账本与固定证据，不建单、不认领、不引入第二套生命周期；开发预览只读复用stable数据。",
     "tasks": "TaskService拥有新详情任务；旧生命周期adapter在独立worker内同步执行。任务状态CAS终态不可回写成功；结果原子提交。",
     "account_state": "Observation为唯一业务状态；修订号和恢复owner租约阻止迟到写入，问题和通知outbox同事务；浏览器生命周期不代表业务成功。",
     "mcp_identity": "按transport/PID/进程代际登记，真实SDK生命周期负责启动和结束；session/tool list按实例绑定，不用其他进程的观测冒充本进程。",
-    "console_security": "loopback/Host/Origin/Fetch-Metadata约束全部请求；详细GET和POST校验本页短期token，health仅返回最小监督身份。",
+    "console_security": "回环、Host、Origin与Fetch-Metadata约束全部请求；Windows以精确客户端TCP四元组查PID并只读核对TokenUser SID，持句柄复核连接和进程活性，同用户固定网址直入、失败拒绝且Cookie不能绕过。读写API另校验CSRF；DPAPI密钥保护控制证明，非Windows保留票据与角色Cookie兼容；health不泄露CSRF。开发配置、缓存及状态独立，正式研究记录仅显式只读接入。",
+    "console_lifecycle": "正式localhost:18882与开发localhost:18883各由一个宿主管理；同一Windows固定任务负责登录、失败重试和每分钟补启动，IgnoreNew避免重叠，无运行时限及电池停止。显式停止会暂停任务，重新打开恢复；开发任务仅维护者显式启用。宿主恢复退出或持续无响应的自有worker，持角色互斥锁后用身份与签名协议回收同身份孤儿worker再接管；端口冲突不抢占。",
     "offline_runtime": "Windows x64/Python3.12固定hash lock + wheelhouse；候选可verify-install，不注册宿主、不激活。",
     "storage": "manifest-known media + active lease + per-file quarantine receipt；per_profile仅统计数据根内已登记且不重叠的profile，作为browser分类子集；不跟随联接、不删除未知文件。",
     "legacy_accounts": "默认record_profile_state仅转发Observation；旧JSON兼容只读。显式path参数仅历史fixture使用。",
     "protected_fetch": "公开canonical与内存profile令牌分离，任务输入/结果不落明文访问令牌；XHS复用src/media_platform内既有CDP适配器，不复制受限上游文件。",
-    "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。"
+    "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。",
+    "optional_media": "可选ASR/OCR/解析器仅在获批隔离安装回执、精确代码/权重身份及输入授权根核验后启动独立进程；默认不下载或安装，复用资源租约。",
+    "evidence_export": "固定版本文本证据ZIP显式导出到全新专用收件箱；保留SHA、LF偏移映射和独立撤销边界，不自动扫描私人库或启用同步。"
   },
   "stable_research_reports": [],
   "research_report_scope": "Private research reports and their quality sidecars remain in the private source; public product docs use structural governance.",

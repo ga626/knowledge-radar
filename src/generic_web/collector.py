@@ -56,7 +56,7 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
             strategy=strategy,
         )
 
-    if request.use_jina and reader_allowed(request.url):
+    if request.use_jina and not urlparse(request.url).path.lower().endswith('.pdf') and reader_allowed(request.url):
         try:
             return _with_elapsed(_collect_via_jina(request), started, errors=errors, strategy=strategy)
         except GenericWebError as exc:
@@ -162,13 +162,27 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         raise GenericWebError("network_error", f"HTTP {response.status_code}", collector=collector, status_code=response.status_code)
 
     content_type = response.headers.get("content-type", "")
-    if not any(kind in content_type.lower() for kind in ["html", "xml", "text/plain", "text/markdown"]):
+    if not any(kind in content_type.lower() for kind in ["html", "xml", "text/plain", "text/markdown", "application/pdf"]):
         raise GenericWebError("unsupported_content_type", f"Unsupported content-type: {content_type}", collector=collector, status_code=response.status_code)
     return response, content_type
 
 
 def _collect_via_trafilatura(request: GenericWebRequest) -> GenericWebResponse:
     response, content_type = _fetch_html(request, collector="trafilatura")
+    if 'application/pdf' in content_type.lower():
+        from io import BytesIO
+        from pypdf import PdfReader
+        from kr_core.evidence_locators import document_text
+        if len(response.content) > 32 * 1024 * 1024:
+            raise GenericWebError('document_too_large', 'PDF exceeds 32 MiB input budget', collector='pypdf')
+        reader = PdfReader(BytesIO(response.content))
+        if len(reader.pages) > 500:
+            raise GenericWebError('document_too_large', 'PDF exceeds 500 page budget', collector='pypdf')
+        blocks = [{'text':page.extract_text() or '', 'page':index+1, 'kind':'pdf_page'} for index, page in enumerate(reader.pages)]
+        body, _locations = document_text(blocks)
+        if not body.strip():
+            raise GenericWebError('parse_failed', 'PDF has no selectable text; requires approved OCR component', collector='pypdf')
+        return GenericWebResponse(url=request.url, final_url=str(response.url), title=str(reader.metadata.title or '') if reader.metadata else '', content=body, content_format='text', collector='pypdf', fetched_at=utc_now_iso(), metadata={'page_count':len(reader.pages), 'document_blocks':blocks, 'images':'not_requested', 'tables':'text_only_no_cell_geometry', 'coverage':'partial'})
     if content_type.lower().startswith(("text/plain", "text/markdown")):
         text = response.text[:1_000_000].strip()
         if not text:

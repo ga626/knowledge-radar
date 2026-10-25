@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import base64
 import ctypes
+from ctypes import wintypes
 from datetime import datetime, timezone
 import hashlib
 from http.client import HTTPConnection, HTTPException
@@ -31,9 +32,11 @@ CONSOLE_PORT = 18882
 DEV_CONSOLE_PORT = 18883
 CONSOLE_HEALTH_SCHEMA = "knowledgeradar-local-console/v2"
 STABLE_TASK_NAME = "KnowledgeRadar Stable Local Console"
+DEV_TASK_NAME = "KnowledgeRadar Development Local Console"
 STARTUP_FILENAME = "KnowledgeRadar Local Console.cmd"  # legacy entry to remove on migration
 MAX_RESTARTS = 5
 RESTART_WINDOW_SECONDS = 120.0
+WORKER_HEALTH_GRACE_SECONDS = 20.0
 
 
 class ConsoleContext:
@@ -107,12 +110,16 @@ def resolve_context(*, role: str, port: int, install_root: Path, program_overrid
 
 
 def _configure_environment(context: ConsoleContext, *, generation: int) -> None:
+    writable = context.supervisor_root if context.role == 'dev' else context.data
     os.environ.update(
         {
             "KR_PROJECT_ROOT": str(context.program), "KR_SOURCE_ROOT": str(context.program / "src"), "KR_INSTALL_ROOT": str(context.install_root),
-            "KR_DATA_ROOT": str(context.data), "KR_RUNTIME_ENV_PATH": str(context.data / "config" / "runtime.env"),
-            "KR_PROFILE_REGISTRY_PATH": str(context.data / "config" / "profile_registry.json"), "KR_BROWSER_DATA_DIR": str(context.data / "browser_data"),
-            "KR_STATE_DIR": str(context.data / "state"), "KR_LOG_DIR": str(context.data / "logs"), "KR_MEDIA_CACHE_DIR": str(context.data / "state" / "media_cache"),
+            "KR_DATA_ROOT": str(writable), "KR_RUNTIME_ENV_PATH": str(writable / "config" / "runtime.env"),
+            "KR_PROFILE_REGISTRY_PATH": str(writable / "config" / "profile_registry.json"), "KR_BROWSER_DATA_DIR": str(writable / "browser_data"),
+            "KR_STATE_DIR": str(writable / "state"), "KR_LOG_DIR": str(writable / "logs"), "KR_MEDIA_CACHE_DIR": str(writable / "state" / "media_cache"),
+            "KR_EVIDENCE_ROOT": str(writable / "state" / "evidence_assets"),
+            "KR_RESEARCH_READ_ROOT": str(context.data / 'state') if context.role == 'dev' else '',
+            "KR_CONSOLE_ACCESS_ROOT": str(context.supervisor_root / 'state' / 'console_access'),
             "KR_CONSOLE_ROLE": context.role, "KR_CONSOLE_FINGERPRINT": context.fingerprint, "KR_CONSOLE_GENERATION": str(generation),
             "KR_CONSOLE_READ_ONLY": "1" if context.role == "dev" else "0",
             "KR_CONSOLE_CACHE_DIR": str(context.supervisor_root / "console_cache"),
@@ -124,16 +131,24 @@ def _configure_environment(context: ConsoleContext, *, generation: int) -> None:
 
 
 def _health_details(port: int) -> dict[str, Any]:
+    connection = HTTPConnection(CONSOLE_HOST, port, timeout=3.0)
     try:
-        connection = HTTPConnection(CONSOLE_HOST, port, timeout=0.8)
+        connection.connect()
+        connection.sock.settimeout(0.8)
         connection.request("GET", "/api/health")
         response = connection.getresponse()
         payload = json.loads(response.read().decode("utf-8")) if response.status == 200 else {}
         if payload.get("schema") != CONSOLE_HEALTH_SCHEMA or payload.get("status") != "ready":
             return {"state": "foreign"}
-        return {"state": "ready", "role": str(payload.get("role") or ""), "fingerprint": str(payload.get("fingerprint") or ""), "generation": int(payload.get("generation") or 0)}
-    except (ConnectionError, OSError, TimeoutError, HTTPException, ValueError, json.JSONDecodeError):
+        return {"state": "ready", "role": str(payload.get("role") or ""), "fingerprint": str(payload.get("fingerprint") or ""), "generation": int(payload.get("generation") or 0), **({'challenge': payload['challenge']} if payload.get('challenge') else {})}
+    except ConnectionRefusedError:
         return {"state": "absent"}
+    except (TimeoutError, ConnectionError, OSError, HTTPException):
+        return {"state": "unresponsive"}
+    except (ValueError, json.JSONDecodeError):
+        return {"state": "foreign"}
+    finally:
+        connection.close()
 
 
 def _health(port: int, expected: ConsoleContext | None = None) -> str:
@@ -147,6 +162,19 @@ def _health(port: int, expected: ConsoleContext | None = None) -> str:
 def _request_stop(context: ConsoleContext) -> None:
     if _health(context.port, context) != "ready":
         raise RuntimeError("现有控制台的角色或安装身份不匹配；不会停止它。")
+    detail = _health_details(context.port)
+    if detail.get('challenge'):
+        access = _console_access(context)
+        connection = HTTPConnection(CONSOLE_HOST, context.port, timeout=2)
+        try:
+            connection.request('POST', '/api/console/stop', body='{}', headers={'Content-Type': 'application/json', 'Origin': f'http://{CONSOLE_HOST}:{context.port}', 'X-KR-Control': access.control_proof(detail['challenge'])})
+            response = connection.getresponse()
+            response.read()
+            if response.status != 200:
+                raise RuntimeError('当前账号无法停止此控制台。')
+        finally:
+            connection.close()
+        return
     connection = HTTPConnection(CONSOLE_HOST, context.port, timeout=2)
     connection.request("GET", "/")
     page = connection.getresponse().read().decode("utf-8")
@@ -189,8 +217,13 @@ def _write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
 
 
 def _write_status(context: ConsoleContext, state: str, **extra: Any) -> None:
+    signature = (state, extra)
+    previous, last = getattr(context, '_last_status', (None, 0.0))
+    if previous == signature and time.monotonic() - last < 5.0:
+        return
     payload = {"schema": "knowledgeradar-console-supervisor-status/v1", "role": context.role, "port": context.port, "fingerprint": context.fingerprint, "state": state, "updated_at": _utc_now(), "log": str(Path("logs") / "console" / f"{context.role}-supervisor.log"), **extra}
     _write_json_atomic(context.status_path, payload)
+    context._last_status = (signature, time.monotonic())
 
 
 def _log(context: ConsoleContext, event: str, **details: Any) -> None:
@@ -198,6 +231,17 @@ def _log(context: ConsoleContext, event: str, **details: Any) -> None:
     line = json.dumps({"at": _utc_now(), "event": event, **details}, ensure_ascii=False, sort_keys=True)
     with context.log_path.open("a", encoding="utf-8") as stream:
         stream.write(line + "\n")
+
+
+def _kernel32():
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel.CreateMutexW.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel.CloseHandle.restype = wintypes.BOOL
+    kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel.OpenProcess.restype = wintypes.HANDLE
+    return kernel
 
 
 class _ConsoleMutex:
@@ -208,7 +252,7 @@ class _ConsoleMutex:
 
     def acquire(self) -> bool:
         if os.name == "nt":
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            kernel32 = _kernel32()
             ctypes.set_last_error(0)
             self.handle = kernel32.CreateMutexW(None, False, f"Local\\KnowledgeRadarConsoleSupervisor-{self.context.role}")
             if not self.handle:
@@ -227,7 +271,7 @@ class _ConsoleMutex:
 
     def release(self) -> None:
         if self.handle is not None:
-            ctypes.WinDLL("kernel32", use_last_error=True).CloseHandle(self.handle)
+            _kernel32().CloseHandle(self.handle)
             self.handle = None
         if self.fd is not None:
             os.close(self.fd)
@@ -248,14 +292,10 @@ def _spawn(command: list[str], *, log_path: Path) -> subprocess.Popen[Any]:
 
 
 def _start_background(context: ConsoleContext) -> None:
-    """Start a supervisor outside the invoking terminal's Windows job tree.
-
-    Development previews are deliberately on-demand and never registered as
-    Windows startup tasks. A detached child is enough to survive the calling
-    terminal or Codex session, while avoiding a Task Scheduler dependency that
-    is unavailable in restricted Windows environments (including CI).
-    Stable startup remains the only Task Scheduler responsibility.
-    """
+    """启用过自启动的角色由固定任务拉起；隔离预览仍可按需脱离终端。"""
+    if os.name == 'nt' and context.role == 'dev' and (context.state_dir / 'autostart.json').is_file():
+        _run_task_script(f"$ErrorActionPreference='Stop'\nEnable-ScheduledTask -TaskName '{DEV_TASK_NAME}' | Out-Null\nStart-ScheduledTask -TaskName '{DEV_TASK_NAME}'")
+        return
     if context.role == "stable" and os.name == "nt":
         _run_task_script(_task_script(context=context, enabled=True, start_now=True))
         return
@@ -266,7 +306,7 @@ def _wait_until_ready(context: ConsoleContext, *, timeout: float = 12.0, generat
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         detail = _health_details(context.port)
-        if _health(context.port, context) == "ready" and (generation_after is None or int(detail.get("generation") or 0) > generation_after):
+        if detail.get('state') == 'ready' and detail.get('role') == context.role and detail.get('fingerprint') == context.fingerprint and (generation_after is None or int(detail.get("generation") or 0) > generation_after):
             return True
         time.sleep(0.15)
     return False
@@ -278,12 +318,14 @@ def _request_restart(context: ConsoleContext, *, observed_generation: int) -> No
 
 def request_supervisor_shutdown(context: ConsoleContext) -> None:
     """Request an intentional stop; this is never used for ordinary restarts."""
+    if os.name == 'nt' and (context.role == 'stable' or (context.state_dir / 'autostart.json').is_file()):
+        _run_task_script(f"$ErrorActionPreference='Stop'\nDisable-ScheduledTask -TaskName '{_ps_literal(_task_name(context))}' | Out-Null")
     _write_json_atomic(context.shutdown_path, {"schema": "knowledgeradar-console-shutdown-request/v1", "requested_at": _utc_now()})
 
 
 def open_console(*, context: ConsoleContext, restart: bool, open_browser: bool) -> str:
     state = _health(context.port, context)
-    if state in {"foreign", "stale"}:
+    if state in {"foreign", "stale", "unresponsive"}:
         raise RuntimeError(f"{CONSOLE_HOST}:{context.port} 已被其他程序或错误控制台身份占用；不会抢占或改用随机端口。")
     snapshot = status_snapshot(context)
     supervisor_state = str(snapshot["supervisor"].get("state") or "")
@@ -309,11 +351,38 @@ def open_console(*, context: ConsoleContext, restart: bool, open_browser: bool) 
         _start_background(context)
         if not _wait_until_ready(context):
             raise RuntimeError(f"KnowledgeRadar {context.role} 控制台未能启动；请用 --status 查看日志和状态。")
-    url = f"http://{CONSOLE_HOST}:{context.port}/"
+    url = f"http://localhost:{context.port}/"
     if open_browser:
-        webbrowser.open(url)
+        if os.name == 'nt':
+            webbrowser.open(url)
+        else:
+            challenge = _health_details(context.port).get('challenge')
+            if not challenge:
+                raise RuntimeError('当前版本尚不支持本机账号会话交接，请按安装流程升级。')
+            webbrowser.open(url + '#launch=' + _console_access(context).issue_ticket(challenge))
     print(url)
     return url
+
+
+def _console_access(context: ConsoleContext):
+    source = str(context.program / 'src')
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from onboarding.console_access import ConsoleAccess
+    return ConsoleAccess(context.supervisor_root / 'state' / 'console_access', context.role)
+
+
+def _terminate_worker(child: subprocess.Popen[Any]) -> None:
+    if child.poll() is not None:
+        return
+    if os.name == 'nt':
+        # venv python.exe 可能只是转发进程，必须回收由我们启动的整棵树。
+        result = subprocess.run(['taskkill.exe', '/PID', str(child.pid), '/T', '/F'], capture_output=True, check=False)
+        if result.returncode and child.poll() is None:
+            raise RuntimeError('无法回收自有控制台进程树。')
+    else:
+        child.terminate()
+    child.wait(timeout=8)
 
 
 def serve_console(*, context: ConsoleContext, generation: int) -> None:
@@ -356,18 +425,34 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
                 return
             state = _health(context.port, context)
             if child is None:
-                if state in {"foreign", "stale"}:
+                if state in {"foreign", "stale", "unresponsive"}:
                     _write_status(context, "FOREIGN_PORT_OWNER", supervisor_pid=os.getpid(), observed_state=state)
                     _log(context, "foreign_port_owner", observed_state=state)
                     time.sleep(2.0)
                     continue
                 if state == "ready":
-                    _write_status(context, "KNOWN_WORKER_WITHOUT_OWNER", supervisor_pid=os.getpid())
-                    time.sleep(1.0)
+                    # We own the role mutex, but this worker survived a previous
+                    # supervisor. Verify its identity and use the existing signed
+                    # stop protocol before starting a child we can manage.
+                    detail = _health_details(context.port)
+                    generation = max(generation, int(detail.get('generation') or 0))
+                    _write_status(context, "RECOVERING_ORPHAN", supervisor_pid=os.getpid(), generation=generation)
+                    try:
+                        _request_stop(context)
+                        deadline = time.monotonic() + 8.0
+                        while time.monotonic() < deadline and _health(context.port, context) == 'ready':
+                            time.sleep(0.15)
+                        if _health(context.port, context) != 'absent':
+                            raise RuntimeError('orphan_worker_did_not_release_port')
+                        _log(context, 'orphan_worker_recovered', generation=generation)
+                    except (OSError, RuntimeError, HTTPException) as error:
+                        _log(context, 'orphan_recovery_deferred', error=str(error))
+                        time.sleep(2.0)
                     continue
                 generation += 1
                 command = [sys.executable, str(Path(__file__).resolve()), "--serve", "--port", str(context.port), "--generation", str(generation), "--no-open", *_command_context(context)]
                 child = _spawn(command, log_path=context.log_path)
+                last_healthy = time.monotonic()
                 _write_status(context, "STARTING_WORKER", supervisor_pid=os.getpid(), worker_pid=child.pid, generation=generation)
                 _log(context, "worker_started", worker_pid=child.pid, generation=generation)
             while child.poll() is None:
@@ -396,10 +481,17 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
                     _write_status(context, "READY_LEGACY" if state == "foreign" else "STARTING_WORKER", supervisor_pid=os.getpid(), worker_pid=child.pid, generation=generation, health_contract="legacy-healthless")
                 elif state in {"foreign", "stale"}:
                     _log(context, "worker_identity_mismatch", observed_state=state, worker_pid=child.pid)
-                    child.terminate()
+                    _terminate_worker(child)
                 else:
                     _write_status(context, "READY" if state == "ready" else "STARTING_WORKER", supervisor_pid=os.getpid(), worker_pid=child.pid, generation=generation)
-                time.sleep(0.2)
+                if state == 'ready' or (legacy_healthless and state == 'foreign'):
+                    last_healthy = time.monotonic()
+                elif time.monotonic() - last_healthy > WORKER_HEALTH_GRACE_SECONDS:
+                    _log(context, 'worker_health_timeout', worker_pid=child.pid, generation=generation)
+                    _terminate_worker(child)
+                if shutdown_requested and child.poll() is None:
+                    _terminate_worker(child)
+                time.sleep(1.0)
             code = child.returncode
             _log(context, "worker_exited", worker_pid=child.pid, generation=generation, returncode=code)
             child = None
@@ -424,7 +516,7 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
         raise
     finally:
         if child is not None and child.poll() is None:
-            child.terminate()
+            _terminate_worker(child)
         _write_status(context, exit_state, supervisor_pid=os.getpid(), generation=generation, reason=exit_reason)
         _log(context, "supervisor_exited", supervisor_pid=os.getpid(), generation=generation, state=exit_state, reason=exit_reason)
         mutex.release()
@@ -436,9 +528,7 @@ def _startup_path() -> Path:
 
 
 def _task_name(context: ConsoleContext) -> str:
-    if context.role != "stable":
-        raise RuntimeError("开发预览不使用 Task Scheduler。")
-    return STABLE_TASK_NAME
+    return STABLE_TASK_NAME if context.role == 'stable' else DEV_TASK_NAME
 
 
 def _ps_literal(value: str) -> str:
@@ -457,18 +547,21 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
         if validate_helper and not helper.is_file():
             raise RuntimeError("稳定安装缺少 console_product.py；请先完成与 stable artifact 绑定的本地安装修复。")
     else:
-        raise RuntimeError("开发预览不使用 Task Scheduler。")
+        helper = Path(__file__).resolve()
     arguments = f'"{helper}" --supervise --role {context.role} --port {context.port} --no-open --install-root "{context.install_root}"'
     if context.role == "dev":
         arguments += f' --program-root "{context.program}" --preview-state-root "{context.supervisor_root}"'
     lines = [
         "$ErrorActionPreference = 'Stop'",
         f"$action = New-ScheduledTaskAction -Execute '{_ps_literal(str(runtime))}' -Argument '{_ps_literal(arguments)}'",
-        "$settings = New-ScheduledTaskSettingsSet -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew -StartWhenAvailable",
+        "$settings = New-ScheduledTaskSettingsSet -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 2) -MultipleInstances IgnoreNew -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries",
     ]
-    if context.role == "stable":
-        lines.append("$trigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME")
-        lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Trigger $trigger -Settings $settings -RunLevel Limited -Force | Out-Null")
+    lines.append("$owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name")
+    lines.append("$trigger = New-ScheduledTaskTrigger -AtLogOn -User $owner")
+    # 实测部分退出路径不触发 RestartOnFailure；同一任务定时补启动，
+    # IgnoreNew 确保正在运行时不会另起宿主，无需额外 watcher。
+    lines.append("$retry = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)")
+    lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Trigger @($trigger,$retry) -Settings $settings -User $owner -RunLevel Limited -Force | Out-Null")
     if start_now:
         lines.append(f"Start-ScheduledTask -TaskName '{_ps_literal(task_name)}'")
     return "\n".join(lines)
@@ -484,14 +577,19 @@ def _run_task_script(script: str) -> None:
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
     result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], capture_output=True, text=True, encoding="utf-8", check=False)
     if result.returncode != 0:
-        raise RuntimeError(f"无法更新 KnowledgeRadar stable Task Scheduler 任务：{result.stderr.strip() or result.stdout.strip()}")
+        raise RuntimeError(f"无法更新 KnowledgeRadar Task Scheduler 任务：{result.stderr.strip() or result.stdout.strip()}")
 
 
 def set_autostart(*, enabled: bool, context: ConsoleContext) -> str:
-    if context.role != "stable":
-        raise RuntimeError("开发预览不允许注册为 Windows 自启动任务。")
     _run_task_script(_task_script(context=context, enabled=enabled))
-    _startup_path().unlink(missing_ok=True)
+    if context.role == 'stable':
+        _startup_path().unlink(missing_ok=True)
+    else:
+        marker = context.state_dir / 'autostart.json'
+        if enabled:
+            _write_json_atomic(marker, {'task': DEV_TASK_NAME, 'program_root': str(context.program), 'enabled_at': _utc_now()})
+        else:
+            marker.unlink(missing_ok=True)
     return "enabled" if enabled else "disabled"
 
 
@@ -501,16 +599,18 @@ def status_snapshot(context: ConsoleContext) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError):
         status = {"state": "NO_SUPERVISOR_STATE"}
     health = _health_details(context.port)
+    if status.get('state') == 'READY' and health.get('state') != 'ready':
+        status = {**status, 'state': 'WORKER_UNAVAILABLE', 'prior_state': 'READY'}
     pid = status.get("supervisor_pid")
     if isinstance(pid, int) and pid > 0 and not _pid_is_alive(pid):
-        prior_state = str(status.get("state") or "UNKNOWN")
+        prior_state = str(status.get("prior_state") or status.get("state") or "UNKNOWN")
         status = {**status, "state": "WORKER_WITHOUT_LIVE_SUPERVISOR" if health.get("state") == "ready" else "STALE_SUPERVISOR_STATE", "prior_state": prior_state, "stale_reason": "recorded supervisor PID is not running"}
     return {"schema": "knowledgeradar-console-status/v1", "role": context.role, "port": context.port, "expected_fingerprint": context.fingerprint, "health": health, "supervisor": status}
 
 
 def _pid_is_alive(pid: int) -> bool:
     if os.name == "nt":
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32 = _kernel32()
         handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
         if handle:
             kernel32.CloseHandle(handle)

@@ -20,7 +20,7 @@ Development source is the only editable truth. Package output is regenerated fro
 | --- | --- | --- | --- | --- |
 | `src/runtime/` | dev_runtime | Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution. | allowed_with_secret_scan | include |
 | `src/` | dev_runtime | Python package source. | allowed | include |
-| `src/onboarding/` | dev_runtime | Loopback-only local console: task-oriented configuration guides, dashboard summaries, capability readiness, and sanitized storage/recovery status. | allowed_with_secret_scan | include |
+| `src/onboarding/` | dev_runtime | 同一显式 HTML 页面壳、原生 TypeScript 构建；研究账本只读投影、维护者身份门禁和显式成果导出。 | allowed_with_secret_scan | include |
 | `src/onboarding/assets/` | dev_runtime | Curated, non-login official documentation screenshots used by the loopback console configuration guides. They contain no account, key, or local runtime data. | allowed_with_secret_scan | include |
 | `src/strategy_trees/` | dev_runtime | Unified strategy-tree declarations, shadow consistency checks, and governance/cache policy manifests. | allowed | include |
 | `scripts/` | dev_runtime | Install, setup, validation, generation, and maintenance scripts. | allowed | include |
@@ -34,7 +34,7 @@ Development source is the only editable truth. Package output is regenerated fro
 | `project_status/` | dev_runtime | Sanitized project state packets, open issue registers, and validation semantics for AI handoff. | allowed | exclude |
 | `bridge/` | dev_runtime | Node bridge and MCP integration helpers. | allowed | include_without_node_modules |
 | `runtime/` | local_state | Logs, reports, task state, generated media placeholders, and local runtime data. | readme_and_placeholders_only | readme_and_placeholders_only |
-| `local/` | local_state | Machine-local profiles, user-specific config, and migration scratch state. | local_only | exclude |
+| `local/` | local_state | Machine-local state; local/evaluation is the canonical development ledger when explicitly configured. History is imported with evidence hashes; evaluation summaries never assert installed-product acceptance. | local_only | exclude |
 | `browser_data/` | local_state | Browser automation data, CDP/session state, and platform profile working data. | local_only | exclude |
 | `data/` | local_state | Legacy or runtime data; keep out of product packages unless explicitly migrated. | avoid_new_writes | exclude |
 | `archive/` | history_backup | Sanitized archive index, evidence packs, and user-confirmed migration records. | sanitized_only | exclude |
@@ -42,12 +42,13 @@ Development source is the only editable truth. Package output is regenerated fro
 | `release/` | package_output | Optional generated release staging area. | generated_only | generated_output |
 | `.python312/` | local_state | Optional bundled/local Python runtime. | do_not_edit | exclude_from_git_optional_in_distribution |
 | `config/recruitment_city_registry.json` | dev_runtime | 公开招聘城市参数表；随产品分发，不含用户状态或凭据。 | allowed | include |
-| `scripts/kr_eval/` | dev_runtime | 开发持续评测底座；复用 pytest 与 trace 评分，结果仅写 local/evaluation。 | allowed | exclude |
-| `config/evaluation/` | dev_runtime | 版本化能力、用例和评测环境合同；不含账号或运行结果。 | allowed_with_secret_scan | exclude |
-| `tests/evaluation/` | dev_runtime | 脱敏评测用例与生命周期回归测试。 | allowed | exclude |
+| `scripts/kr_eval/` | dev_runtime | 既有持续评测引擎：追加账本、受控历史/真实回执导入、一次CI执行及摘要投影；开发治理不随产品打包。 | allowed | exclude |
+| `config/evaluation/` | dev_runtime | 版本化能力与用例合同；报告不创建新数据集，新增能力或故障仅增量维护。 | allowed_with_secret_scan | exclude |
+| `tests/evaluation/` | dev_runtime | 评测机制与产品离线合同的定向回归。 | allowed | exclude |
 | `src/use_cases/` | dev_runtime | 业务用例编排，MCP门面委托单一实现。 | allowed | include |
-| `src/onboarding/static/` | dev_runtime | 控制台静态样式与脚本；按manifest打包。 | allowed | include |
+| `src/onboarding/static/` | dev_runtime | 本地控制台静态样式和脚本，含只读持续评测摘要；读取不运行评测。 | allowed | include |
 | `runtime/task_artifacts/` | local_state | 持久任务输入、阶段记录和原子结果；实际位于配置数据根。 | local_only | exclude |
+| `local/evaluation/` | local_state | 项目持续评测账本：不可覆盖run与基线、去重资产和数据集快照、只读摘要及待审核候选；开发治理数据不打包。 | local_only | exclude |
 
 ## Release Forbidden Patterns
 
@@ -124,6 +125,7 @@ Development source is the only editable truth. Package output is regenerated fro
 - `scripts/product_console_launcher.py`
 - `src/onboarding/configuration.py`
 - `src/onboarding/console_page.py`
+- `src/onboarding/console_access.py`
 - `src/onboarding/product_status.py`
 - `src/onboarding/setup_wizard.py`
 - `scripts/build_product_lite_package.py`
@@ -157,6 +159,7 @@ Development source is the only editable truth. Package output is regenerated fro
 - `scripts/kr_candidate_acceptance.py`
 - `scripts/kr_browser_acceptance.py`
 - `src/onboarding/__init__.py`
+- `src/onboarding/research_api.py`
 
 ## Self-Documentation Watch Globs
 

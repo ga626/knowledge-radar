@@ -1,5 +1,28 @@
 from pathlib import Path
 
+
+def test_language_per_request_isolated_task_cache_and_metadata(monkeypatch, tmp_path):
+    monkeypatch.setenv('KR_ASR_LANGUAGE','zh')
+    calls=[]
+    def subtitles(bvid, **kwargs):
+        calls.append(kwargs['language'])
+        return {'hit':True,'text':'English words' if kwargs['language']=='en' else '中文字幕','timestamped_segments':[{'text':'English words' if kwargs['language']=='en' else '中文字幕','start_s':0,'end_s':2}]}
+    monkeypatch.setattr(bili,'_probe_bilibili_subtitle',subtitles)
+    english=bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='en')
+    chinese=bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='zh')
+    assert english=='English words' and chinese=='中文字幕'
+    assert calls==['en','zh']
+    assert bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='en')=='English words'
+    assert calls==['en','zh']
+    metadata=bili.get_bilibili_transcript_metadata('BVlanguages','en')
+    assert metadata['policy']['language']=='en'
+    assert metadata['locators']['status']=='aligned'
+    assert bili.AsrPolicy.from_env().language=='zh'
+    tasks=bili.get_task_store().tasks_for_source(content_id='BVlanguages')
+    assert len(tasks)==2
+    assert {task['metadata']['language'] for task in tasks}=={'en','zh'}
+
+
 import pytest
 import collectors.platform.bilibili as bili
 from runtime.tasks import TaskStore

@@ -3,6 +3,7 @@ import logging
 import glob
 import os, sys, time, json
 from contextlib import contextmanager
+from pathlib import Path
 
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 from runtime.asr_policy import AsrPolicy
@@ -128,6 +129,17 @@ def _load_model(model_size: str, policy: AsrPolicy):
 def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | None = None) -> dict:
     """Transcribe audio using faster-whisper. Returns transcript data."""
     policy = policy or AsrPolicy.from_env()
+    from runtime.optional_media import receipt_root, run_optional, file_sha
+    selected = os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b').strip()
+    fallback_reason = 'approved_native_asr_not_installed'
+    if selected not in {'qwen3-asr-1.7b', 'qwen3-asr-0.6b', 'faster-whisper'}:
+        raise ValueError('unsupported_asr_component')
+    if selected != 'faster-whisper' and (receipt_root() / (selected + '.json')).is_file():
+        started = time.time()
+        source = Path(audio_path).resolve()
+        # 已有安装但身份或执行失败时明确失败；不会悄悄掩盖成旧引擎成功。
+        native = run_optional({'component':selected, 'input_path':str(source), 'approved_input_root':str(source.parent), 'input_sha256':file_sha(source), 'language':policy.language or 'auto'})
+        return {'segments':len(native.get('content_locators') or []), 'timestamped_segments':[], 'duration_s':time.time()-started, 'model_load_s':None, 'model_cache_hit':False, 'device':native.get('device'), 'compute_type':native.get('dtype'), 'beam_size':1, 'vad_enabled':False, 'model':selected, 'engine':'transformers_native', 'txt':native['text'], 'srt':'', 'language':policy.language, 'confidence':None, 'content_locators':native.get('content_locators', []), 'timestamp_precision':'input_chunk_only', 'evidence_assets':native.get('evidence_assets', [])}
     model, model_load_s, model_cache_hit = _load_model(model_size, policy)
 
     log.info(f"[transcribe] Transcribing {audio_path}...")
@@ -143,6 +155,7 @@ def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | No
 
     txt_lines = []
     srt_lines = []
+    timestamped_segments = []
     for i, seg in enumerate(segments, 1):
         start = seg.start
         end = seg.end
@@ -150,6 +163,7 @@ def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | No
         if not text:
             continue
         txt_lines.append(text)
+        timestamped_segments.append({"start_s": float(start), "end_s": float(end), "text": text})
         # SRT format
         srt_lines.append(f"{i}")
         srt_lines.append(
@@ -164,6 +178,7 @@ def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | No
 
     return {
         "segments": len(txt_lines),
+        "timestamped_segments": timestamped_segments,
         "duration_s": duration,
         "model_load_s": model_load_s,
         "model_cache_hit": model_cache_hit,
@@ -172,6 +187,8 @@ def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | No
         "beam_size": policy.beam_size,
         "vad_enabled": policy.vad_enabled,
         "model": model_size,
+        "engine": "faster-whisper",
+        "fallback_reason": fallback_reason if selected != 'faster-whisper' else 'explicit_compatibility_selection',
         "txt": "\n".join(txt_lines),
         "srt": "\n".join(srt_lines),
         "language": info.language,
