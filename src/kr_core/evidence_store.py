@@ -43,7 +43,9 @@ class EvidenceRecord:
 
 class EvidenceStore:
     def __init__(self, path: str | None = None) -> None:
+        from .evidence_assets import EvidenceAssets
         self.path = path or default_evidence_store_path()
+        self.assets = EvidenceAssets(os.path.join(os.path.dirname(path), 'evidence_assets') if path else None)
 
     def append(self, record: EvidenceRecord) -> bool:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -59,6 +61,57 @@ class EvidenceStore:
             self.append(EvidenceRecord("search_result", platform, str(item.get("url") or ""), _with_trace(item, trace), query=query))
 
     def append_detail(self, *, platform: str, url: str, response: Dict[str, Any]) -> None:
+        from .evidence_coverage import content_coverage
+        from .evidence_locators import document_text, transcript_locators
+        if isinstance(response.get('document_blocks'), list):
+            body, locations = document_text(response['document_blocks'])
+            if body:
+                response['content'] = body
+                response['content_locators'] = locations
+        refs = []
+        for kind in ("content", "transcript"):
+            value = response.get(kind)
+            if isinstance(value, str) and value.strip():
+                if response.get("evidence_storage_allowed") is False:
+                    response.setdefault("evidence_storage_gaps", []).append({"part": kind, "reason": "storage_not_permitted"})
+                    continue
+                try:
+                    metadata = {"extractor": str((response.get("detail_metadata") or {}).get("strategy") or response.get("collector") or platform), "coverage": "unknown"}
+                    locations = response.get(kind + '_locators')
+                    if kind == 'transcript':
+                        mapping = response.get('transcript_metadata') or {}
+                        if isinstance(mapping.get('locators'), dict): mapping = mapping['locators']
+                        locations = mapping.get('segments') if mapping.get('status') == 'aligned' else None
+                        if locations is None:
+                            mapped = transcript_locators(value, mapping.get('segments'))
+                            if mapped['status'] == 'aligned': locations = mapped['segments']
+                    if isinstance(locations, list): metadata['locators'] = locations
+                    refs.append(self.assets.put(url, value, kind=kind, title=str(response.get("title") or ""), metadata=metadata))
+                    if kind == "transcript" and isinstance(response.get("transcript_metadata"), dict):
+                        refs.append(self.assets.put(url, json.dumps(response["transcript_metadata"], ensure_ascii=False), kind="transcript_map", metadata={"extractor": platform, "coverage": "segment_mapping_only"}))
+                except (OSError, ValueError) as exc:
+                    response.setdefault("evidence_storage_gaps", []).append({"part": kind, "reason": str(exc)})
+        if response.get('evidence_storage_allowed') is not False:
+            for part in ('comments', 'images', 'tables', 'media_manifest'):
+                entries = response.get(part)
+                if not isinstance(entries, list) or not entries:
+                    continue
+                try:
+                    # 原始结构另存固定资产；URL 清单绝不冒充媒体二进制。
+                    from generic_web.url_policy import public_evidence_payload
+                    blocks = []
+                    for index, entry in enumerate(entries):
+                        value = entry if isinstance(entry, dict) else {'value': entry}
+                        block = {'text': json.dumps(public_evidence_payload(value), ensure_ascii=False), 'kind': part}
+                        if part == 'comments': block['comment_id'] = str(value.get('comment_id') or value.get('id') or index)
+                        if part == 'images': block['image_index'] = index
+                        blocks.append(block)
+                    text, locations = document_text(blocks)
+                    refs.append(self.assets.put(url, text, kind=part, metadata={'extractor': platform, 'coverage': 'manifest_only' if part in ('images','media_manifest') else 'partial', 'locators': locations}))
+                except (OSError, ValueError) as exc:
+                    response.setdefault('evidence_storage_gaps', []).append({'part': part, 'reason': str(exc)})
+        response["evidence_assets"] = refs
+        response.setdefault("content_coverage", content_coverage(response))
         self.append(EvidenceRecord("detail", platform, url, _with_trace(_compact_detail(response), _current_trace())))
 
     def append_academic_search(self, *, query: str, response: Dict[str, Any]) -> None:
@@ -123,12 +176,18 @@ def _compact_detail(response: Dict[str, Any]) -> Dict[str, Any]:
         "recommended_next_action",
         "evidence",
         "detail_metadata",
+        "evidence_assets",
+        "content_coverage",
+        "evidence_storage_gaps",
     }
     data = {key: response.get(key) for key in keep if key in response}
     if isinstance(data.get("content"), str):
         data["content"] = data["content"][:4000]
     if isinstance(data.get("transcript"), str):
         data["transcript"] = data["transcript"][:4000]
+    if response.get("evidence_storage_allowed") is False:
+        for part in ("content", "transcript"):
+            data.pop(part, None)
     return data
 
 

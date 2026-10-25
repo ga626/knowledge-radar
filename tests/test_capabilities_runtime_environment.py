@@ -21,7 +21,7 @@ def test_tool_surface_defaults_to_planning_tools_hidden(monkeypatch) -> None:
 
     surface = build_tool_surface()
 
-    assert surface["actual_mcp_tool_count"] == 22
+    assert surface["actual_mcp_tool_count"] == 23
     assert "kr_research" in surface["actual_mcp_tools"]
     assert "finalize_research_task" in surface["actual_mcp_tools"]
     assert surface["workflow_tools"]["kr_research"]["role"] == "high_level_research_perception_entry"
@@ -48,7 +48,7 @@ def test_tool_surface_does_not_advertise_local_legacy_helpers(monkeypatch) -> No
 
     surface = build_tool_surface()
 
-    assert surface["actual_mcp_tool_count"] == 22
+    assert surface["actual_mcp_tool_count"] == 23
     assert "kr_research" in surface["actual_mcp_tools"]
     assert "expand_keywords" not in surface["actual_mcp_tools"]
     assert "plan_research" not in surface["actual_mcp_tools"]
@@ -137,7 +137,6 @@ def test_runtime_environment_manifest_declares_productization_boundaries(monkeyp
     assert manifest["paths"]["log_dir"]["configured_by"] == "KR_LOG_DIR"
     assert manifest["paths"]["browser_data_dir"]["release_policy"] == "exclude_runtime_or_secret"
     assert manifest["paths"]["proxy_rule_cache_dir"]["configured_by"] == "KR_PROXY_RULE_CACHE_DIR"
-    assert manifest["paths"]["whisper_model_cache_dir"]["configured_by"] == "KR_WHISPER_MODEL_DIR"
     assert manifest["planning_tools"]["enabled"] is False
     assert manifest["proxy_rules"]["schema"] == "knowledgeradar-proxy-rules/v1"
     assert manifest["task_worker"]["schema"] == "knowledgeradar-task-worker/v1"
@@ -147,19 +146,18 @@ def test_runtime_environment_manifest_declares_productization_boundaries(monkeyp
 
 
 def test_media_policy_notes_video_url_spike_not_main_chain(monkeypatch) -> None:
-    monkeypatch.setenv("KR_FRAME_VISION_MODELS", "bailian:qwen3-vl-flash")
+    monkeypatch.setenv("KR_FRAME_VISION_MODELS", "bailian:qwen3.8-omni-flash")
     monkeypatch.setenv("KR_COMMENT_FILTER_MODELS", "bailian:qwen-turbo,bailian:qwen3.5-flash")
 
     policy = media_policy_manifest()
 
     assert policy["storage_policy_status"] == "implemented_p0_4"
     assert policy["provider_primitives"]["bailian"]["status"] == "implemented_main_provider_p1_1_to_p1_4"
-    assert policy["provider_primitives"]["bailian"]["default_model"] == "qwen3-vl-flash"
+    assert policy["provider_primitives"]["bailian"]["default_model"] == "qwen3.8-omni-flash"
     assert "cached_tokens" in policy["provider_primitives"]["bailian"]["usage_fields"]
-    assert policy["model_configuration"]["KR_FRAME_VISION_MODELS"]["models"] == ["bailian:qwen3-vl-flash"]
-    assert policy["model_configuration"]["KR_COMMENT_FILTER_MODELS"]["models"][0] == "bailian:qwen-turbo"
-    assert policy["provider_primitives"]["siliconflow"]["status"] == "implemented_manual_fallback_p1_5"
-    assert policy["provider_primitives"]["mimo"]["status"] == "explicit_fallback_only_p1_5"
+    assert policy["model_configuration"]["KR_FRAME_VISION_MODELS"]["models"] == ["bailian:qwen3.8-omni-flash"]
+    assert "KR_COMMENT_FILTER_MODELS" not in policy["model_configuration"]
+    assert set(policy["provider_primitives"]) == {"bailian"}
     assert policy["direct_media_probe"]["status"] == "implemented_p1_2"
     assert policy["direct_media_probe"]["platforms"]["bilibili"]["provider_downloadability"].startswith("provider_blocked")
     assert "validation_status" in policy["direct_media_probe"]["generic_rule"]
@@ -204,13 +202,13 @@ def test_capabilities_declares_p2_2_asr_strategy(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
     caps = build_capabilities(decision_log_path=str(tmp_path / "decision.jsonl"), provider_status=lambda: {})
 
-    assert caps["strategy_trees"]["asr"]["status"] == "implemented_p2_2"
+    assert caps["strategy_trees"]["asr"]["status"] == "implemented"
     assert caps["resource_concurrency"]["status"] == "implemented_p2_2"
     assert caps["task_scope_fanin"]["status"] == "implemented"
     assert caps["task_scope_fanin"]["legacy_alias"]["field"] == "research_session_id"
     assert caps["tools"]["get_task_status"]["polling"]["task_scope_fanin"].startswith("get_task_status")
-    assert caps["asr_lifecycle"]["status"] == "implemented_p2_2_policy_probe"
-    assert caps["asr_lifecycle"]["default_binding"].startswith("server_run")
+    assert caps["asr_lifecycle"]["status"] == "implemented_isolated_worker"
+    assert caps["asr_lifecycle"]["resident_model"] is False
     assert caps["asr_benchmark"]["schema"] == "knowledgeradar-asr-benchmark/v2"
     assert caps["tools"]["get_content_detail"]["bilibili_asr_fast_path"]["status"] == "implemented_p2_2_strategy_tree"
 

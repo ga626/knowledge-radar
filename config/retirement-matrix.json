@@ -46,8 +46,8 @@
     },
     {
       "mechanism": "MediaCrawler restricted header files",
-      "status": "excluded",
-      "replacement": "68 files retained with headers in source; excluded from product pending exact provenance",
+      "status": "retired",
+      "replacement": "69 inventoried paths absent from current source; exclusion guard retained against reintroduction; no relicensing claim",
       "owner": "config/license-source-inventory.json"
     },
     {

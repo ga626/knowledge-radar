@@ -20,6 +20,15 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_runtime_freeze_uses_the_packaged_lf_text_identity(tmp_path):
+    freezer = _load("kr_freeze_runtime")
+    path = tmp_path / "pyproject.toml"
+    path.write_bytes(b"version = 'test'\r\n")
+    windows = freezer.canonical_text_sha(path)
+    path.write_bytes(b"version = 'test'\n")
+    assert freezer.canonical_text_sha(path) == windows
+
+
 def test_product_manifest_only_references_public_files() -> None:
     manifest = json.loads((ROOT / "config" / "package-manifest.product-lite.json").read_text(encoding="utf-8"))
     _, missing, _ = builder.collect_files(manifest)

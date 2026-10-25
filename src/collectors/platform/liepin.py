@@ -1004,7 +1004,7 @@ def _validate_search_results(items: List[Dict]) -> Dict:
 
 def legacy_search_liepin(keyword: str, city: str = "", limit: int = 10) -> Dict:
     """猎聘搜索入口函数。"""
-    log.info(f"search_liepin: {keyword}, city={city}, limit={limit}")
+    log.info("search_liepin: request received; limit=%s", limit)
     limit = min(limit, 20)
     trace = CollectionTrace("猎聘", ["chrome_cdp_page"])
 

@@ -39,7 +39,7 @@ async def probe(program, python, state, *, live):
         async with ClientSession(read, write) as session:
             await session.initialize()
             catalog = await session.list_tools()
-            rows.append({"case": "sdk_catalog", "success": len(catalog.tools) == 22, "tools": [t.name for t in catalog.tools], "startup_s": round(time.monotonic()-started, 3)})
+            rows.append({"case": "sdk_catalog", "success": len(catalog.tools) == 23, "tools": [t.name for t in catalog.tools], "startup_s": round(time.monotonic()-started, 3)})
             for name, args in [("health_check", {"mode": "summary"}), ("get_capabilities", {"summary": True})]:
                 start = time.monotonic()
                 result = await session.call_tool(name, args)

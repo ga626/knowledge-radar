@@ -197,7 +197,7 @@ def _parse_v2ex_jobs_html(html: str, base_url: str, *, keyword: str = "", city: 
 
 def legacy_search_v2ex(keyword: str = "", limit: int = 10, city: str = "") -> Dict:
     """V2EX 招聘搜索入口函数。"""
-    log.info(f"search_v2ex: keyword={keyword}, city={city}, limit={limit}")
+    log.info("search_v2ex: request received; limit=%s", limit)
     limit = min(limit, 30)
     trace = CollectionTrace("V2EX", ["http_api"])
 

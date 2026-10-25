@@ -195,7 +195,7 @@ def _bring_maimai_to_front_for_login() -> None:
 
 def legacy_search_maimai(keyword: str, limit: int = 10) -> Dict:
     """脉脉搜索入口函数。"""
-    log.info(f"search_maimai: {keyword}, limit={limit}")
+    log.info("search_maimai: request received; limit=%s", limit)
     limit = min(limit, 20)
     trace = CollectionTrace("脉脉", ["chrome_cdp_page"])
 

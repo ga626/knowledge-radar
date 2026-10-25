@@ -1143,7 +1143,7 @@ def _search_xhs_account_task(keyword: str, limit: int, search_type: str, probe_m
 
 
 def _legacy_search_xiaohongshu_impl(keyword: str, limit: int = 10, search_type: str = "all", probe_mode: bool = False, *, profile_id: str = "") -> Dict:
-    log.info(f"search_xiaohongshu: keyword={keyword!r}, limit={limit}, type={search_type}, probe_mode={probe_mode}")
+    log.info("search_xiaohongshu: request received; limit=%s type=%s", limit, search_type)
     limit = 1 if probe_mode else min(limit, 20)
     trace = CollectionTrace("小红书", ["chrome_cdp_preflight", "login_preflight", "scrapling_cdp"] )
     effective_type = "image" if probe_mode and search_type in ("all", "normal", "") else ("all" if search_type in ("all", "normal", "") else search_type)

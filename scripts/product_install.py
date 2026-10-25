@@ -27,8 +27,12 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAME = "knowledgeradar-research"
 ACTIVE_SCHEMA = "knowledgeradar-active-install/v1"
 CAPABILITY_STATE_SCHEMA = "knowledgeradar-capability-state/v1"
-CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_runtime", "transcription_model")
-TRANSCRIPTION_REQUIREMENTS = ("av>=11,<19", "faster-whisper>=1.1,<2.0")
+CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6")
+MODEL_CAPABILITIES = {
+    "transcription_model": "qwen3-asr-0.6b",
+    "docling": "docling",
+    "paddleocr-vl-1.6": "paddleocr-vl-1.6",
+}
 
 
 def sha256_file(path: Path) -> str:
@@ -65,7 +69,9 @@ def require_python_312(python_exe: Path) -> None:
 
 
 def run_runtime_check(command: list[str], *, cwd: Path, action: str, env: dict[str, str] | None = None) -> None:
-    result = subprocess.run(command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+    result = subprocess.run(
+        command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False
+    )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         suffix = f": {detail[-1][:240]}" if detail else ""
@@ -79,7 +85,9 @@ def ensure_runtime(program_root: Path, install_root: Path, version: str, base_py
     if not lock.is_file() or not artifacts.is_file():
         raise RuntimeError("locked runtime inputs are missing")
     artifact_identity = json.loads(artifacts.read_text(encoding="utf-8"))
-    if artifact_identity.get("lock_sha256") != sha256_file(lock) or artifact_identity.get("pyproject_sha256") != sha256_file(program_root / "pyproject.toml"):
+    if artifact_identity.get("lock_sha256") != sha256_file(lock) or artifact_identity.get(
+        "pyproject_sha256"
+    ) != sha256_file(program_root / "pyproject.toml"):
         raise RuntimeError("runtime lock identity mismatch")
     wheels = program_root / "runtime-wheelhouse"
     for row in artifact_identity["wheels"]:
@@ -93,32 +101,78 @@ def ensure_runtime(program_root: Path, install_root: Path, version: str, base_py
     runtime_env["KR_DATA_ROOT"] = str(install_root / "runtime-check-data")
     runtime_env["KR_STATE_DIR"] = str(install_root / "runtime-check-data/state")
     runtime_env["KR_DESKTOP_NOTIFICATIONS_DISABLED"] = "1"
-    runtime_env['PYTHONDONTWRITEBYTECODE']='1'
-    receipt_identity = {"schema": "knowledgeradar-locked-runtime/v1", "lock_sha256": sha256_file(lock),
-                        "artifacts_sha256": sha256_file(artifacts), "python_target": "3.12"}
+    runtime_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    receipt_identity = {
+        "schema": "knowledgeradar-locked-runtime/v1",
+        "lock_sha256": sha256_file(lock),
+        "artifacts_sha256": sha256_file(artifacts),
+        "python_target": "3.12",
+    }
     runtime_receipt = runtime_root / "runtime-receipt.json"
     if executable.is_file():
         if not runtime_receipt.is_file() or json.loads(runtime_receipt.read_text(encoding="utf-8")) != receipt_identity:
             raise RuntimeError("existing runtime has a different or unrecorded dependency identity")
-        run_runtime_check([str(executable), "-c", "import mcp; import server"], cwd=program_root, action="checking the existing runtime", env=runtime_env)
+        run_runtime_check(
+            [str(executable), "-c", "import mcp; import server"],
+            cwd=program_root,
+            action="checking the existing runtime",
+            env=runtime_env,
+        )
         return executable
     runtime_parent = runtime_root.parent
     runtime_parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=".runtime-staging-", dir=runtime_parent))
     try:
-        run_runtime_check([str(base_python), "-m", "venv", str(staging)], cwd=program_root, action="creating the product runtime")
+        run_runtime_check(
+            [str(base_python), "-m", "venv", str(staging)], cwd=program_root, action="creating the product runtime"
+        )
         staged_python = runtime_python(staging)
         run_runtime_check(
-            [str(staged_python), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--no-index", "--find-links", str(wheels), "--require-hashes", "-r", str(lock)],
+            [
+                str(staged_python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--no-index",
+                "--find-links",
+                str(wheels),
+                "--require-hashes",
+                "-r",
+                str(lock),
+            ],
             cwd=program_root,
             action="installing product dependencies",
         )
         # setuptools的元数据/构建输出只写临时副本，程序目录始终保留制品原字节。
-        with tempfile.TemporaryDirectory(prefix='.source-build-',dir=runtime_parent) as source_temp:
-            build_input=Path(source_temp)/'payload'
-            shutil.copytree(program_root,build_input,ignore=shutil.ignore_patterns('runtime-wheelhouse','__pycache__','*.pyc','*.egg-info'))
-            run_runtime_check([str(staged_python), "-m", "pip", "install", "--no-index", "--no-deps", "--no-build-isolation", str(build_input)], cwd=build_input, action="installing the bound product source")
-        run_runtime_check([str(staged_python), "-c", "import mcp; import server"], cwd=program_root, action="checking the product runtime", env=runtime_env)
+        with tempfile.TemporaryDirectory(prefix=".source-build-", dir=runtime_parent) as source_temp:
+            build_input = Path(source_temp) / "payload"
+            shutil.copytree(
+                program_root,
+                build_input,
+                ignore=shutil.ignore_patterns("runtime-wheelhouse", "__pycache__", "*.pyc", "*.egg-info"),
+            )
+            run_runtime_check(
+                [
+                    str(staged_python),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--no-index",
+                    "--no-deps",
+                    "--no-build-isolation",
+                    str(build_input),
+                ],
+                cwd=build_input,
+                action="installing the bound product source",
+            )
+        run_runtime_check(
+            [str(staged_python), "-c", "import mcp; import server"],
+            cwd=program_root,
+            action="checking the product runtime",
+            env=runtime_env,
+        )
         if runtime_root.exists():
             raise RuntimeError("existing product runtime is incomplete; remove it explicitly before retrying")
         write_json_atomic(staging / "runtime-receipt.json", receipt_identity)
@@ -229,7 +283,7 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
     lines = [
         "[mcp_servers.knowledgeradar]",
         f"command = {json.dumps(str(python_exe), ensure_ascii=False)}",
-        f"args = [\"-X\", \"utf8\", {json.dumps(str(program / 'src' / 'server.py'), ensure_ascii=False)}]",
+        f'args = ["-X", "utf8", {json.dumps(str(program / "src" / "server.py"), ensure_ascii=False)}]',
         f"cwd = {json.dumps(str(program), ensure_ascii=False)}",
         "startup_timeout_sec = 30",
         "enabled = true",
@@ -253,12 +307,27 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
     payload["version"] = f"{str(payload.get('version') or '0.0.0').split('+', 1)[0]}+codex.{sha256_file(skill)[:12]}"
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     marketplace = codex_home / ".agents" / "plugins" / "marketplace.json"
-    existing = json.loads(marketplace.read_text(encoding="utf-8-sig")) if marketplace.is_file() else {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
+    existing = (
+        json.loads(marketplace.read_text(encoding="utf-8-sig"))
+        if marketplace.is_file()
+        else {"name": "personal", "interface": {"displayName": "Personal"}, "plugins": []}
+    )
     rows = [row for row in existing.get("plugins", []) if not isinstance(row, dict) or row.get("name") != PLUGIN_NAME]
-    rows.append({"name": PLUGIN_NAME, "source": {"source": "local", "path": f"./plugins/{PLUGIN_NAME}"}, "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"}, "category": "Productivity"})
+    rows.append(
+        {
+            "name": PLUGIN_NAME,
+            "source": {"source": "local", "path": f"./plugins/{PLUGIN_NAME}"},
+            "policy": {"installation": "AVAILABLE", "authentication": "ON_INSTALL"},
+            "category": "Productivity",
+        }
+    )
     existing["plugins"] = rows
     write_json_atomic(marketplace, existing)
-    return {"plugin_version": str(payload["version"]), "plugin_skill_sha256": sha256_file(skill), "plugin_manifest_sha256": sha256_file(manifest)}
+    return {
+        "plugin_version": str(payload["version"]),
+        "plugin_skill_sha256": sha256_file(skill),
+        "plugin_manifest_sha256": sha256_file(manifest),
+    }
 
 
 def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> Path:
@@ -276,9 +345,9 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
     launcher_text = (
         "@echo off\r\n"
         "setlocal\r\n"
-        "set \"PYTHONUTF8=1\"\r\n"
-        "set \"PYTHONIOENCODING=utf-8\"\r\n"
-        f"\"{python_exe}\" \"{helper}\" %*\r\n"
+        'set "PYTHONUTF8=1"\r\n'
+        'set "PYTHONIOENCODING=utf-8"\r\n'
+        f'"{python_exe}" "{helper}" %*\r\n'
     )
     launcher = install_root / "configure.cmd"
     launcher.write_text(launcher_text, encoding="utf-8")
@@ -288,7 +357,9 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
 
 def console_autostart_path() -> Path:
     appdata = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
-    return appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+    return (
+        appdata / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup" / "KnowledgeRadar Local Console.cmd"
+    )
 
 
 def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
@@ -302,11 +373,19 @@ def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
         check=False,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"unable to register stable console supervisor: {result.stderr.strip() or result.stdout.strip()}")
+        raise RuntimeError(
+            f"unable to register stable console supervisor: {result.stderr.strip() or result.stdout.strip()}"
+        )
     startup = console_autostart_path()
     startup.unlink(missing_ok=True)
     marker = install_root / "console-autostart.task"
-    marker.write_text(json.dumps({"schema": "knowledgeradar-console-autostart/v1", "task_name": "KnowledgeRadar Stable Local Console"}) + "\n", encoding="utf-8")
+    marker.write_text(
+        json.dumps(
+            {"schema": "knowledgeradar-console-autostart/v1", "task_name": "KnowledgeRadar Stable Local Console"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     return marker
 
 
@@ -317,7 +396,18 @@ def refresh_console_autostart(install_root: Path, python_exe: Path) -> Path | No
 
 
 def initialize_data(data_root: Path, package_root: Path) -> None:
-    for relative in ("config", "browser_data", "state", "logs", "cache", "media", "models", "playwright", "capabilities", "receipts"):
+    for relative in (
+        "config",
+        "browser_data",
+        "state",
+        "logs",
+        "cache",
+        "media",
+        "models",
+        "playwright",
+        "capabilities",
+        "receipts",
+    ):
         (data_root / relative).mkdir(parents=True, exist_ok=True)
     runtime_env = data_root / "config" / "runtime.env"
     if not runtime_env.exists():
@@ -330,6 +420,105 @@ def initialize_data(data_root: Path, package_root: Path) -> None:
 
 def capability_state_path(data_root: Path) -> Path:
     return data_root / "state" / "capabilities.json"
+
+
+def migrate_model_configuration(data_root: Path, program_root: Path) -> dict[str, Any]:
+    """激活新版本时迁移模型控制项；凭据和其他来源设置逐字保留。"""
+    import importlib.util
+
+    source = program_root / "src/runtime/model_roles.py"
+    spec = importlib.util.spec_from_file_location("kr_install_model_roles", source)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("product model role registry is unavailable")
+    roles = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(roles)
+    path = data_root / "config/runtime.env"
+    before = path.read_bytes()
+    defaults = roles.MODEL_ENVIRONMENT
+    controls = set(defaults) | roles.RETIRED_MODEL_CONTROLS
+    lines, changed, found = [], set(), set()
+    for line in before.decode("utf-8-sig").splitlines():
+        key, separator, value = line.partition("=")
+        key = key.strip().removeprefix("export ").strip()
+        if separator and key in controls:
+            if key in defaults and key not in found:
+                lines.append(key + "=" + defaults[key])
+                if value.strip() != defaults[key]:
+                    changed.add(key)
+                found.add(key)
+            else:
+                changed.add(key)
+        else:
+            lines.append(line)
+    for key, value in defaults.items():
+        if key not in found:
+            lines.append(key + "=" + value)
+            changed.add(key)
+    if not changed:
+        return {"status": "UNCHANGED", "changed_keys": []}
+    digest = hashlib.sha256(before).hexdigest()
+    backup = data_root / "receipts" / ("model-roles-before-" + digest[:16] + ".env")
+    backup.parent.mkdir(parents=True, exist_ok=True)
+    if not backup.exists():
+        backup.write_bytes(before)
+    if sha256_file(backup) != digest:
+        raise RuntimeError("model configuration backup identity mismatch")
+    after = ("\n".join(lines) + "\n").encode("utf-8")
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, suffix=".pending") as handle:
+        temporary = Path(handle.name)
+        handle.write(after)
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    receipt = {"schema": "knowledgeradar-model-config-migration/v1", "status": "APPLIED",
+               "changed_keys": sorted(changed), "before_sha256": digest,
+               "after_sha256": sha256_file(path), "backup_name": backup.name,
+               "applied_values": {key: defaults.get(key) for key in sorted(changed)},
+               "credentials_preserved": True}
+    write_json_atomic(data_root / "receipts/model-roles-migration.json", receipt)
+    return receipt
+
+
+def restore_model_configuration(data_root: Path, migration: dict[str, Any]) -> dict[str, Any]:
+    """仅回滚本次迁移且用户未再改动的模型项，保留新凭据和其他配置。"""
+    if migration.get("status") != "APPLIED":
+        return {"status": "NOT_REQUIRED", "restored_keys": []}
+    backup_name = migration.get("backup_name", "")
+    if not backup_name or Path(backup_name).name != backup_name:
+        raise RuntimeError("unsafe model configuration backup")
+    backup = data_root / "receipts" / backup_name
+    if not backup.is_file() or sha256_file(backup) != migration.get("before_sha256"):
+        raise RuntimeError("model configuration backup identity mismatch")
+    path = data_root / "config/runtime.env"
+    original = backup.read_text(encoding="utf-8-sig").splitlines()
+    current = path.read_text(encoding="utf-8-sig").splitlines()
+
+    def entry(line):
+        key, separator, value = line.partition("=")
+        return (key.strip().removeprefix("export ").strip(), value.strip()) if separator else (None, None)
+
+    restored, conflicts = [], []
+    for key, expected in migration.get("applied_values", {}).items():
+        values = [value for line in current for name, value in [entry(line)] if name == key]
+        if values != ([] if expected is None else [expected]):
+            conflicts.append(key)
+            continue
+        previous = [line for line in original if entry(line)[0] == key]
+        position = next((i for i, line in enumerate(current) if entry(line)[0] == key), len(current))
+        current = [line for line in current if entry(line)[0] != key]
+        current[position:position] = previous
+        restored.append(key)
+    with tempfile.NamedTemporaryFile(dir=path.parent, delete=False, suffix=".pending") as handle:
+        temporary = Path(handle.name)
+        handle.write(("\n".join(current) + "\n").encode("utf-8"))
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return {"status": "RESTORED_WITH_USER_CHANGES" if conflicts else "RESTORED",
+            "restored_keys": sorted(restored), "preserved_user_keys": sorted(conflicts),
+            "credentials_preserved": True}
 
 
 def load_capability_state(data_root: Path) -> dict[str, Any]:
@@ -357,14 +546,27 @@ def restore_selected_runtime_components(program: Path, runtime: Path, data_root:
     env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
     packages = {
         "media_downloader": ("import yt_dlp", ("yt-dlp>=2024.8.6",)),
-        "transcription_runtime": ("import faster_whisper, av; assert int(av.__version__.split('.')[0]) < 19", TRANSCRIPTION_REQUIREMENTS),
     }
     for capability, (check_code, requirements) in packages.items():
         if not _capability_enabled(data_root, capability):
             continue
         check = subprocess.run([str(runtime), "-c", check_code], cwd=program, env=env, capture_output=True, check=False)
         if check.returncode:
-            _run_optional_download([str(runtime), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", *requirements], cwd=program, env=env, action=f"restoring {capability}")
+            _run_optional_download(
+                [
+                    str(runtime),
+                    "-m",
+                    "pip",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--no-input",
+                    "--prefer-binary",
+                    *requirements,
+                ],
+                cwd=program,
+                env=env,
+                action=f"restoring {capability}",
+            )
         restored.append(capability)
     if _capability_enabled(data_root, "browser"):
         code = (
@@ -376,7 +578,12 @@ def restore_selected_runtime_components(program: Path, runtime: Path, data_root:
         )
         check = subprocess.run([str(runtime), "-c", code], cwd=program, env=env, capture_output=True, check=False)
         if check.returncode:
-            _run_optional_download([str(runtime), "-m", "playwright", "install", "chromium"], cwd=program, env=env, action="restoring the selected Playwright browser")
+            _run_optional_download(
+                [str(runtime), "-m", "playwright", "install", "chromium"],
+                cwd=program,
+                env=env,
+                action="restoring the selected Playwright browser",
+            )
         restored.append("browser")
     return restored
 
@@ -442,32 +649,36 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
             "command": ["python", "-m", "pip", "install", "yt-dlp>=2024.8.6"],
             "boundary": "只安装本地媒体下载运行时；实际任务仍遵守内容访问规则，不会自动发起下载。",
         }
-    elif capability == "transcription_runtime":
-        source = program
-        target = install_root / "runtime" / str(active.get("version") or "")
-        summary = {
-            "label": "本地转写运行时",
-            "network_download": True,
-            "login_required": False,
-            "may_use_paid_api": False,
-            "restart_required": False,
-            "target": tree_summary(target),
-            "command": ["python", "-m", "pip", "install", *TRANSCRIPTION_REQUIREMENTS],
-            "boundary": "只安装本地转写运行时；模型权重需在本控制台单独确认，不会上传媒体。",
-        }
     else:
+        previous_path = list(sys.path)
+        sys.path.insert(0, str(program / "src"))
+        try:
+            from runtime.model_roles import COMPONENTS
+        finally:
+            sys.path[:] = previous_path
+
+        component = MODEL_CAPABILITIES[capability]
+        role = COMPONENTS[component]
         source = program
-        target = data_root / "state" / "models" / "whisper"
+        target = data_root / "state" / "optional_components"
         summary = {
-            "label": "基础转写模型（base）",
+            "label": role["label"],
             "network_download": True,
             "login_required": False,
             "may_use_paid_api": False,
             "restart_required": False,
             "target": tree_summary(target),
-            "command": ["python", "-c", "download faster-whisper base model"],
-            "boundary": "需要先安装本地转写运行时；模型只保存在产品数据目录，不会等到任务开始才下载。",
+            "command": [
+                "python",
+                "scripts/kr_optional_media.py",
+                "prepare",
+                "--component",
+                component,
+                "--acknowledge-download",
+            ],
+            "boundary": "将精确依赖和固定版本权重下载到本地隔离目录，再按 hash 离线安装；任务运行时不下载、不上传私人文件。",
         }
+
     return {
         "schema": "knowledgeradar-capability-plan/v1",
         "status": "PLAN",
@@ -481,7 +692,9 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
 
 
 def _run_optional_download(command: list[str], *, cwd: Path, env: dict[str, str], action: str) -> None:
-    result = subprocess.run(command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
+    result = subprocess.run(
+        command, cwd=cwd, env=env, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False
+    )
     if result.returncode:
         detail = (result.stderr or result.stdout).strip().splitlines()
         suffix = f": {detail[-1][:240]}" if detail else ""
@@ -515,7 +728,11 @@ def _refresh_active_mcp_block(install_root: Path, active: dict[str, Any]) -> Non
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
     config.write_text(
-        ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime))),
+        ensure_mcp_catalog_wait(
+            replace_mcp_block(
+                config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)
+            )
+        ),
         encoding="utf-8",
     )
 
@@ -531,7 +748,12 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
     if capability == "browser":
         env = dict(os.environ)
         env["PLAYWRIGHT_BROWSERS_PATH"] = str(data_root / "playwright")
-        _run_optional_download([str(_active_runtime(install_root, active)), "-m", "playwright", "install", "chromium"], cwd=program, env=env, action="installing Playwright Chromium")
+        _run_optional_download(
+            [str(_active_runtime(install_root, active)), "-m", "playwright", "install", "chromium"],
+            cwd=program,
+            env=env,
+            action="installing Playwright Chromium",
+        )
     elif capability == "xhs_bridge":
         npm = shutil.which("npm")
         if not npm:
@@ -549,7 +771,12 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
                 shutil.copy2(candidate, staging / candidate.name)
             for candidate in source.glob("*.mjs"):
                 shutil.copy2(candidate, staging / candidate.name)
-            _run_optional_download([npm, "ci", "--omit=dev", "--ignore-scripts"], cwd=staging, env=dict(os.environ), action="installing xhs bridge dependencies")
+            _run_optional_download(
+                [npm, "ci", "--omit=dev", "--ignore-scripts"],
+                cwd=staging,
+                env=dict(os.environ),
+                action="installing xhs bridge dependencies",
+            )
             if not (staging / "xhs_mcp_bridge.cjs").is_file():
                 raise RuntimeError("xhs bridge source is incomplete")
             if target.exists():
@@ -559,36 +786,78 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
             shutil.rmtree(staging, ignore_errors=True)
     elif capability == "media_downloader":
         _run_optional_download(
-            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", "yt-dlp>=2024.8.6"],
+            [
+                str(_active_runtime(install_root, active)),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                "--no-input",
+                "--prefer-binary",
+                "yt-dlp>=2024.8.6",
+            ],
             cwd=program,
             env=dict(os.environ),
             action="installing the media downloader",
         )
-    elif capability == "transcription_runtime":
-        _run_optional_download(
-            [str(_active_runtime(install_root, active)), "-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--prefer-binary", *TRANSCRIPTION_REQUIREMENTS],
-            cwd=program,
-            env=dict(os.environ),
-            action="installing the local transcription runtime",
-        )
     else:
+        component = MODEL_CAPABILITIES[capability]
+        env = dict(os.environ, KR_OPTIONAL_COMPONENT_RECEIPTS_DIR=str(data_root / "state" / "optional_components"))
         runtime = _active_runtime(install_root, active)
-        check = subprocess.run([str(runtime), "-c", "import faster_whisper"], cwd=program, text=True, encoding="utf-8", errors="replace", capture_output=True, check=False)
-        if check.returncode:
-            raise RuntimeError("local transcription runtime must be installed before downloading a model")
-        model_root = data_root / "state" / "models" / "whisper"
-        code = "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root=r'''" + str(model_root) + "''')"
-        _run_optional_download([str(runtime), "-c", code], cwd=program, env=dict(os.environ), action="downloading the base transcription model")
+        prepared = subprocess.run(
+            [
+                str(runtime),
+                str(program / "scripts/kr_optional_media.py"),
+                "prepare",
+                "--component",
+                component,
+                "--acknowledge-download",
+            ],
+            cwd=program,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            capture_output=True,
+            check=False,
+            timeout=3600,
+        )
+        if prepared.returncode:
+            raise RuntimeError("optional_component_preparation_failed")
+        specification = json.loads(prepared.stdout)["spec_path"]
+        _run_optional_download(
+            [
+                str(runtime),
+                str(program / "scripts/kr_optional_media.py"),
+                "install",
+                "--component",
+                component,
+                "--payload-file",
+                specification,
+            ],
+            cwd=program,
+            env=env,
+            action="installing isolated " + component,
+        )
     _record_capability(data_root, capability, plan)
     _refresh_active_mcp_block(install_root, active)
-    return {"schema": "knowledgeradar-capability-apply/v1", "status": "APPLIED", "capability": capability, "restart_required": plan["details"]["restart_required"]}
+    return {
+        "schema": "knowledgeradar-capability-apply/v1",
+        "status": "APPLIED",
+        "capability": capability,
+        "restart_required": plan["details"]["restart_required"],
+    }
 
 
 def tree_summary(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"exists": False, "files": 0, "bytes": 0, "path_hash": path_hash(path)}
     files = [item for item in path.rglob("*") if item.is_file()] if path.is_dir() else [path]
-    return {"exists": True, "files": len(files), "bytes": sum(item.stat().st_size for item in files), "path_hash": path_hash(path)}
+    return {
+        "exists": True,
+        "files": len(files),
+        "bytes": sum(item.stat().st_size for item in files),
+        "path_hash": path_hash(path),
+    }
 
 
 def _tree_manifest(path: Path) -> dict[str, str]:
@@ -604,7 +873,12 @@ def _tree_manifest(path: Path) -> dict[str, str]:
 
 def _migration_token(source: Path, target: Path, source_summary: dict[str, Any]) -> str:
     payload = json.dumps(
-        {"source": str(source.resolve()), "target": str(target.resolve()), "files": source_summary["files"], "bytes": source_summary["bytes"]},
+        {
+            "source": str(source.resolve()),
+            "target": str(target.resolve()),
+            "files": source_summary["files"],
+            "bytes": source_summary["bytes"],
+        },
         ensure_ascii=False,
         sort_keys=True,
     )
@@ -691,7 +965,14 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
     config.parent.mkdir(parents=True, exist_ok=True)
     if config.is_file():
         shutil.copyfile(config, target / "receipts" / f"codex-config.before-data-move-{started}.toml")
-    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime))), encoding="utf-8")
+    config.write_text(
+        ensure_mcp_catalog_wait(
+            replace_mcp_block(
+                config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)
+            )
+        ),
+        encoding="utf-8",
+    )
     write_json_atomic(install_root / "backup" / "active.before-data-move.json", previous)
     write_json_atomic(install_root / "active.json", active)
     launcher = write_product_wizard_launcher(active, runtime)
@@ -720,11 +1001,23 @@ def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
     runtime = _active_runtime(install_root, previous)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
-    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime))), encoding="utf-8")
+    config.write_text(
+        ensure_mcp_catalog_wait(
+            replace_mcp_block(
+                config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime)
+            )
+        ),
+        encoding="utf-8",
+    )
     write_json_atomic(install_root / "active.json", previous)
     launcher = write_product_wizard_launcher(previous, runtime)
     refresh_console_autostart(install_root, runtime)
-    return {"schema": "knowledgeradar-data-root-move-rollback/v1", "status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(launcher)}
+    return {
+        "schema": "knowledgeradar-data-root-move-rollback/v1",
+        "status": "ROLLED_BACK",
+        "active": previous,
+        "wizard_launcher": str(launcher),
+    }
 
 
 def migration_plan(legacy_root: Path, data_root: Path) -> dict[str, Any]:
@@ -734,7 +1027,11 @@ def migration_plan(legacy_root: Path, data_root: Path) -> dict[str, Any]:
         raise RuntimeError("legacy source must stay outside the product data root")
     mappings = [
         (legacy_root / ".env", data_root / "config" / "runtime.env", "runtime_config"),
-        (legacy_root / "config" / "profile_registry.json", data_root / "config" / "profile_registry.json", "profile_registry"),
+        (
+            legacy_root / "config" / "profile_registry.json",
+            data_root / "config" / "profile_registry.json",
+            "profile_registry",
+        ),
         (legacy_root / "browser_data", data_root / "browser_data", "browser_data"),
         (legacy_root / "local", data_root / "local", "local_profiles"),
         (legacy_root / "runtime", data_root / "state" / "legacy-runtime", "runtime_state"),
@@ -794,7 +1091,11 @@ def merge_runtime_env(source: Path, destination: Path) -> tuple[int, int, list[s
     existing = destination.read_text(encoding="utf-8-sig") if destination.is_file() else ""
     destination_values = env_values(destination)
     additions = {key: value for key, value in source_values.items() if value and not destination_values.get(key)}
-    conflicts = sorted(key for key, value in source_values.items() if value and destination_values.get(key) and destination_values[key] != value)
+    conflicts = sorted(
+        key
+        for key, value in source_values.items()
+        if value and destination_values.get(key) and destination_values[key] != value
+    )
     if additions:
         lines = existing.splitlines()
         for index, line in enumerate(lines):
@@ -831,10 +1132,20 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
     legacy_root = legacy_root.resolve()
     data_root = data_root.resolve()
     migration_id = uuid4().hex
-    receipt: dict[str, Any] = {"schema": "knowledgeradar-legacy-migration-receipt/v1", "migration_id": migration_id, "status": "APPLIED", "plan": plan, "copied": []}
+    receipt: dict[str, Any] = {
+        "schema": "knowledgeradar-legacy-migration-receipt/v1",
+        "migration_id": migration_id,
+        "status": "APPLIED",
+        "plan": plan,
+        "copied": [],
+    }
     mapping_paths = [
         (legacy_root / ".env", data_root / "config" / "runtime.env", "runtime_config"),
-        (legacy_root / "config" / "profile_registry.json", data_root / "config" / "profile_registry.json", "profile_registry"),
+        (
+            legacy_root / "config" / "profile_registry.json",
+            data_root / "config" / "profile_registry.json",
+            "profile_registry",
+        ),
         (legacy_root / "browser_data", data_root / "browser_data", "browser_data"),
         (legacy_root / "local", data_root / "local", "local_profiles"),
         (legacy_root / "runtime", data_root / "state" / "legacy-runtime", "runtime_state"),
@@ -846,8 +1157,17 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
             copied, skipped, conflicts = migrate_profile_registry(source, destination)
         else:
             copied, skipped, conflicts = copy_without_overwrite(source, destination)
-        receipt["copied"].append({"category": category, "copied_files": copied, "skipped_files": skipped, "conflict_relative_paths": conflicts[:50]})
-    receipt["status"] = "NEEDS_REVIEW" if any(item["conflict_relative_paths"] for item in receipt["copied"]) else "APPLIED"
+        receipt["copied"].append(
+            {
+                "category": category,
+                "copied_files": copied,
+                "skipped_files": skipped,
+                "conflict_relative_paths": conflicts[:50],
+            }
+        )
+    receipt["status"] = (
+        "NEEDS_REVIEW" if any(item["conflict_relative_paths"] for item in receipt["copied"]) else "APPLIED"
+    )
     write_json_atomic(data_root / "receipts" / f"migration-{migration_id}.json", receipt)
     return receipt
 
@@ -889,13 +1209,17 @@ def verify_product_package(package_root: Path) -> dict[str, Any]:
         path = safe_child(package_root, package_root / row["path"])
         if not path.is_file() or sha256_file(path) != row["sha256"]:
             raise RuntimeError("product file identity mismatch: " + row["path"])
-    listed=[row['path'] for row in provenance.get('files',[])]
-    if not listed or len(set(listed))!=len(listed):
-        raise RuntimeError('empty or duplicate product inventory')
-    expected=set(listed)|{'package-provenance.json','SBOM.json','GENERATED_FROM.md'}
-    actual={p.relative_to(package_root).as_posix() for p in package_root.rglob('*') if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('.pyc')}
-    if actual-set(expected) or set(listed)-actual:
-        raise RuntimeError('product file inventory differs from provenance')
+    listed = [row["path"] for row in provenance.get("files", [])]
+    if not listed or len(set(listed)) != len(listed):
+        raise RuntimeError("empty or duplicate product inventory")
+    expected = set(listed) | {"package-provenance.json", "SBOM.json", "GENERATED_FROM.md"}
+    actual = {
+        p.relative_to(package_root).as_posix()
+        for p in package_root.rglob("*")
+        if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(".pyc")
+    }
+    if actual - set(expected) or set(listed) - actual:
+        raise RuntimeError("product file inventory differs from provenance")
     return provenance
 
 
@@ -908,10 +1232,16 @@ def verify_artifact_receipt(package_root: Path, archive: Path, receipt_path: Pat
     provenance = verify_product_package(package_root)
     if receipt.get("source_commit") != provenance.get("source_commit"):
         raise RuntimeError("receipt and extracted package source identity do not match")
-    if receipt.get("package_provenance_sha256") != sha256_file(package_root / "package-provenance.json") or receipt.get("sbom_sha256") != sha256_file(package_root / "SBOM.json"):
+    if receipt.get("package_provenance_sha256") != sha256_file(package_root / "package-provenance.json") or receipt.get(
+        "sbom_sha256"
+    ) != sha256_file(package_root / "SBOM.json"):
         raise RuntimeError("receipt metadata identity mismatch")
     with zipfile.ZipFile(archive) as bundle:
-        expected = {"KnowledgeRadar/" + p.relative_to(package_root).as_posix(): p for p in package_root.rglob("*") if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(".pyc")}
+        expected = {
+            "KnowledgeRadar/" + p.relative_to(package_root).as_posix(): p
+            for p in package_root.rglob("*")
+            if p.is_file() and "__pycache__" not in p.parts and not p.name.endswith(".pyc")
+        }
         members = [n for n in bundle.namelist() if not n.endswith("/")]
         if len(members) != len(set(members)) or set(members) != set(expected):
             raise RuntimeError("archive and extracted file inventory differ")
@@ -921,33 +1251,47 @@ def verify_artifact_receipt(package_root: Path, archive: Path, receipt_path: Pat
     return receipt
 
 
-def stage_verified_package(package_root: Path, install_root: Path, data_root: Path, python_exe: Path, archive: Path, receipt_path: Path) -> dict[str, Any]:
+def stage_verified_package(
+    package_root: Path, install_root: Path, data_root: Path, python_exe: Path, archive: Path, receipt_path: Path
+) -> dict[str, Any]:
     """只安装已核验内容；不注册宿主、不写active.json。"""
-    install_root=install_root.resolve()
-    data_root=data_root.resolve()
-    if data_root.is_relative_to(install_root/'app') or data_root.is_relative_to(install_root/'runtime'):
-        raise RuntimeError('data root must not be inside immutable app or runtime directory')
+    install_root = install_root.resolve()
+    data_root = data_root.resolve()
+    if data_root.is_relative_to(install_root / "app") or data_root.is_relative_to(install_root / "runtime"):
+        raise RuntimeError("data root must not be inside immutable app or runtime directory")
     receipt = verify_artifact_receipt(package_root, archive, receipt_path)
     plan = build_plan(package_root, install_root, data_root, python_exe)
     program = Path(plan["program_root"])
     if program.exists():
-        if not (program / "package-provenance.json").is_file() or sha256_file(program / "package-provenance.json") != sha256_file(package_root / "package-provenance.json"):
+        if not (program / "package-provenance.json").is_file() or sha256_file(
+            program / "package-provenance.json"
+        ) != sha256_file(package_root / "package-provenance.json"):
             raise RuntimeError("same-version program identity differs; use a separate install root")
         verify_product_package(program)
     else:
         program.parent.mkdir(parents=True, exist_ok=True)
         staging = Path(tempfile.mkdtemp(prefix=".verified-staging-", dir=program.parent))
         try:
-            shutil.copytree(package_root, staging / "payload", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info"))
+            shutil.copytree(
+                package_root, staging / "payload", ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.egg-info")
+            )
             verify_product_package(staging / "payload")
             (staging / "payload").replace(program)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     runtime = ensure_runtime(program, install_root, plan["version"], python_exe)
     initialize_data(data_root, package_root)
-    result = {"status": "STAGED", "version": plan["version"], "program_root": str(program), "runtime_python": str(runtime),
-              "data_root": str(data_root), "source_commit": receipt["source_commit"], "archive_sha256": receipt["archive_sha256"],
-              "activated": False, "host_registered": False}
+    result = {
+        "status": "STAGED",
+        "version": plan["version"],
+        "program_root": str(program),
+        "runtime_python": str(runtime),
+        "data_root": str(data_root),
+        "source_commit": receipt["source_commit"],
+        "archive_sha256": receipt["archive_sha256"],
+        "activated": False,
+        "host_registered": False,
+    }
     write_json_atomic(install_root / "staged-install.json", result)
     return result
 
@@ -981,6 +1325,7 @@ def apply_install(
     app_root.mkdir(parents=True, exist_ok=True)
     staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
     product_python = Path(staged["runtime_python"])
+    model_configuration = migrate_model_configuration(data_root, program_root)
     restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
     active = {
         "schema": ACTIVE_SCHEMA,
@@ -992,6 +1337,7 @@ def apply_install(
         "data_root_hash": path_hash(data_root),
         "archive_sha256": str(artifact_receipt["archive_sha256"]),
         "source_commit": provenance["source_commit"],
+        "model_configuration": model_configuration,
     }
     active_path = install_root / "active.json"
     if active_path.is_file():
@@ -1005,10 +1351,21 @@ def apply_install(
     if config.is_file():
         shutil.copyfile(config, backup)
     plugin = copy_plugin(program_root, codex_home)
-    config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python))), encoding="utf-8")
+    config.write_text(
+        ensure_mcp_catalog_wait(
+            replace_mcp_block(
+                config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)
+            )
+        ),
+        encoding="utf-8",
+    )
     write_json_atomic(active_path, active)
     wizard_launcher = write_product_wizard_launcher(active, product_python)
-    autostart = write_console_autostart(install_root, product_python) if enable_console_autostart else refresh_console_autostart(install_root, product_python)
+    autostart = (
+        write_console_autostart(install_root, product_python)
+        if enable_console_autostart
+        else refresh_console_autostart(install_root, product_python)
+    )
     receipt = {
         "schema": "knowledgeradar-activation-receipt/v1",
         "status": "APPLIED",
@@ -1018,6 +1375,7 @@ def apply_install(
         "console_launcher": str(install_root / "console.cmd"),
         "console_autostart": str(autostart) if autostart else None,
         "restored_runtime_components": restored_components,
+        "model_configuration": model_configuration,
     }
     write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt
@@ -1028,6 +1386,8 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     if not backup.is_file():
         raise RuntimeError("no previous active installation is available")
     previous = json.loads(backup.read_text(encoding="utf-8"))
+    current = load_active(install_root)
+    model_env = Path(current["data_root"]) / "config/runtime.env"
     safe_child(install_root / "app", Path(str(previous.get("program_root") or "")))
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
@@ -1036,41 +1396,83 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         raise RuntimeError("previous product runtime is unavailable")
     verify_product_package(Path(previous["program_root"]))
     # active最后提交。失败时恢复被覆盖的配置与plugin，不留下半切换身份。
-    plugin=codex_home/'plugins'/PLUGIN_NAME
-    marketplace=codex_home/'.agents/plugins/marketplace.json'
-    files=[config,marketplace,*(install_root/name for name in ['console_product.py','console.cmd','configure.cmd'])]
-    snapshots={p:p.read_bytes() if p.is_file() else None for p in files}
-    with tempfile.TemporaryDirectory(prefix='kr-rollback-') as temp:
-        backup_plugin=Path(temp)/'plugin'
-        had_plugin=plugin.is_dir()
+    plugin = codex_home / "plugins" / PLUGIN_NAME
+    marketplace = codex_home / ".agents/plugins/marketplace.json"
+    files = [
+        config,
+        marketplace,
+        model_env,
+        *(install_root / name for name in ["console_product.py", "console.cmd", "configure.cmd"]),
+    ]
+    snapshots = {p: p.read_bytes() if p.is_file() else None for p in files}
+    with tempfile.TemporaryDirectory(prefix="kr-rollback-") as temp:
+        backup_plugin = Path(temp) / "plugin"
+        had_plugin = plugin.is_dir()
         if had_plugin:
-            shutil.copytree(plugin,backup_plugin)
+            shutil.copytree(plugin, backup_plugin)
         try:
             copy_plugin(Path(previous["program_root"]), codex_home)
-            config.parent.mkdir(parents=True,exist_ok=True)
-            config.write_text(ensure_mcp_catalog_wait(replace_mcp_block(config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, previous_runtime))), encoding="utf-8")
+            config.parent.mkdir(parents=True, exist_ok=True)
+            config.write_text(
+                ensure_mcp_catalog_wait(
+                    replace_mcp_block(
+                        config.read_text(encoding="utf-8") if config.is_file() else "",
+                        active_mcp_block(previous, previous_runtime),
+                    )
+                ),
+                encoding="utf-8",
+            )
             wizard_launcher = write_product_wizard_launcher(previous, previous_runtime)
             refresh_console_autostart(install_root, previous_runtime)
+            model_configuration = restore_model_configuration(
+                Path(current["data_root"]), current.get("model_configuration", {})
+            )
             write_json_atomic(install_root / "active.json", previous)
         except Exception:
-            for path,content in snapshots.items():
+            for path, content in snapshots.items():
                 if content is None:
                     path.unlink(missing_ok=True)
                 else:
-                    path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(content)
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
             if plugin.exists():
                 shutil.rmtree(plugin)
             if had_plugin:
-                shutil.copytree(backup_plugin,plugin)
+                shutil.copytree(backup_plugin, plugin)
             raise
-    return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher)}
+    return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher),
+            "model_configuration": model_configuration}
+
+
+def set_developer_view(install_root: Path, enabled: bool) -> dict[str, Any]:
+    """同一稳定安装的本机维护者标记；不修改账号、MCP或安装身份。"""
+    active = load_active(install_root.resolve())
+    marker = Path(active["data_root"]) / "config" / "developer-console.json"
+    write_json_atomic(
+        marker, {"schema": "knowledgeradar-developer-console/v1", "enabled": enabled, "audience": "maintainer"}
+    )
+    return {"status": "APPLIED", "developer_view": enabled, "effective": "next_console_page_load", "mcp_changed": False}
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
     parser.add_argument(
         "command",
-        choices=("plan", "verify-install", "apply", "status", "rollback", "migrate-plan", "migrate-apply", "data-move-plan", "data-move-apply", "data-move-rollback", "capability-plan", "capability-apply"),
+        choices=(
+            "plan",
+            "verify-install",
+            "apply",
+            "status",
+            "rollback",
+            "migrate-plan",
+            "migrate-apply",
+            "data-move-plan",
+            "data-move-apply",
+            "data-move-rollback",
+            "capability-plan",
+            "capability-apply",
+            "developer-view",
+        ),
     )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
@@ -1079,17 +1481,30 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--channel", choices=("stable", "maintainer-main"), default="stable")
     parser.add_argument("--archive", default="", help="downloaded candidate/release ZIP")
     parser.add_argument("--receipt", default="", help="candidate/release receipt JSON matching --archive")
-    parser.add_argument("--legacy-root", default="", help="existing private development/runtime root; read only for migration")
+    parser.add_argument(
+        "--legacy-root", default="", help="existing private development/runtime root; read only for migration"
+    )
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
-    parser.add_argument("--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install")
-    parser.add_argument("--no-console-autostart", action="store_true", help="do not create the per-user local-console startup entry")
+    parser.add_argument(
+        "--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install"
+    )
+    parser.add_argument(
+        "--no-console-autostart", action="store_true", help="do not create the per-user local-console startup entry"
+    )
+    parser.add_argument(
+        "--developer-view", choices=("enable", "disable"), help="local maintainer view; no account or MCP changes"
+    )
     args = parser.parse_args(argv)
     try:
         package_root = Path(args.package_root).resolve()
         install_root = Path(args.install_root).resolve()
         data_root = Path(args.data_root).resolve() if args.data_root else install_root / "data"
         python_exe = Path(args.python).resolve()
-        if args.command == "capability-plan":
+        if args.command == "developer-view":
+            if not args.developer_view:
+                raise ValueError("developer-view requires --developer-view enable|disable")
+            result = set_developer_view(install_root, args.developer_view == "enable")
+        elif args.command == "capability-plan":
             if not args.capability:
                 raise RuntimeError("capability-plan requires --capability")
             result = capability_plan(install_root, args.capability)
@@ -1120,7 +1535,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "verify-install":
             if not args.archive or not args.receipt:
                 raise RuntimeError("verify-install requires --archive and --receipt")
-            result = stage_verified_package(package_root, install_root, data_root, python_exe, Path(args.archive), Path(args.receipt))
+            result = stage_verified_package(
+                package_root, install_root, data_root, python_exe, Path(args.archive), Path(args.receipt)
+            )
         elif args.command == "apply":
             result = apply_install(
                 package_root,
@@ -1136,7 +1553,15 @@ def main(argv: list[str] | None = None) -> int:
             result = {"status": "ACTIVE", "active": load_active(install_root)}
         else:
             result = rollback(install_root, python_exe)
-    except (OSError, RuntimeError, ValueError, KeyError, TypeError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+    except (
+        OSError,
+        RuntimeError,
+        ValueError,
+        KeyError,
+        TypeError,
+        json.JSONDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
         result = {"status": "FAIL", "error": str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result.get("status") not in {"FAIL"} else 1

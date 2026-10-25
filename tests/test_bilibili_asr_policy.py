@@ -1,5 +1,28 @@
 from pathlib import Path
 
+
+def test_language_per_request_isolated_task_cache_and_metadata(monkeypatch, tmp_path):
+    monkeypatch.setenv('KR_ASR_LANGUAGE','zh')
+    calls=[]
+    def subtitles(bvid, **kwargs):
+        calls.append(kwargs['language'])
+        return {'hit':True,'text':'English words' if kwargs['language']=='en' else '中文字幕','timestamped_segments':[{'text':'English words' if kwargs['language']=='en' else '中文字幕','start_s':0,'end_s':2}]}
+    monkeypatch.setattr(bili,'_probe_bilibili_subtitle',subtitles)
+    english=bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='en')
+    chinese=bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='zh')
+    assert english=='English words' and chinese=='中文字幕'
+    assert calls==['en','zh']
+    assert bili.transcribe_bilibili('BVlanguages',output_dir=str(tmp_path/'transcripts'),language='en')=='English words'
+    assert calls==['en','zh']
+    metadata=bili.get_bilibili_transcript_metadata('BVlanguages','en')
+    assert metadata['policy']['language']=='en'
+    assert metadata['locators']['status']=='aligned'
+    assert bili.AsrPolicy.from_env().language=='zh'
+    tasks=bili.get_task_store().tasks_for_source(content_id='BVlanguages')
+    assert len(tasks)==2
+    assert {task['metadata']['language'] for task in tasks}=={'en','zh'}
+
+
 import pytest
 import collectors.platform.bilibili as bili
 from runtime.tasks import TaskStore
@@ -94,7 +117,7 @@ def test_bilibili_asr_no_subtitle_starts_task_with_policy_metadata(monkeypatch, 
         def start(self):
             started["value"] = True
 
-    monkeypatch.setattr(bili.threading, "Thread", FakeThread)
+    monkeypatch.setattr("runtime.task_adapter.threading.Thread", FakeThread)
 
     message = bili.transcribe_bilibili("BVnosub", output_dir=str(output_dir), research_session_id="session-nosub")
     task = bili.get_task_store().get_task("bilibili_transcribe_BVnosub")
@@ -106,16 +129,16 @@ def test_bilibili_asr_no_subtitle_starts_task_with_policy_metadata(monkeypatch, 
     assert task["metadata"]["research_session_id"] == "session-nosub"
     assert task["metadata"]["blocks_final_report"] is True
     assert task["metadata"]["adapter"] == "local_thread_lifecycle"
-    assert task["metadata"]["model"] == "base"
-    assert task["metadata"]["beam_size"] == 3
-    assert task["metadata"]["vad_enabled"] is True
+    assert task["metadata"]["model"] == "qwen3-asr-0.6b"
+    assert task["metadata"]["beam_size"] == 1
+    assert task["metadata"]["vad_enabled"] is False
     assert task["metadata"]["subtitle_probe_s"] == 0.02
 
 
 def test_bilibili_asr_missing_components_returns_before_queuing_worker(monkeypatch, tmp_path: Path) -> None:
     output_dir = tmp_path / "transcripts"
     monkeypatch.setattr(bili, "_probe_bilibili_subtitle", lambda *args, **kwargs: {"hit": False, "duration_s": 0.01})
-    monkeypatch.setattr(bili, "_missing_transcription_components", lambda: ["本地转写运行时（faster-whisper）", "FFmpeg"])
+    monkeypatch.setattr(bili, "_missing_transcription_components", lambda: ["本地语音转写（0.6B）", "FFmpeg"])
 
     message = bili.transcribe_bilibili("BVmissing", output_dir=str(output_dir))
 

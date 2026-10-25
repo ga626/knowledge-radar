@@ -8,6 +8,7 @@ without introducing Celery, Prefect, or another worker runtime.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import os
 import threading
@@ -23,6 +24,7 @@ RESOURCE_ASR_CPU = "asr_cpu"
 RESOURCE_ASR_GPU = "asr_gpu"
 RESOURCE_PROVIDER_BAILIAN = "provider_bailian"
 RESOURCE_FRAME_VISION = "frame_vision"
+RESOURCE_LOCAL_HEAVY = "local_heavy"
 RESOURCE_UNBOUNDED = "unbounded"
 
 
@@ -42,7 +44,7 @@ class ResourceConcurrencyPolicy:
     media_download: int = 2
     asr_cpu: int = 1
     asr_gpu: int = 1
-    provider_bailian: int = 3
+    provider_bailian: int = 1
     frame_vision: int = 2
 
     @classmethod
@@ -52,12 +54,14 @@ class ResourceConcurrencyPolicy:
             media_download=_env_int("KR_MEDIA_DOWNLOAD_CONCURRENCY", 2),
             asr_cpu=_env_int("KR_ASR_CPU_CONCURRENCY", 1),
             asr_gpu=_env_int("KR_ASR_GPU_CONCURRENCY", 1),
-            provider_bailian=_env_int("KR_PROVIDER_CONCURRENCY_BAILIAN", 3),
+            provider_bailian=_env_int("KR_PROVIDER_CONCURRENCY_BAILIAN", 1),
             frame_vision=_env_int("KR_FRAME_VISION_CONCURRENCY", 2),
         )
 
     def limit_for(self, resource: str) -> int | None:
         normalized = normalize_resource(resource)
+        if normalized == RESOURCE_LOCAL_HEAVY:
+            return 1
         if normalized == RESOURCE_SUBTITLE_PROBE:
             return self.subtitle_probe
         if normalized == RESOURCE_MEDIA_DOWNLOAD:
@@ -76,6 +80,7 @@ class ResourceConcurrencyPolicy:
         return {
             "schema": "knowledgeradar-resource-concurrency/v1",
             "resources": {
+                RESOURCE_LOCAL_HEAVY: {"limit": 1, "role": "ASR 与 OCR/文档模型跨进程共享；完成后退出 worker"},
                 RESOURCE_SUBTITLE_PROBE: {
                     "limit": self.subtitle_probe,
                     "env": "KR_SUBTITLE_PROBE_CONCURRENCY",
@@ -89,7 +94,7 @@ class ResourceConcurrencyPolicy:
                 RESOURCE_ASR_CPU: {
                     "limit": self.asr_cpu,
                     "env": "KR_ASR_CPU_CONCURRENCY",
-                    "role": "CPU faster-whisper/FunASR/sherpa local ASR",
+                    "role": "本地转写；实际执行同时遵守 local_heavy=1",
                 },
                 RESOURCE_ASR_GPU: {
                     "limit": self.asr_gpu,
@@ -149,6 +154,7 @@ _SEMAPHORES: dict[str, threading.BoundedSemaphore] = {}
 _SEMAPHORE_LIMITS: dict[str, int] = {}
 _RESOURCE_STATS: dict[str, dict[str, float]] = {}
 _LOCK = threading.RLock()
+_HELD_RESOURCES = ContextVar("kr_held_resources", default={})
 
 
 def _stats_for(resource: str) -> dict[str, float]:
@@ -168,6 +174,8 @@ def _stats_for(resource: str) -> dict[str, float]:
 
 def _semaphore_for(resource: str, policy: ResourceConcurrencyPolicy) -> threading.BoundedSemaphore | None:
     normalized = normalize_resource(resource)
+    if normalized in {RESOURCE_ASR_CPU, RESOURCE_ASR_GPU}:
+        normalized = RESOURCE_LOCAL_HEAVY
     limit = policy.limit_for(normalized)
     if limit is None:
         return None
@@ -185,20 +193,48 @@ def _semaphore_for(resource: str, policy: ResourceConcurrencyPolicy) -> threadin
 def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = None) -> Iterator[dict[str, object]]:
     selected_policy = policy or ResourceConcurrencyPolicy.from_env()
     normalized = normalize_resource(resource)
+    if normalized in {RESOURCE_ASR_CPU, RESOURCE_ASR_GPU}:
+        normalized = RESOURCE_LOCAL_HEAVY
+    held = _HELD_RESOURCES.get()
+    if normalized in held:
+        # 同一调用链复用外层租约，避免单 GPU 路径再次申请自己的槽位。
+        yield {**held[normalized], "reused_outer_lease": True}
+        return
     sem = _semaphore_for(normalized, selected_policy)
     if sem is None:
         yield {"resource_kind": normalized, "limit": None, "limited": False, "wait_s": 0.0}
         return
     limit = selected_policy.limit_for(normalized)
     lease_started = time.time()
-    lease = get_runtime_lease_coordinator().acquire_bounded(
-        "runtime_resource",
-        normalized,
-        limit=int(limit or 1),
-        owner=default_owner("acquire_resource"),
-        ttl_s=int(os.environ.get("KR_RESOURCE_LEASE_TTL_S", "900")),
-        metadata={"resource_kind": normalized, "limit": limit},
+    coordinator = get_runtime_lease_coordinator()
+    from runtime.process_identity import process_identity
+    ttl = max(30, int(os.environ.get("KR_RESOURCE_LEASE_TTL_S", "60")))
+    wait_deadline = time.monotonic() + (
+        max(0, float(os.environ.get("KR_LOCAL_HEAVY_QUEUE_TIMEOUT_S", "600")))
+        if normalized == RESOURCE_LOCAL_HEAVY
+        else 0
     )
+    while True:
+        # 取消/崩溃后仅核对有确切进程身份的本地资源，不影响共享浏览器租约。
+        for active in coordinator.summary(limit=100).get("active", []):
+            metadata = active.get("metadata") or {}
+            if active.get("resource_kind") != "runtime_resource" or not metadata.get("owner_process_identity"):
+                continue
+            actual = process_identity(metadata.get("owner_pid"))
+            if not actual or actual != metadata["owner_process_identity"]:
+                coordinator.release(active["lease_id"])
+        lease = coordinator.acquire_bounded(
+            "runtime_resource",
+            normalized,
+            limit=int(limit or 1),
+            owner=default_owner("acquire_resource"),
+            ttl_s=ttl,
+            metadata={"resource_kind": normalized, "limit": limit,
+                      "owner_pid": os.getpid(), "owner_process_identity": process_identity()},
+        )
+        if lease.acquired or time.monotonic() >= wait_deadline:
+            break
+        time.sleep(0.2)
     lease_wait_s = round(time.time() - lease_started, 3)
     if not lease.acquired:
         raise RuntimeError(f"runtime resource busy: {normalized}; retry_after_s={lease.retry_after_s}")
@@ -211,8 +247,17 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
         stats["active"] += 1
         stats["wait_total_s"] += wait_s
         stats["wait_max_s"] = max(float(stats.get("wait_max_s") or 0.0), wait_s)
+    token = None
+    stop_heartbeat = threading.Event()
+
+    def heartbeat():
+        while not stop_heartbeat.wait(ttl / 3):
+            coordinator.heartbeat(lease.lease_id, ttl_s=ttl)
+
+    heart = threading.Thread(target=heartbeat, daemon=True)
+    heart.start()
     try:
-        yield {
+        resource_meta = {
             "resource_kind": normalized,
             "limit": limit,
             "limited": True,
@@ -221,7 +266,13 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
             "lease_wait_s": lease_wait_s,
             "lease_backed": True,
         }
+        token = _HELD_RESOURCES.set({**held, normalized: resource_meta})
+        yield resource_meta
     finally:
+        stop_heartbeat.set()
+        heart.join(timeout=2)
+        if token is not None:
+            _HELD_RESOURCES.reset(token)
         try:
             sem.release()
         finally:
@@ -236,7 +287,9 @@ def resource_concurrency_summary() -> dict[str, object]:
     data = policy.compact()
     data["status"] = "implemented_p2_2"
     data["lease_backed"] = True
-    data["adapter_scope"] = "runtime.task_adapter.LocalTaskAdapter acquires a cross-process runtime lease and a process-local semaphore before running task callables"
+    data["adapter_scope"] = (
+        "runtime.task_adapter.LocalTaskAdapter acquires a cross-process runtime lease and a process-local semaphore before running task callables"
+    )
     data["default_principle"] = "probe fan-out is allowed; GPU ASR and downloads are intentionally conservative"
     with _LOCK:
         data["runtime_stats"] = {

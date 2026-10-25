@@ -2,9 +2,11 @@
 import socket
 import subprocess
 import weakref
+import os
+import pytest
 
 
-def install_network_policy():
+def install_network_policy(owned_host_process=False):
     def blocked(*args, **kwargs):
         raise RuntimeError("EVAL_OFFLINE_POLICY: real network access is forbidden in fixture runs")
     original_bind=socket.socket.bind
@@ -14,7 +16,7 @@ def install_network_policy():
     original_resolve=socket.getaddrinfo
     listeners=weakref.WeakValueDictionary()
     def bind(sock,address):
-        if not isinstance(address,tuple) or address[0] not in {'127.0.0.1','::1'} or address[1]!=0:
+        if not isinstance(address,tuple) or address[0] not in {'127.0.0.1','::1'} or address[1] in {18882,18883} or (address[1]!=0 and not owned_host_process):
             return blocked()
         return original_bind(sock,address)
     def listen(sock,*args):
@@ -26,6 +28,8 @@ def install_network_policy():
         if not isinstance(address,tuple) or len(address)<2:
             return False
         host='127.0.0.1' if address[0]=='localhost' else address[0]
+        if owned_host_process and host in {'127.0.0.1','::1'} and int(address[1]) not in {18882,18883}:
+            return True
         listener=listeners.get((host,int(address[1])))
         return listener is not None and listener.fileno()>=0
     def connect(sock,address):
@@ -43,8 +47,22 @@ def install_network_policy():
     socket.getaddrinfo=resolve
 
 
+def pytest_addoption(parser):
+    parser.addoption('--kr-owned-host-process', action='store_true', default=False)
+
+
+@pytest.fixture(autouse=True)
+def restore_test_environment():
+    # 部分旧安装测试会直接写os.environ；合批后不能把配置带到后续用例。
+    previous = dict(os.environ)
+    yield
+    os.environ.clear()
+    os.environ.update(previous)
+
+
 def pytest_configure(config):
-    install_network_policy()
+    config._kr_collection_environment = dict(os.environ)
+    install_network_policy(config.getoption('--kr-owned-host-process'))
     original = subprocess.Popen
     class GuardedPopen(original):
         def __init__(self, args, *rest, **kwargs):
@@ -53,3 +71,9 @@ def pytest_configure(config):
                 raise RuntimeError("EVAL_OFFLINE_POLICY: external helper/browser launch forbidden")
             super().__init__(args, *rest, **kwargs)
     subprocess.Popen = GuardedPopen
+
+
+def pytest_collection_finish(session):
+    # 导入旧验收脚本也会setdefault关闭ASR；收集阶段的副作用不能改变待测默认值。
+    os.environ.clear()
+    os.environ.update(session.config._kr_collection_environment)

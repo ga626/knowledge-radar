@@ -65,7 +65,7 @@ def _build_l1_snapshot(platform: str, data: Dict[str, Any]) -> L1Snapshot:
         "transcript": L1Signal(
             name="transcript",
             status=transcript_status,
-            source="faster_whisper" if platform == "B站" else "",
+            source="qwen3-asr-0.6b" if platform == "B站" else "",
             length=_text_len(data.get("transcript")),
             notes="Bilibili transcript may be pending because download/transcription runs in background.",
         ),

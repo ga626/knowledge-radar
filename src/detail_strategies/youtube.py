@@ -32,7 +32,10 @@ class YouTubeDetailStrategy:
             return self._response(request, result)
 
         if "include_transcript" in request.options:
-            result = self.deps.get_detail(video_id, include_transcript=bool(request.options["include_transcript"]))
+            kwargs = {"include_transcript": bool(request.options["include_transcript"])}
+            if request.options.get("language") is not None:
+                kwargs["language"] = request.options["language"]
+            result = self.deps.get_detail(video_id, **kwargs)
         else:
             result = self.deps.get_detail(video_id)
         result.setdefault("platform", self.platform)

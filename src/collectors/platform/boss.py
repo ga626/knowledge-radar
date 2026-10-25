@@ -969,7 +969,7 @@ def _bring_boss_to_front_for_login() -> None:
 
 def legacy_search_boss(keyword: str, city: str = "", limit: int = 10) -> Dict:
     """BOSS直聘搜索入口函数，注册到平台适配器系统。"""
-    log.info(f"search_boss: {keyword}, city={city}, limit={limit}")
+    log.info("search_boss: request received; limit=%s", limit)
     limit = min(limit, 20)
     trace = CollectionTrace("BOSS直聘", ["stealth_cdp_page"])
 

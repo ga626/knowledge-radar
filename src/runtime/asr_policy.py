@@ -1,57 +1,28 @@
 """Runtime ASR policy helpers.
 
 This module is intentionally side-effect-light: it reads environment variables
-and normalizes faster-whisper options, but does not load models or touch media.
+and normalizes the selected Qwen3-ASR worker options, but does not load models or touch media.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hashlib
 import os
+import re
 from pathlib import Path
 
-from runtime.paths import whisper_model_cache_dir
+from runtime.paths import runtime_state_dir
+from runtime.model_roles import ASR_COMPONENT, ASR_MODEL_REF
 
 
-DEFAULT_ASR_MODELS = ("local:faster-whisper/base", "local:faster-whisper/tiny")
-P2_ASR_ENGINE_CANDIDATES = (
-    "local:faster-whisper/base",
-    "local:faster-whisper/tiny",
-    "local:funasr/sensevoice-small",
-    "local:sherpa-onnx/sensevoice-int8",
-)
+DEFAULT_ASR_MODELS = (ASR_MODEL_REF,)
+P2_ASR_ENGINE_CANDIDATES = DEFAULT_ASR_MODELS
 
 
 def _split_models(value: str | None) -> tuple[str, ...]:
-    models = tuple(item.strip() for item in (value or "").split(",") if item.strip())
-    return models or DEFAULT_ASR_MODELS
-
-
-def _env_bool(name: str, default: bool) -> bool:
-    value = os.environ.get(name)
-    if value is None or not value.strip():
-        return default
-    return value.strip().lower() not in {"0", "false", "no", "off"}
-
-
-def _env_int(name: str, default: int) -> int:
-    value = os.environ.get(name)
-    if value is None or not value.strip():
-        return default
-    try:
-        return int(value)
-    except ValueError:
-        return default
-
-
-def faster_whisper_model_name(model_ref: str) -> str:
-    value = (model_ref or "").strip()
-    if value.startswith("local:faster-whisper/"):
-        return value.split("/", 1)[1].strip() or "base"
-    if value.startswith("faster-whisper/"):
-        return value.split("/", 1)[1].strip() or "base"
-    return value or "base"
+    # 旧版环境覆盖不再唤起已退役引擎；新版本只提供已批准的单一职责。
+    return DEFAULT_ASR_MODELS
 
 
 def transcript_cache_key(
@@ -60,13 +31,13 @@ def transcript_cache_key(
     content_id: str,
     audio_path: str = "",
     audio_hash: str = "",
-    engine: str = "faster-whisper",
-    model: str = "base",
+    engine: str = "transformers_native",
+    model: str = ASR_COMPONENT,
     device: str = "cpu",
-    compute_type: str = "int8",
+    compute_type: str = "float32",
     language: str = "zh",
-    vad: bool = True,
-    beam: int = 5,
+    vad: bool = False,
+    beam: int = 1,
 ) -> dict[str, object]:
     """Return the canonical transcript cache key and its explicit fields."""
     resolved_audio_hash = audio_hash or _file_hash(audio_path)
@@ -74,10 +45,10 @@ def transcript_cache_key(
         "platform": platform or "unknown",
         "content_id": content_id or "unknown",
         "audio_hash": resolved_audio_hash or "unknown",
-        "engine": engine or "faster-whisper",
-        "model": model or "base",
+        "engine": engine or "transformers_native",
+        "model": model or ASR_COMPONENT,
         "device": device or "cpu",
-        "compute": compute_type or "int8",
+        "compute": compute_type or "float32",
         "language": language or "",
         "vad": bool(vad),
         "beam": int(beam or 1),
@@ -107,32 +78,45 @@ def _file_hash(path: str) -> str:
 class AsrPolicy:
     models: tuple[str, ...] = DEFAULT_ASR_MODELS
     device: str = "cpu"
-    compute_type: str = "int8"
-    beam_size: int = 5
-    vad_enabled: bool = True
+    compute_type: str = "float32"
+    beam_size: int = 1
+    vad_enabled: bool = False
     language: str = "zh"
     model_cache_dir: str = ""
-    batch_size: int = 8
+    batch_size: int = 1
 
     @classmethod
     def from_env(cls) -> "AsrPolicy":
         return cls(
             models=_split_models(os.environ.get("KR_ASR_MODELS")),
             device=(os.environ.get("KR_ASR_DEVICE") or "cpu").strip() or "cpu",
-            compute_type=(os.environ.get("KR_ASR_COMPUTE_TYPE") or "int8").strip() or "int8",
-            beam_size=max(1, _env_int("KR_ASR_BEAM_SIZE", 5)),
-            vad_enabled=_env_bool("KR_ASR_VAD", True),
+            compute_type="float16" if (os.environ.get("KR_ASR_DEVICE") or "cpu").startswith("cuda") else "float32",
+            beam_size=1,
+            vad_enabled=False,
             language=(os.environ.get("KR_ASR_LANGUAGE") or "zh").strip() or "zh",
-            model_cache_dir=str(whisper_model_cache_dir()),
-            batch_size=max(1, _env_int("KR_ASR_BATCH_SIZE", 8)),
+            model_cache_dir=str(runtime_state_dir() / "optional_components"),
+            batch_size=1,
         )
 
     @property
     def primary_model(self) -> str:
-        return faster_whisper_model_name(self.models[0] if self.models else DEFAULT_ASR_MODELS[0])
+        return ASR_COMPONENT
+
+    @classmethod
+    def for_request(cls, language: str | None = None) -> "AsrPolicy":
+        policy = cls.from_env()
+        if language is None:
+            return policy
+        normalized = str(language).strip().lower()
+        if normalized == "auto":
+            normalized = ""
+        if normalized and not re.fullmatch("[a-z]{2,3}", normalized):
+            raise ValueError("invalid_asr_language")
+        return replace(policy, language=normalized)
 
     def compact(self) -> dict[str, object]:
         return {
+            "selected_component": ASR_COMPONENT,
             "models": list(self.models),
             "model": self.primary_model,
             "engine_candidates": list(P2_ASR_ENGINE_CANDIDATES),

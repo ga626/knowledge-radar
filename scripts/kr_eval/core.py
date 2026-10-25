@@ -18,7 +18,7 @@ import uuid
 SCHEMA = "knowledgeradar-evaluation/v1"
 VERDICTS = {"PASS", "FAIL", "ERROR", "BLOCKED", "SKIPPED", "NOT_RUN"}
 READINESS = {"ready", "degraded", "needs_interaction", "unavailable", "unknown"}
-SCOPES = ("src/", "scripts/", "tests/", "config/", "bridge/")
+SCOPES = ("src/", "scripts/", "tests/", "config/", "bridge/", ".github/workflows/")
 
 
 def now():
@@ -99,6 +99,8 @@ def load_suite(root, directory="config/evaluation"):
         if any(x not in cap_map for x in cap.get("depends_on", [])):
             raise ValueError("unknown capability dependency")
     for case in cases:
+        if not all(ch.isalnum() or ch in '._-' for ch in case["case_id"]) or case["case_id"] in {".", ".."}:
+            raise ValueError("unsafe case ID")
         if not case.get("version") or not case.get("oracle_version") or not case.get("success"):
             raise ValueError("missing version or business success rule")
         if not case.get("capabilities") or any(x not in cap_map for x in case["capabilities"]):
@@ -115,6 +117,9 @@ def load_suite(root, directory="config/evaluation"):
             raise ValueError("invalid TTL")
         for pattern in case["dependencies"]:
             safe_path(root, pattern)
+        contract = case.get("receipt_contract")
+        if contract and (not contract.get("tool") or not contract.get("assertions") or not contract.get("identity_fields")):
+            raise ValueError("external receipt needs reviewed business assertions and identity fields")
     return {"catalog": catalog, "cases": cases, "caps": cap_map}
 
 
@@ -283,7 +288,7 @@ class Ledger:
         raw = {k: v for k, v in run.items() if k != "integrity"}
         if digest(raw) != run.get("integrity"):
             raise ValueError(f"ledger integrity mismatch: {run_id}")
-        for result in run["results"]:
+        for result in [*run["results"], {"evidence": run.get('ci_evidence', [])}]:
             for item in result.get("evidence", []):
                 evidence = safe_path(folder, item["path"])
                 if not evidence.is_file() or file_hash(evidence) != item["sha256"]:
@@ -371,16 +376,24 @@ def status(root, suite, ledger, *, at=None):
             continue
         row, run = current[case["case_id"]]
         applicable, reasons = applicability(root, suite, case, row, run, snap, env, at)
+        if row["verdict"] == "NOT_RUN":
+            applicable = "unknown" if applicable == "fresh" else applicable
+            reasons = ["no_execution", *reasons]
         rows.append({"case_id": case["case_id"], "layer": case["layer"], "verdict": row["verdict"], "applicability": applicable,
-                     "readiness": row["readiness"], "run_id": run["run_id"], "checked_at": run["finished_at"], "reasons": reasons,
+                     "readiness": row["readiness"], "run_id": run["run_id"], "checked_at": run["finished_at"] if row["verdict"] != "NOT_RUN" else None, "reasons": reasons,
                      "known_issue": case.get("known_issue"), "summary": row.get("summary", "")})
     counts = {key: dict(Counter(row[key] for row in rows)) for key in ["verdict", "applicability", "readiness", "layer"]}
     gate = "INCOMPLETE"
-    if inv["issues"] or any(r["verdict"] in {"FAIL", "ERROR"} and r["applicability"] == "fresh" for r in rows):
+    latest_ci = next((r for r in reversed(history) if r['target']['kind'] == 'development_source' and 'ci_pytest' in r), None)
+    ci_gate = None
+    if latest_ci:
+        ci_fresh = latest_ci['snapshot']['content_hash'] == snap['content_hash'] and latest_ci['environment']['fingerprint'] == env['fingerprint'] and not latest_ci.get('changed_during_execution')
+        ci_gate = {'run_id': latest_ci['run_id'], 'verdict': latest_ci['ci_pytest']['verdict'], 'applicability': 'fresh' if ci_fresh else 'stale'}
+    if inv["issues"] or (ci_gate and ci_gate['applicability'] == 'fresh' and ci_gate['verdict'] != 'PASS') or any(r["verdict"] in {"FAIL", "ERROR", "BLOCKED"} and r["applicability"] == "fresh" for r in rows):
         gate = "BLOCKED"
     elif rows and all(r["verdict"] == "PASS" and r["applicability"] == "fresh" for r in rows):
         gate = "PASS"
-    return {"schema": SCHEMA, "target": "development_source", "gate": gate, "inventory": inv, "denominator": len(rows),
+    return {"schema": SCHEMA, "target": "development_source", "gate": gate, "ci_gate": ci_gate, "inventory": inv, "denominator": len(rows),
             "counts": counts, "cases": rows, "history_runs": len(history), "snapshot_hash": snap["content_hash"]}
 
 
@@ -399,11 +412,13 @@ def compare(before, after):
                     reasons.append(f"{field}_changed")
         if before["environment"]["fingerprint"] != after["environment"]["fingerprint"]:
             reasons.append("environment_changed")
+        if any(r["environment"]["fingerprint"].startswith("unknown:") for r in (before, after)):
+            reasons.append("environment_unmeasured")
         if before["target"] != after["target"]:
             reasons.append("target_changed")
         transition = "incomparable" if reasons else "unchanged"
         if not reasons and left["verdict"] != right["verdict"]:
-            if left["verdict"] == "PASS" and right["verdict"] == "FAIL":
+            if left["verdict"] == "PASS" and right["verdict"] != "PASS":
                 transition = "regression"
             elif left["verdict"] == "FAIL" and right["verdict"] == "PASS":
                 transition = "fixed"
@@ -411,4 +426,7 @@ def compare(before, after):
                 transition = "verdict_changed"
         rows.append({"case_id": key, "before": left and left["verdict"], "after": right and right["verdict"],
                      "transition": transition, "reasons": reasons, "reused": bool(right and right.get("reused_from"))})
-    return {"schema": SCHEMA, "before": before["run_id"], "after": after["run_id"], "cases": rows}
+    gate = "BLOCKED" if any(r["transition"] == "regression" for r in rows) else "INCOMPLETE" if any(r["transition"] == "incomparable" or r["after"] != "PASS" for r in rows) else "PASS"
+    if after.get('ci_pytest', {}).get('verdict', 'PASS') != 'PASS':
+        gate = 'BLOCKED'
+    return {"schema": SCHEMA, "before": before["run_id"], "after": after["run_id"], "gate": gate, "cases": rows}

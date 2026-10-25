@@ -1,8 +1,10 @@
-"""B站视频转写：下载音频 + faster-whisper 语音转文字"""
+"""B站视频转写：下载音频 + 隔离 Qwen3-ASR 0.6B"""
+
 import logging
 import glob
-import os, sys, time, json
+import os, sys, time
 from contextlib import contextmanager
+from pathlib import Path
 
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 from runtime.asr_policy import AsrPolicy
@@ -12,26 +14,13 @@ log = logging.getLogger("mcp-server")
 OUTPUT_DIR = os.environ.get("KR_TRANSCRIBE_OUTPUT_DIR") or str(media_cache_subdir("transcripts"))
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Ensure ffmpeg is in PATH for faster-whisper
-ffmpeg_bin = os.environ.get("KR_FFMPEG_BIN", "")
-if ffmpeg_bin:
-    os.environ["PATH"] = ffmpeg_bin + os.pathsep + os.environ.get("PATH", "")
-
-_MODEL_CACHE = {}
-
-
 @contextmanager
 def _redirect_stdout_to_stderr():
-    """Redirect sys.stdout to sys.stderr to prevent MCP stdio pollution.
-    
-    yt-dlp and faster-whisper may write directly to stdout via C extensions
-    or low-level sys.stdout.write(), bypassing any builtins.print monkeypatch.
-    This context manager physically redirects the file descriptor.
-    """
+    """stdio 宿主中重定向下载器的 Python 输出；模型使用独立 worker 管道。"""
     if os.environ.get("KR_MCP_TRANSPORT", "").strip().lower() != "stdio":
         yield
         return
-    
+
     old_stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
@@ -47,13 +36,17 @@ def download_audio(bvid: str) -> str:
     audio_path = os.path.join(OUTPUT_DIR, f"{bvid}.m4a")
     if os.path.exists(audio_path):
         log.info(f"[download] Audio already exists: {audio_path}")
-        record_media_cache_entry(audio_path, kind="audio", content_id=bvid, source_url=f"https://www.bilibili.com/video/{bvid}")
+        record_media_cache_entry(
+            audio_path, kind="audio", content_id=bvid, source_url=f"https://www.bilibili.com/video/{bvid}"
+        )
         return audio_path
 
     existing_audio = _find_downloaded_audio(bvid)
     if existing_audio:
         log.info(f"[download] Audio already exists: {existing_audio}")
-        record_media_cache_entry(existing_audio, kind="audio", content_id=bvid, source_url=f"https://www.bilibili.com/video/{bvid}")
+        record_media_cache_entry(
+            existing_audio, kind="audio", content_id=bvid, source_url=f"https://www.bilibili.com/video/{bvid}"
+        )
         return existing_audio
 
     url = f"https://www.bilibili.com/video/{bvid}"
@@ -96,95 +89,67 @@ def _find_downloaded_audio(bvid: str) -> str:
     return existing[0]
 
 
-def _model_cache_key(model_size: str, policy: AsrPolicy) -> tuple[str, str, str]:
-    return (model_size, policy.device, policy.compute_type)
+def _chunk_srt(segments):
+    def stamp(seconds):
+        milliseconds = max(0, round(seconds * 1000))
+        hours, milliseconds = divmod(milliseconds, 3600000)
+        minutes, milliseconds = divmod(milliseconds, 60000)
+        seconds, milliseconds = divmod(milliseconds, 1000)
+        return f"{hours:02}:{minutes:02}:{seconds:02},{milliseconds:03}"
+    return "\n\n".join(f"{i}\n{stamp(row['start_s'])} --> {stamp(row['end_s'])}\n{row['text']}"
+                        for i, row in enumerate(segments, 1))
 
 
-def _load_model(model_size: str, policy: AsrPolicy):
-    from faster_whisper import WhisperModel
+def transcribe(audio_path: str, model_size: str = "qwen3-asr-0.6b", policy: AsrPolicy | None = None) -> dict:
+    """通过唯一隔离 ASR worker 转写；缺少安装或执行失败明确返回缺口。"""
+    from runtime.optional_media import run_optional, file_sha
+    from runtime.model_roles import ASR_COMPONENT
 
-    key = _model_cache_key(model_size, policy)
-    cached = _MODEL_CACHE.get(key)
-    if cached is not None:
-        return cached, 0.0, True
-    log.info(
-        "[transcribe] Loading model '%s' device=%s compute=%s...",
-        model_size,
-        policy.device,
-        policy.compute_type,
-    )
-    t0 = time.time()
-    with _redirect_stdout_to_stderr():
-        kwargs = {}
-        if policy.model_cache_dir:
-            kwargs["download_root"] = policy.model_cache_dir
-        model = WhisperModel(model_size, device=policy.device, compute_type=policy.compute_type, **kwargs)
-    elapsed = time.time() - t0
-    _MODEL_CACHE[key] = model
-    log.info(f"[transcribe] Model loaded in {elapsed:.1f}s")
-    return model, elapsed, False
-
-
-def transcribe(audio_path: str, model_size: str = "base", policy: AsrPolicy | None = None) -> dict:
-    """Transcribe audio using faster-whisper. Returns transcript data."""
     policy = policy or AsrPolicy.from_env()
-    model, model_load_s, model_cache_hit = _load_model(model_size, policy)
-
-    log.info(f"[transcribe] Transcribing {audio_path}...")
-    t0 = time.time()
-    with _redirect_stdout_to_stderr():
-        segments, info = model.transcribe(
-            audio_path,
-            language=policy.language or None,
-            beam_size=policy.beam_size,
-            vad_filter=policy.vad_enabled,
-        )
-    log.info(f"[transcribe] Detected: {info.language} (p={info.language_probability:.2f})")
-
-    txt_lines = []
-    srt_lines = []
-    for i, seg in enumerate(segments, 1):
-        start = seg.start
-        end = seg.end
-        text = seg.text.strip()
-        if not text:
-            continue
-        txt_lines.append(text)
-        # SRT format
-        srt_lines.append(f"{i}")
-        srt_lines.append(
-            f"{int(start//3600):02d}:{int((start%3600)//60):02d}:{int(start%60):02d},{int((start%1)*1000):03d}"
-            f" --> "
-            f"{int(end//3600):02d}:{int((end%3600)//60):02d}:{int(end%60):02d},{int((end%1)*1000):03d}"
-        )
-        srt_lines.append(text)
-        srt_lines.append("")
-
-    duration = time.time() - t0
-
+    started = time.time()
+    source = Path(audio_path).resolve()
+    native = run_optional(
+        {
+            "component": ASR_COMPONENT,
+            "input_path": str(source),
+            "approved_input_root": str(source.parent),
+            "input_sha256": file_sha(source),
+            "language": policy.language or "auto",
+        }
+    )
+    locations = native.get("content_locators") or []
+    segments = [
+        {"start_s": loc["start_s"], "end_s": loc["end_s"], "text": native["text"][loc["start"] : loc["end"]]}
+        for loc in locations
+    ]
     return {
-        "segments": len(txt_lines),
-        "duration_s": duration,
-        "model_load_s": model_load_s,
-        "model_cache_hit": model_cache_hit,
-        "device": policy.device,
-        "compute_type": policy.compute_type,
-        "beam_size": policy.beam_size,
-        "vad_enabled": policy.vad_enabled,
-        "model": model_size,
-        "txt": "\n".join(txt_lines),
-        "srt": "\n".join(srt_lines),
-        "language": info.language,
-        "confidence": info.language_probability,
+        "segments": len(segments),
+        "timestamped_segments": segments,
+        "duration_s": time.time() - started,
+        "model_load_s": None,
+        "model_cache_hit": False,
+        "device": native.get("device"),
+        "compute_type": native.get("dtype"),
+        "beam_size": 1,
+        "vad_enabled": False,
+        "model": ASR_COMPONENT,
+        "engine": "transformers_native",
+        "txt": native["text"],
+        "srt": _chunk_srt(segments),
+        "language": policy.language,
+        "confidence": None,
+        "content_locators": locations,
+        "timestamp_precision": "input_chunk_only",
+        "evidence_assets": native.get("evidence_assets", []),
     }
 
 
-def process_video(bvid: str, model_size: str = "base", policy: AsrPolicy | None = None) -> dict:
+def process_video(bvid: str, model_size: str = "qwen3-asr-0.6b", policy: AsrPolicy | None = None) -> dict:
     """Full pipeline: download audio + transcribe for a B站 video."""
     policy = policy or AsrPolicy.from_env()
-    log.info(f"{'='*60}")
+    log.info(f"{'=' * 60}")
     log.info(f"Processing B站 video: {bvid}")
-    log.info(f"{'='*60}")
+    log.info(f"{'=' * 60}")
 
     # Step 1: Download audio
     t0 = time.time()
@@ -229,7 +194,7 @@ def process_video(bvid: str, model_size: str = "base", policy: AsrPolicy | None 
     log.info(f"[result] Total time: {result['total_time_s']:.1f}s")
     log.info(f"[result] TXT: {result['txt_path']}")
     log.info(f"[result] SRT: {result['srt_path']}")
-    log.info(f"[result] Text preview (first 200 chars):")
+    log.info("[result] Text preview (first 200 chars):")
     log.info(f"  {result['txt'][:200]}")
 
     return result

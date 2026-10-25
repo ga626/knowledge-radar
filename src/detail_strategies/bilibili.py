@@ -30,6 +30,7 @@ class BilibiliDetailDeps:
     direct_media_probe: Callable[[str, bool], Dict]
     evidence_builder: Callable[[str, str, Dict], EvidenceItem]
     data_dir: str
+    transcript_metadata: Callable[..., Dict] | None = None
 
 
 class BilibiliDetailStrategy:
@@ -79,7 +80,8 @@ class BilibiliDetailStrategy:
             result_status=self._transcript_status,
         )
         if not transcribe_enabled:
-            result["transcript"] = "[transcribe] skipped by KR_BILIBILI_TRANSCRIBE_ON_DETAIL=0"
+            result["transcript"] = ""
+            result["transcript_status"] = {"status": "not_requested", "message": "transcription explicitly disabled"}
         elif str(result["transcript"]).startswith("[transcribe] INSTALL_COMPONENT_MISSING:"):
             detail = str(result["transcript"]).split(":", 1)[1].split("；", 1)[0].strip()
             result["component_status"] = {
@@ -93,6 +95,8 @@ class BilibiliDetailStrategy:
             result["transcript_status"] = {"status": status, "message": str(result["transcript"] or "empty transcript")[:400]}
             result["transcript"] = ""
             result["failure_type"] = "transcript_pending" if status == "pending" else "transcript_failed"
+        if result["transcript"] and self.deps.transcript_metadata:
+            result["transcript_metadata"] = self.deps.transcript_metadata(bvid, request.options.get("language"))
         comments_enabled = bool(request.options.get("include_comments", True))
         comments = self.deps.get_comments(bvid) if comments_enabled else []
         result["comments"] = comments

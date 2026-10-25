@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "generated_at": "2026-10-21T11:39:08.194104+00:00",
+  "generated_at": "2026-10-25T09:00:21.396425+00:00",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -98,14 +98,14 @@
       "path": "scripts/kr_evaluate.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 63,
+      "reference_count": 69,
       "action": "may_move_after_targeted_checks"
     },
     {
       "path": "scripts/kr_freeze_runtime.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 9,
+      "reference_count": 10,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -123,6 +123,13 @@
       "action": "may_move_after_targeted_checks"
     },
     {
+      "path": "scripts/kr_optional_media.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 18,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
       "path": "scripts/kr_source_ecology_eval.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
@@ -137,6 +144,13 @@
       "action": "may_move_after_targeted_checks"
     },
     {
+      "path": "scripts/kr_workspace.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 12,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
       "path": "scripts/open_academic_login_profiles.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
@@ -147,14 +161,14 @@
       "path": "scripts/product_console_launcher.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 18,
+      "reference_count": 22,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
       "path": "scripts/product_install.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 100,
+      "reference_count": 110,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -189,7 +203,7 @@
       "path": "scripts/setup_wizard.bat",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 53,
+      "reference_count": 54,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -238,7 +252,7 @@
   "counts": {
     "S0": 0,
     "S1": 28,
-    "S2": 5,
+    "S2": 7,
     "S3": 0,
     "S4": 0
   }

@@ -243,7 +243,7 @@ def test_optional_capability_and_diagnostic_status_never_expose_paths_or_values(
     states = {row["id"]: row["status"] for row in optional}
     assert states["browser"] == "not_installed"  # Empty directory and APPLIED history do not prove a browser binary.
     assert states["xhs_bridge"] == "ready"
-    assert {"media_downloader", "transcription_runtime", "transcription_model"}.issubset(states)
+    assert {"media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6"}.issubset(states)
     assert str(data_root) not in json.dumps(diagnostic)
     assert "private bridge" not in json.dumps(diagnostic)
 
@@ -267,14 +267,14 @@ def test_local_component_catalog_groups_everything_by_user_goal(tmp_path, monkey
     groups = {group["id"]: group for group in catalog["groups"]}
     all_items = {item["id"]: item for group in groups.values() for item in group["items"]}
 
-    assert set(groups) == {"web_automation", "platform_sessions", "media_understanding", "experimental"}
+    assert set(groups) == {"web_automation", "platform_sessions", "media_understanding"}
     assert {"browser"} == {item["id"] for item in groups["web_automation"]["items"]}
     assert {"chrome", "node", "xhs_bridge"} == {item["id"] for item in groups["platform_sessions"]["items"]}
-    assert {"media_downloader", "transcription_runtime", "transcription_model", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}
-    assert {"camoufox", "funasr", "sherpa_onnx"} == {item["id"] for item in groups["experimental"]["items"]}
-    assert all_items["transcription_model"]["status"] == "ready"
+    assert {"media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}
+    assert "experimental" not in groups
+    assert all_items["transcription_model"]["status"] == "not_installed"
     assert all_items["node"]["install_mode"] == "guided"
-    assert all_items["transcription_runtime"]["install_mode"] == "managed"
+    assert all_items["transcription_model"]["install_mode"] == "managed"
     assert str(data_root) not in rendered
 
 
@@ -286,7 +286,7 @@ def test_optional_media_components_are_not_downloaded_with_the_plugin_body() -> 
 
     assert '"faster-whisper>=1.1,<2.0"' not in dependencies
     assert '"yt-dlp>=2024.8.6"' not in dependencies
-    assert '"transcription_runtime"' in installer_source
+    assert '"transcription_runtime"' not in installer_source
     assert '"transcription_model"' in installer_source
 
 

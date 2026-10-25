@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import subprocess
 from pathlib import Path
 import sys
 
@@ -41,23 +42,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--port", type=int, default=18882)
     parser.add_argument("--no-open", action="store_true")
     args = parser.parse_args(argv)
-    if not 0 <= args.port <= 65535:
-        parser.error("--port must be between 0 and 65535")
-    active = load_active(Path(args.install_root).resolve())
-    data_root = Path(active["data_root"])
-    os.environ["KR_PROJECT_ROOT"] = active["program_root"]
-    os.environ["KR_SOURCE_ROOT"] = str(Path(active["program_root"]) / "src")
-    os.environ["KR_DATA_ROOT"] = str(data_root)
-    os.environ["KR_RUNTIME_ENV_PATH"] = str(data_root / "config" / "runtime.env")
-    os.environ["KR_STATE_DIR"] = str(data_root / "state")
-    os.environ["KR_LOG_DIR"] = str(data_root / "logs")
-    src = Path(active["program_root"]) / "src"
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    from onboarding.setup_wizard import run_wizard
-
-    run_wizard(port=args.port, open_browser=not args.no_open)
-    return 0
+    if args.port != 18882:
+        parser.error('正式入口固定为 18882。')
+    install_root = Path(args.install_root).resolve()
+    load_active(install_root)
+    helper = install_root / 'console_product.py'
+    if not helper.is_file():
+        raise RuntimeError('稳定安装缺少统一启动入口，请运行安装修复。')
+    command = [sys.executable, str(helper), '--role', 'stable', '--port', '18882', '--install-root', str(install_root)]
+    if args.no_open:
+        command.append('--no-open')
+    return subprocess.run(command, check=False).returncode
 
 
 if __name__ == "__main__":

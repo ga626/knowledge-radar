@@ -16,6 +16,19 @@ from onboarding import configuration  # noqa: E402
 from onboarding.setup_wizard import WizardServer  # noqa: E402
 
 
+def test_ordinary_http_session_cannot_read_developer_evaluation(monkeypatch):
+    monkeypatch.setattr('onboarding.console_page._developer_view_enabled',lambda:False)
+    server=WizardServer(('127.0.0.1',0))
+    worker=threading.Thread(target=server.serve_forever,daemon=True);worker.start()
+    try:
+        connection=HTTPConnection('127.0.0.1',server.server_port,timeout=5)
+        connection.request('GET','/api/evaluation',headers={'X-KR-Setup-Token':server.setup_token})
+        response=connection.getresponse()
+        assert response.status==403 and 'maintainer_view_required' in response.read().decode()
+    finally:
+        server.shutdown();server.server_close();worker.join(timeout=5)
+
+
 def test_public_snapshot_never_returns_secret_values(tmp_path):
     env_path = tmp_path / ".env"
     env_path.write_text("TAVILY_API_KEY=private-value\nSEARXNG_BASE_URL=http://127.0.0.1:8080\n", encoding="utf-8")
@@ -62,7 +75,8 @@ def test_public_provider_guides_expose_classified_tutorial_metadata_without_valu
     assert tavily["prerequisite"] == "Tavily 账号"
     assert tavily["screenshot"] == "/assets/tavily.jpg"
     assert len(tavily["steps"]) == 4
-    assert guides["compatible_llm"]["screenshot"] == ""
+    assert guides["dashscope"]["screenshot"] == ""
+    assert "compatible_llm" not in guides
     assert "private-value" not in json.dumps(guides, ensure_ascii=False)
 
 
@@ -317,6 +331,7 @@ def test_wizard_health_is_safe_and_local_session_can_stop_the_host() -> None:
 
 def test_development_preview_rejects_mutating_console_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("KR_CONSOLE_READ_ONLY", "1")
+    monkeypatch.setattr('onboarding.setup_wizard.apply_updates', lambda *_: pytest.fail('read-only request must not apply updates'))
     server = WizardServer(("127.0.0.1", 0))
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -326,7 +341,8 @@ def test_development_preview_rejects_mutating_console_requests(monkeypatch: pyte
         connection.request(
             "POST",
             "/api/config",
-            body='{"values": {}}',
+            # 只读门禁在读body之前拒绝；不留下未读POST数据触发Windows TCP reset。
+            body='',
             headers={"Content-Type": "application/json", "Origin": f"http://127.0.0.1:{port}", "X-KR-Setup-Token": server.setup_token},
         )
         response = connection.getresponse()

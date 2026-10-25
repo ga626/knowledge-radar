@@ -371,6 +371,21 @@
         "mcp.get_content_detail"
       ],
       "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+    },
+    {
+      "capability_id": "mcp.process_local_evidence",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "process_local_evidence"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "MCP注册与入参合同；真实业务以独立用例验证。",
+      "description": "明确授权的本地文件经已批准隔离组件处理，持久任务与固定证据版本回读"
     }
   ]
 }

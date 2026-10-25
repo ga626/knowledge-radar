@@ -14,6 +14,7 @@ import re
 import secrets
 import threading
 import time
+from collections import deque
 from typing import Any, Dict, Iterator, List, Optional
 
 from .failure_tags import FAILURE_TAGS, detect_failure_tags
@@ -74,6 +75,7 @@ class ToolTraceRecorder:
         self.path = path or default_tool_trace_path()
         self._lock = threading.RLock()
         self._last_event: Dict[str, Any] = {}
+        self._candidate_error = ""
 
     def record(self, event: ToolTraceEvent) -> Dict[str, Any]:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
@@ -82,6 +84,13 @@ class ToolTraceRecorder:
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")
             self._last_event = payload
+        try:
+            from .evaluation_candidates import record_candidate
+            record_candidate(payload, os.path.join(os.path.dirname(self.path), "evaluation-candidates.sqlite3"))
+            self._candidate_error = ""
+        except Exception as exc:
+            # 候选失败不改变业务结果；诊断可核查现有trace，不伪造候选成功。
+            self._candidate_error = type(exc).__name__
         return payload
 
     def last_event(self) -> Dict[str, Any]:
@@ -93,7 +102,9 @@ class ToolTraceRecorder:
             os.makedirs(os.path.dirname(self.path), exist_ok=True)
             with open(self.path, "a", encoding="utf-8") as f:
                 f.write("")
-            return {"status": "ok", "detail": "tool trace 可写", "path": self.path}
+            return {"status": "ok", "detail": "tool trace 可写", "path": self.path,
+                    "evaluation_candidates": "degraded" if self._candidate_error else "available_on_record",
+                    "candidate_error_type": self._candidate_error}
         except Exception as exc:
             return {"status": "degraded", "detail": f"tool trace 不可写: {exc}", "path": self.path}
 
@@ -102,7 +113,7 @@ class ToolTraceRecorder:
             return []
         limit = max(1, min(int(limit or 20), 200))
         with open(self.path, "r", encoding="utf-8") as f:
-            lines = f.readlines()[-limit:]
+            lines = list(deque(f, maxlen=limit))
         events: List[Dict[str, Any]] = []
         for line in lines:
             try:
@@ -317,19 +328,21 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             # ordinary tools, and only an explicit task scope may create one.
             try:
                 from .research_ledger import record_tool_receipt
-
                 receipt_result = record_tool_receipt(
-                    task_id=research_task_id,
-                    trace_id=trace_id,
-                    tool=tool_name,
-                    status=status,
+                    task_id=research_task_id, trace_id=trace_id, tool=tool_name, status=status,
                     failure_code=failure_code,
                     source_ecology=str((metadata or {}).get("source_ecology") or ""),
-                    association="explicit_task_scope",
+                    association="explicit_task_scope", result=result,
+                    elapsed_s=elapsed,
                 )
                 receipt = receipt_result.get("receipt") if isinstance(receipt_result, dict) else None
                 if isinstance(result, dict) and isinstance(receipt, dict):
+                    from .research_ledger import link_tool_result
+                    association = link_tool_result(task_id=research_task_id, tool=tool_name, result=result, receipt=receipt)
                     result["research_receipt"] = {
+                        'research_task_id':research_task_id,
+                        'candidate_association':association,
+                        **{key: receipt[key] for key in ("task_id", "run_id", "operation_id", "evidence_versions") if key in receipt},
                         "receipt_id": receipt.get("receipt_id"),
                         "trace_id": receipt.get("trace_id"),
                         "status": receipt.get("status"),
@@ -339,7 +352,8 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
                 # Observability must never turn a successful collector result
                 # into a runtime failure.  The absent receipt remains visible
                 # to the ledger contract as unverified, not silently trusted.
-                pass
+                if isinstance(result, dict):
+                    result['research_receipt'] = {'research_task_id': research_task_id, 'status': 'recording_failed', 'association': 'unverified'}
         # A completed root call must not become the implicit parent of the
         # next call on the same worker thread.  This is the minimal isolation
         # guarantee for concurrent and sequential native MCP execution.
@@ -370,6 +384,8 @@ def traced_tool(tool_name: str, *, strategy: str = ""):
                 metadata["query_fingerprint"] = privacy_fingerprint(raw_query)
                 metadata["query_language"] = _query_language(raw_query)
             research_task_id = kwargs.get("research_task_id") or kwargs.get("task_id") or ""
+            if tool_name == "get_task_status" and kwargs.get("research_action"):
+                research_task_id = ""  # Read-only projections do not become execution receipts.
             if research_task_id:
                 metadata["research_task_scope"] = privacy_fingerprint(research_task_id)
                 metadata["research_association"] = "explicit_task_scope"

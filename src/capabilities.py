@@ -15,7 +15,6 @@ from runtime.openclaw_native_adapter import openclaw_native_adapter_summary
 from runtime.asr_lifecycle import asr_lifecycle_summary
 from runtime.asr_policy import AsrPolicy
 from runtime.asr_strategy import asr_strategy_manifest
-from runtime.dependency_preflight import external_dependency_preflight_summary
 from runtime.leases import runtime_lease_summary
 from runtime.resource_concurrency import resource_concurrency_summary
 from runtime.runtime_environment import planning_tools_manifest, runtime_environment_manifest
@@ -50,6 +49,7 @@ BASE_MCP_TOOLS = [
     "search_academic",
     "extract_web_page",
     "extract_dynamic_page",
+    "process_local_evidence",
     "search_bilibili",
     "search_xiaohongshu",
     "search_zhihu",
@@ -504,11 +504,6 @@ def media_policy_manifest() -> Dict[str, Any]:
                 "required": False,
                 "used_for": ["native_media"],
             },
-            "KR_COMMENT_FILTER_MODELS": {
-                "models": list(policy.comment_filter_models),
-                "required": False,
-                "used_for": ["comment_filtering", "text_analysis"],
-            },
         },
         "capability_registry": policy.capability_registry(),
         "provider_preflight": {
@@ -526,7 +521,8 @@ def media_policy_manifest() -> Dict[str, Any]:
         "provider_primitives": {
             "bailian": {
                 "status": "implemented_main_provider_p1_1_to_p1_4",
-                "default_model": "qwen3-vl-flash",
+                "default_model": "qwen3.8-omni-flash",
+                "reasoning_policy": {"ordinary_media": "none", "native_audio_video": "low"},
                 "inputs": ["text", "image_url", "image_data_url", "video_url", "audio_url"],
                 "schemas": ["DashScope official multimodal-generation", "OpenAI-compatible chat/completions for text"],
                 "functions": [
@@ -538,23 +534,11 @@ def media_policy_manifest() -> Dict[str, Any]:
                     "smoke_video_url",
                 ],
                 "usage_tracking": True,
-                "usage_fields": ["prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens"],
-                "main_chain_scope": ["sampled_media_with_text", "native_media", "comment_filtering", "video_text_analysis"],
+                "usage_fields": ["prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens", "reasoning_tokens"],
+                "main_chain_scope": ["sampled_media_with_text", "native_media", "video_text_analysis"],
                 "known_boundary": "Bilibili raw CDN URLs are not provider-downloadable in current matrix; probe and fallback before native_media",
             },
-            "siliconflow": {
-                "status": "implemented_manual_fallback_p1_5",
-                "inputs": ["image_base64", "video_url", "audio_url"],
-                "functions": ["call_video_url_model", "call_audio_url_model", "smoke_video_url"],
-                "usage_tracking": True,
-                "fallback_scope": "manual fallback only; enable with KR_ENABLE_SILICONFLOW_FALLBACK=true or explicit legacy model envs",
-            },
-            "mimo": {
-                "status": "explicit_fallback_only_p1_5",
-                "inputs": ["text", "image_url", "video_url", "audio_url"],
-                "default_usage": False,
-                "fallback_scope": "not used by default for comments or vision; keep only when user explicitly configures MIMO/API147 fallback and has a cost reason",
-            },
+
         },
         "direct_media_probe": {
             "status": "implemented_p1_2",
@@ -1237,14 +1221,11 @@ def build_capabilities(
         web_search_plan = {"schema": "knowledgeradar-web-search-plan/v1", "waves": []}
         web_quota = {}
     asr_policy = AsrPolicy.from_env()
-    dependency_external = external_dependency_preflight_summary()
     asr_lifecycle = asr_lifecycle_summary()
-    asr_lifecycle["current_state"] = "policy_probe_only; live worker states are exposed by future ASR worker pool runtime"
-    asr_lifecycle["candidate_engine_install_status"] = {
-        "faster_whisper": dependency_external["tools"]["faster_whisper"],
-        "funasr": dependency_external["tools"]["funasr"],
-        "sherpa_onnx": dependency_external["tools"]["sherpa_onnx"],
-    }
+    from runtime.model_roles import COMPONENTS, role_summary
+    from runtime.optional_media import component_plan
+    asr_lifecycle['component_install_status'] = {name: component_plan(name) for name in COMPONENTS}
+    asr_lifecycle['roles'] = role_summary()
     strategy_tree_registry = build_strategy_tree_bundle(include_nodes=True)
     strategy_tree_consistency = validate_strategy_tree_bundle(strategy_tree_registry, actual_tools=ACTUAL_MCP_TOOLS)
     tool_surface = build_tool_surface()
@@ -1451,22 +1432,19 @@ def build_capabilities(
                 },
                 "bilibili_asr_fast_path": {
                     "status": "implemented_p2_2_strategy_tree",
-                    "order": ["transcript_cache", "bilibili_subtitle_api", "audio_download_plus_faster_whisper"],
-                    "config": ["KR_ASR_MODELS", "KR_ASR_DEVICE", "KR_ASR_COMPUTE_TYPE", "KR_ASR_BEAM_SIZE", "KR_ASR_VAD", "KR_ASR_LANGUAGE", "KR_ASR_BATCH_SIZE", "KR_WHISPER_MODEL_DIR"],
+                    "order": ["transcript_cache", "bilibili_subtitle_api", "audio_download_plus_qwen3_asr_0_6b"],
+                    "config": ["KR_ASR_DEVICE", "KR_ASR_LANGUAGE", "KR_LOCAL_MODEL_THREADS"],
                     "timing_fields": ["subtitle_probe_s", "download_s", "model_load_s", "warmup_s", "unload_to_cpu_s", "reload_from_cpu_s", "transcribe_s", "total_s"],
                     "transcript_cache_key_fields": asr_policy.compact()["transcript_cache_key_fields"],
-                    "benchmark_tool": "tools/asr_benchmark.py --dry-run or --real-run --manifest <local-audio-manifest.json>",
+                    "benchmark_tool": "scripts/kr_evaluate.py plan; scripts/kr_evaluate.py run --case model.local_chain",
                     "strategy_tree": "strategy_trees.asr",
                     "concurrency": "resource_concurrency",
                 },
                 "comment_filtering": {
-                    "status": "implemented_non_blocking_p1_4",
-                    "blocks_final_report": False,
-                    "model_policy": "KR_COMMENT_FILTER_MODELS",
-                    "default_models": list(MediaModelPolicy.from_env().comment_filter_models),
-                    "default_provider": "bailian",
-                    "fallback_scope": "MIMO/API147 only when explicitly configured; no key returns rule fallback with provider/model metadata",
-                    "timeout_behavior": "returns raw comments or rule-filtered comments with explicit policy; background cache may complete later",
+                    "status": "deterministic_deduplication",
+                    "assessment_owner": "research_agent",
+                    "cloud_model": None,
+                    "raw_comments_preserved": True,
                 },
                 "direct_media": {
                     "status": "implemented_p1_2",
@@ -1517,16 +1495,9 @@ def build_capabilities(
             "tool": "tools/asr_benchmark.py",
             "lifecycle_probe_tool": "tools/asr_lifecycle_probe.py --summary",
             "engine_install_probe_tool": "tools/asr_engine_install_probe.py",
-            "real_run_command": "tools/asr_benchmark.py --real-run --manifest <local-audio-manifest.json> --include-engines faster-whisper",
-            "engine_matrix_command": "tools/asr_engine_benchmark.py --manifest runtime/verification/p2_2_asr_benchmark_manifest.json --engines faster-whisper,funasr,sherpa-onnx",
-            "baseline_fields": ["subtitle_probe_s", "download_s", "model_load_s", "warmup_s", "unload_to_cpu_s", "reload_from_cpu_s", "transcribe_s", "total_s"],
-            "strategy_plan": "runtime.asr_strategy.build_asr_strategy_plan",
-            "default_mode": "dry_run_schema_validation; engine real-run requires explicit local audio manifest and may download model weights but does not download media",
-            "selected_default": "local:faster-whisper/base cpu/int8 after 2026-06-05 main-env benchmark",
-            "not_selected": {
-                "local:funasr/sensevoice-small": "benchmark evidence retained, but package is currently uninstalled from main .python312 and cold load was too high for KR default ASR",
-                "local:sherpa-onnx/sensevoice-int8": "benchmark evidence retained, but package is currently uninstalled from main .python312 and 5m fixture was too slow and low quality on this host",
-            },
+            "real_run_command":"scripts/kr_optional_media.py submit --component qwen3-asr-0.6b --payload-file <approved-input.json>",
+            "selected_default":"local:qwen3-asr/0.6b-hf",
+            "quality_boundary":"真实样本、人工金标和历史模型评测分别记录；旧结果不代表新模型质量",
         },
         "detail_response": {
             "external_compatibility": "legacy fields preserved",

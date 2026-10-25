@@ -202,7 +202,7 @@ from runtime.summary_helpers import (
     task_status_compact_from_summary,
 )
 from runtime.status_schema import aggregate_validation_status, canonical_status_counts, classify_runtime_payload, legacy_health_status
-from runtime.tool_trace import current_tool_trace, get_tool_trace_recorder, set_current_tool_trace, traced_tool
+from runtime.tool_trace import current_tool_trace, get_tool_trace_recorder, set_current_tool_trace, traced_tool, privacy_fingerprint
 from runtime.xhs_account_events import xhs_account_control_summary
 from runtime.xhs_account_patrol import xhs_account_patrol_summary
 from runtime.xhs_account_pool import xhs_account_pool_summary
@@ -241,7 +241,7 @@ from understanding import (
     strip_html_text as understanding_strip_html_text,
     transcribe_bilibili,
 )
-from collectors.platform.bilibili import deep_analyze_youtube
+from collectors.platform.bilibili import deep_analyze_youtube, get_bilibili_transcript_metadata
 
 
 def _load_xhs_scrapling_adapter():
@@ -496,6 +496,7 @@ def _record_detail_evidence(platform: str, url: str, response: Dict) -> None:
     try:
         evidence_store.append_detail(platform=platform, url=url, response=response)
     except Exception as exc:
+        response.setdefault("evidence_storage_gaps", []).append({"part": "repository", "reason": type(exc).__name__})
         log.debug(f"详情证据仓库写入失败: platform={platform}, error={exc}")
 
 
@@ -1057,14 +1058,14 @@ XHS_BRIDGE_PATH = _find_xhs_bridge()
 # 工具 1: expand_keywords
 # ═══════════════════════════════════════════════════════════════════════
 
-@traced_tool("expand_keywords", strategy="llm_keyword_expansion")
+@traced_tool("expand_keywords", strategy="deterministic_keyword_templates")
 def expand_keywords(topic: Annotated[str, Field(description="待拆解的主题文本。返回若干可直接提交给搜索工具的短查询词。")]) -> List[str]:
     """生成多组搜索查询词。
 
     返回围绕同一主题的短查询词列表，不访问外部网页，不读取详情页。
     这是 legacy planning helper；可通过环境开关从 MCP 工具面隐藏。
     """
-    log.info(f"expand_keywords: {topic}")
+    log.info("expand_keywords: topic_fingerprint=%s", privacy_fingerprint(topic))
     from expand_keywords import expand_keywords as _expand
     plan_keywords = build_research_plan(topic).keywords
     legacy_keywords = _expand(topic)
@@ -1147,6 +1148,8 @@ def get_task_status(
     task_scope_id: Annotated[str, Field(description="任务作用域 ID。由上游详情调用返回；普通调用留空。")] = "",
     source_url: Annotated[str, Field(description="源内容 URL。可用于等待绑定到该来源的后台任务。")] = "",
     content_id: Annotated[str, Field(description="平台内容 ID。可用于等待绑定到该内容的后台任务。")] = "",
+    research_action: Annotated[Literal["", "list", "inspect", "files", "evidence_search", "evidence_fetch"], Field(description="可选只读查询：list/inspect/files读取kr_research同一账本的任务、详情或产物；evidence_search/evidence_fetch读取已保存固定证据。空值沿用后台任务查询，不负责启动或完成研究。")] = "",
+    research_payload: Annotated[Dict | None, Field(description="只读查询参数：query/limit或version_id/start/max_chars；inspect/files使用task_id。")] = None,
 ) -> Dict:
     """查询后台理解任务状态。
 
@@ -1154,6 +1157,12 @@ def get_task_status(
     可取消 queued/running 任务；可等待绑定范围内的阻塞任务进入终态。
     wait=true 可能阻塞到 max_wait_s。
     """
+    if research_action:
+        from runtime.research_workspace import ResearchRecords, research_action as read_research
+        try:
+            return read_research(ResearchRecords(), research_action, task_id, payload=research_payload)
+        except (ValueError, OSError) as exc:
+            return {"status": "rejected", "error": str(exc), "research_task_id": task_id}
     store = get_task_store()
     limit = max(1, min(int(limit or 20), 100))
     task_id = str(task_id or "").strip()
@@ -1542,12 +1551,16 @@ def _research_route_plan(
 
 
 def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> list[Dict]:
+    from runtime.research_queries import query_families, query_for_ecology
+    families = plan.get("query_families") or query_families(plan.get("query") or "")
     query = plan.get("query") or ""
     results: list[Dict] = []
     if not query:
         return results
     per_tool_limit = max(1, min(int(limit or 5), 8))
     for ecology_id in plan.get("selected_source_ecologies") or []:
+        family = query_for_ecology(families, ecology_id)
+        query = family["query"]
         if ecology_id not in _FIRST_WAVE_SAFE_ECOLOGIES:
             results.append(
                 {
@@ -1562,19 +1575,19 @@ def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> 
             continue
         try:
             if ecology_id == "academic_literature_ecology":
-                payload = search_academic(query=query, limit=min(per_tool_limit, 5), provider="auto")
+                payload = search_academic(query=query, limit=min(per_tool_limit, 5), provider="auto", research_task_id=research_task_id)
                 tool_name = "search_academic"
             elif ecology_id == "github_repository_ecology":
-                payload = search_github_repositories(query=query, limit=per_tool_limit)
+                payload = search_github_repositories(query=query, limit=per_tool_limit, research_task_id=research_task_id)
                 tool_name = "search_github_repositories"
             elif ecology_id == "youtube_video_ecology":
-                payload = search_youtube(keyword=query, limit=per_tool_limit)
+                payload = search_youtube(keyword=query, limit=per_tool_limit, research_task_id=research_task_id)
                 tool_name = "search_youtube"
             elif ecology_id == "wechat_public_article_ecology":
-                payload = search_wechat_articles(query=query, limit=per_tool_limit)
+                payload = search_wechat_articles(query=query, limit=per_tool_limit, research_task_id=research_task_id)
                 tool_name = "search_wechat_articles"
             else:
-                payload = kr_web_search(query=query, limit=per_tool_limit, provider="auto")
+                payload = kr_web_search(query=query, limit=per_tool_limit, provider="auto", research_task_id=research_task_id)
                 tool_name = "kr_web_search"
             candidate_items = (payload.get("items") or [])[:per_tool_limit]
             candidate_set = _research_candidate_records(ecology_id, candidate_items)
@@ -1585,8 +1598,9 @@ def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> 
                     tool=tool_name,
                     items=candidate_items,
                     query=query,
-                    language="zh" if re.search(r"[\u4e00-\u9fff]", query) else "non_zh",
-                    intent_label="first_wave_discovery",
+                    language=family["language"],
+                    intent_label=family["intent"],
+                    receipt_id=(payload.get("research_receipt") or {}).get("receipt_id", ""),
                 )
             results.append(
                 {
@@ -1626,6 +1640,9 @@ def kr_research(
     evidence_needs: Annotated[str, Field(description="可选证据需求，例如官方来源、学术、平台讨论、实现证据、近期性。")] = "",
     limit: Annotated[int, Field(description="first_wave 每个低风险来源返回候选数量。", ge=1, le=10)] = 5,
     research_task_id: Annotated[str, Field(description="可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。")]= "",
+    queries: Annotated[list[Dict] | None, Field(description="执行者给出的查询族；每项含query/intent/language/source_ecology/parent_event_id/gap_id。默认仅原语种草案，不伪造翻译。")] = None,
+    display_title: Annotated[str, Field(description="Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。", max_length=80)] = "",
+    project_name: Annotated[str, Field(description="可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。", max_length=80)] = "",
 ) -> Dict:
     """高层研究感知入口。
 
@@ -1636,7 +1653,8 @@ def kr_research(
     clean_mode = mode if mode in _RESEARCH_MODE_VALUES else "plan_only"
     clean_budget = budget if budget in _RESEARCH_BUDGET_VALUES else "balanced"
     hints = _split_hint_list(source_ecology_hints)
-    log.info("kr_research: mode=%s budget=%s task=%r", clean_mode, clean_budget, task)
+    from runtime.research_ledger import query_fingerprint
+    log.info("kr_research: mode=%s budget=%s objective_fingerprint=%s", clean_mode, clean_budget, query_fingerprint(task))
     plan = _research_route_plan(
         task=task,
         mode=clean_mode,
@@ -1644,22 +1662,35 @@ def kr_research(
         source_ecology_hints=hints,
         evidence_needs=evidence_needs,
     )
+    from runtime.research_queries import query_families
+    plan["query_families"] = query_families(task, queries)
     ledger = open_research_task(
-        objective=task,
-        budget=clean_budget,
-        considered=list(plan.get("considered_source_ecologies") or []),
-        task_id=research_task_id,
-    )
-    record_research_event(
-        task_id=ledger["research_task_id"],
-        kind="query_family_created",
-        source_ecology="research_route",
-        tool="kr_research",
-        language="zh" if re.search(r"[\u4e00-\u9fff]", _research_query(task, evidence_needs)) else "non_zh",
-        intent_label="route_admission",
-        query=_research_query(task, evidence_needs),
-        metadata={"mode": clean_mode, "budget": clean_budget},
-    )
+        objective=task, budget=clean_budget,
+        considered=list(plan.get("considered_source_ecologies") or []), task_id=research_task_id,
+        display_title=display_title, project_name=project_name)
+    route_receipt_id = ""
+    route_trace = current_tool_trace()
+    if route_trace.get("trace_id"):
+        from runtime.research_ledger import record_tool_receipt
+        route_receipt = record_tool_receipt(
+            task_id=ledger["research_task_id"],
+            trace_id=str(route_trace["trace_id"]),
+            tool="kr_research",
+            status="ok",
+            source_ecology="research_route",
+            association="explicit_task_scope",
+            result={"route_plan": plan},
+        )
+        route_receipt_id = str((route_receipt.get("receipt") or {}).get("receipt_id") or "")
+    for family in plan["query_families"]:
+        record_research_event(
+            task_id=ledger["research_task_id"], kind="query_family_created",
+            source_ecology=family["source_ecology"], tool="kr_research",
+            language=family["language"], intent_label=family["intent"], query=family["query"],
+            parent_event_id=family["parent_event_id"],
+            metadata={"mode": clean_mode, "budget": clean_budget, "gap_id": family["gap_id"]},
+        )
+    completion_rule = "Use finalize_research_task after autonomous research. Every considered ecology requires an explicit outcome. The optional console reads this same ledger; no webpage, claim, lease or reservation is required."
     result: Dict = {
         "schema": "knowledgeradar-research-perception/v1",
         "status": "ok",
@@ -1673,9 +1704,12 @@ def kr_research(
         "route_plan": plan,
         "research_task": {
             "research_task_id": ledger["research_task_id"],
+            "display_title": ledger.get("display_title", ""),
+            "project_name": ledger.get("project_name", ""),
             "status": ledger["status"],
             "ledger_schema": ledger["schema"],
-            "completion_rule": "Use finalize_research_task after autonomous research. Every considered ecology must be recorded as used, skipped, blocked, not_relevant, or not_reached; this is an outcome record, not a tool route.",
+            "route_receipt_id": route_receipt_id,
+            "completion_rule": completion_rule,
         },
         "first_wave": [],
         "fallback_policy": {
@@ -1800,7 +1834,7 @@ def kr_web_search(
     返回普通网页、新闻、博客、技术文档、论文页面、项目主页等候选 URL 和摘要。
     不返回封闭平台登录内容。include_raw_content 可能增加耗时和响应体积。
     """
-    log.info(f"kr_web_search: query={query!r}, limit={limit}, freshness={freshness}, provider={provider}")
+    log.info("kr_web_search: query_fingerprint=%s limit=%s provider=%s", privacy_fingerprint(query), limit, provider)
     if str(provider or "").lower() in {"youtube", "yt"}:
         result = search_youtube(query, limit=limit)
         result.setdefault("metadata", {})
@@ -1898,7 +1932,7 @@ def search_github_repositories(
     依赖 GitHub 可访问性和速率限制；认证不可用时会降级或返回错误。
     """
     clean_limit = max(1, min(int(limit or 10), 20))
-    log.info("search_github_repositories: query=%r, limit=%s", query, clean_limit)
+    log.info("search_github_repositories: query_fingerprint=%s limit=%s", privacy_fingerprint(query), clean_limit)
     try:
         result = gh_cli_sidecar.search_repositories(query, limit=clean_limit)
     except Exception as exc:
@@ -1942,7 +1976,7 @@ def search_youtube(
     需要 YouTube API 配置；不访问未公开、会员或地区受限内容。
     """
     clean_limit = max(1, min(int(limit or 10), 25))
-    log.info("search_youtube: keyword=%r, limit=%s", keyword, clean_limit)
+    log.info("search_youtube: query_fingerprint=%s limit=%s", privacy_fingerprint(keyword), clean_limit)
     result = youtube_collectors.search_youtube(keyword, limit=clean_limit)
     result.setdefault("platform", "YouTube")
     result.setdefault("metadata", {})
@@ -1967,7 +2001,7 @@ def search_wechat_articles(
     """
     clean_limit = max(1, min(int(limit or 10), 20))
     queries = _wechat_article_queries(query, account_hint)
-    log.info("search_wechat_articles: query=%r, limit=%s, freshness=%s, query_count=%s", query, clean_limit, freshness, len(queries))
+    log.info("search_wechat_articles: query_fingerprint=%s limit=%s query_count=%s", privacy_fingerprint(query), clean_limit, len(queries))
     if not queries:
         result = {
             "query": query,
@@ -2081,7 +2115,7 @@ def search_academic(
     返回 title/authors/year/doi/url/source/oa_status/abstract/full_text_status/access_mode 等字段。
     只获取公开元数据和开放全文线索，不绕过登录、验证码、付费墙、文献传递或机构授权。
     """
-    log.info(f"search_academic: query={query!r}, limit={limit}, provider={provider}")
+    log.info("search_academic: query_fingerprint=%s limit=%s provider=%s", privacy_fingerprint(query), limit, provider)
     request = AcademicSearchRequest(query=query, limit=limit, provider=provider)
     result = search_academic_metadata(request).to_mcp_dict()
     _record_academic_evidence(query, result)
@@ -2107,6 +2141,7 @@ def extract_web_page(
     """
     log.info(f"extract_web_page: url={redact_url(url)!r}, use_jina={use_jina}, timeout={timeout}")
     result = collect_url(GenericWebRequest(url=url, timeout=timeout, use_jina=use_jina)).to_mcp_dict()
+    _record_detail_evidence("web", url, result)
     log.info(
         "  -> collector=%s chars=%s error=%s elapsed=%s",
         result.get("collector"),
@@ -2120,6 +2155,34 @@ def extract_web_page(
 # ═══════════════════════════════════════════════════════════════════════
 # 工具 4: extract_dynamic_page
 # ═══════════════════════════════════════════════════════════════════════
+
+@nonblocking_mcp_tool(mcp)
+@traced_tool('process_local_evidence', strategy='isolated_optional_media')
+def process_local_evidence(
+    input_path: Annotated[str, Field(description='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。')]='',
+    approved_input_root: Annotated[str, Field(description='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。')]='',
+    input_sha256: Annotated[str, Field(description='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。', pattern='^$|^[a-f0-9]{64}$')]='',
+    component: Annotated[str, Field(description='auto 按文件内容唯一分流：文字 PDF 直接解析，Office 用 docling，扫描/图片用 paddleocr-vl-1.6，音频用 qwen3-asr-0.6b；模型组件需先显式安装。')]='auto',
+    language: Annotated[str, Field(description='语言代码或 auto。')]='auto',
+    research_task_id: Annotated[str, Field(description='所属 kr_research 任务；不创建新研究生命周期。')]='',
+    task_id: Annotated[str, Field(description='已有后台任务 ID；提供时只读取该任务结果，不重复执行。')]='',
+) -> Dict:
+    """通过已批准的隔离模型解析本地证据，并保留固定版本；未安装时明确返回缺失。"""
+    from runtime.task_service import TaskService
+    service = TaskService()
+    if task_id:
+        value = service.result(task_id)
+        result = value.get('result') or {}
+        return {**value, 'evidence_assets':result.get('evidence_assets', [])}
+    if not input_path or not approved_input_root or not re.fullmatch(r'[a-f0-9]{64}',input_sha256):
+        raise ValueError('explicit_input_root_and_sha256_required')
+    payload = {'input_path':input_path, 'approved_input_root':approved_input_root, 'input_sha256':input_sha256, 'component':component, 'language':language}
+    from runtime.optional_media import select_component, validate_receipt
+    payload['component'] = select_component(payload)
+    if payload['component'] != 'pypdf': validate_receipt(payload['component'])
+    task = service.submit('optional_media', payload, scope={'research_task_id':research_task_id}, timeout_s=600)
+    return {'status':task['status'], 'task':task, 'recommended_next_action':'调用同一工具并传入 task_id 回读；未完成不作为已取得证据。'}
+
 
 @nonblocking_mcp_tool(mcp)
 @traced_tool("extract_dynamic_page", strategy="dynamic_playwright")
@@ -2139,6 +2202,7 @@ def extract_dynamic_page(
         GenericWebRequest(url=url, timeout=timeout, use_jina=False),
         wait_ms=wait_ms,
     ).to_mcp_dict()
+    _record_detail_evidence("dynamic_web", url, result)
     log.info(
         "  -> collector=%s chars=%s error=%s elapsed=%s",
         result.get("collector"),
@@ -3958,6 +4022,7 @@ def get_content_detail(
     include_transcript: Annotated[bool | None, Field(description="明确允许或禁止字幕/ASR；未指定时跟随增强开关。允许时由有界持久任务执行。")]= None,
     include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
     include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
+    language: Annotated[str | None, Field(description="本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。")] = None,
     deadline_s: Annotated[float, Field(description="增强任务总deadline秒数，含排队；到期停止自有worker。", ge=1, le=3600)] = 600,
 ) -> Dict:
     """详情页正文抽取。
@@ -3968,6 +4033,8 @@ def get_content_detail(
     """
     log.info(f"get_content_detail: {redact_url(url)}, deep={enable_deep_analysis}, filter={enable_comment_filtering}, auto_mm={auto_multimodal}")
     platform = _infer_detail_platform(url)
+    from runtime.asr_policy import AsrPolicy
+    AsrPolicy.for_request(language)
     scope = make_task_scope(
         source_url=url,
         platform=platform,
@@ -3986,7 +4053,7 @@ def get_content_detail(
         work_scope_id=scope.work_scope_id,
         task_scope_id=scope.task_scope_id,
         scope_kind=scope.scope_kind,
-        options={"task_scope": scope.compact(),
+        options={"task_scope": scope.compact(), "language": language,
                  "include_transcript": include_transcript if include_transcript is not None else (auto_multimodal or enable_deep_analysis),
                  "include_comments": include_comments if include_comments is not None else enable_comment_filtering,
                  "include_ocr": include_ocr if include_ocr is not None else (auto_multimodal or enable_deep_analysis)},
@@ -4129,6 +4196,7 @@ def _bilibili_detail_strategy() -> BilibiliDetailStrategy:
                 bvid,
                 research_session_id=session_id,
                 scope_metadata=(options or {}).get("task_scope") if isinstance(options, dict) else None,
+                language=(options or {}).get("language") if isinstance(options, dict) else None,
             ),
             get_comments=get_bilibili_comments,
             filter_comments=filter_bilibili_comments,
@@ -4138,6 +4206,7 @@ def _bilibili_detail_strategy() -> BilibiliDetailStrategy:
             direct_media_probe=_probe_bilibili_direct_media,
             evidence_builder=build_detail_evidence,
             data_dir=REPO_ROOT,
+            transcript_metadata=get_bilibili_transcript_metadata,
         )
     )
 

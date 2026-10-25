@@ -17,12 +17,38 @@ import httpx
 from runtime.cost_latency import TTLCache, attach_runtime_metadata, budget_envelope, stable_key
 from runtime.tasks import compact_task_ref, get_task_store
 
-from .siliconflow import call_multimodal_models, configured_models, image_bytes_to_base64
+import base64
+from media_policy import MediaModelPolicy
+from .bailian import call_frame_images_model
+
+
+def configured_models(kind):
+    return MediaModelPolicy.from_env().frame_vision_models
+
+
+def image_bytes_to_base64(content):
+    return base64.b64encode(content).decode("ascii")
+
+
+def call_multimodal_models(
+    *, models, system_prompt, user_text, images_base64, temperature=0.1, max_tokens=1800, timeout=120
+):
+    return call_frame_images_model(
+        images_base64,
+        model=models[0].removeprefix("bailian:"),
+        system_prompt=system_prompt,
+        prompt=user_text,
+        max_tokens=max_tokens,
+        timeout=timeout,
+    )[:2]
+
 
 log = logging.getLogger("mcp-server")
 
 _OCR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kr-xhs-ocr")
-_OCR_ARTIFACT_CACHE = TTLCache("xhs.ocr.artifact", ttl_s=float(os.environ.get("KR_XHS_OCR_ARTIFACT_TTL_S", "86400")), max_items=256)
+_OCR_ARTIFACT_CACHE = TTLCache(
+    "xhs.ocr.artifact", ttl_s=float(os.environ.get("KR_XHS_OCR_ARTIFACT_TTL_S", "86400")), max_items=256
+)
 _NOISE_IMAGE_TOKENS = (
     "avatar",
     "profile",
@@ -60,7 +86,7 @@ def _extract_json(text: str) -> Dict:
     start, end = text.find("{"), text.rfind("}")
     if start >= 0 and end > start:
         try:
-            return json.loads(text[start:end + 1])
+            return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
             pass
     return {"text": text}
@@ -254,7 +280,11 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
         return {
             "status": "degraded" if status in {"queued", "running"} else "ok",
             "task_id": str(existing_task.get("task_id") or task_id),
-            "engine": str((existing_task.get("metadata") or {}).get("engine") or base_metadata.get("engine") or "configured_image_model"),
+            "engine": str(
+                (existing_task.get("metadata") or {}).get("engine")
+                or base_metadata.get("engine")
+                or "configured_image_model"
+            ),
             "image_url": image_url,
             "image_urls": selected_urls,
             "image_selection": image_selection,
@@ -263,14 +293,18 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
             "text": "",
             "items": [],
             "ocr_signal_strength": "pending" if status in {"queued", "running"} else "result_external",
-            "ocr_empty_reason": "existing_task_not_completed" if status in {"queued", "running"} else "completed_task_reused_without_inline_text",
+            "ocr_empty_reason": "existing_task_not_completed"
+            if status in {"queued", "running"}
+            else "completed_task_reused_without_inline_text",
             "elapsed_s": round(time.time() - started, 3),
             "metadata": {
                 "artifact_cache_key": artifact_key,
                 "ocr_identity_hash": identity_hash,
                 "existing_task_status": status,
                 "task_ref": compact_task_ref(existing_task),
-                "recommended_next_action": "poll_get_task_status" if status in {"queued", "running"} else "reuse_completed_task",
+                "recommended_next_action": "poll_get_task_status"
+                if status in {"queued", "running"}
+                else "reuse_completed_task",
             },
         }
     metadata = {
@@ -374,7 +408,11 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
             "visual_summary": visual_summary,
             "ocr_signal_strength": signal_strength,
             "elapsed_s": round(elapsed, 2),
-            "metadata": {"artifact_cache_key": artifact_key, "ocr_identity_hash": identity_hash, "cache_policy": "artifact_cache_by_media_url"},
+            "metadata": {
+                "artifact_cache_key": artifact_key,
+                "ocr_identity_hash": identity_hash,
+                "cache_policy": "artifact_cache_by_media_url",
+            },
         }
         if empty_reason:
             result["ocr_empty_reason"] = empty_reason

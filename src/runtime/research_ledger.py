@@ -113,7 +113,8 @@ def _receipt_id(payload: dict[str, Any], trace_id: str) -> str:
 
 def record_tool_receipt(
     *, task_id: str, trace_id: str, tool: str, status: str, failure_code: str = "",
-    source_ecology: str = "", association: str = "explicit_task_scope",
+    source_ecology: str = "", association: str = "explicit_task_scope", result: Any = None,
+    elapsed_s: float | None = None,
 ) -> dict[str, Any]:
     """Bind a completed, privacy-safe tool trace to an explicit research task.
 
@@ -140,10 +141,64 @@ def record_tool_receipt(
             "association": _safe_label(association) or "explicit_task_scope",
             "at": _now(),
         }
+        if isinstance(elapsed_s, (int, float)) and elapsed_s >= 0:
+            receipt["elapsed_s"] = round(float(elapsed_s), 3)
+        if isinstance(result, dict):
+            # Only preserve server-produced fixed asset identities and task IDs;
+            # raw queries, source text and account data remain outside the ledger.
+            receipt["evidence_versions"] = [
+                str(item["version_id"]) for item in result.get("evidence_assets", [])
+                if isinstance(item, dict) and re.fullmatch(r"[a-f0-9]{64}", str(item.get("version_id") or ""))
+            ]
+            rows = []
+            for container in (result, result.get("detail_metadata") or {}, result.get("metadata") or {}):
+                if not isinstance(container, dict):
+                    continue
+                if isinstance(container.get("task"), dict):
+                    rows.append(container["task"])
+                for key in ("tasks", "pending_tasks", "blocking_tasks"):
+                    value = container.get(key)
+                    if isinstance(value, list):
+                        rows.extend(value)
+                    elif isinstance(value, dict):
+                        rows.extend(value.get("tasks") or [])
+            receipt["background_task_ids"] = sorted({
+                str(row["task_id"]) for row in rows if isinstance(row, dict) and row.get("task_id")
+            })
+        if payload.get('status') == 'accepted_for_decision' and str(tool) != 'finalize_research_task':
+            # 新的真实调用会使上次完成检查失效，但不会自动派发研究。
+            payload['status'] = 'open'
+            payload['previous_closeout'] = payload.get('closeout') or {}
+            payload['closeout'] = {}
         payload["tool_receipts"].append(receipt)
         payload["updated_at"] = _now()
         _write(payload)
         return {"schema": SCHEMA, "status": "recorded", "research_task_id": task_id, "receipt": receipt}
+
+
+def link_tool_result(*, task_id, tool, result, receipt):
+    """真实搜索自动入候选池；详情只在唯一同源匹配时升级，不按对话顺序猜测。"""
+    if not isinstance(result, dict): return {'association':'unavailable'}
+    from .research_workspace import _ecology_for_tool
+    from generic_web.url_policy import canonical_url
+    ecology = receipt.get('source_ecology') or _ecology_for_tool(tool)
+    if str(tool).startswith('search_') or tool == 'kr_web_search':
+        items = result.get('items') or result.get('results') or []
+        if isinstance(items, list):
+            rows = record_candidates(task_id=task_id, source_ecology=ecology or 'unclassified', tool=tool, items=items[:100], receipt_id=receipt['receipt_id'])
+            return {'association':'discovery_candidates', 'count':len(rows.get('candidates', []))}
+    if not result.get('evidence_assets') and not result.get('error'): return {'association':'no_detail_evidence'}
+    url = str(result.get('url') or result.get('source_url') or '')
+    if not url: return {'association':'ambiguous_no_source_identity'}
+    source_key = hashlib.sha256(canonical_url(url).encode()).hexdigest()
+    with _LOCK:
+        payload = _read(task_id)
+        matches = [row for row in payload.get('candidate_pool', []) if row.get('source_key') == source_key]
+    if len(matches) != 1:
+        return {'association':'ambiguous' if matches else 'unmatched', 'matches':len(matches)}
+    stage = 'degraded_or_blocked' if receipt.get('status') in {'failed','partial','degraded'} else 'detail_extracted'
+    updated = update_candidate_stage(task_id=task_id, candidate_id=matches[0]['candidate_id'], stage=stage, tool=tool, evidence_receipt_ids=[receipt['receipt_id']])
+    return {'association':'unique_source_identity', 'candidate_id':matches[0]['candidate_id'], 'status':updated['status']}
 
 
 def _receipts(payload: dict[str, Any], receipt_ids: list[str]) -> list[dict[str, Any]]:
@@ -179,6 +234,9 @@ def record_candidates(
                     "cluster_id": f"cluster-{candidate_id.rsplit('-', 1)[-1]}", "seen_count": 0,
                     "discovery_receipt_ids": [], "verification": "declared",
                 }
+                if item.get('url'):
+                    from generic_web.url_policy import canonical_url
+                    candidate['source_key'] = hashlib.sha256(canonical_url(str(item['url'])).encode()).hexdigest()
                 payload["candidate_pool"].append(candidate)
                 known[candidate_id] = candidate
             candidate["seen_count"] = int(candidate.get("seen_count") or 0) + 1
@@ -289,8 +347,14 @@ def _write(payload: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], task_id: str = "") -> dict[str, Any]:
+def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], task_id: str = "", display_title: str = "", project_name: str = "") -> dict[str, Any]:
     """Create or retrieve the auditable research state for one user delivery."""
+    title = ' '.join(str(display_title or '').split())
+    if len(title) > 80:
+        raise ValueError('research_title_too_long')
+    project = ' '.join(str(project_name or '').split())
+    if len(project) > 80:
+        raise ValueError('research_project_too_long')
     with _LOCK:
         research_task_id = str(task_id or "").strip() or _new_id(objective)
         existing = _read(research_task_id)
@@ -315,6 +379,8 @@ def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], 
                 "schema": SCHEMA,
                 "research_task_id": research_task_id,
                 "objective": str(objective),
+                "display_title": title,
+                "project_name": project,
                 "budget": str(budget),
                 "created_at": _now(),
                 "updated_at": _now(),
@@ -405,7 +471,28 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
         ]
         quality_receipt_valid = _quality_receipt_ok(report_path=report_path, evidence_path=evidence_path, quality_receipt_path=quality_receipt_path)
         deep_receipt_required = str(payload.get("budget") or "").lower() == "deep"
-        status = "accepted_for_decision" if not missing and not critical_without_support and not critical_without_receipts and quality_status == "pass" and (not deep_receipt_required or quality_receipt_valid) else "needs_repair"
+        pending_tasks, unavailable_versions = [], []
+        recorded_tasks = {task for receipt in payload.get("tool_receipts", []) for task in receipt.get("background_task_ids", [])}
+        if recorded_tasks:
+            from .tasks import get_task_store
+            store = get_task_store()
+            for task in sorted(recorded_tasks):
+                row = store.get_task(task)
+                if not row or row.get("status") != 'completed':
+                    pending_tasks.append(task)
+        # Revalidate the assets actually cited through receipts. Withdrawing a
+        # source or corrupting its original cannot leave a new closeout green.
+        cited_receipts = {str(value) for claim in claims for value in claim.get("supporting_receipt_ids", [])}
+        versions = {version for receipt in payload.get("tool_receipts", []) if receipt.get("receipt_id") in cited_receipts for version in receipt.get("evidence_versions", [])}
+        if versions:
+            from kr_core.evidence_assets import EvidenceAssets
+            assets = EvidenceAssets(read_only=True)
+            for version in sorted(versions):
+                try:
+                    assets.fetch(version, max_chars=1)
+                except (ValueError, OSError):
+                    unavailable_versions.append(version)
+        status = "accepted_for_decision" if not missing and not critical_without_support and not critical_without_receipts and not pending_tasks and not unavailable_versions and quality_status == "pass" and (not deep_receipt_required or quality_receipt_valid) else "needs_repair"
         payload["status"] = status
         payload["updated_at"] = _now()
         payload["closeout"] = {
@@ -414,8 +501,12 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
             "missing_outcomes": missing,
             "critical_claims_without_support": critical_without_support,
             "critical_claims_without_receipts": critical_without_receipts,
+            "pending_background_tasks": pending_tasks,
+            "unavailable_evidence_versions": unavailable_versions,
             "quality_status": quality_status or "not_supplied",
             "quality_receipt_valid": quality_receipt_valid,
+            "report_path": str(report_path or ""),
+            "evidence_path": str(evidence_path or ""),
             "quality_receipt_path": str(quality_receipt_path or ""),
             "transcript_status": transcript_status or "unavailable",
             "stop_rationale": str(stop_rationale or ""),

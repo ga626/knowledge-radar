@@ -1,8 +1,8 @@
 {
   "schema": "knowledgeradar-license-source-inventory/v1",
   "upstream_reference": "https://github.com/NanmiCoder/MediaCrawler/blob/main/LICENSE",
-  "vendored_commit": "unresolved",
-  "policy": "preserve source headers; exclude these files from product until exact provenance and distribution terms are established",
+  "vendored_commit": null,
+  "policy": "所有列出的旧上游文件已从当前公开候选移除；排除清单保留为防回流门禁，不声称历史来源许可已确认。",
   "excluded_product_files": [
     "src/async_db.py",
     "src/db.py",
@@ -76,5 +76,6 @@
   ],
   "additional_upstream_references": [
     "https://github.com/tiam-bloom/zhihuQuestionAnswer/blob/main/zhihuvmp.js"
-  ]
+  ],
+  "resolution": "retired_from_public_source_and_product; historical provenance remains unknown"
 }

@@ -31,11 +31,12 @@ def isolated_env(root, folder):
 
 def _pytest(root, case, folder):
     nodes = case["nodes"]
-    if not nodes or any(n.startswith("-") or not safe_path(root, n.split("::")[0]).is_file() for n in nodes):
+    if not nodes or any(n.startswith("-") or not (safe_path(root, n.split("::")[0]).is_file() or (n.startswith("tests/") and safe_path(root, n).is_dir())) for n in nodes):
         raise ValueError("invalid or missing pytest node")
     junit = folder / "junit.xml"
     command = [sys.executable, str(root / "scripts/kr_eval/pytest_entry.py"), "-q", "-p", "scripts.kr_eval.offline_guard", "-p", "no:cacheprovider",
-               f"--junitxml={junit}", *nodes]
+               f"--junitxml={junit}", *(["--kr-owned-host-process"] if case.get("owned_host_process") else []),
+               *[f"--deselect={node}" for node in case.get("deselect", [])], *nodes]
     started = time.monotonic()
     with (folder / "stdout.txt").open("x", encoding="utf-8") as out, (folder / "stderr.txt").open("x", encoding="utf-8") as err:
         try:

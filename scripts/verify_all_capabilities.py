@@ -527,6 +527,7 @@ def _server_tools(server: Any, *, safe: bool, wait_multimodal_s: float, include_
         "search_wechat_articles": lambda: server.search_wechat_articles("台湾青年 政治态度", limit=1),
         "search_academic": lambda: server.search_academic("Model Context Protocol", limit=1, provider="openalex"),
         "extract_web_page": lambda: server.extract_web_page("https://www.iana.org/domains/reserved", use_jina=False, timeout=10.0),
+        "process_local_evidence": lambda: server.process_local_evidence(task_id="verification-missing-task"),
         "extract_dynamic_page": lambda: server.extract_dynamic_page("https://www.iana.org/domains/reserved", wait_ms=300, timeout=12.0),
         "search_bilibili": lambda: server.search_bilibili("KnowledgeRadar", page_size=1),
         "search_xiaohongshu": lambda: (
