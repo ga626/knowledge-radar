@@ -1058,7 +1058,7 @@ XHS_BRIDGE_PATH = _find_xhs_bridge()
 # 工具 1: expand_keywords
 # ═══════════════════════════════════════════════════════════════════════
 
-@traced_tool("expand_keywords", strategy="llm_keyword_expansion")
+@traced_tool("expand_keywords", strategy="deterministic_keyword_templates")
 def expand_keywords(topic: Annotated[str, Field(description="待拆解的主题文本。返回若干可直接提交给搜索工具的短查询词。")]) -> List[str]:
     """生成多组搜索查询词。
 
@@ -2162,7 +2162,7 @@ def process_local_evidence(
     input_path: Annotated[str, Field(description='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。')]='',
     approved_input_root: Annotated[str, Field(description='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。')]='',
     input_sha256: Annotated[str, Field(description='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。', pattern='^$|^[a-f0-9]{64}$')]='',
-    component: Annotated[str, Field(description='已安装的隔离组件：docling、paddleocr-vl-1.6、qwen3-asr-1.7b 或 qwen3-asr-0.6b。')]='docling',
+    component: Annotated[str, Field(description='auto 按文件内容唯一分流：文字 PDF 直接解析，Office 用 docling，扫描/图片用 paddleocr-vl-1.6，音频用 qwen3-asr-0.6b；模型组件需先显式安装。')]='auto',
     language: Annotated[str, Field(description='语言代码或 auto。')]='auto',
     research_task_id: Annotated[str, Field(description='所属 kr_research 任务；不创建新研究生命周期。')]='',
     task_id: Annotated[str, Field(description='已有后台任务 ID；提供时只读取该任务结果，不重复执行。')]='',
@@ -2176,9 +2176,10 @@ def process_local_evidence(
         return {**value, 'evidence_assets':result.get('evidence_assets', [])}
     if not input_path or not approved_input_root or not re.fullmatch(r'[a-f0-9]{64}',input_sha256):
         raise ValueError('explicit_input_root_and_sha256_required')
-    from runtime.optional_media import validate_receipt
-    validate_receipt(component)
     payload = {'input_path':input_path, 'approved_input_root':approved_input_root, 'input_sha256':input_sha256, 'component':component, 'language':language}
+    from runtime.optional_media import select_component, validate_receipt
+    payload['component'] = select_component(payload)
+    if payload['component'] != 'pypdf': validate_receipt(payload['component'])
     task = service.submit('optional_media', payload, scope={'research_task_id':research_task_id}, timeout_s=600)
     return {'status':task['status'], 'task':task, 'recommended_next_action':'调用同一工具并传入 task_id 回读；未完成不作为已取得证据。'}
 

@@ -125,6 +125,65 @@ def test_smoke_video_url_skips_without_api_key(monkeypatch) -> None:
     assert "API key" in result["reason"]
 
 
+def test_omni_default_disables_thinking_and_records_reasoning_usage(monkeypatch) -> None:
+    captured = {}
+    tracker = FakeUsageTracker()
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "test-key")
+    monkeypatch.setattr(bailian, "get_degradation_policy", lambda: FakePolicy())
+    monkeypatch.setattr(bailian, "get_usage_tracker", lambda: tracker)
+    monkeypatch.setattr(bailian, "get_monitor_tracker", lambda: FakeMonitorTracker())
+
+    def post(url, *, headers, json, timeout):
+        captured.update(json)
+        class Response:
+            status_code = 200
+            def json(self):
+                return {
+                    "output": {"choices": [{"message": {"content": [{"text": "red square"}]}}]},
+                    "usage": {"input_tokens": 20, "output_tokens": 8,
+                              "output_tokens_details": {"reasoning_tokens": 3}},
+                }
+        return Response()
+
+    monkeypatch.setattr(bailian.httpx, "post", post)
+    content, provider, usage = bailian.call_image_url_model("https://example.test/image.png", prompt="describe")
+    assert content == "red square"
+    assert provider == "Bailian qwen3.8-omni-flash"
+    assert captured["parameters"]["reasoning_effort"] == "none"
+    assert usage["reasoning_tokens"] == 3
+    assert tracker.records[0]["metadata"]["reasoning_tokens"] == 3
+    assert tracker.records[0]["metadata"]["reasoning_effort"] == "none"
+
+
+def test_omni_joint_audio_video_uses_low_effort_and_allows_explicit_none(monkeypatch) -> None:
+    requests = []
+    def post(payload, *, timeout):
+        requests.append(payload)
+        return bailian.BailianResponse("ok", "Bailian qwen3.8-omni-flash", {}, 0.1, {})
+    monkeypatch.setattr(bailian, "_post_multimodal_generation", post)
+    monkeypatch.setattr(bailian, "get_degradation_policy", lambda: FakePolicy())
+    monkeypatch.setattr(bailian, "get_usage_tracker", lambda: FakeUsageTracker())
+    monkeypatch.setattr(bailian, "get_monitor_tracker", lambda: FakeMonitorTracker())
+    kwargs = dict(prompt="relate sound to picture", capability="native_audio_video",
+                  image_urls=["https://example.test/image.png"], audio_urls=["https://example.test/audio.wav"])
+    bailian.call_multimodal_generation(**kwargs)
+    bailian.call_multimodal_generation(**kwargs, reasoning_effort="none")
+    assert requests[0]["parameters"]["reasoning_effort"] == "low"
+    assert requests[1]["parameters"]["reasoning_effort"] == "none"
+    assert requests[0]["input"]["messages"][0]["content"][1:3] == [
+        {"image": "https://example.test/image.png"}, {"audio": "https://example.test/audio.wav"}]
+
+
+def test_omni_rejects_invalid_effort_before_network() -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        bailian.build_multimodal_payload(model="bailian:qwen3.8-omni-flash", prompt="x", reasoning_effort="typo")
+
+
+def test_compatible_endpoint_accepts_official_base_url(monkeypatch) -> None:
+    monkeypatch.setenv("DASHSCOPE_BASE_URL", "https://workspace.example/compatible-mode/v1/")
+    assert bailian.bailian_compatible_base_url() == "https://workspace.example/compatible-mode/v1"
+
+
 def test_call_image_url_model_requires_api_key(monkeypatch) -> None:
     monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
     monkeypatch.setattr(bailian, "get_degradation_policy", lambda: FakePolicy())

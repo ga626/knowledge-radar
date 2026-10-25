@@ -132,7 +132,7 @@ class MediaActionPlan:
 
     @property
     def requires_network(self) -> bool:
-        local_providers = {"", "local", "local-whisper", "whisper"}
+        local_providers = {"", "local", "qwen3-asr"}
         processing_requires_network = self.provider.lower() not in local_providers
         return any(
             operation
@@ -331,7 +331,7 @@ def _plan_video(
             source_mode=InformationSourceMode.DERIVED_TEXT,
             target_kinds=(MediaKind.AUDIO,),
             operations=(operation,),
-            provider="" if has_transcript else "whisper",
+            provider="" if has_transcript else "qwen3-asr",
             model="" if has_transcript else policy.default_model_for("asr"),
             execution_mode=ExecutionMode.SYNC if has_transcript else ExecutionMode.ASYNC,
             wait_mode=WaitMode.SHORT if not has_transcript else WaitMode.NONE,
@@ -395,7 +395,7 @@ def _plan_audio(
         source_mode=InformationSourceMode.DERIVED_TEXT,
         target_kinds=(MediaKind.AUDIO,),
         operations=(MediaOperation.RUN_ASR,),
-        provider="whisper",
+        provider="qwen3-asr",
         model=policy.default_model_for("asr"),
         execution_mode=ExecutionMode.ASYNC,
         wait_mode=WaitMode.CLIENT_BUDGET,

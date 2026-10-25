@@ -50,4 +50,6 @@ scripts/kr_workspace.py提供list/inspect/search/fetch/export、显式证据包m
 
 前端使用显式page.html与console.ts/research_workspace.ts模块，node scripts/build_console.mjs生成随包JS，--check检查漂移；不等于完整tsc检查，产品运行不要求Node。旧动态HTML补丁与11份旧片段已退役。
 
-语音主路径为Qwen3-ASR-1.7B原生Transformers，0.6B为显式资源备选；未安装新模型时保留带原因的faster-whisper兼容路径。Docling/PaddleOCR为可选隔离文档组件。scripts/kr_optional_media.py plan只读查看；install仅接受已审阅、带hash的离线requirements_lock/wheelhouse/model_files和明确installation_acknowledged，不修改核心Python。安装失败清理本次新环境，可重试。安装身份有效不等于真实样本质量或显存验收通过；当前不自动下载模型。
+语音唯一主路径为 Qwen3-ASR-0.6B-hf（原生 Transformers）；没有 Whisper 或 1.7B 自动回退。文本 PDF 由 pypdf 读取；任一页无文本则整份交给 PaddleOCR-VL-1.6；Office/HTML/Markdown 由 Docling 转换且不加载 OCR/ASR 模型。三项隔离组件共用 local_heavy=1，默认 CPU、4 线程，完成/取消后退出进程。模型角色和固定版本集中在 src/runtime/model_roles.py，云端仅百炼 Qwen3.8-Omni-Flash；评论完整保留并精确去重，相关性由当前研究 Agent 判断。
+
+组件页显式安装，或运行 scripts/kr_optional_media.py：所有命令均须 --component <组件>；plan 只读；prepare --acknowledge-download 按随包 config/optional-*-win-py312.lock 下载全量固定 wheel 与权重，不重新解析候选版本；install --payload-file <install-spec.json> 按 hash 离线安装到数据根的独立环境。推理不下载，失败不更换模型。uninstall 卸载隔离环境且保留证据；加 --purge-downloads 才删除该组件下载缓存。核心 Python 不变。激活升级时只迁移已退役模型控制项，保留凭据和搜索设置，并保存本地备份/哈希回执；回滚按项恢复，保留升级后用户修改的值；只暂存制品时不改现有配置。模型超时或取消须回收实际子进程树。安装身份有效不等于人工质量或正式宿主验收。

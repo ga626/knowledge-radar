@@ -1412,10 +1412,79 @@
       "case_id": "surface.process_local_evidence",
       "executor": "surface",
       "entry": "process_local_evidence",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='input_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。'))])], ctx=Load()), ctx=Load())), arg(arg='approved_input_root', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。'))])], ctx=Load()), ctx=Load())), arg(arg='input_sha256', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。')), keyword(arg='pattern', value=Constant(value='^$|^[a-f0-9]{64}$'))])], ctx=Load()), ctx=Load())), arg(arg='component', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='已安装的隔离组件：docling、paddleocr-vl-1.6、qwen3-asr-1.7b 或 qwen3-asr-0.6b。'))])], ctx=Load()), ctx=Load())), arg(arg='language', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='语言代码或 auto。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='所属 kr_research 任务；不创建新研究生命周期。'))])], ctx=Load()), ctx=Load())), arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='已有后台任务 ID；提供时只读取该任务结果，不重复执行。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='docling'), Constant(value='auto'), Constant(value=''), Constant(value='')])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='input_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。'))])], ctx=Load()), ctx=Load())), arg(arg='approved_input_root', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。'))])], ctx=Load()), ctx=Load())), arg(arg='input_sha256', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。')), keyword(arg='pattern', value=Constant(value='^$|^[a-f0-9]{64}$'))])], ctx=Load()), ctx=Load())), arg(arg='component', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='auto 按文件内容唯一分流：文字 PDF 直接解析，Office 用 docling，扫描/图片用 paddleocr-vl-1.6，音频用 qwen3-asr-0.6b；模型组件需先显式安装。'))])], ctx=Load()), ctx=Load())), arg(arg='language', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='语言代码或 auto。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='所属 kr_research 任务；不创建新研究生命周期。'))])], ctx=Load()), ctx=Load())), arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='已有后台任务 ID；提供时只读取该任务结果，不重复执行。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='auto'), Constant(value='auto'), Constant(value=''), Constant(value='')])",
       "layer": "contract",
       "auto": true,
       "success": "注册签名与显式本地文件授权合同一致；不证明真实模型质量。"
+    },
+    {
+      "case_id": "model.cloud_omni",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.get_content_detail",
+        "mcp.get_capabilities"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_bailian_provider.py",
+        "tests/test_media_policy.py",
+        "tests/test_media_router_planning.py",
+        "tests/test_video_processor_provider_routing.py",
+        "tests/test_capabilities_runtime_environment.py::test_media_policy_notes_video_url_spike_not_main_chain"
+      ],
+      "layer": "contract",
+      "auto": true,
+      "timeout_seconds": 60,
+      "dependencies": [
+        "src/understanding/bailian.py",
+        "src/media_policy.py",
+        "src/video_processor.py",
+        "src/capabilities.py",
+        "config/package.env.example",
+        "config/runtime.env.example",
+        "tests/test_bailian_provider.py",
+        "tests/test_media_policy.py",
+        "tests/test_media_router_planning.py",
+        "tests/test_video_processor_provider_routing.py",
+        "tests/test_capabilities_runtime_environment.py"
+      ],
+      "success": "默认云端多模态只有qwen3.8-omni-flash；普通媒体关闭思考，音画联合low；Token与思考用量回读；不证明账号余额、正式安装或生产原生调用。",
+      "change_reason": "用户确认百炼现有账号切换唯一多模态候选；补充现有评测集缺失的模型与费用合同用例。"
+    },
+    {
+      "case_id": "model.local_chain",
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "mcp.process_local_evidence",
+        "mcp.get_capabilities"
+      ],
+      "executor": "pytest",
+      "nodes": [
+        "tests/test_model_chain_contracts.py",
+        "tests/test_comment_filter_provider.py",
+        "tests/test_asr_lifecycle.py",
+        "tests/test_resource_concurrency_leases.py"
+      ],
+      "layer": "contract",
+      "auto": true,
+      "timeout_seconds": 90,
+      "dependencies": [
+        "src/runtime/model_roles.py",
+        "src/runtime/optional_media.py",
+        "src/runtime/optional_media_worker.py",
+        "src/runtime/optional_install.py",
+        "src/runtime/process.py",
+        "config/optional-asr-win-py312.lock",
+        "config/optional-docling-win-py312.lock",
+        "config/optional-ocr-win-py312.lock",
+        "src/runtime/resource_concurrency.py",
+        "src/runtime/asr_lifecycle.py",
+        "scripts/product_install.py",
+        "src/filter_comments.py"
+      ],
+      "success": "本地模型职责唯一、混合PDF不丢页、受管FFmpeg绝对路径、ASR/OCR互斥、旧配置迁移保留凭据、卸载不删除证据；真实质量另需样本回执。"
     }
   ]
 }

@@ -47,7 +47,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-media = ["yt-dlp>=2025.1", "faster-whisper>=1.1,<2", "av>=11,<19"]
+media = ["yt-dlp>=2025.1"]
 dev = ["pytest>=8", "ruff>=0.9"]
 
 [project.urls]

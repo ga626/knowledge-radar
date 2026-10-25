@@ -33,7 +33,7 @@
     {
       "path": "src/runtime/",
       "area": "dev_runtime",
-      "role": "Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution.",
+      "role": "Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution. Fixed model roles; explicit isolated model preparation and installation; ASR/OCR share a bounded local heavy-worker lease.",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
@@ -356,6 +356,9 @@
     "config/recruitment_city_registry.json",
     "config/runtime-win-py312.lock",
     "config/runtime-artifacts.json",
+    "config/optional-asr-win-py312.lock",
+    "config/optional-docling-win-py312.lock",
+    "config/optional-ocr-win-py312.lock",
     "config/retirement-matrix.json",
     "config/license-source-inventory.json",
     "THIRD_PARTY_NOTICES.md",
@@ -421,7 +424,7 @@
     "legacy_accounts": "默认record_profile_state仅转发Observation；旧JSON兼容只读。显式path参数仅历史fixture使用。",
     "protected_fetch": "公开canonical与内存profile令牌分离，任务输入/结果不落明文访问令牌；XHS复用src/media_platform内既有CDP适配器，不复制受限上游文件。",
     "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。",
-    "optional_media": "可选ASR/OCR/解析器仅在获批隔离安装回执、精确代码/权重身份及输入授权根核验后启动独立进程；默认不下载或安装，复用资源租约。",
+    "optional_media": "可选ASR/OCR/解析器使用 config/optional-*-win-py312.lock 冻结全量 wheel 版本和 SHA；仅在获批隔离安装回执、精确代码/权重身份及输入授权根核验后启动独立进程；默认不下载或安装，复用资源租约。",
     "evidence_export": "固定版本文本证据ZIP显式导出到全新专用收件箱；保留SHA、LF偏移映射和独立撤销边界，不自动扫描私人库或启用同步。"
   },
   "stable_research_reports": [],
@@ -444,6 +447,7 @@
     "src/**",
     "config/runtime-win-py312.lock",
     "config/runtime-artifacts.json",
+    "config/optional-*-win-py312.lock",
     "THIRD_PARTY_NOTICES.md"
   ],
   "required_structure_docs": [

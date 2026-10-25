@@ -78,7 +78,7 @@ def test_video_native_preference_maps_to_video_url_plan() -> None:
     assert plan.storage_policy == StoragePolicy.NO_DOWNLOAD
     assert plan.wait_mode == WaitMode.CLIENT_BUDGET
     assert plan.provider == "bailian"
-    assert plan.model == "bailian:qwen3-vl-flash"
+    assert plan.model == "bailian:qwen3.8-omni-flash"
     assert plan.budget.max_duration_seconds == 300
     assert plan.budget.max_frames == 16
     assert plan.requires_network
@@ -191,7 +191,7 @@ def test_long_video_native_preference_falls_back_to_sampled_media() -> None:
     assert plan.source_mode == InformationSourceMode.SAMPLED_MEDIA_WITH_TEXT
     assert plan.operations == (MediaOperation.RUN_ASR, MediaOperation.SAMPLE_FRAMES)
     assert plan.provider == "bailian"
-    assert plan.model == "bailian:qwen3-vl-flash"
+    assert plan.model == "bailian:qwen3.8-omni-flash"
 
 
 def test_image_bundle_maps_to_sampled_media_with_text() -> None:

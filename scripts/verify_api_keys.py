@@ -26,10 +26,6 @@ PROVIDERS = [
     ("SERPAPI_API_KEY", "SerpAPI Google Scholar", False),
     ("KR_CORE_API_KEY", "CORE 学术 API", False),
     ("DASHSCOPE_API_KEY", "DashScope/百炼", False),
-    ("SILICONFLOW_API_KEY", "SiliconFlow 多模态/LLM", False),
-    ("LLM_API_KEY", "通用 LLM 服务商", False),
-    ("MIMO_API_KEY", "Mimo 服务商", False),
-    ("API147_KEY", "API147 备用模型服务", False),
     ("TIKHUB_API_KEY", "TikHub 兜底能力", False),
 ]
 

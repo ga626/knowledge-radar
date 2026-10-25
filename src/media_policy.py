@@ -9,25 +9,17 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any
+from runtime.model_roles import ASR_MODEL_REF, CLOUD_MODEL_REF, OCR_COMPONENT
 
 
-DEFAULT_ASR_MODELS = ("local:faster-whisper/base", "local:faster-whisper/tiny")
-DEFAULT_OCR_MODELS = ("PaddlePaddle/PaddleOCR-VL-1.5",)
-DEFAULT_FRAME_VISION_MODELS = ("bailian:qwen3-vl-flash",)
-DEFAULT_NATIVE_VIDEO_MODELS = ("bailian:qwen3-vl-flash",)
-DEFAULT_NATIVE_AUDIO_VIDEO_MODELS = ("bailian:qwen3.5-omni-flash",)
-# qwen-turbo previously sat first and could fail with HTTP 400/Access denied.
-# Keep it out of the default blocking path; explicit legacy configuration is
-# still accepted but filtered by ``ordered_models`` for video analysis.
-DEFAULT_COMMENT_FILTER_MODELS = ("bailian:qwen3.5-flash",)
-# Newer models are deliberately canary-only until this project records a
-# successful provider/endpoint/region probe.  They are candidates, not proof
-# of entitlement or availability.
-CANARY_MODELS = (
-    ("bailian:qwen3.7-flash", "video", "L2"),
-    ("bailian:qwen3.7-plus", "video", "L3"),
-    ("bailian:qwen3.8-max", "video", "L4"),
-)
+DEFAULT_ASR_MODELS = (ASR_MODEL_REF,)
+DEFAULT_OCR_MODELS = (OCR_COMPONENT,)
+DEFAULT_FRAME_VISION_MODELS = (CLOUD_MODEL_REF,)
+DEFAULT_NATIVE_VIDEO_MODELS = DEFAULT_FRAME_VISION_MODELS
+DEFAULT_NATIVE_AUDIO_VIDEO_MODELS = DEFAULT_FRAME_VISION_MODELS
+# 评论原文交给研究 Agent，不增加第二个云端文本模型。
+DEFAULT_COMMENT_FILTER_MODELS = ()
+CANARY_MODELS = ()
 
 DEFAULT_NATIVE_AUTO_MAX_DURATION_SECONDS = 300.0
 DEFAULT_NATIVE_AUTO_MAX_FRAMES = 16
@@ -80,22 +72,12 @@ class MediaModelPolicy:
     def from_env(cls) -> "MediaModelPolicy":
         return cls(
             basic_text_models=tuple(parse_model_list(os.environ.get("KR_BASIC_TEXT_MODELS"))),
-            asr_models=tuple(parse_model_list(os.environ.get("KR_ASR_MODELS")) or DEFAULT_ASR_MODELS),
-            ocr_models=tuple(parse_model_list(os.environ.get("KR_OCR_MODELS")) or DEFAULT_OCR_MODELS),
-            frame_vision_models=tuple(
-                parse_model_list(os.environ.get("KR_FRAME_VISION_MODELS")) or DEFAULT_FRAME_VISION_MODELS
-            ),
-            native_video_models=tuple(
-                parse_model_list(os.environ.get("KR_NATIVE_VIDEO_MODELS")) or DEFAULT_NATIVE_VIDEO_MODELS
-            ),
-            native_audio_video_models=tuple(
-                parse_model_list(os.environ.get("KR_NATIVE_AUDIO_VIDEO_MODELS"))
-                or DEFAULT_NATIVE_AUDIO_VIDEO_MODELS
-            ),
-            comment_filter_models=tuple(
-                parse_model_list(os.environ.get("KR_COMMENT_FILTER_MODELS"))
-                or DEFAULT_COMMENT_FILTER_MODELS
-            ),
+            asr_models=DEFAULT_ASR_MODELS,
+            ocr_models=DEFAULT_OCR_MODELS,
+            frame_vision_models=DEFAULT_FRAME_VISION_MODELS,
+            native_video_models=DEFAULT_NATIVE_VIDEO_MODELS,
+            native_audio_video_models=DEFAULT_NATIVE_AUDIO_VIDEO_MODELS,
+            comment_filter_models=DEFAULT_COMMENT_FILTER_MODELS,
             native_auto_max_duration_seconds=env_float(
                 "KR_NATIVE_AUTO_MAX_DURATION_SECONDS", DEFAULT_NATIVE_AUTO_MAX_DURATION_SECONDS
             ),
@@ -143,11 +125,14 @@ class MediaModelPolicy:
         ):
             for model in self.models_for(key):
                 ref = str(model)
+                previous = registry.get(ref, {})
                 registry[ref] = {
                     "model_ref": ref,
                     "capability": key,
                     "input_modality": modality,
                     "quality_tier": tier,
+                    "capabilities": [*previous.get("capabilities", []), key],
+                    "input_modalities": list(dict.fromkeys([*previous.get("input_modalities", []), modality])),
                     "canary_required": ref.startswith("bailian:"),
                     "blocked_default": ref.lower() in {"bailian:qwen-turbo", "qwen-turbo"} and key in {"native_video", "native_audio_video", "comment_filter"},
                 }

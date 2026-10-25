@@ -13,9 +13,8 @@ from pathlib import Path
 from typing import Dict, List
 
 from runtime.asr_policy import AsrPolicy
-from runtime.asr_lifecycle import asr_lifecycle_summary, ctranslate2_lifecycle_probe_summary
-from runtime.resource_concurrency import resource_concurrency_summary
-from runtime.paths import playwright_browsers_dir, whisper_model_cache_dir
+from runtime.asr_lifecycle import asr_lifecycle_summary
+from runtime.paths import playwright_browsers_dir
 from runtime.paths import project_root
 from runtime.executables import managed_chrome_resolution_summary, resolve_managed_chrome
 
@@ -40,7 +39,6 @@ DEPENDENCIES: tuple[DependencySpec, ...] = (
     DependencySpec("pypdf", "pypdf", False, "academic PDF text extraction", "pip install pypdf"),
     DependencySpec("youtube-transcript-api", "youtube_transcript_api", False, "YouTube transcript fallback", "pip install youtube-transcript-api"),
     DependencySpec("yt-dlp", "yt_dlp", False, "video download for frame extraction", "install it from the local console"),
-    DependencySpec("faster-whisper", "faster_whisper", False, "local transcription runtime", "install it from the local console"),
     DependencySpec("Pillow", "PIL", False, "QR/image utilities", "pip install Pillow"),
 )
 
@@ -100,7 +98,6 @@ def external_dependency_preflight_summary() -> Dict[str, object]:
     camoufox = _env_path("KR_CAMOUFOX_EXE")
     yt_dlp_cli = shutil.which("yt-dlp") or ""
     yt_dlp_import = importlib.util.find_spec("yt_dlp") is not None
-    asr_policy = AsrPolicy.from_env()
     tools = {
         "ffmpeg": {
             "available": bool(ffmpeg),
@@ -115,27 +112,9 @@ def external_dependency_preflight_summary() -> Dict[str, object]:
             "version": _version("yt-dlp"),
             "configured_by": "Python import/PATH",
         },
-        "faster_whisper": {
-            "available": importlib.util.find_spec("faster_whisper") is not None,
-            "version": _version("faster-whisper"),
-            "model_cache_dir": str(whisper_model_cache_dir()),
-            "policy": asr_policy.compact(),
-            "concurrency": resource_concurrency_summary(),
-            "ctranslate2": ctranslate2_lifecycle_probe_summary(),
-            "lifecycle": asr_lifecycle_summary(),
-            "configured_by": ["KR_WHISPER_MODEL_DIR", "KR_ASR_*"],
-        },
-        "funasr": {
-            "available": importlib.util.find_spec("funasr") is not None,
-            "version": _version("funasr"),
-            "role": "P2.2 candidate; isolated install/smoke required before enabling",
-            "default_enabled": False,
-        },
-        "sherpa_onnx": {
-            "available": importlib.util.find_spec("sherpa_onnx") is not None,
-            "version": _version("sherpa-onnx"),
-            "role": "P2.2 candidate; CPU wheel smoke first, GPU experimental",
-            "default_enabled": False,
+        "local_asr": {
+            "policy":AsrPolicy.from_env().compact(),
+            "lifecycle":asr_lifecycle_summary(),
         },
         "chrome": {
             "available": bool(chrome),

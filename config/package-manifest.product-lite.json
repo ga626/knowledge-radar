@@ -35,6 +35,7 @@
     "CODE_OF_CONDUCT.md",
     "config/selectors.json",
     "config/runtime-win-py312.lock",
+    "config/optional-*-win-py312.lock",
     "config/runtime-artifacts.json",
     "THIRD_PARTY_NOTICES.md",
     "config/license-source-inventory.json",

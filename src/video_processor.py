@@ -7,10 +7,10 @@
   层3: 精品通道 - 千问多模态深度视频理解 (仅在 FULL_ANALYSIS 时触发)
 
 依赖:
-  - httpx, yt-dlp, faster-whisper
+  - httpx、yt-dlp；本地转写由隔离 Qwen3-ASR 组件承担
   - ffmpeg (通过 pyffmpeg 安装至 ~/.pyffmpeg/bin)
-  - 多模态 L2: Bailian Qwen3-VL-Flash；SiliconFlow 仅显式 fallback
-  - 文本评分/摘要: Bailian text model；SiliconFlow 仅显式 fallback
+  - 多模态 L2: 百炼 Qwen3.8-Omni-Flash
+  - 文本评分/摘要: Bailian text model
 """
 
 import base64
@@ -25,6 +25,7 @@ from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
 
+from runtime.dependency_preflight import _ffmpeg_path
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 from runtime.paths import resolve_runtime_media_file
 from runtime.proxy_config import get_yt_dlp_proxy
@@ -38,7 +39,6 @@ log = logging.getLogger(__name__)
 SUMMARIZE_THRESHOLD_CHARS = 3000       # transcript 摘要阈值
 MAX_FRAMES = 8                          # 多模态分析最大帧数
 FRAME_INTERVAL_SEC = 15                 # 帧提取间隔（秒）
-from runtime.dependency_preflight import _ffmpeg_path
 
 FFMPEG_PATH = _ffmpeg_path() or "ffmpeg"
 
@@ -100,7 +100,7 @@ def _call_llm(
 
     policy = MediaModelPolicy.from_env()
     from runtime.media_provider_preflight import classify_provider_error, preflight_contract
-    models = tuple(_first_provider_model((candidate,), "bailian") for candidate in policy.ordered_models("comment_filter"))
+    models = tuple(_first_provider_model((candidate,), "bailian") for candidate in policy.ordered_models("frame_vision"))
     models = tuple(model for model in models if model)
     last_error: Exception | None = None
     for model in models:
@@ -121,19 +121,9 @@ def _call_llm(
         except Exception as exc:
             last_error = exc
             log.warning("[provider] text model %s failed: %s", model, classify_provider_error(exc)["failure_class"])
-    if last_error is not None and not _siliconflow_fallback_enabled():
+    if last_error is not None:
         raise last_error
-    if not _siliconflow_fallback_enabled():
-        raise RuntimeError("No usable Bailian text model configured for video analysis")
-    from understanding.siliconflow import call_text_models, configured_models
-    return call_text_models(
-        models=configured_models("video"),
-        system_prompt=system_prompt,
-        user_prompt=user_prompt,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        timeout=120,
-    )
+    raise RuntimeError("No usable Bailian text model configured for video analysis")
 
 
 def _call_multimodal(
@@ -145,13 +135,13 @@ def _call_multimodal(
 ) -> Tuple[str, str]:
     """
     调用多模态模型（支持 base64 图片）。
-    默认走 Bailian Qwen3-VL-Flash；只有显式启用 fallback 时才回退 SiliconFlow。
+    默认走百炼 Qwen3.8-Omni-Flash。
     """
     from media_policy import MediaModelPolicy
     from understanding.bailian import call_frame_images_model
     from runtime.media_provider_preflight import classify_provider_error, preflight_contract
 
-    model = _first_provider_model(MediaModelPolicy.from_env().frame_vision_models, "bailian") or "qwen3-vl-flash"
+    model = _first_provider_model(MediaModelPolicy.from_env().frame_vision_models, "bailian") or "qwen3.8-omni-flash"
     contract = preflight_contract(f"bailian:{model}", capability="frame_vision")
     if contract["status"] == "blocked_model":
         raise RuntimeError(f"Blocked media model: {model}")
@@ -166,23 +156,7 @@ def _call_multimodal(
         )[:2]
     except Exception as exc:
         log.warning("[provider] frame model %s failed: %s", model, classify_provider_error(exc)["failure_class"])
-        if not _siliconflow_fallback_enabled():
-            raise
-        from understanding.siliconflow import call_multimodal_models, configured_models
-
-        return call_multimodal_models(
-            models=configured_models("video"),
-            system_prompt=system_prompt,
-            user_text=user_text,
-            images_base64=images_base64,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            timeout=300,
-        )
-
-
-def _siliconflow_fallback_enabled() -> bool:
-    return (os.environ.get("KR_ENABLE_SILICONFLOW_FALLBACK") or "").strip().lower() in {"1", "true", "yes", "on"}
+        raise
 
 
 def _first_provider_model(models: Tuple[str, ...], provider: str) -> str:
@@ -552,8 +526,8 @@ def deep_analyze_video(
     流程:
     1. 下载视频画面流（如未缓存）
     2. 提取关键帧（base64）
-    3. 调用 SiliconFlow 千问多模态分析
-       - qwen3.5-122b-a10b 失败 → 自动切换 qwen3-vl-8b-instruct
+    3. 调用百炼 Omni 多模态分析
+       - 按唯一已选模型调用，失败返回明确缺口
        - 全部失败 → 抛异常
 
     Returns:

@@ -8,7 +8,7 @@ import importlib.util
 from pathlib import Path
 import shutil
 import sqlite3
-import subprocess
+from runtime.process import silent_subprocess_run
 import sys
 import time
 from typing import Any
@@ -16,7 +16,7 @@ from typing import Any
 from onboarding.configuration import public_provider_guides, public_snapshot
 from runtime.media_cache import cleanup_expired_media_cache, media_cache_root
 from runtime.executables import resolve_managed_chrome
-from runtime.paths import project_root, whisper_model_cache_dir
+from runtime.paths import project_root
 
 
 CAPABILITY_PACKS = (
@@ -36,7 +36,14 @@ CAPABILITY_PACKS = (
         "id": "research_sources",
         "label": "资料来源",
         "description": "按研究问题补充学术、GitHub 与 YouTube；不是开始普通网页研究的前置条件。",
-        "fields": ("YOUTUBE_API_KEY", "OPENALEX_API_KEY", "SEMANTIC_SCHOLAR_API_KEY", "BAIDU_QIANFAN_BEARER_TOKEN", "SERPAPI_API_KEY", "KR_CORE_API_KEY"),
+        "fields": (
+            "YOUTUBE_API_KEY",
+            "OPENALEX_API_KEY",
+            "SEMANTIC_SCHOLAR_API_KEY",
+            "BAIDU_QIANFAN_BEARER_TOKEN",
+            "SERPAPI_API_KEY",
+            "KR_CORE_API_KEY",
+        ),
         "needs": "YouTube 需要 Key；学术默认可走公开元数据；GitHub 推荐本机 gh 登录",
         "boundary": "学术授权、GitHub 限流和公开视频地域限制分别显示，不混成“已配置”。",
         "status_kind": "optional",
@@ -53,20 +60,26 @@ CAPABILITY_PACKS = (
         "boundary": "不保存密码、不绕过验证码或风控；空结果不是要求重新登录的理由。",
         "status_kind": "manual",
         "tool_count": 5,
-        "tools": ("search_xiaohongshu", "manage_xiaohongshu_accounts", "search_zhihu", "search_recruitment", "get_content_detail"),
+        "tools": (
+            "search_xiaohongshu",
+            "manage_xiaohongshu_accounts",
+            "search_zhihu",
+            "search_recruitment",
+            "get_content_detail",
+        ),
         "provider_ids": ("tikhub",),
     },
     {
         "id": "content_intelligence",
         "label": "模型服务",
-        "description": "按需配置图文、视频或文本理解所使用的模型服务。浏览器、转写模型等本地依赖在“本地组件”中单独管理。",
-        "fields": ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY", "MIMO_API_KEY", "API147_KEY", "LLM_API_KEY"),
-        "needs": "基础文本不需要模型；需要深度理解时，选择一个适合任务的模型服务",
+        "description": "按需配置百炼图片与音视频理解。浏览器、转写模型等本地依赖在“本地组件”中单独管理。",
+        "fields": ("DASHSCOPE_API_KEY",),
+        "needs": "基础文本交给 Codex；需要图片或音视频理解时使用百炼 Omni",
         "boundary": "可能产生媒体缓存、后台任务或费用；每次任务会说明实际采用的路径。",
         "status_kind": "optional",
         "tool_count": 2,
         "tools": ("get_content_detail", "get_task_status"),
-        "provider_ids": ("dashscope", "siliconflow", "mimo", "api147", "compatible_llm"),
+        "provider_ids": ("dashscope",),
     },
 )
 
@@ -124,7 +137,9 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
             from runtime.browser_sessions import browser_sessions_summary
 
             sessions = browser_sessions_summary(limit=100).get("sessions") or []
-            pending = any(row.get("state") in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"} for row in sessions)
+            pending = any(
+                row.get("state") in {"NEEDS_USER", "USER_INTERACTING", "USER_DONE_VERIFYING"} for row in sessions
+            )
             status = "needs_interaction" if pending else "on_call_check"
         elif status_kind == "optional" and not ready:
             status = "optional"
@@ -152,7 +167,11 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
 def optional_capabilities() -> list[dict[str, Any]]:
     """Return user-selectable downloads, never a generic host-software bucket."""
     root_raw = os.environ.get("KR_DATA_ROOT", "").strip()
-    data_root = Path(root_raw).expanduser() if root_raw else Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "KnowledgeRadar" / "data"
+    data_root = (
+        Path(root_raw).expanduser()
+        if root_raw
+        else Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "KnowledgeRadar" / "data"
+    )
     state_path = data_root / "state" / "capabilities.json"
     try:
         state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
@@ -165,13 +184,21 @@ def optional_capabilities() -> list[dict[str, Any]]:
         and (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
     )
     browser_root = data_root / "playwright"
-    browser_ready = browser_root.is_dir() and any(path.is_file() for pattern in ("chromium-*/chrome-*/chrome.exe", "chromium-*/chrome-*/chrome", "chromium-*/chrome-*/chrome-linux*/chrome") for path in browser_root.glob(pattern))
+    browser_ready = browser_root.is_dir() and any(
+        path.is_file()
+        for pattern in (
+            "chromium-*/chrome-*/chrome.exe",
+            "chromium-*/chrome-*/chrome",
+            "chromium-*/chrome-*/chrome-linux*/chrome",
+        )
+        for path in browser_root.glob(pattern)
+    )
     media_downloader_ready = bool(importlib.util.find_spec("yt_dlp"))
-    transcription_runtime_ready = bool(importlib.util.find_spec("faster_whisper"))
-    model_cache = whisper_model_cache_dir()
-    required_model_files = ("model.bin", "config.json", "tokenizer.json")
-    snapshots = model_cache.glob("models--Systran--faster-whisper-base/snapshots/*") if model_cache.is_dir() else []
-    transcription_model_ready = any(all((path / name).is_file() and (path / name).stat().st_size > 0 for name in required_model_files) for path in snapshots)
+    from runtime.optional_media import component_plan
+    from runtime.model_roles import ASR_COMPONENT
+
+    asr = component_plan(ASR_COMPONENT)
+    transcription_model_ready = asr.get("ready", False)
     return [
         {
             "id": "browser",
@@ -205,26 +232,30 @@ def optional_capabilities() -> list[dict[str, Any]]:
             "restart_required": False,
         },
         {
-            "id": "transcription_runtime",
-            "label": "本地转写运行时",
-            "description": "启用本地音视频转写时必需；不使用本地转写则无需安装。",
-            "status": "ready" if transcription_runtime_ready else "not_installed",
-            "requirement": "启用本地转写后必需",
-            "install_mode": "managed",
-            "boundary": "仅在本控制台确认后安装到产品运行环境；不下载模型权重，也不会上传媒体。",
-            "restart_required": False,
-        },
-        {
             "id": "transcription_model",
-            "label": "基础转写模型（base）",
-            "description": "本地转写运行时所需的模型权重；选择本地转写后必需，可在这里预先下载。",
+            "label": "本地语音转写（0.6B）",
+            "description": "无字幕时按需启动；运行时与权重统一安装，不再选择引擎。",
             "status": "ready" if transcription_model_ready else "not_installed",
-            "requirement": "启用本地转写后必需",
+            "requirement": "按需",
             "install_mode": "managed",
-            "depends_on": ("transcription_runtime",),
-            "boundary": "在本控制台确认后下载并只保存在产品数据目录；不会等到任务开始才悄悄下载。",
             "restart_required": False,
+            "boundary": "只在本地隔离环境处理；完成后退出 worker，不上传音频。",
         },
+        *[
+            {
+                "id": component,
+                "label": component_plan(component)["label"],
+                "description": "Office 文档解析，不下载模型。"
+                if component == "docling"
+                else "扫描件、图片与复杂文档保留页码和位置。",
+                "status": "ready" if component_plan(component).get("ready") else "not_installed",
+                "requirement": "按需",
+                "install_mode": "managed",
+                "restart_required": False,
+                "boundary": "隔离安装，显式下载；与转写共享一个本地重计算名额。",
+            }
+            for component in ("docling", "paddleocr-vl-1.6")
+        ],
     ]
 
 
@@ -258,7 +289,15 @@ def local_component_catalog() -> dict[str, Any]:
                         "requirement": "启用平台账号后必需",
                         "install_mode": "guided",
                         "boundary": "在此查看官方安装引导并在安装后重新检测；产品不会读取密码、Cookie 或绕过验证。",
-                        "guide": {"official_url": "https://www.google.com/chrome/", "official_label": "打开 Chrome 官方下载页", "steps": ("打开官方安装页并下载适用于 Windows 的 Chrome 安装程序。", "按安装程序完成安装，不要把浏览器资料导入产品目录。", "回到本页刷新检测；后续只在页面明确要求时人工登录或扫码。")},
+                        "guide": {
+                            "official_url": "https://www.google.com/chrome/",
+                            "official_label": "打开 Chrome 官方下载页",
+                            "steps": (
+                                "打开官方安装页并下载适用于 Windows 的 Chrome 安装程序。",
+                                "按安装程序完成安装，不要把浏览器资料导入产品目录。",
+                                "回到本页刷新检测；后续只在页面明确要求时人工登录或扫码。",
+                            ),
+                        },
                     },
                     {
                         "id": "node",
@@ -268,7 +307,15 @@ def local_component_catalog() -> dict[str, Any]:
                         "requirement": "启用小红书诊断 bridge 后必需",
                         "install_mode": "guided",
                         "boundary": "在此查看官方安装引导并在安装后重新检测；它本身不会自动启用任何平台访问。",
-                        "guide": {"official_url": "https://nodejs.org/en/download", "official_label": "打开 Node.js 官方下载页", "steps": ("下载并安装 Node.js 的长期支持版（LTS）。", "安装时保留 npm；完成后重新打开本地控制台。", "回到本页刷新检测，再为小红书诊断 bridge 生成安装计划。")},
+                        "guide": {
+                            "official_url": "https://nodejs.org/en/download",
+                            "official_label": "打开 Node.js 官方下载页",
+                            "steps": (
+                                "下载并安装 Node.js 的长期支持版（LTS）。",
+                                "安装时保留 npm；完成后重新打开本地控制台。",
+                                "回到本页刷新检测，再为小红书诊断 bridge 生成安装计划。",
+                            ),
+                        },
                     },
                     selectable["xhs_bridge"],
                 ],
@@ -279,8 +326,9 @@ def local_component_catalog() -> dict[str, Any]:
                 "description": "只有在需要下载公开媒体、提取关键帧或使用本地转写时才安装。",
                 "items": [
                     selectable["media_downloader"],
-                    selectable["transcription_runtime"],
                     selectable["transcription_model"],
+                    selectable["docling"],
+                    selectable["paddleocr-vl-1.6"],
                     {
                         "id": "ffmpeg",
                         "label": "FFmpeg",
@@ -289,18 +337,16 @@ def local_component_catalog() -> dict[str, Any]:
                         "requirement": "启用本地媒体处理后必需",
                         "install_mode": "guided",
                         "boundary": "在此查看官方安装引导并在安装后重新检测；不会自动扫描或处理你的媒体文件。",
-                        "guide": {"official_url": "https://ffmpeg.org/download.html", "official_label": "打开 FFmpeg 官方下载页", "steps": ("从官方页面进入适用于 Windows 的可信发行渠道。", "按发行方说明安装，并确保 ffmpeg 可通过系统 PATH 或明确配置找到。", "回到本页刷新检测，再启用本地媒体处理或转写。")},
+                        "guide": {
+                            "official_url": "https://ffmpeg.org/download.html",
+                            "official_label": "打开 FFmpeg 官方下载页",
+                            "steps": (
+                                "从官方页面进入适用于 Windows 的可信发行渠道。",
+                                "按发行方说明安装，并确保 ffmpeg 可通过系统 PATH 或明确配置找到。",
+                                "回到本页刷新检测，再启用本地媒体处理或转写。",
+                            ),
+                        },
                     },
-                ],
-            },
-            {
-                "id": "experimental",
-                "label": "实验与候选",
-                "description": "未进入默认研究链路，不提供普通安装入口。",
-                "items": [
-                    {"id": "camoufox", "label": "Camoufox 浏览器候选", "description": "只用于隔离诊断或候选验证。", "status": "disabled", "requirement": "实验", "install_mode": "disabled", "boundary": "默认关闭，不会自动用于平台访问。"},
-                    {"id": "funasr", "label": "FunASR 引擎候选", "description": "本地转写备选引擎，尚需独立验证。", "status": "disabled", "requirement": "实验", "install_mode": "disabled", "boundary": "默认关闭，不向普通使用者承诺可用。"},
-                    {"id": "sherpa_onnx", "label": "sherpa-onnx 引擎候选", "description": "本地转写备选引擎，当前只保留隔离验证路径。", "status": "disabled", "requirement": "实验", "install_mode": "disabled", "boundary": "默认关闭，不提供安装入口。"},
                 ],
             },
         ],
@@ -316,7 +362,7 @@ def _run_product_installer(arguments: list[str], *, timeout: int) -> dict[str, A
     installer = Path(program_root) / "scripts" / "product_install.py"
     if not installer.is_file():
         raise RuntimeError("当前产品安装器不可用。")
-    result = subprocess.run(
+    result = silent_subprocess_run(
         [sys.executable, str(installer), *arguments, "--install-root", install_root],
         cwd=Path(program_root),
         text=True,
@@ -375,7 +421,7 @@ def optional_capability_apply(capability: str, confirmation: str) -> dict[str, A
     if not confirmation or len(confirmation) > 128:
         raise ValueError("请先生成并确认当前能力安装计划。")
     payload = _run_product_installer(
-        ["capability-apply", "--capability", capability, "--confirmation", confirmation], timeout=900
+        ["capability-apply", "--capability", capability, "--confirmation", confirmation], timeout=3600
     )
     return {
         "status": str(payload.get("status") or "APPLIED"),
@@ -416,7 +462,7 @@ def _read_dashboard_rows(database: Path, query: str, parameters: tuple[Any, ...]
 _TASK_LABELS = {
     "bilibili_transcribe": "视频转写",
     "bilibili_qwen_video_analysis": "视频理解",
-    "bilibili_comment_filter": "评论筛选",
+    "bilibili_comment_filter": "评论去重",
 }
 _TASK_STATUS_LABELS = {
     "queued": "排队中",
@@ -448,7 +494,11 @@ def _public_task_row(row: sqlite3.Row, *, now: float) -> dict[str, Any]:
     updated_at = float(row["updated_at"] or now)
     started_at = float(row["started_at"] or row["created_at"] or updated_at)
     finished_at = float(row["finished_at"] or updated_at)
-    duration_s = max(0, int(finished_at - started_at)) if status in {"completed", "failed", "cancelled", "skipped"} else max(0, int(now - started_at))
+    duration_s = (
+        max(0, int(finished_at - started_at))
+        if status in {"completed", "failed", "cancelled", "skipped"}
+        else max(0, int(now - started_at))
+    )
     return {
         "label": _TASK_LABELS.get(task_type, "后台研究处理"),
         "platform": "B 站" if task_type.startswith("bilibili_") else (platform[:32] or "本机任务"),
@@ -495,6 +545,7 @@ def _dashboard_trace_activity(since: float) -> dict[str, Any]:
     if not trace_path.is_file():
         return {"available": False, "successful": 0, "top_tools": []}
     from runtime.activity_index import trace_activity
+
     try:
         return trace_activity(trace_path, since)
     except (OSError, sqlite3.Error):
@@ -510,12 +561,15 @@ def _dashboard_usage_activity(since: float) -> dict[str, Any]:
         "SELECT capability, COUNT(*) AS count FROM usage_records WHERE created_at >= ? GROUP BY capability ORDER BY count DESC LIMIT 3",
         (since,),
     )
-    return {"available": database.is_file(), "top_capabilities": [{"label": str(row["capability"] or "unknown")[:80], "count": int(row["count"] or 0)} for row in rows]}
+    return {
+        "available": database.is_file(),
+        "top_capabilities": [
+            {"label": str(row["capability"] or "unknown")[:80], "count": int(row["count"] or 0)} for row in rows
+        ],
+    }
 
 
-def _control_plane_capabilities(
-    packs: list[dict[str, Any]], components: list[dict[str, Any]]
-) -> list[dict[str, str]]:
+def _control_plane_capabilities(packs: list[dict[str, Any]], components: list[dict[str, Any]]) -> list[dict[str, str]]:
     """Map existing product readiness to honest, user-facing control-plane states.
 
     "已接入" means that the necessary local configuration exists.  It does not
@@ -570,7 +624,11 @@ def dashboard_snapshot(*, window_days: int = 7) -> dict[str, Any]:
     next_action = (
         {"view": "services", "label": "配置网页搜索", "reason": "先配置至少一个网页搜索来源，才能启用核心网页研究。"}
         if core_pack and core_pack["status"] != "ready"
-        else {"view": "services", "label": "查看能力中心", "reason": "核心网页研究已具备最小配置；可按需要补充其他能力。"}
+        else {
+            "view": "services",
+            "label": "查看能力中心",
+            "reason": "核心网页研究已具备最小配置；可按需要补充其他能力。",
+        }
     )
     return {
         "schema": "knowledgeradar-dashboard-snapshot/v1",
@@ -581,11 +639,18 @@ def dashboard_snapshot(*, window_days: int = 7) -> dict[str, Any]:
         "control_plane": {
             "capabilities": control_plane,
             "connected_count": sum(item["state"] in {"connected", "local_ready"} for item in control_plane),
-            "attention_count": sum(item["state"] not in {"connected", "local_ready", "on_call_check"} for item in control_plane),
+            "attention_count": sum(
+                item["state"] not in {"connected", "local_ready", "on_call_check"} for item in control_plane
+            ),
         },
         "next_action": next_action,
         "activity": {"tasks": task_activity, "tools": trace_activity, "usage": usage_activity},
-        "pending": {"active_tasks": task_activity["active"], "restart_required": any(bool(item.get("restart_required")) and item.get("status") != "ready" for item in components)},
+        "pending": {
+            "active_tasks": task_activity["active"],
+            "restart_required": any(
+                bool(item.get("restart_required")) and item.get("status") != "ready" for item in components
+            ),
+        },
         "privacy": "仅汇总本机已有记录；不返回查询、网址、任务内容、账号、文件名、Profile、Cookie、配置值或密钥。",
     }
 
@@ -614,9 +679,13 @@ def _tree_bytes(path: Path, *, excluded: tuple[Path, ...] = ()) -> int:
         total = 0
         for root, directories, files in os.walk(path, followlinks=False):
             base = Path(root)
-            directories[:] = [name for name in directories if not (base / name).is_symlink()
-                              and not (base / name).is_junction()
-                              and not any(item == base / name or item in (base / name).parents for item in excluded)]
+            directories[:] = [
+                name
+                for name in directories
+                if not (base / name).is_symlink()
+                and not (base / name).is_junction()
+                and not any(item == base / name or item in (base / name).parents for item in excluded)
+            ]
             for name in files:
                 item = base / name
                 if not item.is_symlink() and not any(item == skip or skip in item.parents for skip in excluded):
@@ -632,7 +701,9 @@ def _storage_ownership_manifest() -> dict[str, Any]:
         payload = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError("product storage ownership manifest is unavailable") from error
-    if payload.get("schema") != "knowledgeradar-storage-ownership/v1" or not isinstance(payload.get("categories"), list):
+    if payload.get("schema") != "knowledgeradar-storage-ownership/v1" or not isinstance(
+        payload.get("categories"), list
+    ):
         raise RuntimeError("product storage ownership manifest is invalid")
     return payload
 
@@ -656,33 +727,66 @@ def storage_summary() -> dict[str, Any]:
         relative = str(category["relative_path"])
         path = media_cache_root() if category["id"] == "media_cache" else data_root / relative
         excluded = tuple(data_root / str(item) for item in category.get("exclude_relative_paths", []))
-        rows.append({"id": category["id"], "label": category["label"], "policy": category["policy"], "bytes": _tree_bytes(path, excluded=excluded)})
+        rows.append(
+            {
+                "id": category["id"],
+                "label": category["label"],
+                "policy": category["policy"],
+                "bytes": _tree_bytes(path, excluded=excluded),
+            }
+        )
     from runtime.profile_registry import profile_registry_internal, _resolve_profile_dir
+
     browser_root = (data_root / "browser_data").resolve()
     registered = (profile_registry_internal().get("raw") or {}).get("profiles") or []
     candidates = []
     for profile in registered:
         raw_path = _resolve_profile_dir(str(profile.get("profile_dir") or ""))
         path = Path(raw_path) if raw_path else None
-        safe = bool(path and path.resolve().is_relative_to(browser_root) and path.resolve() != browser_root
-                    and not any(parent.is_symlink() or parent.is_junction() for parent in [path, *path.parents]))
+        safe = bool(
+            path
+            and path.resolve().is_relative_to(browser_root)
+            and path.resolve() != browser_root
+            and not any(parent.is_symlink() or parent.is_junction() for parent in [path, *path.parents])
+        )
         candidates.append((profile, path, safe))
     counted_paths = []
     projected = {}
     # 外层目录先计；同路径优先归当前账号池，实验别名只展示共享关系。
-    ordered = sorted(candidates, key=lambda item: (len(item[1].parts) if item[1] else 999,
-                                                 item[0].get("account_pool_member") is False,
-                                                 item[0].get("role") != "primary"))
+    ordered = sorted(
+        candidates,
+        key=lambda item: (
+            len(item[1].parts) if item[1] else 999,
+            item[0].get("account_pool_member") is False,
+            item[0].get("role") != "primary",
+        ),
+    )
     for profile, path, safe in ordered:
-        shared_with = next((owner for other, owner in counted_paths if safe and path.resolve().is_relative_to(other)), "")
+        shared_with = next(
+            (owner for other, owner in counted_paths if safe and path.resolve().is_relative_to(other)), ""
+        )
         present = bool(safe and path.is_dir())
-        status = "outside_managed_browser_root" if not safe else "missing" if not present else "shared_directory" if shared_with else "counted"
+        status = (
+            "outside_managed_browser_root"
+            if not safe
+            else "missing"
+            if not present
+            else "shared_directory"
+            if shared_with
+            else "counted"
+        )
         profile_id = profile.get("profile_id", "")
-        projected[profile_id] = {"profile_id": profile_id, "platform": profile.get("platform", ""),
-                                 "display_label": profile.get("display_label") or profile.get("label") or profile_id,
-                                 "account_slot": profile.get("account_slot", ""), "bytes": _tree_bytes(path) if status == "counted" else 0,
-                                 "status": status, "shared_with_profile_id": shared_with,
-                                 "scope": "browser_data_subset", "policy": "protected"}
+        projected[profile_id] = {
+            "profile_id": profile_id,
+            "platform": profile.get("platform", ""),
+            "display_label": profile.get("display_label") or profile.get("label") or profile_id,
+            "account_slot": profile.get("account_slot", ""),
+            "bytes": _tree_bytes(path) if status == "counted" else 0,
+            "status": status,
+            "shared_with_profile_id": shared_with,
+            "scope": "browser_data_subset",
+            "policy": "protected",
+        }
         if status == "counted":
             counted_paths.append((path.resolve(), profile_id))
     per_profile = [projected[profile.get("profile_id", "")] for profile, _, _ in candidates]
@@ -716,7 +820,13 @@ def expired_media_cleanup(*, apply: bool) -> dict[str, Any]:
     data_root = Path(os.environ["KR_DATA_ROOT"]).resolve()
     cache_root = media_cache_root().resolve()
     if cache_root != data_root and data_root not in cache_root.parents:
-        return {"status": "SKIPPED", "expired_file_count": 0, "kept_file_count": 0, "error_count": 0, "scope": "媒体缓存不在当前产品数据根，拒绝自动处理。"}
+        return {
+            "status": "SKIPPED",
+            "expired_file_count": 0,
+            "kept_file_count": 0,
+            "error_count": 0,
+            "scope": "媒体缓存不在当前产品数据根，拒绝自动处理。",
+        }
     result = cleanup_expired_media_cache(root=cache_root, dry_run=True)
     manifest = cache_root / "manifest.jsonl"
     known = set()
@@ -729,6 +839,7 @@ def expired_media_cleanup(*, apply: bool) -> dict[str, Any]:
                 known.add(Path(raw).resolve())
     eligible = [Path(raw).resolve() for raw in result["deleted"] if Path(raw).resolve() in known]
     from runtime.storage_lifecycle import quarantine_files, StorageLeases
+
     leases = StorageLeases()
     eligible = [path for path in eligible if not leases.protected(path)]
     applied = quarantine_files(eligible, cache_root=cache_root, data_root=data_root) if apply else {}

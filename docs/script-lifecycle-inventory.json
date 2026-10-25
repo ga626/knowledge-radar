@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "generated_at": "2026-10-25T04:00:41.770502+00:00",
+  "generated_at": "2026-10-25T08:55:33.986370+00:00",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -126,7 +126,7 @@
       "path": "scripts/kr_optional_media.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 9,
+      "reference_count": 18,
       "action": "may_move_after_targeted_checks"
     },
     {
@@ -168,7 +168,7 @@
       "path": "scripts/product_install.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 104,
+      "reference_count": 110,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

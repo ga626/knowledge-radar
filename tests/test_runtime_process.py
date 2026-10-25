@@ -58,7 +58,8 @@ def test_silent_subprocess_run_respects_debug_window_switch(monkeypatch) -> None
 
 def test_runtime_code_uses_silent_subprocess_wrappers() -> None:
     src_root = Path(__file__).resolve().parents[1] / "src"
-    allowed = {src_root / "runtime" / "process.py"}
+    # -I 独立模型工人不导入主运行时，自行传 CREATE_NO_WINDOW 给 FFmpeg。
+    allowed = {src_root / "runtime" / "process.py", src_root / "runtime" / "optional_media_worker.py"}
     pattern = re.compile(
         r"\bsubprocess\.(?:run|Popen|check_output|check_call)\s*\("
         r"|\basyncio\.create_subprocess(?:_exec|_shell)?\s*\("

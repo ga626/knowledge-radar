@@ -1,6 +1,5 @@
 """新功能的完整数据链与失败边界；模型质量不由替身数据赋予。"""
 import base64
-import hashlib
 import io
 import json
 import zipfile
@@ -94,7 +93,7 @@ def test_real_tool_receipts_automatically_link_unique_candidate(tmp_path, monkey
     @traced_tool('extract_web_page')
     def detail(research_task_id=''):
         return {'url':'https://example.org/paper','evidence_assets':[{'version_id':'a'*64}]}
-    found=search(research_task_id=task['research_task_id'])
+    search(research_task_id=task['research_task_id'])
     extracted=detail(research_task_id=task['research_task_id'])
     current=read_task(task_id=task['research_task_id'])
     assert len(current['tool_receipts']) == 2
@@ -116,9 +115,9 @@ def test_transcript_nested_map_and_source_ecology(tmp_path):
 def test_model_main_path_has_no_old_qwen_engine_and_blocks_unapproved(tmp_path, monkeypatch):
     from runtime.optional_media import COMPONENTS, install_component
     monkeypatch.setenv('KR_OPTIONAL_COMPONENT_RECEIPTS_DIR',str(tmp_path/'components'))
-    assert COMPONENTS['qwen3-asr-1.7b']['package']=='transformers'
+    assert COMPONENTS['qwen3-asr-0.6b']['package']=='transformers'
     with pytest.raises(ValueError,match='reviewed_installation'):
-        install_component('qwen3-asr-1.7b',{})
+        install_component('qwen3-asr-0.6b',{})
     assert not (tmp_path/'components').exists()
 
 
@@ -166,5 +165,5 @@ def test_optional_install_failure_does_not_block_retry(tmp_path,monkeypatch):
     monkeypatch.setattr(optional_media,'_install_component',fail)
     for _ in range(2):
         with pytest.raises(RuntimeError,match='offline_install_failed'):
-            optional_media.install_component('qwen3-asr-1.7b',{})
-    assert not (root/'environments/qwen3-asr-1.7b').exists()
+            optional_media.install_component('qwen3-asr-0.6b',{})
+    assert not (root/'environments/qwen3-asr-0.6b').exists()

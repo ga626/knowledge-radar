@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 import pytest
 from kr_core.evidence_assets import EvidenceAssets
 from kr_core.evidence_locators import transcript_locators
@@ -46,12 +45,16 @@ def test_original_finalizer_blocks_pending_and_withdrawn_evidence(tmp_path, monk
 def test_optional_components_block_before_execution(tmp_path, monkeypatch):
     from runtime.optional_media import COMPONENTS, component_plan, run_optional
     monkeypatch.setenv('KR_OPTIONAL_COMPONENT_RECEIPTS_DIR', str(tmp_path / 'receipts'))
+    source = tmp_path / 'source.wav'
+    source.write_bytes(b'authorized input')
     for component in COMPONENTS:
         plan = component_plan(component)
-        assert plan['status'] == 'BLOCKED_NO_APPROVED_ISOLATED_INSTALL'
+        assert plan['status'] == 'not_installed'
         assert not plan['automatic_install'] and not plan['automatic_model_download']
         with pytest.raises(ValueError, match='not_installed_and_approved'):
-            run_optional({'component': component, 'input_path': str(tmp_path / 'private')})
+            run_optional({'component': component, 'input_path': str(source),
+                          'approved_input_root': str(tmp_path),
+                          'input_sha256': __import__('hashlib').sha256(source.read_bytes()).hexdigest()})
     assert not (tmp_path / 'receipts').exists()
 
 

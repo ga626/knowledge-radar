@@ -48,7 +48,7 @@ def test_asr_strategy_selects_downloader_subtitle_hit(monkeypatch, tmp_path):
 
 def test_asr_strategy_selects_local_gpu_asr_when_requested(monkeypatch, tmp_path):
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
-    policy = AsrPolicy(models=("local:faster-whisper/base",), device="cuda", compute_type="float16")
+    policy = AsrPolicy(models=("local:qwen3-asr/0.6b-hf",), device="cuda", compute_type="float16")
     miss = SubtitleProbeResult(platform="bilibili", status="miss", reason="no subtitles")
 
     plan = build_asr_strategy_plan(AsrStrategyInput(platform="bilibili", platform_subtitle=miss, gpu_available=True), asr_policy=policy)
@@ -56,14 +56,14 @@ def test_asr_strategy_selects_local_gpu_asr_when_requested(monkeypatch, tmp_path
     assert plan.selected_step_id == "local_asr"
     selected = plan.steps[-1]
     assert selected.resource_kind == RESOURCE_ASR_GPU
-    assert selected.engine == "local:faster-whisper/base"
-    assert selected.metadata["benchmark_profile"]["status"] == "opt_in_hot_path"
+    assert selected.engine == "local:qwen3-asr/0.6b-hf"
+    assert selected.metadata["benchmark_profile"]["status"] == "single_selected_engine"
     assert selected.metadata["download_resource_kind"] == "media_download"
 
 
 def test_asr_strategy_prefers_tiny_when_cpu_load_is_high(monkeypatch, tmp_path):
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
-    policy = AsrPolicy(models=("local:faster-whisper/base", "local:faster-whisper/tiny"), device="cpu", compute_type="int8")
+    policy = AsrPolicy(models=("local:qwen3-asr/0.6b-hf", "local:qwen3-asr/0.6b-hf"), device="cpu", compute_type="int8")
     miss = SubtitleProbeResult(platform="bilibili", status="miss", reason="no subtitles")
 
     plan = build_asr_strategy_plan(
@@ -73,19 +73,16 @@ def test_asr_strategy_prefers_tiny_when_cpu_load_is_high(monkeypatch, tmp_path):
 
     selected = plan.steps[-1]
     assert selected.resource_kind == RESOURCE_ASR_CPU
-    assert selected.engine == "local:faster-whisper/tiny"
-    assert selected.metadata["benchmark_profile"]["status"] == "speed_fallback"
+    assert selected.engine == "local:qwen3-asr/0.6b-hf"
+    assert selected.metadata["benchmark_profile"]["status"] == "single_selected_engine"
 
 
-def test_asr_strategy_manifest_marks_unselected_engines() -> None:
+def test_asr_strategy_manifest_has_one_engine_and_no_fallback():
     from runtime.asr_strategy import asr_strategy_manifest
-
     manifest = asr_strategy_manifest()
-
-    assert manifest["default_engine"] == "local:faster-whisper/base"
-    assert "local:funasr/sensevoice-small" in manifest["disabled_after_real_run"]
-    assert "local:sherpa-onnx/sensevoice-int8" in manifest["disabled_after_real_run"]
-    assert manifest["benchmark_profile"]["validated_paths"]["faster_whisper_cpu_base_int8"]["status"] == "default_main_path"
+    assert manifest['default_engine'] == 'local:qwen3-asr/0.6b-hf'
+    assert manifest['engine_candidates'] == [manifest['default_engine']]
+    assert manifest['active_fallback_chain'] == []
 
 
 def test_resource_concurrency_policy_env(monkeypatch):

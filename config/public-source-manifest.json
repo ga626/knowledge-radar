@@ -18,6 +18,7 @@
     "start-knowledgeradar-server-detached.py",
     "start-knowledgeradar-server-hidden.ps1",
     "src/**",
+    "config/optional-*-win-py312.lock",
     "tests/**",
     "scripts/build_product_lite_package.py",
     "scripts/build_public_source_projection.py",

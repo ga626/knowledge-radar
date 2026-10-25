@@ -45,10 +45,6 @@ def proxy_rule_cache_dir() -> Path:
     return Path(os.environ.get("KR_PROXY_RULE_CACHE_DIR") or (runtime_state_dir() / "proxy_rules"))
 
 
-def whisper_model_cache_dir() -> Path:
-    return Path(os.environ.get("KR_WHISPER_MODEL_DIR") or (runtime_state_dir() / "models" / "whisper"))
-
-
 def runtime_media_dir() -> Path:
     return Path(os.environ.get("KR_RUNTIME_MEDIA_DIR") or (runtime_state_dir() / "data" / "media"))
 

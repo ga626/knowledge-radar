@@ -18,7 +18,7 @@ Development source is the only editable truth. Package output is regenerated fro
 
 | Path | Area | Role | Codex Edit | Release |
 | --- | --- | --- | --- | --- |
-| `src/runtime/` | dev_runtime | Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution. | allowed_with_secret_scan | include |
+| `src/runtime/` | dev_runtime | Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution. Fixed model roles; explicit isolated model preparation and installation; ASR/OCR share a bounded local heavy-worker lease. | allowed_with_secret_scan | include |
 | `src/` | dev_runtime | Python package source. | allowed | include |
 | `src/onboarding/` | dev_runtime | 同一显式 HTML 页面壳、原生 TypeScript 构建；研究账本只读投影、维护者身份门禁和显式成果导出。 | allowed_with_secret_scan | include |
 | `src/onboarding/assets/` | dev_runtime | Curated, non-login official documentation screenshots used by the loopback console configuration guides. They contain no account, key, or local runtime data. | allowed_with_secret_scan | include |
@@ -145,6 +145,9 @@ Development source is the only editable truth. Package output is regenerated fro
 - `config/recruitment_city_registry.json`
 - `config/runtime-win-py312.lock`
 - `config/runtime-artifacts.json`
+- `config/optional-asr-win-py312.lock`
+- `config/optional-docling-win-py312.lock`
+- `config/optional-ocr-win-py312.lock`
 - `config/retirement-matrix.json`
 - `config/license-source-inventory.json`
 - `THIRD_PARTY_NOTICES.md`

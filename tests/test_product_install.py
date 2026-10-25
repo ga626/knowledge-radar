@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import importlib.util
 import json
-import os
 from pathlib import Path
 import shutil
 import sys
@@ -75,6 +74,8 @@ def package_fixture(tmp_path: Path, version: str) -> Path:
     package = tmp_path / f"package-{version}"
     (package / "src").mkdir(parents=True)
     (package / "src" / "server.py").write_text("print('fixture')\n", encoding="utf-8")
+    (package / "src/runtime").mkdir()
+    shutil.copyfile(ROOT / "src/runtime/model_roles.py", package / "src/runtime/model_roles.py")
     (package / ".env.example").write_text("TAVILY_API_KEY=\n", encoding="utf-8")
     (package / "pyproject.toml").write_text(f"[project]\nname='knowledgeradar'\nversion='{version}'\n", encoding="utf-8")
     registry = package / "config" / "profile_registry.example.json"
@@ -127,7 +128,8 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
     assert result["status"] == "APPLIED"
     assert active["version"] == "0.2.0"
     assert active["program_root"].endswith("app\\0.2.0") or active["program_root"].endswith("app/0.2.0")
-    assert env_path.read_text(encoding="utf-8") == "TAVILY_API_KEY=private-value\n"
+    assert env_path.read_text(encoding="utf-8").startswith("TAVILY_API_KEY=private-value\n")
+    assert "KR_FRAME_VISION_MODELS=bailian:qwen3.8-omni-flash" in env_path.read_text(encoding="utf-8")
     assert config_text.count("[mcp_servers.knowledgeradar]") == 1
     assert parsed_config["mcp_optional_startup_grace_ms"] == 0
     assert config["cwd"].startswith(str(install_root))
@@ -427,14 +429,12 @@ def test_media_component_plans_are_console_owned_and_separate_runtime_from_model
     installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
 
     downloader = installer.capability_plan(install_root, "media_downloader")
-    runtime = installer.capability_plan(install_root, "transcription_runtime")
     model = installer.capability_plan(install_root, "transcription_model")
-
-    assert downloader["details"]["command"][-1] == "yt-dlp>=2024.8.6"
-    assert runtime["details"]["command"][-1] == "faster-whisper>=1.1,<2.0"
-    assert "av>=11,<19" in runtime["details"]["command"]
-    assert model["details"]["label"] == "基础转写模型（base）"
-    assert model["details"]["boundary"].startswith("需要先安装本地转写运行时")
+    assert downloader['details']['command'][-1] == 'yt-dlp>=2024.8.6'
+    assert model['details']['label'] == '本地语音转写（Qwen3-ASR 0.6B）'
+    assert model['details']['command'][-2:] == ['qwen3-asr-0.6b', '--acknowledge-download']
+    assert '隔离' in model['details']['boundary']
+    assert 'transcription_runtime' not in installer.CAPABILITY_IDS
 
 
 def test_xhs_bridge_capability_stays_in_data_root_and_requires_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

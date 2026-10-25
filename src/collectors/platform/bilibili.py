@@ -8,10 +8,9 @@ import importlib.util
 import json
 import logging
 import os
+from pathlib import Path
 import re
-import subprocess
 import sys
-import threading
 import time
 from typing import Dict, List, Optional
 
@@ -49,10 +48,9 @@ def _missing_transcription_components() -> list[str]:
     if importlib.util.find_spec("yt_dlp") is None:
         missing.append("媒体下载器（yt-dlp）")
     from runtime.optional_media import receipt_root
-    selected = os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b')
-    native_available = selected in {'qwen3-asr-1.7b','qwen3-asr-0.6b'} and (receipt_root() / (selected + '.json')).is_file()
-    if not native_available and importlib.util.find_spec("faster_whisper") is None:
-        missing.append("本地转写运行时（faster-whisper）")
+    from runtime.model_roles import ASR_COMPONENT
+    if not (receipt_root() / (ASR_COMPONENT + '.json')).is_file():
+        missing.append("本地语音转写（Qwen3-ASR 0.6B）")
     if not _ffmpeg_path():
         missing.append("FFmpeg")
     return missing
@@ -580,7 +578,7 @@ def transcribe_bilibili(
                         ),
                     )
                     return ("[transcribe] 语音转写已在后台处理中，"
-                            f"完成后可重新调用 get_content_detail 获取转写文本")
+                            "完成后可重新调用 get_content_detail 获取转写文本")
             except Exception:
                 # If we can't check the file age, treat as stale
                 try:
@@ -739,7 +737,7 @@ def transcribe_bilibili(
                 return cached
             return "[transcribe] failed: " + str(finished.get("error_code") or finished.get("status") or "no_result")
         return ("[transcribe] 语音下载和转写已在后台启动（约1-2分钟），"
-                f"完成后可重新调用 get_content_detail 获取转写文本")
+                "完成后可重新调用 get_content_detail 获取转写文本")
     except Exception as e:
         log.warning(f"转写失败: {e}")
         return f"[transcribe] 转写失败: {str(e)}"
@@ -793,117 +791,22 @@ def filter_bilibili_comments(
     bvid: str = "",
     source_url: str = "",
 ) -> List[Dict]:
-    """评论知识价值过滤（后台异步 + 缓存，避免 MCP 超时）"""
+    """保留原文、精确去重并缓存；不启动评论模型或后台任务。"""
+    from filter_comments import filter_valuable_comments
     if not comments:
         return []
-
-    if not output_dir:
-        output_dir = str(media_cache_subdir("comments"))
-    os.makedirs(output_dir, exist_ok=True)
-    try:
-        content_sig = hashlib.md5(json.dumps(comments, ensure_ascii=False).encode()).hexdigest()[:16]
-    except Exception:
-        content_sig = str(len(comments))
-    cache_path = os.path.join(output_dir, f"filtered_{content_sig}.json")
-
-    if os.path.exists(cache_path):
+    output = Path(output_dir) if output_dir else media_cache_subdir("comments")
+    output.mkdir(parents=True, exist_ok=True)
+    signature = hashlib.sha256(json.dumps(comments, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    cache_path = output / ("comments_raw_v2_" + signature + ".json")
+    if cache_path.is_file():
         try:
-            with open(cache_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-                log.info(f"评论过滤: 缓存命中, 返回 {len(cached)} 条")
-                return cached
-        except Exception:
+            return json.loads(cache_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             pass
-
-    import time as _time
-    result_container = {"done": False, "data": None}
-    task_store = get_task_store()
-    task_id = f"bilibili_comment_filter_{content_sig}"
-    scope_metadata = (scope_options or {}).get("task_scope") if isinstance(scope_options, dict) else None
-    task_source_url = source_url or (f"https://www.bilibili.com/video/{bvid}" if bvid else "")
-    task_content_id = bvid or content_sig
-    task_scope = _task_scope_metadata(
-        source_url=task_source_url,
-        content_id=task_content_id,
-        scope_metadata=scope_metadata if isinstance(scope_metadata, dict) else None,
-    )
-
-    def _do_filter():
-        try:
-            task_store.mark_running(task_id, metadata={"phase": "running"})
-            sys.path.insert(0, PROJECT_ROOT)
-            from filter_comments import filter_valuable_comments
-            log.info(f"[bg] 评论过滤开始: {len(comments)} 条")
-            r = filter_valuable_comments(comments, verbose=False)
-            kept = r.get("kept_comments", [])
-            with open(cache_path, "w", encoding="utf-8") as f:
-                json.dump(kept, f, ensure_ascii=False, indent=2)
-            record_media_cache_entry(
-                cache_path,
-                kind="comments",
-                content_id=task_content_id,
-                metadata={"comment_count": len(comments), "kept_count": len(kept)},
-            )
-            result_container["data"] = kept
-            task_store.mark_completed(
-                task_id,
-                result_path=cache_path,
-                metadata={"phase": "completed", "kept_count": len(kept), "comment_count": len(comments)},
-            )
-            log.info(f"[bg] 评论过滤完成: {len(kept)}/{len(comments)} 条")
-        except Exception as e:
-            import traceback
-            log.error(f"[bg] 评论过滤异常: {e} | {traceback.format_exc()}")
-            degraded = [{"user": c.get("user", ""), "content": c.get("content", ""),
-                         "likes": c.get("likes", 0), "verdict": "unknown", "reason": "过滤异常降级"}
-                        for c in comments]
-            try:
-                with open(cache_path, "w", encoding="utf-8") as f:
-                    json.dump(degraded, f, ensure_ascii=False, indent=2)
-            except Exception:
-                pass
-            result_container["data"] = degraded
-            task_store.mark_failed(
-                task_id,
-                error=str(e),
-                result_path=cache_path,
-                metadata={"phase": "failed", "comment_count": len(comments)},
-            )
-        finally:
-            result_container["done"] = True
-
-    LocalTaskAdapter(task_store).submit_lifecycle(
-        LocalTaskSpec(
-            task_id=task_id,
-            task_type="bilibili_comment_filter",
-            platform="B站",
-            target=content_sig,
-            content_id=task_content_id,
-            result_path=cache_path,
-            max_attempts=1,
-            timeout_s=60.0,
-            metadata={
-                **task_scope,
-                "comment_count": len(comments),
-                "cache_path": cache_path,
-                "blocks_final_report": False,
-                "result_reread_tool": "get_content_detail",
-                "approach": "basic_text",
-            },
-        ),
-        _do_filter,
-    )
-
-    timeout = 20
-    t0 = _time.time()
-    while not result_container["done"] and _time.time() - t0 < timeout:
-        _time.sleep(0.5)
-
-    if result_container["done"] and result_container["data"] is not None:
-        return result_container["data"]
-
-    log.warning(f"评论过滤超时（>{timeout}s），返回原始评论，后台继续处理")
-    return comments[:]
+    kept = filter_valuable_comments(comments, verbose=False)["kept_comments"]
+    cache_path.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
+    return kept
 
 
 def deep_analyze_bilibili(
@@ -912,7 +815,7 @@ def deep_analyze_bilibili(
     research_session_id: str = "",
     scope_options: Dict | None = None,
 ) -> Dict:
-    """Qwen/SiliconFlow 多模态深度视频分析（后台异步模式）"""
+    """百炼 Omni 多模态深度视频分析（后台异步模式）"""
     return _deep_analyze_video_platform(
         platform="B站",
         video_key=bvid,
@@ -932,7 +835,7 @@ def deep_analyze_youtube(
     research_session_id: str = "",
     scope_options: Dict | None = None,
 ) -> Dict:
-    """Qwen/SiliconFlow YouTube video analysis through the shared L2 pipeline."""
+    """百炼 Omni YouTube video analysis through the shared L2 pipeline."""
     return _deep_analyze_video_platform(
         platform="YouTube",
         video_key=video_id,

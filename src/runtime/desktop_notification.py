@@ -12,6 +12,7 @@ import threading
 import uuid
 from urllib.parse import quote
 from .paths import runtime_state_dir
+from .process import silent_subprocess_popen
 
 SCRIPT = r'''
 $ErrorActionPreference = 'Stop'
@@ -142,7 +143,7 @@ def notify_account_failure(manual_action: dict) -> dict:
     env["KR_ACCOUNT_NOTICE"] = base64.b64encode(json.dumps(payload, ensure_ascii=False).encode("utf-8")).decode("ascii")
     command = [executable, "-NoProfile", "-NonInteractive", "-EncodedCommand", base64.b64encode(SCRIPT.encode("utf-16-le")).decode("ascii")]
     try:
-        process = subprocess.Popen(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        process = silent_subprocess_popen(command, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                    stderr=subprocess.DEVNULL, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         result = {"status": "dispatched", "event_id": event_id, "pid": process.pid, "delivery_confirmed": False,
                   "target": payload["url"], "helper_receipt": str(receipt)}

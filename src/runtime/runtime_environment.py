@@ -19,7 +19,6 @@ from runtime.paths import (
     runtime_media_cache_dir,
     runtime_media_dir,
     runtime_state_dir,
-    whisper_model_cache_dir,
 )
 from runtime.proxy_rules import proxy_rules_summary
 from runtime.profile_registry import registry_path
@@ -107,7 +106,6 @@ def runtime_environment_manifest() -> Dict[str, Any]:
             "media_cache_dir": _path_state(media_cache, configured_by="KR_MEDIA_CACHE_DIR/KR_RUNTIME_MEDIA_DIR", secret=True),
             "runtime_media_dir": _path_state(runtime_media_dir(), configured_by="KR_RUNTIME_MEDIA_DIR", secret=True),
             "proxy_rule_cache_dir": _path_state(proxy_rule_cache_dir(), configured_by="KR_PROXY_RULE_CACHE_DIR", secret=True),
-            "whisper_model_cache_dir": _path_state(whisper_model_cache_dir(), configured_by="KR_WHISPER_MODEL_DIR", secret=True),
             "browser_data_dir": _path_state(browser_dir, configured_by="KR_BROWSER_DATA_DIR", secret=True),
             "playwright_browsers_dir": _path_state(playwright_dir, configured_by="PLAYWRIGHT_BROWSERS_PATH", secret=True),
             "profile_registry": _path_state(registry_path(), configured_by="KR_PROFILE_REGISTRY_PATH", secret=True),

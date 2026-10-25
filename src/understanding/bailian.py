@@ -26,16 +26,8 @@ DEFAULT_MULTIMODAL_ENDPOINT = (
     "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation"
 )
 DEFAULT_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
-DEFAULT_VL_MODEL = "qwen3-vl-flash"
-DEFAULT_TEXT_MODEL = "qwen-turbo"
-
-MODEL_ALIASES = {
-    "bailian:qwen3-vl-flash": "qwen3-vl-flash",
-    "bailian:qwen3.5-omni-flash": "qwen3.5-omni-flash",
-    "bailian:qwen-turbo": "qwen-turbo",
-    "bailian:qwen3.5-flash": "qwen3.5-flash",
-}
-
+DEFAULT_VL_MODEL = "qwen3.8-omni-flash"
+DEFAULT_TEXT_MODEL = DEFAULT_VL_MODEL
 
 @dataclass(frozen=True)
 class BailianResponse:
@@ -55,12 +47,12 @@ def bailian_multimodal_endpoint() -> str:
 
 
 def bailian_compatible_base_url() -> str:
-    return (os.environ.get("DASHSCOPE_COMPATIBLE_BASE_URL") or DEFAULT_COMPATIBLE_BASE_URL).rstrip("/")
+    return (os.environ.get("DASHSCOPE_BASE_URL") or os.environ.get("DASHSCOPE_COMPATIBLE_BASE_URL") or DEFAULT_COMPATIBLE_BASE_URL).rstrip("/")
 
 
 def normalize_model_id(model: str | None, *, default: str = DEFAULT_VL_MODEL) -> str:
     value = (model or default).strip()
-    return MODEL_ALIASES.get(value, MODEL_ALIASES.get(value.lower(), value))
+    return value.partition(":")[2] if value.lower().startswith("bailian:") else value
 
 
 def _headers() -> Dict[str, str]:
@@ -114,12 +106,14 @@ def _normalise_usage(data: Dict[str, Any]) -> Dict[str, Any]:
     prompt_details = usage.get("prompt_tokens_details")
     if isinstance(prompt_details, dict):
         cached_tokens = int(prompt_details.get("cached_tokens") or 0)
+    output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
     return {
         **usage,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": int(usage.get("total_tokens") or prompt_tokens + completion_tokens),
         "cached_tokens": cached_tokens,
+        "reasoning_tokens": int(output_details.get("reasoning_tokens") or 0),
     }
 
 
@@ -145,6 +139,7 @@ def build_multimodal_payload(
     media_params: Optional[Dict[str, Any]] = None,
     max_tokens: int = 1024,
     temperature: float | None = None,
+    reasoning_effort: str | None = None,
 ) -> Dict[str, Any]:
     content: List[Dict[str, Any]] = []
     if system_prompt:
@@ -159,6 +154,11 @@ def build_multimodal_payload(
     parameters: Dict[str, Any] = {"max_tokens": int(max_tokens)}
     if temperature is not None:
         parameters["temperature"] = float(temperature)
+    if normalize_model_id(model) == "qwen3.8-omni-flash":
+        effort = reasoning_effort or "none"
+        if effort not in {"none", "low", "medium", "xhigh"}:
+            raise ValueError("unsupported Omni reasoning_effort")
+        parameters["reasoning_effort"] = effort
     return {
         "model": normalize_model_id(model),
         "input": {"messages": [{"role": "user", "content": content}]},
@@ -231,6 +231,7 @@ def call_multimodal_generation(
     temperature: float | None = None,
     timeout: float = 120,
     capability: str = "native_video",
+    reasoning_effort: str | None = None,
 ) -> Tuple[str, str, Dict[str, Any]]:
     """Call Bailian official multimodal-generation and track usage."""
     request_model = normalize_model_id(model)
@@ -247,6 +248,7 @@ def call_multimodal_generation(
         media_params=media_params,
         max_tokens=max_tokens,
         temperature=temperature,
+        reasoning_effort=reasoning_effort or ("low" if capability == "native_audio_video" else "none"),
     )
     breaker_key = f"model:bailian:{capability}:{request_model}"
     policy = get_degradation_policy()
@@ -274,6 +276,8 @@ def call_multimodal_generation(
                 "provider": "bailian",
                 "schema": "multimodal-generation",
                 "cached_tokens": int(result.usage.get("cached_tokens") or 0),
+                "reasoning_tokens": int(result.usage.get("reasoning_tokens") or 0),
+                "reasoning_effort": payload["parameters"].get("reasoning_effort"),
                 "input_images": len(image_url_list),
                 "input_videos": len(video_url_list),
                 "input_audios": len(audio_url_list),

@@ -1,4 +1,5 @@
 """可选资产身份，内容hash按文件大小和mtime缓存；不下载资产。"""
+
 from functools import lru_cache
 import hashlib
 from pathlib import Path
@@ -18,28 +19,26 @@ def file_identity(path):
     if not path.is_file():
         return {"status": "missing"}
     stat = path.stat()
-    return {"name": path.name, "size": stat.st_size, "sha256": _digest(str(path.resolve()), stat.st_size, stat.st_mtime_ns)}
+    return {
+        "name": path.name,
+        "size": stat.st_size,
+        "sha256": _digest(str(path.resolve()), stat.st_size, stat.st_mtime_ns),
+    }
 
 
 def model_identity(policy):
-    import os
-    from runtime.optional_media import receipt_root, file_sha
-    component = os.environ.get('KR_ASR_COMPONENT', 'qwen3-asr-1.7b')
-    receipt = receipt_root() / (component + '.json')
-    if component != 'faster-whisper' and receipt.is_file():
-        from runtime.optional_media import validate_receipt
-        identity = validate_receipt(component)
-        return {'model':component, 'engine':'transformers_native', 'status':'recorded', 'install_receipt_sha256':file_sha(receipt), 'weight_revision':identity['weight_revision'], 'model_files':identity['model_files']}
-    root = Path(policy.model_cache_dir)
-    direct = Path(policy.primary_model)
-    if direct.is_dir():
-        candidates = [direct]
-    else:
-        snapshots = root / ("models--Systran--faster-whisper-" + policy.primary_model) / "snapshots"
-        candidates = sorted(snapshots.glob("*")) if snapshots.is_dir() else []
-    files = []
-    for folder in candidates:
-        for file in sorted(folder.rglob("*")):
-            if file.is_file():
-                files.append({"relative": folder.name + "/" + file.relative_to(folder).as_posix(), **file_identity(file)})
-    return {"model": policy.primary_model, "status": "recorded" if files else "not_provisioned", "files": files}
+    from runtime.model_roles import ASR_COMPONENT
+    from runtime.optional_media import receipt_root, file_sha, validate_receipt
+
+    receipt = receipt_root() / (ASR_COMPONENT + ".json")
+    if not receipt.is_file():
+        return {"model": ASR_COMPONENT, "engine": "transformers_native", "status": "not_provisioned"}
+    identity = validate_receipt(ASR_COMPONENT)
+    return {
+        "model": ASR_COMPONENT,
+        "engine": "transformers_native",
+        "status": "recorded",
+        "install_receipt_sha256": file_sha(receipt),
+        "weight_revision": identity["weight_revision"],
+        "model_files": identity["model_files"],
+    }
