@@ -51,7 +51,12 @@ def test_missing_previous_runtime_does_not_switch_active(tmp_path, monkeypatch):
     (tmp_path / "backup").mkdir()
     (tmp_path / "backup/active.previous.json").write_text(json.dumps({"program_root": str(old), "version": "old"}), encoding="utf-8")
     current = tmp_path / "active.json"
-    current.write_text('{"sentinel":"current"}', encoding="utf-8")
+    program = tmp_path / "app/current"
+    (program / "src").mkdir(parents=True)
+    (program / "src/server.py").write_text("x=1", encoding="utf-8")
+    current.write_text(json.dumps({"schema": installer.ACTIVE_SCHEMA,
+                                   "program_root": str(program), "version": "current",
+                                   "data_root": str(tmp_path / "data")}), encoding="utf-8")
     before = current.read_bytes()
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "isolated-home"))
     with pytest.raises(RuntimeError, match="unavailable"):

@@ -274,7 +274,17 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
     assert 'run: python -m pytest' not in text
     assert '--extra-node tests/evaluation' in text and '--extra-node tests/test_product_install.py' in text
     assert 'if: always()' in text and 'path: local/evaluation' in text
-    assert text.count("if: steps.scope.outputs.docs_only != 'true'")==7
+    # 新增构建步骤不应让合同依赖步骤总数；所有产品步骤都必须保留文档跳过门禁。
+    product_steps = (
+        'Install package and test tools', 'Compile public source',
+        'Set up console build runtime', 'Check console source and reconnect behavior',
+        'Verify public package plan', 'Prepare hash-locked offline runtime',
+        'Build immutable release candidate', 'Verify the generated candidate',
+        'Upload verified candidate',
+    )
+    for name in product_steps:
+        step = next(block for block in text.split('      - name: ') if block.startswith(name + '\n'))
+        assert "if: steps.scope.outputs.docs_only != 'true'" in step, name
 
 
 def test_extra_governance_failure_blocks_summary_compare_and_survives_import(tmp_path, monkeypatch):

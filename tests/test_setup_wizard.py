@@ -75,7 +75,8 @@ def test_public_provider_guides_expose_classified_tutorial_metadata_without_valu
     assert tavily["prerequisite"] == "Tavily 账号"
     assert tavily["screenshot"] == "/assets/tavily.jpg"
     assert len(tavily["steps"]) == 4
-    assert guides["compatible_llm"]["screenshot"] == ""
+    assert guides["dashscope"]["screenshot"] == ""
+    assert "compatible_llm" not in guides
     assert "private-value" not in json.dumps(guides, ensure_ascii=False)
 
 
