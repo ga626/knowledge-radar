@@ -28,6 +28,12 @@ REQUIRED_TOOLS = {
 }
 
 
+def owned_probe_job(*, allow_breakaway=True):
+    import runpy
+    entry = runpy.run_path(str(Path(__file__).resolve().parent/'kr_eval/pytest_entry.py'))
+    return entry['owned_probe_job'](allow_breakaway=allow_breakaway)
+
+
 def _reader(handle: Any, lines: queue.Queue[str]) -> None:
     for line in iter(handle.readline, ""):
         lines.put(line)
@@ -117,7 +123,9 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             "KR_OWNER_ROOT": str(state_root / "state" / "execution_owner"),
         })
         process = subprocess.Popen(
-            [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src)) + ");runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
+            [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src))
+             + ");probe=runpy.run_path(" + repr(str(Path(__file__).resolve()))
+             + ");job=probe['owned_probe_job']();runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
             cwd=root,
             env=env,
             stdin=subprocess.PIPE,
@@ -133,10 +141,18 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             reader = threading.Thread(target=_reader, args=(process.stdout, lines), daemon=True)
             reader.start()
             _request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "knowledgeradar-public-verifier", "version": "1"}})
+            process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) + '\n')
+            process.stdin.flush()
             response = _request(process, lines, 2, "tools/list", {})
             names = sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
             missing = sorted(REQUIRED_TOOLS - set(names))
-            return {"status": "PASS" if not missing else "FAIL", "tool_count": len(names), "tools": names, "missing_required": missing}
+            expected_path = root / 'config/codex-product/tool-contracts.json'
+            expected = json.loads(expected_path.read_text(encoding='utf-8'))
+            expected_names = sorted(item['name'] for item in expected['tools'])
+            consistent = names == expected_names and len(names) == expected['tool_count']
+            return {"status": "PASS" if not missing and consistent else "FAIL", "tool_count": len(names),
+                    "tools": names, "missing_required": missing, 'catalog_matches': consistent,
+                    'initialized_notification_sent': True}
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             return {"status": "FAIL", "error": str(exc)}
         finally:

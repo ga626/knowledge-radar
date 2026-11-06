@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "9bcb062d3cf6ea79388529569a04046ce8d3eda74cd910883e09428b8c60348a",
+  "content_hash": "98d1aeb0331242d2dc6aa862694cde74510272d6da2611b58f0232cefbc22b0c",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -217,7 +217,7 @@
       "path": "scripts/product_console_launcher.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 22,
+      "reference_count": 23,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -294,7 +294,7 @@
       "path": "scripts/verify_codex_product.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 13,
+      "reference_count": 25,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

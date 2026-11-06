@@ -20,6 +20,20 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_ci_receipt_identity_is_explicit_and_local_build_is_not_a_ci_run(monkeypatch):
+    import pytest
+    monkeypatch.delenv('GITHUB_ACTIONS', raising=False)
+    assert builder.ci_build_identity() is None
+    monkeypatch.setenv('GITHUB_ACTIONS', 'true')
+    monkeypatch.setenv('GITHUB_RUN_ID', '')
+    with pytest.raises(RuntimeError, match='incomplete'):
+        builder.ci_build_identity()
+    for key, value in {'GITHUB_RUN_ID':'123', 'GITHUB_RUN_ATTEMPT':'2', 'GITHUB_REPOSITORY':'owner/source',
+                       'GITHUB_EVENT_NAME':'push', 'GITHUB_REF':'refs/heads/main', 'GITHUB_WORKFLOW':'CI'}.items():
+        monkeypatch.setenv(key, value)
+    assert builder.ci_build_identity()['run_attempt'] == '2'
+
+
 def test_runtime_freeze_uses_the_packaged_lf_text_identity(tmp_path):
     freezer = _load("kr_freeze_runtime")
     path = tmp_path / "pyproject.toml"

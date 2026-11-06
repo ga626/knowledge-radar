@@ -141,13 +141,76 @@ def _field(value, path):
     return value
 
 
+def _native_arguments(request, tool):
+    if request.get('type') == 'function_call':
+        if request.get('namespace') != 'mcp__knowledgeradar' or request.get('name') != tool:
+            raise ValueError('native namespace/tool mismatch')
+        value = json.loads(request.get('arguments', ''))
+        if not isinstance(value, dict):
+            raise ValueError('native arguments must be an object')
+        return value, 'codex_function_call'
+    script = request.get('input', '')
+    pattern = r'tools\.mcp__knowledgeradar__' + re.escape(tool) + r'\((\{[^;]*\})\)'
+    match = re.fullmatch(r'text\(await ' + pattern + r'\);?', script.strip())
+    if not match:
+        match = re.fullmatch(r'text\(\(await ' + pattern + r'\)\.content\);?', script.strip())
+    if request.get('type') != 'custom_tool_call' or request.get('name') != 'exec' or not match:
+        raise ValueError('only an unambiguous single native host dispatch is supported')
+    return json.loads(re.sub(r'([,{]\s*)([A-Za-z_]\w*)\s*:', r'\1"\2":', match.group(1))), 'codex_exec_wrapper'
+
+
+def _native_response(request, output):
+    if request.get('type') == 'function_call':
+        if output.get('type') != 'function_call_output' or not isinstance(output.get('output'), str):
+            raise ValueError('native response type mismatch')
+        raw = output['output']
+        # 宿主固定前缀不是JSON正文；不搜索任意首个花括号，也不接受截断尾缀。
+        if raw.startswith('Wall time: '):
+            prefix, separator, raw = raw.partition('\nOutput:\n')
+            if not separator or not re.fullmatch(r'Wall time: [^\r\n]+', prefix):
+                raise ValueError('ambiguous native response prefix')
+        value = json.loads(raw)
+        if isinstance(value, dict) and set(value) == {'result'}:
+            value = value['result']
+        if not isinstance(value, dict):
+            raise ValueError('native response must be one object')
+        return value
+    candidates = []
+    for block in output.get('output', []):
+        try:
+            raw = json.loads(block.get('text', ''))
+            content = raw.get('content', []) if isinstance(raw, dict) else raw
+            for item in content:
+                if item.get('type') == 'text':
+                    candidates.append(json.loads(item['text']))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    if len(candidates) != 1 or not isinstance(candidates[0], dict):
+        raise ValueError('ambiguous/truncated native response')
+    return candidates[0]
+
+
+def _observation_time(response, transcript):
+    runtime = response.get('runtime')
+    stamp = runtime.get('generated_at') if isinstance(runtime, dict) else None
+    source = 'runtime.generated_at'
+    if not stamp:
+        stamp, source = transcript.get('response_timestamp'), 'host_output_timestamp'
+    if not stamp:
+        raise ValueError('native observation timestamp missing')
+    checked = datetime.fromisoformat(stamp)
+    if checked.tzinfo is None or checked > datetime.now(timezone.utc):
+        raise ValueError('invalid observation time')
+    return stamp, source
+
+
 def prepare_native_receipt(suite, transcript_path, call_id, case_id, target, output):
     """从已有宿主日志提取精确调用对；不执行工具，不把自填PASS当回执。"""
     case = next(c for c in suite["cases"] if c["case_id"] == case_id)
     contract = case.get("receipt_contract")
     if not contract or case["layer"] != "native_mcp":
         raise ValueError("case needs a reviewed native response contract")
-    session_id, request, response = None, None, None
+    session_id, requests, responses = None, [], []
     with Path(transcript_path).open(encoding="utf-8") as stream:
         for line in stream:
             row = json.loads(line)
@@ -156,38 +219,23 @@ def prepare_native_receipt(suite, transcript_path, call_id, case_id, target, out
                 session_id = payload.get("id")
             if payload.get("call_id") != call_id:
                 continue
-            if payload.get("type") == "custom_tool_call": request = payload
-            if payload.get("type") == "custom_tool_call_output": response = payload
-    if not session_id or not request or not response:
-        raise ValueError("host call pair missing")
+            if payload.get('type') in {'custom_tool_call', 'function_call'}: requests.append(row)
+            if payload.get('type') in {'custom_tool_call_output', 'function_call_output'}: responses.append(row)
+    if not session_id or len(requests) != 1 or len(responses) != 1:
+        raise ValueError('host call pair missing or ambiguous')
+    request, response = requests[0]['payload'], responses[0]['payload']
     output = Path(output).resolve()
     if output.exists() and any(output.iterdir()):
         raise ValueError("receipt output must be empty")
     tool = contract["tool"]
-    script = request.get("input", "")
-    match = re.search(r'tools\.mcp__knowledgeradar__' + re.escape(tool) + r'\((\{[^;]*\})\)', script)
-    if not match:
-        raise ValueError("native dispatch missing")
-    args = json.loads(re.sub(r'([,{]\s*)([A-Za-z_]\w*)\s*:', r'\1"\2":', match.group(1)))
-    candidates = []
-    for block in response.get("output", []):
-        try:
-            raw = json.loads(block.get("text", ""))
-            content = raw.get("content", []) if isinstance(raw, dict) else raw
-            for item in content:
-                if item.get("type") == "text": candidates.append(json.loads(item["text"]))
-        except (ValueError, TypeError, AttributeError):
-            continue
-    if len(candidates) != 1:
-        raise ValueError("ambiguous/truncated native response")
-    raw_response = candidates[0]
-    # 时间取工具原始回执，不以导入时间冒充最近实测。
-    checked_at = raw_response.get("runtime", {}).get("generated_at")
-    if not checked_at:
-        raise ValueError("native observation timestamp missing")
-    write_new(output / "transcript.json", {"session_id": session_id, "request": request, "response": response})
+    args, kind = _native_arguments(request, tool)
+    raw_response = _native_response(request, response)
+    transcript = {'session_id': session_id, 'request': request, 'response': response,
+                  'request_timestamp': requests[0].get('timestamp'), 'response_timestamp': responses[0].get('timestamp')}
+    checked_at, time_source = _observation_time(raw_response, transcript)
+    write_new(output / 'transcript.json', transcript)
     write_new(output / "response.json", raw_response)
-    host = {"session_id": session_id, "call_id": call_id, "call_id_kind": "codex_exec_wrapper",
+    host = {"session_id": session_id, "call_id": call_id, "call_id_kind": kind,
         "tool": tool, "target": target, "access_path": "codex_native_tool", "input_sha256": digest(args),
         "response_sha256": file_hash(output / "response.json"),
         "transcript": {"path": "transcript.json", "sha256": file_hash(output / "transcript.json")}}
@@ -195,7 +243,7 @@ def prepare_native_receipt(suite, transcript_path, call_id, case_id, target, out
     write_new(output / "host.json", host)
     envelope = {"schema": "knowledgeradar-evaluation-receipt/v1", "case_id": case_id,
         "contract_hash": digest(contract), "oracle_version": case["oracle_version"], "input_sha256": digest(args),
-        "checked_at": checked_at, "target": target,
+        "checked_at": checked_at, "observation_time_source": time_source, "target": target,
         "response": {"path": "response.json", "sha256": file_hash(output / "response.json")},
         "host_record": {"path": "host.json", "sha256": file_hash(output / "host.json")}}
     write_new(output / "receipt.json", envelope)
@@ -211,27 +259,11 @@ def _native_transcript(host, base, response, tool):
     request, output = transcript["request"], transcript["response"]
     if not host.get("session_id") == transcript["session_id"] or not request.get("call_id") == output.get("call_id") == host["call_id"]:
         raise ValueError("host transcript call pairing mismatch")
-    # 单原生调用的宿主exec回执；call_id是宿主包装调用ID，非KR伪造的server ID。
-    script = request.get("input", "")
-    match = re.fullmatch(r'text\(await tools\.mcp__knowledgeradar__' + re.escape(tool) + r'\((\{[^;]*\})\)\);?', script.strip())
-    if not match:
-        match = re.fullmatch(r'text\(\(await tools\.mcp__knowledgeradar__' + re.escape(tool) + r'\((\{[^;]*\})\)\)\.content\);?', script.strip())
-    if request.get("type") != "custom_tool_call" or request.get("name") != "exec" or not match:
-        raise ValueError("only an unambiguous single native host dispatch is supported")
-    found = []
-    for block in output.get("output", []):
-        try:
-            raw = json.loads(block.get("text", ""))
-            content = raw.get("content") if isinstance(raw, dict) else raw
-            if isinstance(content, list):
-                for item in content:
-                    if item.get("type") == "text":
-                        found.append(json.loads(item["text"]))
-        except (ValueError, TypeError):
-            continue
-    if not any(digest(value) == digest(response) for value in found):
+    arguments, kind = _native_arguments(request, tool)
+    if host.get('call_id_kind', kind) != kind:
+        raise ValueError('native call ID kind mismatch')
+    if digest(_native_response(request, output)) != digest(response):
         raise ValueError("native response absent from paired host output")
-    arguments = json.loads(re.sub(r'([,{]\s*)([A-Za-z_]\w*)\s*:', r'\1"\2":', match.group(1)))
     if digest(arguments) != host.get("input_sha256"):
         raise ValueError("host input identity mismatch")
     return path
@@ -274,12 +306,23 @@ def import_receipt(root, suite, ledger, path, expected_target):
         if host.get("response_sha256") != file_hash(source) or host.get("target") != target or host.get("access_path") != "codex_native_tool":
             raise ValueError("native host evidence mismatch")
         transcript_path = _native_transcript(host, path.parent, response, contract["tool"])
+        if host.get('call_id_kind') == 'codex_function_call' or envelope.get('observation_time_source'):
+            stamp, source_kind = _observation_time(response, read_json(transcript_path))
+            if stamp != envelope['checked_at'] or source_kind != envelope.get('observation_time_source'):
+                raise ValueError('observation timestamp mismatch')
     failed_assertions = []
     for check in contract["assertions"]:
         try:
             actual = _field(response, check["field"])
             if "equals" in check and actual != check["equals"]:
                 failed_assertions.append(check["field"])
+            if 'equals_target' in check and actual != target[check['equals_target']]:
+                failed_assertions.append(check['field'])
+            if 'names_equal_target' in check:
+                names = [item['name'] for item in actual]
+                expected = target[check['names_equal_target']]
+                if not expected or len(names) != len(set(names)) or sorted(names) != sorted(expected):
+                    failed_assertions.append(check['field'])
             if check.get("nonempty") and (not isinstance(actual, (str, list, dict)) or not actual):
                 failed_assertions.append(check["field"])
         except (KeyError, IndexError, TypeError, ValueError):

@@ -6,6 +6,21 @@ from runtime.research_workspace import ResearchRecords, research_action
 from kr_core.evidence_assets import EvidenceAssets
 
 
+def test_query_family_enum_is_public_and_invalid_input_is_rejected_before_execution():
+    from runtime import composition
+    from runtime.application import OPERATIONS
+    from runtime.research_queries import query_families
+    from pydantic import ValidationError
+    op = OPERATIONS['kr_research']
+    schema = op.card()['input_schema']
+    assert schema['$defs']['ResearchQuery']['properties']['intent']['enum'] == [
+        'discovery', 'counterevidence', 'implementation', 'experience', 'citation_follow', 'gap_follow', 'pagination']
+    with pytest.raises(ValidationError):
+        op.validate({'task': '查询', 'queries': [{'query': 'example', 'intent': '自然语言描述'}]})
+    parsed = op.validate({'task': '查询', 'queries': [{'query': 'example', 'intent': 'counterevidence'}]})
+    assert query_families('查询', parsed['queries'])[0]['intent'] == 'counterevidence'
+
+
 def test_projection_reads_original_ledger_and_does_not_create_files(tmp_path, monkeypatch):
     monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
     view = ResearchRecords()

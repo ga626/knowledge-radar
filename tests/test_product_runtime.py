@@ -17,6 +17,46 @@ from kr_core.evidence_assets import EvidenceAssets
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def windows_job_start_owner():
+    """在可脱离、关闭即回收子进程的真实Job里启动owner。"""
+    probe = __import__('runpy').run_path(str(ROOT/'scripts/verify_codex_product.py'))
+    handle = probe['owned_probe_job']()
+    print(json.dumps(OwnerClient().start()), flush=True)
+    sys.stdin.read()  # 由测试终止launcher，OS关闭其Job；不主动stop owner。
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows Job生命周期')
+def test_owner_survives_launcher_job_close(isolated):
+    _, client, _ = isolated
+    code = f"import sys,runpy; sys.path.insert(0,{str(ROOT/'src')!r}); runpy.run_path({str(Path(__file__))!r})['windows_job_start_owner']()"
+    launcher = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', code], cwd=ROOT,
+        env=dict(os.environ), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding='utf-8')
+    descriptor = None
+    try:
+        def ready():
+            if launcher.poll() is not None:
+                raise AssertionError(launcher.communicate(timeout=5)[1])
+            return client.status()
+        until(ready, lambda x: x.get('status') == 'ready', timeout=30)
+        descriptor = client.descriptor()
+        launcher.terminate()
+        launcher.wait(timeout=10)
+        # 确保Job回收已经发生，再以原代际查询真实owner。
+        time.sleep(.3)
+        status = client.status()
+        assert status.get('status') == 'ready', status
+        assert status['generation'] == descriptor['generation']
+        assert client.call('get_capabilities', {'summary': True})['tool_count'] > 0
+    finally:
+        if launcher.poll() is None:
+            launcher.terminate()
+        launcher.communicate(timeout=10)
+        if client.descriptor():
+            assert client.stop()['status'] == 'stopping'
+            until(client.descriptor, lambda x: x is None)
+
+
 def until(function, predicate, timeout=15):
     end = time.monotonic() + timeout
     while time.monotonic() < end:
@@ -82,6 +122,30 @@ def test_status_and_receipt_do_not_start_or_create(isolated):
     assert client.receipt('missing')['status'] == 'error'
     assert client.receipts()['status'] == 'error'
     assert not client.root.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows Job启动拒绝')
+def test_restrictive_job_denial_never_falls_back_to_attached_owner(isolated):
+    _, client, _ = isolated
+    code = f'''import sys,runpy
+sys.path.insert(0,{str(ROOT/'src')!r})
+probe=runpy.run_path({str(ROOT/'scripts/verify_codex_product.py')!r})
+job=probe['owned_probe_job'](allow_breakaway=False)
+from runtime.execution_owner import OwnerClient
+try:
+    OwnerClient().start()
+except RuntimeError as error:
+    assert str(error)=='execution_owner_job_breakaway_denied_start_from_user_terminal'
+else:
+    raise AssertionError('restrictive Job unexpectedly allowed owner launch')
+assert OwnerClient().descriptor() is None
+print('denied_without_fallback')
+'''
+    completed = subprocess.run([sys.executable, '-X', 'utf8', '-c', code], cwd=ROOT,
+        capture_output=True, text=True, encoding='utf-8', timeout=20)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == 'denied_without_fallback'
+    assert client.descriptor() is None
 
 
 def test_disconnect_reconcile_single_execution_and_busy_stop(running):

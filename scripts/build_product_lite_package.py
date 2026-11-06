@@ -4,6 +4,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 import subprocess
 import sys
 import tomllib
@@ -17,6 +18,17 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = ROOT / "config" / "package-manifest.product-lite.json"
 DEFAULT_OUTPUT = ROOT / "dist" / "product-lite" / "KnowledgeRadar"
 PACKAGE_ROOT = "KnowledgeRadar"
+
+
+def ci_build_identity():
+    if os.environ.get('GITHUB_ACTIONS') != 'true':
+        return None
+    ci = {key: os.environ.get(env, '') for key, env in {
+        'repository': 'GITHUB_REPOSITORY', 'run_id': 'GITHUB_RUN_ID', 'run_attempt': 'GITHUB_RUN_ATTEMPT',
+        'event_name': 'GITHUB_EVENT_NAME', 'ref': 'GITHUB_REF', 'workflow': 'GITHUB_WORKFLOW'}.items()}
+    if not ci['run_id'].isdigit() or not ci['run_attempt'].isdigit() or not ci['repository']:
+        raise RuntimeError('CI build identity is incomplete')
+    return ci
 
 
 def sha256_file(path: Path) -> str:
@@ -225,6 +237,9 @@ def build(manifest_path: Path, output: Path, *, dry_run: bool, candidate: bool) 
         "sbom_sha256": sha256_file(output / "SBOM.json"),
         "package_file_count": len(records),
     }
+    ci = ci_build_identity()
+    if ci is not None:
+        receipt['ci'] = ci
     receipt_path = candidate_dir / "candidate-receipt.json"
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"candidate archive: {archive}")

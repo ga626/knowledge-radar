@@ -2,6 +2,21 @@
 from __future__ import annotations
 import hashlib
 import re
+from typing import Literal
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ResearchQuery(BaseModel):
+    """执行者查询族；枚举和约束直接投影到MCP/CLI同源合同。"""
+    model_config = ConfigDict(extra='forbid')
+    query: str = Field(min_length=1, max_length=500, pattern=r'\S')
+    intent: Literal['discovery', 'counterevidence', 'implementation', 'experience',
+                    'citation_follow', 'gap_follow', 'pagination']
+    language: str = Field(default='unknown', max_length=24)
+    source_ecology: str = '*'
+    family_id: str = ''
+    parent_event_id: str = ''
+    gap_id: str = ''
 
 
 def query_families(objective, supplied=None):
@@ -13,6 +28,8 @@ def query_families(objective, supplied=None):
         raise ValueError('invalid_query_families')
     result = []
     for row in supplied:
+        if isinstance(row, ResearchQuery):
+            row = row.model_dump()
         if not isinstance(row, dict):
             raise ValueError('invalid_query_family')
         query = str(row.get('query') or '').strip()

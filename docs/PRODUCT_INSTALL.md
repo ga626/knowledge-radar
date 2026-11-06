@@ -39,6 +39,8 @@ python scripts\product_install.py data-move-rollback
 
 安装或更新后，由 Codex Desktop 的受支持刷新/重启重新加载 MCP；安装器不会修改 Codex cache 或强制结束 Codex 进程。
 
+执行内核只在显式启动时创建；状态查询不自动启动或恢复任务。Windows启动会脱离调用命令所属的Job，避免命令/宿主退出连带回收owner；系统拒绝脱离时明确报错，可从本人终端显式启动，不静默退回短命子进程。正常启动/退出在现有startup.log留PID和代际。未知结果仍按原request_id查回执，不因内核重启而重发。
+
 首次填写配置、查看能力包状态或清理过期媒体缓存，可直接打开 `http://localhost:18882/`。Windows 同一安装用户无需浏览器票据或 Cookie；安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 为兼容别名）保留为手动恢复入口。阅读[本地控制台](LOCAL_CONSOLE.md)、[首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。安装默认注册当前用户登录启动及同任务补启动，可用 `--no-console-autostart` 禁用。开发端口 `18883` 仅维护者显式启用，不随普通安装创建。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
 
 ## 可选浏览器与小红书连接
