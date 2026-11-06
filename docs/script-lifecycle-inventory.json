@@ -1,8 +1,22 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "generated_at": "2026-10-25T09:00:21.396425+00:00",
+  "content_hash": "9bcb062d3cf6ea79388529569a04046ce8d3eda74cd910883e09428b8c60348a",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
+    {
+      "path": "scripts/__init__.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 150,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/browser_link_install.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 13,
+      "action": "may_move_after_targeted_checks"
+    },
     {
       "path": "scripts/build_product_lite_package.py",
       "level": "S1",
@@ -18,6 +32,13 @@
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
+      "path": "scripts/check_current_docs.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 23,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
       "path": "scripts/check_doc_drift.py",
       "level": "S1",
       "reason": "manifest_watch_path",
@@ -29,6 +50,13 @@
       "level": "S1",
       "reason": "manifest_watch_path",
       "reference_count": 19,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/check_mcp_tool_schema.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 30,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -63,7 +91,7 @@
       "path": "scripts/generate_script_lifecycle_inventory.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 44,
+      "reference_count": 49,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -71,6 +99,13 @@
       "level": "S1",
       "reason": "manifest_watch_path",
       "reference_count": 16,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/generate_tool_manual.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 25,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -91,7 +126,7 @@
       "path": "scripts/kr_candidate_acceptance.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 12,
+      "reference_count": 17,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -105,14 +140,14 @@
       "path": "scripts/kr_freeze_runtime.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 10,
+      "reference_count": 14,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
       "path": "scripts/kr_mcp_continuity.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 25,
+      "reference_count": 26,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -120,6 +155,13 @@
       "level": "S2",
       "reason": "referenced_reusable_script",
       "reference_count": 25,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/kr_opencli.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 18,
       "action": "may_move_after_targeted_checks"
     },
     {
@@ -158,6 +200,20 @@
       "action": "may_move_after_targeted_checks"
     },
     {
+      "path": "scripts/private_candidate_delivery.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 7,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
+      "path": "scripts/product_cli_launcher.py",
+      "level": "S2",
+      "reason": "referenced_reusable_script",
+      "reference_count": 19,
+      "action": "may_move_after_targeted_checks"
+    },
+    {
       "path": "scripts/product_console_launcher.py",
       "level": "S1",
       "reason": "manifest_watch_path",
@@ -168,7 +224,7 @@
       "path": "scripts/product_install.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 110,
+      "reference_count": 106,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -189,7 +245,7 @@
       "path": "scripts/setup_codex_product.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 16,
+      "reference_count": 20,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -203,7 +259,7 @@
       "path": "scripts/setup_wizard.bat",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 54,
+      "reference_count": 55,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -228,10 +284,24 @@
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
+      "path": "scripts/verify_architecture_chain.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 13,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
       "path": "scripts/verify_codex_product.py",
       "level": "S1",
       "reason": "manifest_watch_path",
       "reference_count": 13,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_github_chain.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 6,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -247,12 +317,26 @@
       "reason": "manifest_watch_path",
       "reference_count": 31,
       "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_web_chain.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 6,
+      "action": "move_only_with_manifest_and_callsite_updates"
+    },
+    {
+      "path": "scripts/verify_wechat_chain.py",
+      "level": "S1",
+      "reason": "manifest_watch_path",
+      "reference_count": 6,
+      "action": "move_only_with_manifest_and_callsite_updates"
     }
   ],
   "counts": {
     "S0": 0,
-    "S1": 28,
-    "S2": 7,
+    "S1": 35,
+    "S2": 12,
     "S3": 0,
     "S4": 0
   }

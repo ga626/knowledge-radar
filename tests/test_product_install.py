@@ -28,8 +28,85 @@ def _load():
 installer = _load()
 
 
+def test_legacy_migration_rebases_copied_profiles_and_excludes_runtime_ownership(tmp_path):
+    legacy, data = tmp_path / "legacy", tmp_path / "data"
+    profile = legacy / "browser_data" / "profiles" / "boss" / "account_a"
+    profile.mkdir(parents=True)
+    (profile / "Cookies").write_text("fixture", encoding="utf-8")
+    (legacy / "config").mkdir()
+    (legacy / "config/profile_registry.json").write_text(json.dumps({
+        "profiles": [{"profile_dir": str(profile), "user_data_dir": str(profile)}],
+    }), encoding="utf-8")
+    (legacy / ".env").write_text(
+        f"KR_PROJECT_ROOT={legacy}\nKR_DATA_ROOT={legacy}\n"
+        f"KR_BOSS_CHROME_USER_DATA_DIR={profile}\nTAVILY_API_KEY=fixture\n", encoding="utf-8",
+    )
+    assert installer.migrate_apply(legacy, data)["status"] == "APPLIED"
+    copied = json.loads((data / "config/profile_registry.json").read_text(encoding="utf-8"))
+    assert copied["profiles"][0] == {
+        "profile_dir": "browser_data/profiles/boss/account_a",
+        "user_data_dir": "browser_data/profiles/boss/account_a",
+    }
+    env = (data / "config/runtime.env").read_text(encoding="utf-8")
+    assert "TAVILY_API_KEY=fixture" in env
+    assert "KR_PROJECT_ROOT" not in env and "KR_DATA_ROOT" not in env
+    assert "KR_BOSS_CHROME_USER_DATA_DIR" not in env
+    assert (profile / "Cookies").read_text(encoding="utf-8") == "fixture"
+
+
+def test_legacy_registry_migration_preserves_existing_destination_and_external_paths(tmp_path):
+    legacy, data = tmp_path / "legacy", tmp_path / "data"
+    (legacy / "config").mkdir(parents=True)
+    data.mkdir()
+    source, destination = legacy / "config/profile_registry.json", data / "registry.json"
+    external = str(tmp_path / "external-profile")
+    source.write_text(json.dumps({"profiles": [
+        {"profile_dir": external}, {"profile_dir": "browser_data/relative"},
+    ]}), encoding="utf-8")
+    installer.migrate_profile_registry(source, destination, legacy_root=legacy)
+    assert json.loads(destination.read_text(encoding="utf-8"))["profiles"] == [
+        {"profile_dir": external}, {"profile_dir": "browser_data/relative"},
+    ]
+    destination.write_text('{"profiles": [], "owner": "user"}\n', encoding="utf-8")
+    original = destination.read_bytes()
+    assert installer.migrate_profile_registry(source, destination, legacy_root=legacy)[2] == ["profile_registry.json"]
+    assert destination.read_bytes() == original
+
+
+def test_legacy_registry_example_uses_same_rebase_path(tmp_path):
+    legacy = tmp_path / "legacy"
+    (legacy / "config").mkdir(parents=True)
+    source, destination = legacy / "config/profile_registry.json", tmp_path / "registry.json"
+    source.write_text(json.dumps({"profiles": [{"profile_dir": str(legacy / "browser_data/.hidden-profile")}]}), encoding="utf-8")
+    destination.write_text('{"version":"example"}', encoding="utf-8")
+    installer.migrate_profile_registry(source, destination, legacy_root=legacy)
+    assert json.loads(destination.read_text(encoding="utf-8"))["profiles"][0]["profile_dir"] == "browser_data/.hidden-profile"
+
+
+def test_retired_ocr_cannot_be_planned_restored_or_loaded(tmp_path, monkeypatch):
+    from runtime import model_roles, optional_media
+    assert set(model_roles.COMPONENTS) == {"qwen3-asr-0.6b", "docling"}
+    assert not (ROOT / "config/optional-ocr-win-py312.lock").exists()
+    for role in model_roles.COMPONENTS.values():
+        assert optional_media.file_sha(ROOT / role["requirements_lock"]) == role["requirements_sha256"]
+    retired = "paddleocr-vl-1.6"
+    with pytest.raises(RuntimeError, match="unsupported optional capability"):
+        installer.capability_plan(tmp_path, retired)
+    monkeypatch.setenv("KR_OPTIONAL_COMPONENT_RECEIPTS_DIR", str(tmp_path / "receipts"))
+    (tmp_path / "receipts").mkdir()
+    (tmp_path / "receipts" / (retired + ".json")).write_text('{"status":"ready"}', encoding="utf-8")
+    with pytest.raises(ValueError, match="unsupported_optional_component"):
+        optional_media.validate_receipt(retired)
+    data_root = tmp_path / "data"
+    installer.write_json_atomic(installer.capability_state_path(data_root), {
+        "schema": installer.CAPABILITY_STATE_SCHEMA, "capabilities": {retired: {"status": "APPLIED"}}})
+    monkeypatch.setattr(installer, "_run_optional_download", lambda *_a, **_k: pytest.fail("restored retired component"))
+    assert installer.restore_selected_runtime_components(tmp_path, Path("python.exe"), data_root) == []
+
+
 def test_maintainer_marker_is_per_install_and_keeps_active_identity(tmp_path,monkeypatch):
-    root=tmp_path/'install';data=tmp_path/'data'
+    root=tmp_path/'install'
+    data=tmp_path/'data'
     active={'data_root':str(data),'version':'fixture-version','program_root':str(tmp_path/'program')}
     monkeypatch.setattr(installer,'load_active',lambda path:active.copy())
     from onboarding.console_page import _developer_view_enabled
@@ -102,7 +179,7 @@ def artifact_fixture(tmp_path: Path, package: Path) -> tuple[Path, Path]:
             if p.is_file():
                 bundle.write(p, "KnowledgeRadar/" + p.relative_to(package).as_posix())
     receipt = tmp_path / f"{package.name}.receipt.json"
-    receipt.write_text(json.dumps({"source_commit": "a" * 40, "archive_sha256": installer.sha256_file(archive), "package_provenance_sha256": installer.sha256_file(provenance), "sbom_sha256": installer.sha256_file(package / "SBOM.json")}), encoding="utf-8")
+    receipt.write_text(json.dumps({"source_commit": payload["source_commit"], "archive_sha256": installer.sha256_file(archive), "package_provenance_sha256": installer.sha256_file(provenance), "sbom_sha256": installer.sha256_file(package / "SBOM.json")}), encoding="utf-8")
     return archive, receipt
 
 
@@ -127,13 +204,14 @@ def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkey
 
     assert result["status"] == "APPLIED"
     assert active["version"] == "0.2.0"
-    assert active["program_root"].endswith("app\\0.2.0") or active["program_root"].endswith("app/0.2.0")
+    assert Path(active["program_root"]).name == active["installation_id"]
+    assert active["installation_id"].startswith("0.2.0-")
     assert env_path.read_text(encoding="utf-8").startswith("TAVILY_API_KEY=private-value\n")
     assert "KR_FRAME_VISION_MODELS=bailian:qwen3.8-omni-flash" in env_path.read_text(encoding="utf-8")
     assert config_text.count("[mcp_servers.knowledgeradar]") == 1
     assert parsed_config["mcp_optional_startup_grace_ms"] == 0
     assert config["cwd"].startswith(str(install_root))
-    assert config["command"].endswith("runtime\\0.2.0\\Scripts\\python.exe") or config["command"].endswith("runtime/0.2.0/Scripts/python.exe")
+    assert active["installation_id"] in config["command"]
     assert config["env"]["KR_DATA_ROOT"] == str(data_root)
     assert str(first) not in config_text and str(second) not in config_text
     assert (codex_home / "plugins" / "knowledgeradar-research" / ".codex-plugin" / "plugin.json").is_file()
@@ -164,6 +242,28 @@ def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path,
     assert installer.load_active(install_root)["version"] == "0.1.0"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "EXA_API_KEY=private\n"
     assert "console_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
+
+
+def test_consecutive_main_packages_same_version_keep_distinct_identity(tmp_path, monkeypatch):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    install_root, data_root = tmp_path / "install", tmp_path / "data"
+    first = package_fixture(tmp_path / "a", "0.1.0")
+    archive, receipt = artifact_fixture(tmp_path / "a", first)
+    installer.apply_install(first, install_root, data_root, Path(sys.executable), channel="maintainer-main", archive=archive, receipt_path=receipt)
+    previous = installer.load_active(install_root)
+    second = package_fixture(tmp_path / "b", "0.1.0")
+    provenance = second / "package-provenance.json"
+    provenance.write_text(json.dumps({"source_commit": "b" * 40, "source_dirty": False}), encoding="utf-8")
+    archive, receipt = artifact_fixture(tmp_path / "b", second)
+    installer.apply_install(second, install_root, data_root, Path(sys.executable), channel="maintainer-main", archive=archive, receipt_path=receipt)
+    active = installer.load_active(install_root)
+    assert active["version"] == previous["version"]
+    assert active["installation_id"] != previous["installation_id"]
+    assert Path(previous["program_root"]).is_dir()
+    installer.rollback(install_root, Path(sys.executable))
+    restored = installer.load_active(install_root)
+    assert restored["installation_id"] == previous["installation_id"]
+    assert restored["source_commit"] == "a" * 40
 
 
 def test_product_wizard_launcher_is_rebound_when_rolling_back(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -285,7 +385,7 @@ def test_product_wizard_resolves_active_data_root(tmp_path: Path, monkeypatch: p
     package = package_fixture(tmp_path, "0.1.0")
     archive, receipt = artifact_fixture(tmp_path, package)
     installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
-    script = install_root / "app" / "0.1.0" / "scripts" / "setup_product_wizard.py"
+    script = Path(installer.load_active(install_root)["program_root"]) / "scripts" / "setup_product_wizard.py"
     spec = importlib.util.spec_from_file_location("setup_product_wizard_fixture", script)
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -431,37 +531,19 @@ def test_media_component_plans_are_console_owned_and_separate_runtime_from_model
     downloader = installer.capability_plan(install_root, "media_downloader")
     model = installer.capability_plan(install_root, "transcription_model")
     assert downloader['details']['command'][-1] == 'yt-dlp>=2024.8.6'
-    assert model['details']['label'] == '本地语音转写（Qwen3-ASR 0.6B）'
+    assert model['details']['label'] == '本地语音转写（Qwen3-ASR 0.6B · sherpa INT8）'
     assert model['details']['command'][-2:] == ['qwen3-asr-0.6b', '--acknowledge-download']
     assert '隔离' in model['details']['boundary']
     assert 'transcription_runtime' not in installer.CAPABILITY_IDS
 
 
-def test_xhs_bridge_capability_stays_in_data_root_and_requires_restart(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_retired_xhs_bridge_cannot_be_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     install_root = tmp_path / "install"
     data_root = tmp_path / "data"
     package = package_fixture(tmp_path, "0.1.0")
-    bridge = package / "bridge"
-    bridge.mkdir()
-    (bridge / "package.json").write_text('{"dependencies": {}}\n', encoding="utf-8")
-    (bridge / "package-lock.json").write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
-    (bridge / "xhs_mcp_bridge.cjs").write_text("console.log('fixture')\n", encoding="utf-8")
     archive, receipt = artifact_fixture(tmp_path, package)
     installer.apply_install(package, install_root, data_root, Path(sys.executable), channel="stable", archive=archive, receipt_path=receipt)
-    plan = installer.capability_plan(install_root, "xhs_bridge")
-    assert plan["details"]["login_required"] is False
-    assert "Node.js/npm" in plan["details"]["boundary"]
-    monkeypatch.setattr(installer.shutil, "which", lambda name: "npm.exe" if name == "npm" else None)
-    monkeypatch.setattr(
-        installer,
-        "_run_optional_download",
-        lambda command, *, cwd, env, action: (cwd / "node_modules").mkdir(exist_ok=True),
-    )
-
-    result = installer.capability_apply(install_root, "xhs_bridge", str(plan["confirmation_token"]))
-
-    config = tomllib.loads((tmp_path / "codex" / "config.toml").read_text(encoding="utf-8"))
-    assert result["restart_required"] is True
-    assert (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
-    assert config["mcp_servers"]["knowledgeradar"]["env"]["XHS_BRIDGE_PATH"].endswith("xhs-bridge\\xhs_mcp_bridge.cjs") or config["mcp_servers"]["knowledgeradar"]["env"]["XHS_BRIDGE_PATH"].endswith("xhs-bridge/xhs_mcp_bridge.cjs")
+    with pytest.raises(RuntimeError, match="OpenCLI"):
+        installer.capability_plan(install_root, "xhs_bridge")
+    assert not (data_root / "capabilities" / "xhs-bridge").exists()

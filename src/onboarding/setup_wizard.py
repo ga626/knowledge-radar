@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
-from onboarding.configuration import apply_updates, public_snapshot
+from onboarding.configuration import apply_updates, public_snapshot, runtime_env_path
 from runtime.account_alerts import account_alert_snapshot, recover_account
 from onboarding.console_page import render_console_page
 from onboarding.console_access import ConsoleAccess
@@ -32,6 +32,20 @@ from onboarding.product_status import (
     optional_capability_plan,
     storage_summary,
 )
+
+
+def _preview_config_is_isolated() -> bool:
+    """开发配置只能写独立数据根；稳定研究记录仍只读。"""
+    writable = os.environ.get("KR_DATA_ROOT", "")
+    read_root = os.environ.get("KR_RESEARCH_READ_ROOT", "")
+    if os.environ.get("KR_CONSOLE_ROLE") != "dev" or not writable or not read_root:
+        return False
+    target = runtime_env_path().resolve()
+    local_root = Path(writable).resolve()
+    stable_root = Path(read_root).resolve().parent
+    return (target.is_relative_to(local_root / "config")
+            and not local_root.is_relative_to(stable_root)
+            and not stable_root.is_relative_to(local_root))
 
 
 class WizardServer(ThreadingHTTPServer):
@@ -62,6 +76,19 @@ def _handler_factory(server: WizardServer):
             return
 
         def _send_json(self, status: HTTPStatus, payload: dict[str, Any], *, cookie: str = '') -> None:
+            if status == HTTPStatus.FORBIDDEN and self.command == 'POST' and not getattr(self, '_body_consumed', False):
+                # Drain only a small declared body before closing. On Windows an
+                # unread body can reset the socket and hide the structured 403.
+                previous_timeout = self.connection.gettimeout()
+                try:
+                    length = int(self.headers.get('Content-Length', '0'))
+                    if 0 < length <= 16384:
+                        self.connection.settimeout(.2)
+                        self.rfile.read(length)
+                except (OSError, ValueError):
+                    pass
+                finally:
+                    self.connection.settimeout(previous_timeout)
             body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -205,6 +232,7 @@ def _handler_factory(server: WizardServer):
                     length = int(self.headers.get('Content-Length', '0'))
                     if not 0 < length <= 4096:
                         raise ValueError()
+                    self._body_consumed = True
                     payload = json.loads(self.rfile.read(length))
                     if not isinstance(payload, dict) or not isinstance(payload.get('ticket'), str) or not server.access.redeem(payload['ticket']):
                         raise ValueError()
@@ -231,13 +259,15 @@ def _handler_factory(server: WizardServer):
             if self.path not in allowed:
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "不存在的操作。"})
                 return
-            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"}:
-                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "开发预览只读复用稳定数据；请在 stable 控制台执行配置或维护操作。"})
+            local_config = self.path == "/api/config" and _preview_config_is_isolated()
+            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"} and not local_config:
+                self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "开发预览只读复用稳定数据；配置必须写入独立开发目录，其他维护请使用正式版。"})
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
                 if length < 1 or length > 65536:
                     raise ValueError("请求大小无效。")
+                self._body_consumed = True
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise ValueError("请求必须是JSON对象。")
@@ -263,7 +293,13 @@ def _handler_factory(server: WizardServer):
                 elif self.path == "/api/capability-apply":
                     response = optional_capability_apply(str(payload.get("capability") or ""), str(payload.get("confirmation") or ""))
                 else:
-                    response = {"ok": True, "changed_count": len(apply_updates(payload.get("values")))}
+                    changed = apply_updates(payload.get('values') or {},
+                        delete_keys=payload.get('delete_keys', []), provider_updates=payload.get('providers'),
+                        connections=payload.get('connections'), expected_generation=payload.get('expected_generation'))
+                    from runtime.search_configuration import current_configuration
+                    response = {'ok': True, 'changed_count': len(changed),
+                                'configuration_generation': current_configuration(fresh=True).generation,
+                                'application': 'applied_for_next_search', 'active_tasks': 'pinned_with_send_revocation_check'}
                 self._send_json(HTTPStatus.OK, response)
             except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)})

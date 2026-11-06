@@ -26,14 +26,8 @@ def test_v2ex_html_parser_filters_by_city() -> None:
     assert [item["title"] for item in items] == ["北京 Python 开发"]
 
 
-def test_v2ex_empty_result_is_no_result_signal(monkeypatch) -> None:
-    monkeypatch.setattr(v2ex, "v2ex_fetch_jobs", lambda keyword="", limit=20, city="": [])
-    monkeypatch.setattr(v2ex, "v2ex_fetch_jobs_from_web", lambda keyword="", limit=20, city="": [])
-    monkeypatch.setattr(v2ex, "proxy_health_summary", lambda: {"status": "ok"})
-
-    result = v2ex.legacy_search_v2ex("unlikely-keyword", limit=3, city="北京")
-
-    assert result["error"]["failure_type"] == "empty_results"
-    assert result["failure_class"] == "empty_results"
-    assert result["evidence_strength"] == "no_result_signal"
-    assert result["market_claim_allowed"] is False
+def test_v2ex_empty_result_is_no_result_signal(monkeypatch):
+    monkeypatch.setattr(v2ex,'discover',lambda *a,**kw:{'platform':'V2EX','items':[],'status':'empty','empty_reason':'no_match_in_scanned_node_pages','metadata':{'open_index_eligible':True}})
+    result=v2ex.legacy_search_v2ex('unlikely-keyword',limit=3,city='北京')
+    assert result['status']=='empty' and not result.get('error')
+    assert result['metadata']['open_index_eligible']

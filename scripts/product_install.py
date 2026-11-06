@@ -8,6 +8,8 @@ overwrites user configuration.  Source-checkout installation remains in
 from __future__ import annotations
 
 import argparse
+from functools import wraps
+import inspect
 import hashlib
 import json
 import os
@@ -27,12 +29,42 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 PLUGIN_NAME = "knowledgeradar-research"
 ACTIVE_SCHEMA = "knowledgeradar-active-install/v1"
 CAPABILITY_STATE_SCHEMA = "knowledgeradar-capability-state/v1"
-CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6")
+CAPABILITY_IDS = ("browser", "xhs_bridge", "media_downloader", "transcription_model", "docling")
 MODEL_CAPABILITIES = {
     "transcription_model": "qwen3-asr-0.6b",
     "docling": "docling",
-    "paddleocr-vl-1.6": "paddleocr-vl-1.6",
 }
+
+
+def browser_link_lifecycle():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('kr_browser_link_install', Path(__file__).with_name('browser_link_install.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def cli_lifecycle():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('kr_product_cli', Path(__file__).with_name('product_cli_launcher.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def installation_maintenance(function):
+    @wraps(function)
+    def guarded(*args, **kwargs):
+        values = inspect.signature(function).bind(*args, **kwargs).arguments
+        install_root = Path(values['install_root'])
+        if not (install_root/'active.json').is_file():
+            return function(*args, **kwargs)
+        active = load_active(install_root)
+        if not active:
+            return function(*args, **kwargs)
+        with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT):
+            return function(*args, **kwargs)
+    return guarded
 
 
 def sha256_file(path: Path) -> str:
@@ -259,27 +291,8 @@ def ensure_mcp_catalog_wait(text: str) -> str:
 
 def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
     program = Path(str(active["program_root"])).resolve()
-    data = Path(str(active["data_root"])).resolve()
-    fields = {
-        "PYTHONPATH": str(program / "src"),
-        "KR_MCP_TRANSPORT": "stdio",
-        "KR_PROJECT_ROOT": str(program),
-        "KR_SOURCE_ROOT": str(program / "src"),
-        "KR_INSTALL_ROOT": str(program.parents[1]),
-        "KR_DATA_ROOT": str(data),
-        "KR_RUNTIME_ENV_PATH": str(data / "config" / "runtime.env"),
-        "KR_PROFILE_REGISTRY_PATH": str(data / "config" / "profile_registry.json"),
-        "KR_BROWSER_DATA_DIR": str(data / "browser_data"),
-        "KR_STATE_DIR": str(data / "state"),
-        "KR_LOG_DIR": str(data / "logs"),
-        "KR_ACTIVE_INSTALL_ROOT": str(program.parents[1]),
-        "KR_ACTIVE_VERSION": str(active.get("version") or ""),
-        "KR_MEDIA_CACHE_DIR": str(data / "state" / "media_cache"),
-        "PLAYWRIGHT_BROWSERS_PATH": str(data / "playwright"),
-    }
-    xhs_bridge = data / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs"
-    if xhs_bridge.is_file() and _capability_enabled(data, "xhs_bridge"):
-        fields["XHS_BRIDGE_PATH"] = str(xhs_bridge)
+    fields = cli_lifecycle().active_environment(active)
+
     lines = [
         "[mcp_servers.knowledgeradar]",
         f"command = {json.dumps(str(python_exe), ensure_ascii=False)}",
@@ -352,6 +365,10 @@ def write_product_wizard_launcher(active: dict[str, Any], python_exe: Path) -> P
     launcher = install_root / "configure.cmd"
     launcher.write_text(launcher_text, encoding="utf-8")
     (install_root / "console.cmd").write_text(launcher_text, encoding="utf-8")
+    cli_helper = install_root / 'cli_product.py'
+    shutil.copyfile(PACKAGE_ROOT/'scripts/product_cli_launcher.py', cli_helper)
+    cli_text = launcher_text.replace(str(helper), str(cli_helper))
+    (install_root/'knowledgeradar.cmd').write_text(cli_text, encoding='utf-8')
     return launcher
 
 
@@ -422,6 +439,18 @@ def capability_state_path(data_root: Path) -> Path:
     return data_root / "state" / "capabilities.json"
 
 
+# Upgrade cleanup only: remove obsolete controls while retaining credentials and rollback.
+_RETIRED_MODEL_CONTROLS = {
+    "KR_L2_VIDEO_MODEL_VERSION", "KR_IMAGE_MODELS", "KR_VIDEO_MODELS",
+    "KR_BASIC_TEXT_MODELS",
+    "KR_COMMENT_FILTER_MODELS", "KR_ENABLE_SILICONFLOW_FALLBACK", "KR_ENABLE_MIMO_FALLBACK",
+    "KR_WHISPER_MODEL_DIR", "KR_ASR_BATCH_SIZE", "KR_ASR_BEAM_SIZE", "KR_ASR_VAD",
+    "KR_ASR_COMPUTE_TYPE", "KR_ASR_LIFECYCLE", "KR_ASR_PREWARM_TRIGGER",
+    "KR_ASR_GPU_HOT_TTL_SECONDS", "KR_ASR_WORKER_KEEPALIVE_SECONDS",
+    "KR_ASR_GPU_UNLOAD_POLICY", "KR_ASR_ENABLE_CTRANSLATE2_UNLOAD", "KR_ASR_GPU_MIN_FREE_MB",
+}
+
+
 def migrate_model_configuration(data_root: Path, program_root: Path) -> dict[str, Any]:
     """激活新版本时迁移模型控制项；凭据和其他来源设置逐字保留。"""
     import importlib.util
@@ -435,7 +464,7 @@ def migrate_model_configuration(data_root: Path, program_root: Path) -> dict[str
     path = data_root / "config/runtime.env"
     before = path.read_bytes()
     defaults = roles.MODEL_ENVIRONMENT
-    controls = set(defaults) | roles.RETIRED_MODEL_CONTROLS
+    controls = set(defaults) | _RETIRED_MODEL_CONTROLS
     lines, changed, found = [], set(), set()
     for line in before.decode("utf-8-sig").splitlines():
         key, separator, value = line.partition("=")
@@ -592,7 +621,7 @@ def _capability_token(active: dict[str, Any], capability: str, source: Path) -> 
     package_lock = source / "package-lock.json"
     payload = {
         "capability": capability,
-        "version": str(active.get("version") or ""),
+        "version": str(active.get("installation_id") or active.get("version") or ""),
         "data_root": str(Path(str(active["data_root"])).resolve()),
         "source_hash": sha256_file(package_lock) if package_lock.is_file() else path_hash(source),
     }
@@ -622,23 +651,10 @@ def capability_plan(install_root: Path, capability: str) -> dict[str, Any]:
             "command": command,
         }
     elif capability == "xhs_bridge":
-        source = program / "bridge"
-        if not (source / "package.json").is_file() or not (source / "package-lock.json").is_file():
-            raise RuntimeError("xhs bridge package metadata is unavailable")
-        target = data_root / "capabilities" / "xhs-bridge"
-        summary = {
-            "label": "小红书诊断 bridge 依赖",
-            "network_download": True,
-            "login_required": False,
-            "may_use_paid_api": False,
-            "restart_required": True,
-            "target": tree_summary(target),
-            "command": ["npm", "ci", "--omit=dev", "--ignore-scripts"],
-            "boundary": "需要电脑已安装 Node.js/npm；只安装本地 bridge 依赖，不会登录、绕过验证码或把 bridge 自动提升为生产兜底。",
-        }
+        raise RuntimeError("小红书已固定OpenCLI；请使用日常Chrome扩展连接引导，旧bridge安装已退役。")
     elif capability == "media_downloader":
         source = program
-        target = install_root / "runtime" / str(active.get("version") or "")
+        target = install_root / "runtime" / str(active.get("installation_id") or active.get("version") or "")
         summary = {
             "label": "媒体下载器",
             "network_download": True,
@@ -755,35 +771,7 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
             action="installing Playwright Chromium",
         )
     elif capability == "xhs_bridge":
-        npm = shutil.which("npm")
-        if not npm:
-            raise RuntimeError("xhs bridge requires Node.js and npm; install them before applying this capability")
-        source = program / "bridge"
-        target = data_root / "capabilities" / "xhs-bridge"
-        target.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".xhs-bridge-staging-", dir=target.parent))
-        try:
-            for name in ("package.json", "package-lock.json", ".npmrc", "README.md"):
-                candidate = source / name
-                if candidate.is_file():
-                    shutil.copy2(candidate, staging / name)
-            for candidate in source.glob("*.cjs"):
-                shutil.copy2(candidate, staging / candidate.name)
-            for candidate in source.glob("*.mjs"):
-                shutil.copy2(candidate, staging / candidate.name)
-            _run_optional_download(
-                [npm, "ci", "--omit=dev", "--ignore-scripts"],
-                cwd=staging,
-                env=dict(os.environ),
-                action="installing xhs bridge dependencies",
-            )
-            if not (staging / "xhs_mcp_bridge.cjs").is_file():
-                raise RuntimeError("xhs bridge source is incomplete")
-            if target.exists():
-                target.replace(target.parent / f"xhs-bridge.previous-{int(time.time())}")
-            staging.replace(target)
-        finally:
-            shutil.rmtree(staging, ignore_errors=True)
+        raise RuntimeError("旧小红书bridge安装已退役；使用日常Chrome的OpenCLI扩展连接。")
     elif capability == "media_downloader":
         _run_optional_download(
             [
@@ -851,13 +839,18 @@ def capability_apply(install_root: Path, capability: str, confirmation: str) -> 
 def tree_summary(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {"exists": False, "files": 0, "bytes": 0, "path_hash": path_hash(path)}
-    files = [item for item in path.rglob("*") if item.is_file()] if path.is_dir() else [path]
+    files = [item for item in path.rglob("*") if item.is_file() and not _owner_ephemeral(item.relative_to(path))] if path.is_dir() else [path]
     return {
         "exists": True,
         "files": len(files),
         "bytes": sum(item.stat().st_size for item in files),
         "path_hash": path_hash(path),
     }
+
+
+def _owner_ephemeral(relative: Path) -> bool:
+    # 选主锁与进程描述符不是用户资料；维护接管不能改变迁移确认令牌。
+    return relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log'})
 
 
 def _tree_manifest(path: Path) -> dict[str, str]:
@@ -867,6 +860,8 @@ def _tree_manifest(path: Path) -> dict[str, str]:
     rows: dict[str, str] = {}
     for item in sorted((entry for entry in path.rglob("*") if entry.is_file()), key=lambda entry: entry.as_posix()):
         relative = item.relative_to(path).as_posix()
+        if _owner_ephemeral(Path(relative)):
+            continue
         rows[relative] = f"{item.stat().st_size}:{sha256_file(item)}"
     return rows
 
@@ -886,7 +881,7 @@ def _migration_token(source: Path, target: Path, source_summary: dict[str, Any])
 
 
 def _active_runtime(install_root: Path, active: dict[str, Any]) -> Path:
-    runtime = runtime_python(install_root / "runtime" / str(active.get("version") or ""))
+    runtime = runtime_python(install_root / "runtime" / str(active.get("installation_id") or active.get("version") or ""))
     if not runtime.is_file():
         raise RuntimeError("active product runtime is unavailable")
     return runtime
@@ -930,6 +925,7 @@ def data_root_move_plan(install_root: Path, target_root: Path) -> dict[str, Any]
     }
 
 
+@installation_maintenance
 def data_root_move_apply(install_root: Path, target_root: Path, confirmation: str) -> dict[str, Any]:
     plan = data_root_move_plan(install_root, target_root)
     if plan["browser_lock_relative_paths"]:
@@ -948,7 +944,8 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
     started = int(time.time())
     try:
         copied = staging / "payload"
-        shutil.copytree(source, copied, copy_function=shutil.copy2)
+        shutil.copytree(source, copied, copy_function=shutil.copy2,
+                        ignore=lambda directory, names: [name for name in names if _owner_ephemeral((Path(directory)/name).relative_to(source))])
         if _tree_manifest(source) != _tree_manifest(copied):
             raise RuntimeError("copied data does not match source manifest")
         copied.replace(target)
@@ -989,6 +986,7 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
     return receipt
 
 
+@installation_maintenance
 def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
     install_root = install_root.resolve()
     backup = install_root / "backup" / "active.before-data-move.json"
@@ -1084,10 +1082,45 @@ def env_values(path: Path) -> dict[str, str]:
     return values
 
 
+_PRODUCT_OWNERSHIP_ENV_KEYS = frozenset({
+    "KR_DATA_ROOT", "KR_PROJECT_ROOT", "KR_SOURCE_ROOT", "KR_INSTALL_ROOT",
+    "KR_RUNTIME_ENV_PATH", "KR_PROFILE_REGISTRY_PATH", "KR_BROWSER_DATA_DIR",
+    "KR_STATE_DIR", "KR_LOG_DIR", "KR_MEDIA_CACHE_DIR", "KR_RUNTIME_MEDIA_DIR",
+    "PLAYWRIGHT_BROWSERS_PATH",
+})
+
+
+def _migrated_profile_registry(source: Path, legacy_root: Path) -> dict[str, Any]:
+    """Rebase copied legacy profiles without changing an existing destination."""
+    data = json.loads(source.read_text(encoding="utf-8-sig"))
+    if not isinstance(data, dict) or not isinstance(data.get("profiles", []), list):
+        raise ValueError("invalid legacy profile registry")
+    for row in data.get("profiles", []):
+        if not isinstance(row, dict):
+            raise ValueError("invalid legacy profile entry")
+        for key in ("profile_dir", "user_data_dir"):
+            value = row.get(key)
+            if not isinstance(value, str) or not value:
+                continue
+            path = Path(os.path.expandvars(os.path.expanduser(value)))
+            if not path.is_absolute():
+                continue
+            try:
+                relative = path.resolve().relative_to(legacy_root.resolve())
+            except ValueError:
+                continue  # Explicit external paths are not silently relocated.
+            row[key] = relative.as_posix()
+    return data
+
+
 def merge_runtime_env(source: Path, destination: Path) -> tuple[int, int, list[str]]:
     source_values = env_values(source)
     if not source_values:
         return 0, 0, []
+    source_values = {
+        key: value for key, value in source_values.items()
+        if key not in _PRODUCT_OWNERSHIP_ENV_KEYS and not key.endswith("_CHROME_USER_DATA_DIR")
+    }
     existing = destination.read_text(encoding="utf-8-sig") if destination.is_file() else ""
     destination_values = env_values(destination)
     additions = {key: value for key, value in source_values.items() if value and not destination_values.get(key)}
@@ -1110,19 +1143,19 @@ def merge_runtime_env(source: Path, destination: Path) -> tuple[int, int, list[s
     return len([value for value in source_values.values() if value]), 0, conflicts
 
 
-def migrate_profile_registry(source: Path, destination: Path) -> tuple[int, int, list[str]]:
+def migrate_profile_registry(source: Path, destination: Path, *, legacy_root: Path | None = None) -> tuple[int, int, list[str]]:
     if not source.is_file():
         return 0, 0, []
     if not destination.exists():
         destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
+        write_json_atomic(destination, _migrated_profile_registry(source, legacy_root or source.parent.parent))
         return 1, 0, []
     try:
         current = json.loads(destination.read_text(encoding="utf-8-sig"))
     except json.JSONDecodeError:
         return 0, 1, ["profile_registry.json"]
     if isinstance(current, dict) and current.get("version") == "example":
-        shutil.copy2(source, destination)
+        write_json_atomic(destination, _migrated_profile_registry(source, legacy_root or source.parent.parent))
         return 1, 0, []
     return 0, 1, [] if sha256_file(source) == sha256_file(destination) else ["profile_registry.json"]
 
@@ -1154,7 +1187,7 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
         if category == "runtime_config":
             copied, skipped, conflicts = merge_runtime_env(source, destination)
         elif category == "profile_registry":
-            copied, skipped, conflicts = migrate_profile_registry(source, destination)
+            copied, skipped, conflicts = migrate_profile_registry(source, destination, legacy_root=legacy_root)
         else:
             copied, skipped, conflicts = copy_without_overwrite(source, destination)
         receipt["copied"].append(
@@ -1174,18 +1207,23 @@ def migrate_apply(legacy_root: Path, data_root: Path) -> dict[str, Any]:
 
 def build_plan(package_root: Path, install_root: Path, data_root: Path, python_exe: Path) -> dict[str, Any]:
     version = version_for(package_root)
-    program_root = install_root / "app" / version
-    runtime_root = install_root / "runtime" / version
+    # 同版本连续主线实验包并存；安装和回滚均绑定不可变制品元数据。
+    identity = sha256_file(package_root / "package-provenance.json")[:16]
+    installation_id = version + "-" + identity
+    program_root = install_root / "app" / installation_id
+    runtime_root = install_root / "runtime" / installation_id
     total_bytes = sum(path.stat().st_size for path in package_root.rglob("*") if path.is_file())
     return {
         "schema": "knowledgeradar-product-install-plan/v1",
         "package_root": str(package_root.resolve()),
         "version": version,
+        "installation_id": installation_id,
         "program_root": str(program_root.resolve()),
         "runtime_root": str(runtime_root.resolve()),
         "runtime_python": str(runtime_python(runtime_root).resolve()),
         "data_root": str(data_root.resolve()),
         "python": str(python_exe.resolve()),
+        "browser_link": browser_link_lifecycle().plan(package_root, install_root, data_root),
         "package_bytes": total_bytes,
         "required_free_bytes": total_bytes * 2,
         "will_preserve_existing_data": True,
@@ -1279,11 +1317,12 @@ def stage_verified_package(
             (staging / "payload").replace(program)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
-    runtime = ensure_runtime(program, install_root, plan["version"], python_exe)
+    runtime = ensure_runtime(program, install_root, plan["installation_id"], python_exe)
     initialize_data(data_root, package_root)
     result = {
         "status": "STAGED",
         "version": plan["version"],
+        "installation_id": plan["installation_id"],
         "program_root": str(program),
         "runtime_python": str(runtime),
         "data_root": str(data_root),
@@ -1296,6 +1335,7 @@ def stage_verified_package(
     return result
 
 
+@installation_maintenance
 def apply_install(
     package_root: Path,
     install_root: Path,
@@ -1331,6 +1371,7 @@ def apply_install(
         "schema": ACTIVE_SCHEMA,
         "channel": channel,
         "version": plan["version"],
+        "installation_id": plan["installation_id"],
         "program_root": str(program_root),
         "data_root": str(data_root),
         "program_root_hash": path_hash(program_root),
@@ -1359,7 +1400,13 @@ def apply_install(
         ),
         encoding="utf-8",
     )
-    write_json_atomic(active_path, active)
+    browser_link = browser_link_lifecycle().apply(program_root, install_root, data_root)
+    active['browser_link'] = browser_link
+    try:
+        write_json_atomic(active_path, active)
+    except Exception:
+        browser_link_lifecycle().restore(browser_link, install_root)
+        raise
     wizard_launcher = write_product_wizard_launcher(active, product_python)
     autostart = (
         write_console_autostart(install_root, product_python)
@@ -1373,7 +1420,9 @@ def apply_install(
         "plugin": plugin,
         "wizard_launcher": str(wizard_launcher),
         "console_launcher": str(install_root / "console.cmd"),
+        "cli_launcher": str(install_root / "knowledgeradar.cmd"),
         "console_autostart": str(autostart) if autostart else None,
+        "browser_link": browser_link,
         "restored_runtime_components": restored_components,
         "model_configuration": model_configuration,
     }
@@ -1381,6 +1430,7 @@ def apply_install(
     return receipt
 
 
+@installation_maintenance
 def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     backup = install_root / "backup" / "active.previous.json"
     if not backup.is_file():
@@ -1391,7 +1441,7 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     safe_child(install_root / "app", Path(str(previous.get("program_root") or "")))
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
-    previous_runtime = runtime_python(install_root / "runtime" / str(previous.get("version") or ""))
+    previous_runtime = runtime_python(install_root / "runtime" / str(previous.get("installation_id") or previous.get("version") or ""))
     if not previous_runtime.is_file():
         raise RuntimeError("previous product runtime is unavailable")
     verify_product_package(Path(previous["program_root"]))
@@ -1402,8 +1452,9 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         config,
         marketplace,
         model_env,
-        *(install_root / name for name in ["console_product.py", "console.cmd", "configure.cmd"]),
+        *(install_root / name for name in ["console_product.py", "console.cmd", "configure.cmd", "cli_product.py", "knowledgeradar.cmd"]),
     ]
+    browser_link = None
     snapshots = {p: p.read_bytes() if p.is_file() else None for p in files}
     with tempfile.TemporaryDirectory(prefix="kr-rollback-") as temp:
         backup_plugin = Path(temp) / "plugin"
@@ -1427,8 +1478,14 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
             model_configuration = restore_model_configuration(
                 Path(current["data_root"]), current.get("model_configuration", {})
             )
+            browser_link = browser_link_lifecycle().apply(Path(previous["program_root"]), install_root, Path(previous["data_root"]))
+            if not browser_link.get('registration') and current.get('browser_link', {}).get('status') == 'registered':
+                lifecycle=browser_link_lifecycle()
+                browser_link=lifecycle.uninstall(install_root)
             write_json_atomic(install_root / "active.json", previous)
         except Exception:
+            if browser_link is not None:
+                browser_link_lifecycle().restore(browser_link, install_root)
             for path, content in snapshots.items():
                 if content is None:
                     path.unlink(missing_ok=True)

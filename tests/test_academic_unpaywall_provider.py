@@ -71,6 +71,6 @@ def test_unpaywall_maps_best_oa_pdf_location(monkeypatch) -> None:
     assert work.title == "Gesture Recognition for Smart Homes"
     assert work.doi == "10.3390/ai6010017"
     assert work.url.endswith("/pdf")
-    assert work.full_text_status == "pdf_text_extractable"
-    assert work.license_scope == "open"
+    assert work.full_text_status == "pdf_link_found"
+    assert work.license_scope == "license_declared"
     assert "email=research%40example.org" in captured["url"]

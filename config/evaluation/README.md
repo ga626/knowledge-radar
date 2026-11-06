@@ -17,7 +17,7 @@
 | 原生回执 | `prepare-native-receipt <Codex会话jsonl> --call-id <实际宿主ID> --case <ID> --expected-target <身份JSON> --output <空目录>`，再 `import-receipt <receipt.json> --expected-target <身份JSON>` |
 | 日常故障 | 工具完成时被动收集低敏候选；`--candidate-store <数据库> candidates`；旧trace可用同一参数加 `collect-trace <jsonl>` 有界回填 |
 | 候选审查 | `review-candidate <ID> --case <已有ID> --reviewer <审查者> --reason <依据> --input-sha256 <已核对输入身份> --oracle-version <版本>`；无可重现输入不能宣称已重放；有缺口先在本目录增量补合同 |
-| CI | `ci --extra-node <已有测试节点>`：离线用例合批一次pytest；需要真实子进程的控制台生命周期测试单独在临时端口/数据/互斥名执行一次，均留JUnit并映射case；manual保持NOT_RUN，治理测试失败也阻断 |
+| CI | `ci --extra-node <已有测试节点>`：离线用例合批一次pytest；需要真实子进程的控制台、执行内核和 stdio 探针单独在临时端口/数据/互斥名执行一次；仍禁止外网和日常浏览器，stdio 探针退出时收回自身临时内核，均留JUnit并映射case；manual保持NOT_RUN，治理测试失败也阻断 |
 | 前台 | 执行/导入后自动更新摘要；`publish-summary`可只更新投影。网站“设置与帮助→持续评测”只读，源码变化或摘要过期提示更新，不自动跑平台 |
 | 只写报告 | 文档最小检查；不调用全量产品、账号或付费评测 |
 

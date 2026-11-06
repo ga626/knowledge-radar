@@ -4,6 +4,9 @@ import importlib.util
 import base64
 import json
 from pathlib import Path
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+import asyncio
 
 import pytest
 
@@ -11,6 +14,17 @@ from runtime import continuity_fallback
 
 
 ROOT = Path(__file__).resolve().parents[1]
+REQUIRED_FIXTURE_TOOLS = [
+    "health_check", "get_capabilities", "kr_research", "get_task_status",
+    "get_content_detail", "finalize_research_task",
+]
+
+
+def _contract(root: Path, names: list[str]) -> None:
+    target = root / "config/codex-product/tool-contracts.json"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps({"schema": "kr-tool-catalog/v1", "tool_count": len(names),
+                                  "tools": [{"name": name} for name in names]}), encoding="utf-8")
 
 
 def _config(tmp_path: Path, *, server_path: Path | None = None) -> Path:
@@ -94,11 +108,17 @@ def test_invoke_uses_validated_config_and_returns_only_config_identity(tmp_path:
     assert result["server"]["identity"]["kind"] == "development_source"
 
 
-def test_catalog_validation_requires_exact_public_tool_surface() -> None:
-    tools = sorted(continuity_fallback.EXPECTED_TOOL_NAMES)
-    continuity_fallback._validate_tool_catalog(tools)
+def test_catalog_validation_requires_selected_artifact_contract() -> None:
+    tools = json.loads((ROOT / "config/codex-product/tool-contracts.json").read_text(encoding="utf-8"))
+    expected = [item["name"] for item in tools["tools"]]
+    continuity_fallback._validate_tool_catalog(expected, expected)
     with pytest.raises(continuity_fallback.FallbackContractError, match="tool_catalog_mismatch"):
-        continuity_fallback._validate_tool_catalog(tools[:-1])
+        continuity_fallback._validate_tool_catalog(expected[:-1], expected)
+    replaced = ["wrong_tool" if name == "get_content_detail" else name for name in expected]
+    with pytest.raises(continuity_fallback.FallbackContractError, match="tool_catalog_mismatch"):
+        continuity_fallback._validate_tool_catalog(replaced, expected)
+    with pytest.raises(continuity_fallback.FallbackContractError, match="duplicate"):
+        continuity_fallback._validate_tool_catalog([*expected, expected[0]], expected)
 
 
 def test_readiness_retry_is_bounded_and_not_used_for_research_calls(monkeypatch) -> None:
@@ -108,7 +128,7 @@ def test_readiness_retry_is_bounded_and_not_used_for_research_calls(monkeypatch)
         attempts.append("call")
         if len(attempts) == 1:
             raise OSError("closed")
-        return {"result": {"ok": True}, "tools": sorted(continuity_fallback.EXPECTED_TOOL_NAMES), "tool_list_fingerprint": "sha256:test", "tool_count": 22, "mcp_call_status": "ok"}
+        return {"result": {"ok": True}, "tools": ["health_check"], "tool_list_fingerprint": "sha256:test", "tool_count": 1, "mcp_call_status": "ok"}
 
     monkeypatch.setattr(continuity_fallback, "_invoke", flaky)
     result = continuity_fallback._invoke_sync({}, "health_check", {"mode": "summary"})
@@ -116,7 +136,7 @@ def test_readiness_retry_is_bounded_and_not_used_for_research_calls(monkeypatch)
     assert len(result["retry_failures"]) == 1
 
     attempts.clear()
-    with pytest.raises(continuity_fallback.FallbackContractError, match="fallback_readiness_retry_exhausted"):
+    with pytest.raises(continuity_fallback.FallbackContractError, match="fallback_transport_failed"):
         continuity_fallback._invoke_sync({}, "kr_research", {})
     assert len(attempts) == 1
 
@@ -204,3 +224,226 @@ def test_continuity_cli_exposes_target_identity_and_retry_receipt(monkeypatch, c
     output = capsys.readouterr().out
     assert '"source_fingerprint": "active-source"' in output
     assert '"attempt_count": 2' in output
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_call_uses_selected_contract_and_accepts_legitimate_additions(tmp_path, monkeypatch, legacy):
+    config = _config(tmp_path)
+    root = tmp_path / "repo"
+    names = REQUIRED_FIXTURE_TOOLS + ["process_local_evidence", "future_read_capability"]
+    if legacy:
+        (root / "src/server.py").write_text("\n".join(
+            f"@nonblocking_mcp_tool(mcp)\ndef {name}(): pass" for name in names
+        ), encoding="utf-8")
+    else:
+        _contract(root, names)
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=name) for name in names])
+
+        async def call_tool(self, tool, arguments):
+            return {"isError": False, "structuredContent": {"status": "ok"}}
+
+    @asynccontextmanager
+    async def session(_server):
+        yield Session()
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    result = continuity_fallback.invoke_configured_tool(
+        tool="health_check", arguments={"mode": "summary"}, config_path=config, project_root=root)
+    assert result["mcp_call_status"] == "ok"
+    assert result["tool_count"] == len(names)
+    assert result["catalog_identity"]["kind"] == ("legacy_source_registration" if legacy else "artifact_contract")
+
+
+@pytest.mark.parametrize("names", [
+    [n for n in REQUIRED_FIXTURE_TOOLS if n != "get_content_detail"],
+    REQUIRED_FIXTURE_TOOLS + ["expand_keywords"],
+    REQUIRED_FIXTURE_TOOLS + ["plan_research"],
+])
+def test_invalid_declared_contract_is_rejected_before_starting_a_session(tmp_path, monkeypatch, names):
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", names)
+    called = []
+
+    @asynccontextmanager
+    async def session(_server):
+        called.append(True)
+        yield None
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    with pytest.raises(continuity_fallback.FallbackContractError):
+        continuity_fallback.invoke_configured_tool(
+            tool="health_check", arguments={}, config_path=config, project_root=tmp_path / "repo")
+    assert not called
+
+
+@pytest.mark.parametrize("phase", ["connection", "catalog", "call"])
+def test_exception_group_is_a_structured_failure_without_secret_leak(tmp_path, monkeypatch, capsys, phase):
+    module = _continuity_cli_module()
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS)
+    monkeypatch.setattr(module, "ROOT", tmp_path / "repo")
+    monkeypatch.setattr(module, "record_fallback", lambda **_kwargs: {})
+    monkeypatch.setattr(module, "record_fallback_call", lambda **kwargs: kwargs)
+    calls = []
+
+    class Session:
+        async def list_tools(self):
+            if phase == "catalog":
+                raise RuntimeError("Authorization: Bearer private-marker")
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in REQUIRED_FIXTURE_TOOLS])
+
+        async def call_tool(self, tool, arguments):
+            calls.append(tool)
+            raise RuntimeError("https://example.org/?token=private-marker")
+
+    @asynccontextmanager
+    async def session(_server):
+        try:
+            if phase == "connection":
+                raise OSError("password=private-marker")
+            yield Session()
+        except Exception as exc:
+            raise ExceptionGroup("stdio cleanup", [exc]) from exc
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    exit_code = module.main(["call", "--reason", "test_transport_closed", "--tool", "health_check", "--config", str(config)])
+    value = json.loads(capsys.readouterr().out)
+    assert exit_code == 1
+    assert value["status"] == "fallback_unavailable"
+    assert value["failure_stage"] == phase
+    assert value["access_path"] == "continuity_fallback"
+    assert value["native_mcp_claim"] == "not_claimed"
+    assert "private-marker" not in json.dumps(value)
+    assert len(calls) <= 1
+
+
+def test_grouped_transport_failure_never_replays_a_research_call(monkeypatch):
+    calls = []
+
+    async def fail(*_args):
+        calls.append(1)
+        raise ExceptionGroup("stdio", [OSError("unknown execution result")])
+
+    monkeypatch.setattr(continuity_fallback, "_invoke", fail)
+    with pytest.raises(continuity_fallback.FallbackContractError):
+        continuity_fallback._invoke_sync({}, "kr_research", {})
+    assert len(calls) == 1
+
+
+def test_running_loop_is_rejected_without_creating_a_coroutine():
+    async def check():
+        with pytest.raises(continuity_fallback.FallbackContractError, match="existing_event_loop"):
+            continuity_fallback._invoke_sync({}, "health_check", {})
+    asyncio.run(check())
+
+
+def test_initialization_failure_is_classified_inside_actual_session_wrapper(tmp_path, monkeypatch):
+    import mcp
+    import mcp.client.stdio
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS)
+
+    @asynccontextmanager
+    async def stdio(_parameters):
+        yield None, None
+
+    class Session:
+        def __init__(self, *_args):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return False
+
+        async def initialize(self):
+            raise RuntimeError("Authorization: Bearer private-marker")
+
+    monkeypatch.setattr(mcp.client.stdio, "stdio_client", stdio)
+    monkeypatch.setattr(mcp, "ClientSession", Session)
+    with pytest.raises(continuity_fallback.FallbackContractError) as error:
+        continuity_fallback.invoke_configured_tool(
+            tool="health_check", arguments={}, config_path=config, project_root=tmp_path / "repo")
+    assert error.value.stage == "initialization"
+    assert "private-marker" not in str(error.value)
+
+
+def test_tool_call_is_not_replayed_after_cleanup_failure(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS)
+    calls = []
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in REQUIRED_FIXTURE_TOOLS])
+
+        async def call_tool(self, *_args, **_kwargs):
+            calls.append(True)
+            return {"isError": False}
+
+    @asynccontextmanager
+    async def session(_server):
+        yield Session()
+        raise OSError("cleanup transport lost")
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    with pytest.raises(continuity_fallback.FallbackContractError) as error:
+        continuity_fallback.invoke_configured_tool(
+            tool="health_check", arguments={}, config_path=config, project_root=tmp_path / "repo")
+    assert error.value.stage == "cleanup"
+    assert len(calls) == 1
+
+
+def test_contract_change_during_handshake_prevents_tool_execution(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS)
+
+    class Session:
+        async def list_tools(self):
+            _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS + ["new_tool"])
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in REQUIRED_FIXTURE_TOOLS])
+
+        async def call_tool(self, *_args, **_kwargs):
+            pytest.fail("changed artifact must not execute")
+
+    @asynccontextmanager
+    async def session(_server):
+        yield Session()
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    with pytest.raises(continuity_fallback.FallbackContractError, match="contract_changed"):
+        continuity_fallback.invoke_configured_tool(
+            tool="health_check", arguments={}, config_path=config, project_root=tmp_path / "repo")
+
+
+def test_ci_collects_fallback_and_public_evidence_safety_regressions():
+    cases = json.loads((ROOT / "config/evaluation/cases.json").read_text(encoding="utf-8"))["cases"]
+    auto_nodes = {node for case in cases if case["auto"] and case["executor"] == "pytest" for node in case["nodes"]}
+    assert "tests/test_continuity_fallback.py" in auto_nodes
+    assert "tests/test_public_evidence_urls.py" in auto_nodes
+
+
+def test_business_error_inside_successful_mcp_envelope_is_not_success(tmp_path, monkeypatch):
+    config = _config(tmp_path)
+    _contract(tmp_path / "repo", REQUIRED_FIXTURE_TOOLS)
+
+    class Session:
+        async def list_tools(self):
+            return SimpleNamespace(tools=[SimpleNamespace(name=n) for n in REQUIRED_FIXTURE_TOOLS])
+
+        async def call_tool(self, *_args, **_kwargs):
+            return {"isError": False, "structuredContent": {
+                "result": {"status": "error", "error": {"code": "runtime_busy"}}}}
+
+    @asynccontextmanager
+    async def session(_server):
+        yield Session()
+
+    monkeypatch.setattr(continuity_fallback, "_configured_session", session)
+    result = continuity_fallback.invoke_configured_tool(
+        tool="health_check", arguments={}, config_path=config, project_root=tmp_path / "repo")
+    assert result["mcp_call_status"] == "error"

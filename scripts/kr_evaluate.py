@@ -125,9 +125,10 @@ def main(argv=None):
                 result = review_candidate(candidate_store, args.candidate_id, case=args.case, reviewer=args.reviewer,
                        reason=args.reason, input_sha256=args.input_sha256, oracle_version=args.oracle_version)
         elif args.command == "ci":
-            from scripts.kr_eval.ci import docs_only_change, run_ci
+            from scripts.kr_eval.ci import docs_only_change, run_ci, run_documentation_checks
             if docs_only_change(root, args.changed_from):
-                result = {"status": "NO_EXECUTION", "reason": "documentation_only_change", "baseline_changed": False}
+                result = run_documentation_checks(root)
+                exit_code = int(result["status"] != "PASS")
                 write_new(ledger.path / "ci-scope.json", result)
             else:
                 result, passed = run_ci(root, suite, ledger, args.extra_node)

@@ -18,27 +18,29 @@ KnowledgeRadar 不会要求你在第一次安装时配置所有服务。核心�
 | 按需能力 | 下载到哪里 | 何时需要 | 不会做什么 |
 | --- | --- | --- | --- |
 | Playwright Chromium | 网页采集与自动化 | 动态网页或受支持的浏览器流程 | 不自动登录、不调用付费 API。 |
-| 小红书诊断 bridge | 平台账号与浏览器协作 | 需要本地 bridge 诊断时 | 需要 Node.js/npm；不登录、不绕过验证码、不自动变成生产兜底；完成后需刷新或重启 Codex。 |
+| 小红书日常浏览器连接 | 当前数据根的 OpenCLI 依赖与无密钥绑定 | 小红书搜索、正文、评论和媒体发现 | 需要 Node.js、日常 Chrome 与本人确认扩展权限；单账号，不复制 Cookie、不关闭日常浏览器。 |
 | 媒体下载器 | 本地媒体理解与转写 | 需要获取公开音视频时 | 仅在控制台确认后安装；实际任务仍遵守内容访问规则。 |
 | 本地语音转写（0.6B） | 本地媒体理解与转写 | 无字幕且需要转写时 | Qwen3-ASR 0.6B 运行时与固定版本权重统一安装；任务结束后退出。 |
 
-Chrome、Node.js/npm、FFmpeg 不再单独归入“电脑已有软件”：它们分别显示在平台账号或本地媒体处理功能内，提供官方安装引导和重新检测。组件页不再列出 Camoufox、FunASR、sherpa-onnx 或其他实验模型。Office 解析使用无模型 Docling；扫描件和图片文字使用本地 PaddleOCR-VL-1.6。它们与语音转写共用一个计算名额，不同时加载。云端图片与音视频理解仅配置百炼 Omni。
+Chrome、Node.js/npm、FFmpeg 不再单独归入“电脑已有软件”：它们分别显示在平台账号或本地媒体处理功能内，提供官方安装引导和重新检测。组件页不再列出 Camoufox、FunASR、sherpa-onnx 或其他实验模型。Office 解析使用无模型 Docling；扫描件和图片文字默认上传硅基流动 PaddleOCR-VL 1.5；云端失败不自动转 CPU。本地可选组件仅语音转写和 Office 解析，共用一个计算名额。云端图文语义与音视频理解继续使用百炼 Omni。
 
 仍可手动使用安装器：先运行 `capability-plan`，确认网络、登录、费用和重启边界，再将本次返回的令牌传给 `capability-apply`。令牌只对当前版本与数据根的当前计划有效。
 
 ```bat
 python scripts\product_install.py capability-plan --capability browser
 python scripts\product_install.py capability-apply --capability browser --confirmation <plan 中的 confirmation_token>
-python scripts\product_install.py capability-plan --capability xhs_bridge
-python scripts\product_install.py capability-apply --capability xhs_bridge --confirmation <plan 中的 confirmation_token>
 ```
 
+小红书不再使用上面的旧 bridge 安装入口。维护者先用 `python scripts/kr_opencli.py prepare --source-root <已审查的OpenCLI构建>` 准备固定版本，再运行 `start` 和 `inventory`；本人在日常 Chrome 启用官方扩展后，用 `bind --browser chrome --context-id <核对的context>` 绑定。`status` 只读检查连接。当前准备入口要求已有受审查构建，不提供从任意 npm 版本自动下载或静默安装扩展；扩展在线也不等于账号已登录。
+
 ## 本地健康台
+
+学术检索保留现有 `search_academic` 入口。中文任务会纳入国家科技期刊平台开放获取库（`napstic_oa`），无需注册或 Key 即可检索论文元数据和摘要；全文下载按原站登录与授权要求处理。Semantic Scholar 已有适配及本地 Key 配置入口，配置获批 Key 后参与按需补查；未配置时其他公开学术来源仍可使用，匿名调用可能限流。
 
 Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 兼容）后，浏览器中的固定本地页面会显示：
 
 - 哪些能力包已具备最小配置；
-- 哪些浏览器或 bridge 依赖已经按需安装，并在二次确认后安装它们；
+- 哪些浏览器组件已准备、小红书日常 Chrome 是否连接，以及各自的安装引导；
 - 产品数据根的分类空间摘要；
 - 只针对已过期媒体缓存的可恢复隔离操作。
 

@@ -3,19 +3,25 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from runtime.recruitment_fusion import fuse_recruitment_results
 from runtime.recruitment_sources import recruitment_source_capability
-from kr_core.collection import format_search_error, format_search_response
+from runtime.recruitment_collection import format_search_error, format_search_response
 
 ROOT = Path(__file__).resolve().parents[1]
-PROBE_SPEC = importlib.util.spec_from_file_location(
-    "kr_recruitment_fusion_probe",
-    ROOT / "scripts" / "kr_recruitment_fusion_probe.py",
+PROBE_PATH = ROOT / "scripts" / "kr_recruitment_fusion_probe.py"
+recruitment_fusion_probe = None
+if PROBE_PATH.is_file():
+    PROBE_SPEC = importlib.util.spec_from_file_location("kr_recruitment_fusion_probe", PROBE_PATH)
+    assert PROBE_SPEC is not None and PROBE_SPEC.loader is not None
+    recruitment_fusion_probe = importlib.util.module_from_spec(PROBE_SPEC)
+    PROBE_SPEC.loader.exec_module(recruitment_fusion_probe)
+
+requires_private_probe = pytest.mark.skipif(
+    recruitment_fusion_probe is None,
+    reason="public checkout does not distribute the private developer fusion probe",
 )
-assert PROBE_SPEC is not None
-recruitment_fusion_probe = importlib.util.module_from_spec(PROBE_SPEC)
-assert PROBE_SPEC.loader is not None
-PROBE_SPEC.loader.exec_module(recruitment_fusion_probe)
 
 
 def test_recruitment_fusion_deduplicates_cross_platform_candidates() -> None:
@@ -214,8 +220,8 @@ def test_recruitment_source_capability_registry_defines_platform_boundaries() ->
     assert v2ex.source_type == "community_job_board"
     assert list(v2ex.native_outputs) == ["community_topic"]
     assert v2ex.claim_policy.market_claim_allowed is False
-    assert maimai.source_type == "open_web_signal"
-    assert list(maimai.native_outputs) == ["open_web_candidate"]
+    assert maimai.source_type == "community_discussion"
+    assert list(maimai.native_outputs) == ["community_topic"]
 
 
 def test_recruitment_fusion_records_source_aware_empty_sources() -> None:
@@ -232,7 +238,7 @@ def test_recruitment_fusion_records_source_aware_empty_sources() -> None:
         "v2ex": "valid_no_match_for_source_type",
     }
     assert boundary_types == {
-        "maimai": "open_web_signal",
+        "maimai": "community_discussion",
         "v2ex": "community_job_board",
     }
 
@@ -260,6 +266,7 @@ def test_recruitment_fusion_marks_non_structured_sources_as_weak_signals() -> No
     assert item["salary_claim_allowed"] is False
 
 
+@requires_private_probe
 def test_recruitment_fusion_probe_runs_fixture() -> None:
     fixture = Path(__file__).parent / "fixtures" / "recruitment_fusion_sample.json"
 
@@ -289,6 +296,7 @@ def test_recruitment_fusion_probe_runs_fixture() -> None:
     assert result["fusion"]["items"][0]["fusion_score"] > result["fusion"]["items"][1]["fusion_score"]
 
 
+@requires_private_probe
 def test_recruitment_live_probe_requires_env_before_external_search(monkeypatch) -> None:
     monkeypatch.delenv("KR_RECRUITMENT_LIVE_PROBE", raising=False)
     calls: list[dict[str, object]] = []
@@ -313,6 +321,7 @@ def test_recruitment_live_probe_requires_env_before_external_search(monkeypatch)
     assert result["fusion"]["degraded_sources"][0]["reason"] == "empty_results_requires_failure_classification"
 
 
+@requires_private_probe
 def test_recruitment_live_probe_default_covers_all_platforms(monkeypatch) -> None:
     monkeypatch.delenv("KR_RECRUITMENT_LIVE_PROBE", raising=False)
 
@@ -330,6 +339,7 @@ def test_recruitment_live_probe_default_covers_all_platforms(monkeypatch) -> Non
     assert [item["platform"] for item in result["fusion"]["source_boundaries"]] == ["maimai", "v2ex"]
 
 
+@requires_private_probe
 def test_recruitment_live_probe_feeds_injected_provider_results_into_fusion(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_RECRUITMENT_LIVE_PROBE", "1")
     monkeypatch.setenv("KR_TASK_DB_PATH", str(tmp_path / "gate.sqlite3"))
@@ -368,6 +378,7 @@ def test_recruitment_live_probe_feeds_injected_provider_results_into_fusion(monk
     assert result["fusion"]["items"][0]["fusion"]["platform_provenance"] == ["boss", "liepin"]
 
 
+@requires_private_probe
 def test_recruitment_live_probe_passes_scope_to_gate_and_records(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_RECRUITMENT_LIVE_PROBE", "1")
     monkeypatch.setenv("KR_TASK_DB_PATH", str(tmp_path / "gate.sqlite3"))
@@ -412,6 +423,7 @@ def test_recruitment_live_probe_passes_scope_to_gate_and_records(monkeypatch, tm
     ]
 
 
+@requires_private_probe
 def test_recruitment_live_probe_treats_v2ex_empty_as_source_boundary(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_RECRUITMENT_LIVE_PROBE", "1")
     monkeypatch.setenv("KR_TASK_DB_PATH", str(tmp_path / "gate.sqlite3"))
@@ -448,6 +460,7 @@ def test_recruitment_live_probe_treats_v2ex_empty_as_source_boundary(monkeypatch
     ]
 
 
+@requires_private_probe
 def test_recruitment_probe_extracts_structured_error_type() -> None:
     items, reason = recruitment_fusion_probe._extract_provider_items(
         {
@@ -463,6 +476,7 @@ def test_recruitment_probe_extracts_structured_error_type() -> None:
     assert reason == "city_mismatch"
 
 
+@requires_private_probe
 def test_recruitment_probe_overrides_degraded_source_reason_from_events() -> None:
     result = recruitment_fusion_probe._build_fusion_payload(
         {"liepin": []},

@@ -7,28 +7,21 @@
   层3: 精品通道 - 千问多模态深度视频理解 (仅在 FULL_ANALYSIS 时触发)
 
 依赖:
-  - httpx、yt-dlp；本地转写由隔离 Qwen3-ASR 组件承担
-  - ffmpeg (通过 pyffmpeg 安装至 ~/.pyffmpeg/bin)
+  - 已获取的本地媒体／带PTS的帧；PyAV同进程解码，模型由公共执行器承担
   - 多模态 L2: 百炼 Qwen3.8-Omni-Flash
   - 文本评分/摘要: Bailian text model
 """
 
-import base64
 import json
 import logging
 import os
 import re
-from runtime.process import silent_subprocess_run
-import tempfile
 import time
 from dataclasses import dataclass, field, asdict
 from typing import Dict, List, Optional, Tuple
 
 
-from runtime.dependency_preflight import _ffmpeg_path
-from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 from runtime.paths import resolve_runtime_media_file
-from runtime.proxy_config import get_yt_dlp_proxy
 
 # ─── 日志 ──────────────────────────────────────────────────────────────
 logging.basicConfig(level=logging.INFO, format="[video_processor] %(message)s")
@@ -40,7 +33,6 @@ SUMMARIZE_THRESHOLD_CHARS = 3000       # transcript 摘要阈值
 MAX_FRAMES = 8                          # 多模态分析最大帧数
 FRAME_INTERVAL_SEC = 15                 # 帧提取间隔（秒）
 
-FFMPEG_PATH = _ffmpeg_path() or "ffmpeg"
 
 
 # ─── 数据结构 ──────────────────────────────────────────────────────────
@@ -55,6 +47,8 @@ class VideoInfo:
     duration_seconds: int = 0
     video_url: str = ""                  # 原始视频URL（如B站地址）
     video_path: str = ""                 # 本地视频文件路径（如有缓存）
+
+    frame_samples: List[Dict] = field(default_factory=list)
 
     @property
     def transcript_chars(self) -> int:
@@ -89,6 +83,27 @@ class ProcessingResult:
 
 # ─── LLM 文本调用层 ───────────────────────────────────────────────────
 
+def _completed_call(request, invoke):
+    """复用已完成模型步骤；等待后续资源时不再次发送已付费请求。"""
+    import hashlib
+    from pathlib import Path
+    from runtime.operation_checkpoint import OperationCheckpoint
+    from runtime.media_cache import media_cache_subdir
+    from runtime.optional_media import file_sha
+    from runtime.execution_context import check_execution, execution_value
+    check_execution()
+    identity = {'input_sha256': hashlib.sha256(json.dumps(request, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
+                'implementation': file_sha(Path(__file__)), 'scope': execution_value('KR_PAID_TASK_SCOPE', '')}
+    checkpoint = OperationCheckpoint(media_cache_subdir('video_model_calls'), identity, identity)
+    saved = checkpoint.read()
+    if saved.get('response'):
+        return tuple(saved['response'])
+    response = invoke()
+    check_execution()
+    checkpoint.write({'response': response})
+    return response
+
+
 def _call_llm(
     system_prompt: str,
     user_prompt: str,
@@ -109,7 +124,8 @@ def _call_llm(
             log.warning("[provider] skip blocked model %s", model)
             continue
         try:
-            return call_text_model(
+            return _completed_call({'kind': 'text', 'model': model, 'system': system_prompt, 'prompt': user_prompt,
+                                    'temperature': temperature, 'max_tokens': max_tokens}, lambda: call_text_model(
                 model=model,
                 system_prompt=system_prompt,
                 user_prompt=user_prompt,
@@ -117,7 +133,7 @@ def _call_llm(
                 max_tokens=max_tokens,
                 timeout=120,
                 capability="video_text_analysis",
-            )[:2]
+            )[:2])
         except Exception as exc:
             last_error = exc
             log.warning("[provider] text model %s failed: %s", model, classify_provider_error(exc)["failure_class"])
@@ -146,14 +162,15 @@ def _call_multimodal(
     if contract["status"] == "blocked_model":
         raise RuntimeError(f"Blocked media model: {model}")
     try:
-        return call_frame_images_model(
+        return _completed_call({'kind': 'frames', 'model': model, 'system': system_prompt, 'prompt': user_text,
+                                'images': images_base64, 'max_tokens': max_tokens}, lambda: call_frame_images_model(
             images_base64,
             model=model,
             prompt=user_text,
             system_prompt=system_prompt,
             max_tokens=max_tokens,
             timeout=300,
-        )[:2]
+        )[:2])
     except Exception as exc:
         log.warning("[provider] frame model %s failed: %s", model, classify_provider_error(exc)["failure_class"])
         raise
@@ -193,150 +210,8 @@ def _extract_json(text: str) -> dict:
 # ─── 视频帧提取 ─────────────────────────────────────────────────────
 
 def _extract_frames(video_path: str, max_frames: int = MAX_FRAMES) -> List[str]:
-    """从视频提取关键帧，返回 base64 列表"""
-    if not os.path.exists(video_path):
-        raise FileNotFoundError(f"Video not found: {video_path}")
-
-    with tempfile.TemporaryDirectory() as tmpdir:
-        pattern = os.path.join(tmpdir, "frame_%03d.jpg")
-        cmd = [
-            FFMPEG_PATH, "-i", video_path,
-            "-vf", f"fps=1/{FRAME_INTERVAL_SEC},scale=640:-1",
-            "-q:v", "2", "-y", pattern,
-        ]
-        silent_subprocess_run(
-            cmd,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=120,
-        )
-
-        frames = sorted(os.listdir(tmpdir))
-        if not frames:
-            # 视频太短，尝试截取第一帧
-            single = os.path.join(tmpdir, "single.jpg")
-            silent_subprocess_run(
-                [FFMPEG_PATH, "-i", video_path, "-vframes", "1", "-q:v", "2", "-y", single],
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=30,
-            )
-            frames = sorted(os.listdir(tmpdir))
-
-        # 限制帧数，均匀采样
-        selected = frames[:max_frames]
-        # 如果帧数超过 max_frames，均匀采样
-        if len(frames) > max_frames:
-            indices = [int(i * len(frames) / max_frames) for i in range(max_frames)]
-            selected = [frames[i] for i in indices]
-
-        result = []
-        for fname in selected:
-            fpath = os.path.join(tmpdir, fname)
-            with open(fpath, "rb") as f:
-                b64 = base64.b64encode(f.read()).decode()
-            result.append(b64)
-
-        log.info(f"[frames] Extracted {len(result)} frames from {os.path.basename(video_path)}")
-        return result
-
-
-# ─── 下载B站视频 ─────────────────────────────────────────────────────
-
-def _download_bilibili_video(bvid: str, output_dir: str) -> str:
-    """通过 yt-dlp 下载 B 站视频画面流，返回 mp4 文件路径"""
-    from yt_dlp import YoutubeDL
-
-    os.makedirs(output_dir, exist_ok=True)
-    out_path = os.path.join(output_dir, f"{bvid}_video.mp4")
-    url = f"https://www.bilibili.com/video/{bvid}"
-
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
-        log.info(f"[download] Video already cached: {out_path}")
-        record_media_cache_entry(out_path, kind="video", content_id=bvid, source_url=url)
-        return out_path
-
-    ydl_opts = {
-        "format": "bv[ext=mp4]/bv",
-        "outtmpl": out_path,
-        "noplaylist": True,
-        "playlist_items": "1",
-        "socket_timeout": 30,
-        "retries": 1,
-        "fragment_retries": 1,
-        "http_headers": {
-            "Origin": "https://www.bilibili.com",
-            "Referer": "https://www.bilibili.com/",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-        },
-        "quiet": True,
-        "no_warnings": True,
-    }
-    proxy = get_yt_dlp_proxy()
-    if proxy:
-        ydl_opts["proxy"] = proxy
-    with YoutubeDL(ydl_opts) as ydl:
-        ydl.extract_info(url, download=True)
-
-    if not os.path.exists(out_path) or os.path.getsize(out_path) < 1024:
-        raise RuntimeError(f"Failed to download video: {out_path}")
-
-    record_media_cache_entry(out_path, kind="video", content_id=bvid, source_url=url)
-    log.info(f"[download] Video saved: {out_path} ({os.path.getsize(out_path)//1024}KB)")
-    return out_path
-
-
-def _download_generic_video(video_url: str, output_dir: str, video_key: str) -> str:
-    """Download a low-resolution video stream for frame extraction."""
-    from yt_dlp import YoutubeDL
-
-    os.makedirs(output_dir, exist_ok=True)
-    safe_key = re.sub(r"[^a-zA-Z0-9_.-]+", "_", video_key).strip("_") or "video"
-    out_path = os.path.join(output_dir, f"{safe_key}_video.mp4")
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
-        log.info(f"[download] Video already cached: {out_path}")
-        record_media_cache_entry(out_path, kind="video", content_id=safe_key, source_url=video_url)
-        return out_path
-
-    proxy = get_yt_dlp_proxy()
-    ydl_opts = {
-        "format": "bestvideo[height<=360][ext=mp4]+bestaudio[ext=m4a]/best[height<=360][ext=mp4]/worst[ext=mp4]/worst",
-        "outtmpl": out_path,
-        "merge_output_format": "mp4",
-        "quiet": True,
-        "no_warnings": True,
-        "socket_timeout": 30,
-        "retries": 1,
-        "fragment_retries": 1,
-        "noplaylist": True,
-    }
-    if proxy:
-        ydl_opts["proxy"] = proxy
-
-    with YoutubeDL(ydl_opts) as ydl:
-        ydl.extract_info(video_url, download=True)
-
-    if os.path.exists(out_path) and os.path.getsize(out_path) > 1024:
-        record_media_cache_entry(out_path, kind="video", content_id=safe_key, source_url=video_url)
-        log.info(f"[download] Video saved: {out_path} ({os.path.getsize(out_path)//1024}KB)")
-        return out_path
-
-    candidates = [
-        os.path.join(output_dir, name)
-        for name in os.listdir(output_dir)
-        if name.startswith(f"{safe_key}_video.") and os.path.getsize(os.path.join(output_dir, name)) > 1024
-    ]
-    if candidates:
-        candidates.sort(key=os.path.getmtime, reverse=True)
-        record_media_cache_entry(candidates[0], kind="video", content_id=safe_key, source_url=video_url)
-        log.info(f"[download] Video saved: {candidates[0]} ({os.path.getsize(candidates[0])//1024}KB)")
-        return candidates[0]
-
-    raise RuntimeError(f"Failed to download video: {video_url}")
+    from runtime.media_decode import sample_frames
+    return [row['image_base64'] for row in sample_frames(video_path, max_frames=max_frames)]
 
 
 # ─── 阶段1: 长文本摘要 ──────────────────────────────────────────────
@@ -358,7 +233,7 @@ def _summarize(transcript: str, title: str) -> Tuple[str, str]:
     user_prompt = f"""视频标题：{title}
 
 转写文本（{len(transcript)}字符）：
-{transcript[:8000]}
+{transcript}
 
 请输出精炼摘要："""
 
@@ -370,10 +245,11 @@ def _summarize(transcript: str, title: str) -> Tuple[str, str]:
 def _score_density(
     title: str, description: str, summary: str, comments: List[Dict], is_summarized: bool,
 ) -> Tuple[int, str, str]:
-    comments_text = ""
-    for c in comments:
-        if c.get("verdict") == "keep":
-            comments_text += f"- {c['content'][:120]}\n"
+    from runtime.comments_view import comment_view
+    reading=comment_view(comments,query=title,limit=8)
+    comments_text = "\n".join(
+        f"- [{c.get('comment_id','snapshot')}] {c['content']}"
+        + ('【节选，完整评论可回查】' if c.get('content_is_excerpt') else '') for c in reading['items'])
     if not comments_text:
         comments_text = "（无有效评论）"
 
@@ -420,10 +296,10 @@ def _score_density(
 {description or "（无）"}
 
 ## 语音内容摘要
-{"【已摘要】" if is_summarized else "【原始转写】"}{summary[:5000]}
+{"【已摘要】" if is_summarized else "【原始转写】"}{summary}
 
-## 社区高价值评论（已过滤）
-{comments_text[:2000]}
+## 社区评论导航（程序选择的阅读优先级，非事实可信度，未显示原文仍可回查）
+{comments_text}
 
 请严格按JSON格式输出评分。"""
 
@@ -524,8 +400,8 @@ def deep_analyze_video(
     精品通道深度分析：用千问多模态模型理解视频画面+音频。
 
     流程:
-    1. 下载视频画面流（如未缓存）
-    2. 提取关键帧（base64）
+    1. 接收已获取的视频文件或采样帧
+    2. 必要时在本地文件中提取关键帧（base64）
     3. 调用百炼 Omni 多模态分析
        - 按唯一已选模型调用，失败返回明确缺口
        - 全部失败 → 抛异常
@@ -540,32 +416,13 @@ def deep_analyze_video(
     """
     t_start = time.time()
 
-    # ── 步骤1: 获取视频文件 ──
-    import re
-    bvid_match = re.search(r"BV[a-zA-Z0-9]+", video_info.title + " " + video_info.video_url)
-    bvid = bvid_match.group(0) if bvid_match else None
-    video_path = video_info.video_path
-
-    if not video_path and bvid:
-        log.info("[deep] Downloading video stream from Bilibili...")
-        data_dir = os.path.dirname(video_info.video_path) if video_info.video_path else \
-                   str(media_cache_subdir("video", content_id=bvid))
-        video_path = _download_bilibili_video(bvid, data_dir)
-    elif not video_path and video_info.video_url:
-        log.info("[deep] Downloading video stream from generic provider...")
-        video_key = re.sub(r"[^a-zA-Z0-9_.-]+", "_", video_info.video_url).strip("_")[-64:]
-        data_dir = os.path.dirname(video_info.video_path) if video_info.video_path else \
-                   str(media_cache_subdir("video", content_id=video_key))
-        video_path = _download_generic_video(video_info.video_url, data_dir, video_key)
-    elif not video_path:
-        raise ValueError("No video path or BVID available for deep analysis")
-
-    log.info(f"[deep] Video path: {video_path}")
-
-    # ── 步骤2: 提取关键帧 ──
-    log.info("[deep] Extracting key frames...")
-    frames = _extract_frames(video_path, max_frames=MAX_FRAMES)
-    log.info(f"[deep] {len(frames)} frames extracted")
+    samples = video_info.frame_samples
+    if not samples and video_info.video_path:
+        from runtime.media_decode import sample_frames
+        samples = sample_frames(video_info.video_path, max_frames=MAX_FRAMES)
+    if not samples:
+        raise ValueError('downloaded_video_or_frames_required')
+    frames = [row['image_base64'] for row in samples]
 
     # ── 步骤3: 调用多模态模型 ──
     system_prompt = """你是一个视频深度分析专家。请根据提供的视频截图画面和语音转写内容，输出结构化分析。
@@ -593,9 +450,9 @@ def deep_analyze_video(
 {video_info.description or "（无）"}
 
 ## 语音转写全文
-{video_info.transcript[:5000]}
+{summary}
 
-## 视频截图（共{len(frames)}张，每{FRAME_INTERVAL_SEC}秒一张）
+## 视频截图（共{len(frames)}张；采样PTS：{[row["pts_s"] for row in samples]}）
 请结合截图画面和语音转写内容，分析这个视频。
 
 请严格按JSON格式输出。"""
@@ -612,6 +469,7 @@ def deep_analyze_video(
         "model_used": model_label,
         "analysis_time_s": round(elapsed, 1),
         "frame_count": len(frames),
+        "frame_pts_s": [row["pts_s"] for row in samples],
         "core_summary": result.get("core_summary", ""),
         "key_steps": result.get("key_steps", []),
         "visual_information": result.get("visual_information", ""),
@@ -628,6 +486,7 @@ class VideoProcessor:
         self,
         video: VideoInfo,
         skip_deep: bool = False,
+        force_deep: bool = False,
     ) -> ProcessingResult:
         """
         完整三层处理流水线。
@@ -691,7 +550,7 @@ class VideoProcessor:
         )
 
         # ── 层3: 精品通道（仅在 FULL_ANALYSIS 时触发）──
-        if decision == "FULL_ANALYSIS" and not skip_deep:
+        if (decision == "FULL_ANALYSIS" or force_deep) and not skip_deep:
             self._log("层3-精品通道", "评分≥7，启动千问多模态深度分析...")
             try:
                 deep_result = deep_analyze_video(video, summary)

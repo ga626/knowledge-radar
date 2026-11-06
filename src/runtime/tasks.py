@@ -1,8 +1,11 @@
 """SQLite-backed runtime task registry for long-running understanding jobs."""
 
 from __future__ import annotations
+from runtime.research_storage import guarded_transaction
 
+from runtime.execution_context import execution_value
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 import json
 import os
@@ -19,6 +22,7 @@ from runtime.task_scope import SERVER_RUN_ID
 
 TASK_STATUSES = ("queued", "running", "waiting_for_user", "completed", "failed", "skipped", "cancelled", "interrupted")
 TERMINAL_STATUSES = ("completed", "failed", "skipped", "cancelled", "interrupted")
+_TASK_WRITERS = ContextVar("kr_task_writers", default={})
 
 
 def _default_runtime_dir() -> str:
@@ -26,7 +30,7 @@ def _default_runtime_dir() -> str:
 
 
 def default_task_db_path() -> str:
-    return os.environ.get("KR_TASK_DB_PATH") or os.path.join(_default_runtime_dir(), "knowledgeradar-tasks.sqlite3")
+    return execution_value("KR_TASK_DB_PATH") or os.path.join(_default_runtime_dir(), "knowledgeradar-tasks.sqlite3")
 
 
 def now_ts() -> float:
@@ -159,6 +163,9 @@ def _compact_fanin(metadata: Dict[str, Any]) -> Dict[str, Any]:
         "beam_size",
         "resource_kind",
         "limit",
+        "stage",
+        "phase",
+        "collection_available",
     )
     fanin: Dict[str, Any] = {}
     for name in allowed:
@@ -302,12 +309,26 @@ class TaskRecord:
 
 class TaskStore:
     def __init__(self, db_path: str | None = None):
-        self.db_path = db_path or default_task_db_path()
+        self.db_path = os.fspath(db_path or default_task_db_path())
         self._lock = threading.RLock()
         self._initialized = False
         self._wal_enabled = _env_bool("KR_TASK_DB_WAL", True)
         self._journal_mode = ""
 
+    def _writer_metadata(self, task_id, metadata=None):
+        writer = _TASK_WRITERS.get().get((str(Path(self.db_path).resolve()), task_id))
+        return {**(metadata or {}), **({"attempt_id": writer} if writer else {})}
+
+    @contextmanager
+    def writer_scope(self, task_id, attempt_id):
+        """旧生命周期回调也绑定启动代际；直接写同一个 TaskStore 时不能逃过 CAS。"""
+        token = _TASK_WRITERS.set({**_TASK_WRITERS.get(), (str(Path(self.db_path).resolve()), task_id): attempt_id})
+        try:
+            yield
+        finally:
+            _TASK_WRITERS.reset(token)
+
+    @guarded_transaction
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         os.makedirs(os.path.dirname(self.db_path), exist_ok=True)
@@ -369,6 +390,46 @@ class TaskStore:
                 conn.execute("CREATE INDEX IF NOT EXISTS idx_runtime_tasks_source_url ON runtime_tasks(source_url)")
             self._initialized = True
 
+    def _read_rows(self, sql, params=()):
+        """查询不建库、不迁移、不切换 journal；旧库缺少作用域列时读 metadata。"""
+        path = Path(self.db_path).resolve()
+        if not path.is_file():
+            return []
+        conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=10)
+        conn.row_factory = sqlite3.Row
+        try:
+            columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_tasks)")}
+            if not columns:
+                return []
+            if "error_code" not in columns:
+                sql = sql.replace("NULLIF(error_code, '')", "NULLIF('', '')")
+            for column in ("server_run_id", "work_scope_id", "task_scope_id", "source_url", "content_id"):
+                if column not in columns:
+                    sql = sql.replace(column + " = ?", "json_extract(metadata_json, '$." + column + "') = ?")
+            return conn.execute(sql, params).fetchall()
+        finally:
+            conn.close()
+
+    def record_result_association(self, task, recording):
+        """执行侧补记回执；只注记同一状态/产物，不能覆盖并发取消或新代际。"""
+        self.initialize()
+        expected = task.get("metadata") or {}
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT * FROM runtime_tasks WHERE task_id=?", (task["task_id"],)).fetchone()
+            if row is None:
+                return False
+            metadata = _json_loads(row["metadata_json"])
+            if row["status"] != task["status"] or row['result_path'] != task.get('result_path', '') or any(
+                metadata.get(key) != expected.get(key) for key in ("attempt_id", "execution_id", "artifact_sha256", "research_task_id")
+            ):
+                return False
+            metadata["research_recording"] = {**recording, "task_status": task["status"],
+                "artifact_sha256": expected.get("artifact_sha256", ""), "attempt_id": expected.get("attempt_id")}
+            conn.execute("UPDATE runtime_tasks SET metadata_json=? WHERE task_id=?",
+                         (_json_dumps(metadata), task["task_id"]))
+            return True
+
     def _ensure_column(self, conn: sqlite3.Connection, name: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_tasks)").fetchall()}
         if name not in columns:
@@ -388,7 +449,7 @@ class TaskStore:
     ) -> Dict:
         self.initialize()
         ts = now_ts()
-        metadata = dict(metadata or {})
+        metadata = self._writer_metadata(task_id, metadata)
         server_run_id = str(metadata.get("server_run_id") or SERVER_RUN_ID or "")
         work_scope_id = str(metadata.get("work_scope_id") or "")
         task_scope_id = str(metadata.get("task_scope_id") or "")
@@ -405,6 +466,13 @@ class TaskStore:
             metadata.setdefault("content_id", content_id)
         metadata_json = _json_dumps(metadata)
         with self._lock, self._connect() as conn:
+            writer = self._writer_metadata(task_id).get("attempt_id")
+            if writer:
+                conn.execute("BEGIN IMMEDIATE")
+                current = conn.execute("SELECT * FROM runtime_tasks WHERE task_id=?", (task_id,)).fetchone()
+                if current and (current["status"] in TERMINAL_STATUSES
+                                or _json_loads(current["metadata_json"]).get("attempt_id") != writer):
+                    return TaskRecord.from_row(current).to_dict()
             conn.execute(
                 """
                 INSERT INTO runtime_tasks (
@@ -496,8 +564,8 @@ class TaskStore:
     def mark_interrupted(self, task_id: str, reason: str = "worker_interrupted", metadata: Optional[Dict] = None) -> Dict:
         return self._mark(task_id, "interrupted", finished=True, error=reason, error_code="interrupted", metadata=metadata)
 
-    def mark_waiting_for_user(self, task_id: str, metadata: Optional[Dict] = None) -> Dict:
-        return self._mark(task_id, "waiting_for_user", metadata=metadata)
+    def mark_waiting_for_user(self, task_id: str, metadata: Optional[Dict] = None, result_path: str = "") -> Dict:
+        return self._mark(task_id, "waiting_for_user", metadata=metadata, result_path=result_path)
 
     def claim_queued(self, task_id: str, owner: Dict) -> bool:
         self.initialize()
@@ -506,9 +574,13 @@ class TaskStore:
             row = conn.execute("SELECT metadata_json FROM runtime_tasks WHERE task_id=? AND status='queued'", (task_id,)).fetchone()
             if not row:
                 return False
-            meta = {**_json_loads(row["metadata_json"]), **owner}
-            cur = conn.execute("UPDATE runtime_tasks SET status='running', started_at=?, updated_at=?, attempts=attempts+1, metadata_json=? WHERE task_id=? AND status='queued'",
-                               (now_ts(), now_ts(), _json_dumps(meta), task_id))
+            meta = _json_loads(row["metadata_json"])
+            if owner.get("attempt_id") and meta.get("attempt_id") not in {None, owner["attempt_id"]}:
+                return False
+            meta.update(owner)
+            meta.pop("waiting_resource", None)
+            cur = conn.execute("UPDATE runtime_tasks SET status='running', started_at=COALESCE(started_at, ?), updated_at=?, attempts=attempts+?, metadata_json=? WHERE task_id=? AND status='queued'",
+                               (now_ts(), now_ts(), 0 if owner.get("stage") == "enhancement" else 1, _json_dumps(meta), task_id))
             return cur.rowcount == 1
 
     def _mark(
@@ -522,14 +594,24 @@ class TaskStore:
         error_code: str = "",
         result_path: str = "",
         metadata: Optional[Dict] = None,
+        expected_updated_at: float | None = None,
     ) -> Dict:
         self.initialize()
+        metadata = self._writer_metadata(task_id, metadata)
         ts = now_ts()
-        current = self.get_task(task_id) or {}
-        merged_metadata = dict(current.get("metadata") or {})
-        if metadata:
-            merged_metadata.update(metadata)
         with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT status, metadata_json, updated_at FROM runtime_tasks WHERE task_id=?", (task_id,)).fetchone()
+            if expected_updated_at is not None and (not current or current["updated_at"] != expected_updated_at):
+                return self.get_task(task_id) or {}
+            merged_metadata = _json_loads(current["metadata_json"]) if current else {}
+            if current and metadata and (
+                any(key in metadata and merged_metadata.get(key) != metadata[key]
+                    for key in ("attempt_id", "execution_id"))
+                or (metadata.get("execution_id") and current["status"] != "running")
+            ):
+                return self.get_task(task_id) or {}
+            merged_metadata.update(metadata or {})
             conn.execute(
                 """
                 UPDATE runtime_tasks SET
@@ -563,6 +645,35 @@ class TaskStore:
             )
         return self.get_task(task_id) or {}
 
+    def queue_resource_wait(self, task_id: str, attempt_id: str, resource: str, *, execution_id: str = "") -> bool:
+        """保留阶段产物，CAS让出执行槽；取消和旧代际不能被重开。"""
+        self.initialize()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT metadata_json FROM runtime_tasks WHERE task_id=? AND status='running'", (task_id,)).fetchone()
+            meta = _json_loads(row["metadata_json"]) if row else {}
+            if not row or meta.get("attempt_id") != attempt_id or (execution_id and meta.get("execution_id") != execution_id):
+                return False
+            meta.update(phase="waiting_resource", waiting_resource=resource)
+            conn.execute("UPDATE runtime_tasks SET status='queued', updated_at=?, metadata_json=? WHERE task_id=? AND status='running'",
+                         (now_ts(), _json_dumps(meta), task_id))
+            return True
+
+    def queue_enhancement(self, task_id: str, attempt_id: str, *, result_path: str, artifact_sha256: str, execution_id: str = "") -> bool:
+        """同一任务提交基础产物并交接下一阶段；取消或旧尝试不能重开任务。"""
+        self.initialize()
+        with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT metadata_json FROM runtime_tasks WHERE task_id=? AND status='running'", (task_id,)).fetchone()
+            meta = _json_loads(row["metadata_json"]) if row else {}
+            if not row or meta.get("attempt_id") != attempt_id or (execution_id and meta.get("execution_id") != execution_id):
+                return False
+            meta.update(phase="enhancement_queued", stage="enhancement", artifact_sha256=artifact_sha256,
+                        artifact_execution_id=execution_id or meta.get('execution_id', ''), collection_available=True)
+            conn.execute("UPDATE runtime_tasks SET status='queued', result_path=?, updated_at=?, metadata_json=? WHERE task_id=? AND status='running'",
+                         (result_path, now_ts(), _json_dumps(meta), task_id))
+            return True
+
     def cancel_task(self, task_id: str, reason: str = "cancelled_by_request") -> Dict:
         return self.mark_cancelled(task_id, reason)
 
@@ -573,19 +684,42 @@ class TaskStore:
             return cur.rowcount > 0
 
     def get_task(self, task_id: str) -> Optional[Dict]:
-        self.initialize()
-        with self._lock, self._connect() as conn:
-            row = conn.execute("SELECT * FROM runtime_tasks WHERE task_id=?", (task_id,)).fetchone()
+        rows = self._read_rows("SELECT * FROM runtime_tasks WHERE task_id=?", (task_id,))
+        row = rows[0] if rows else None
         return TaskRecord.from_row(row).to_dict() if row else None
 
     def recent_tasks(self, limit: int = 20) -> list[Dict]:
-        self.initialize()
         limit = max(1, min(int(limit or 20), 200))
-        with self._lock, self._connect() as conn:
-            rows = conn.execute(
+        rows = self._read_rows(
                 "SELECT * FROM runtime_tasks ORDER BY updated_at DESC LIMIT ?",
                 (limit,),
-            ).fetchall()
+            )
+        return [TaskRecord.from_row(row).to_dict() for row in rows]
+
+    def managed_tasks(self, *, adapter: str = "", parent_task_id: str = "", statuses=(), recording_pending=False) -> list[Dict]:
+        """管理查询不受 UI 最近记录分页限制，避免恢复和取消漏掉旧任务。"""
+        if not adapter and not parent_task_id:
+            raise ValueError("task management query requires an owner")
+        clauses, args = [], []
+        for key, value in (("adapter", adapter), ("durable_parent_task_id", parent_task_id)):
+            if value:
+                clauses.append(f"json_extract(metadata_json, '$.{key}') = ?")
+                args.append(value)
+        if statuses:
+            clauses.append("status IN (" + ",".join("?" for _ in statuses) + ")")
+            args.extend(statuses)
+        if recording_pending:
+            clauses.append("COALESCE(NULLIF(json_extract(metadata_json, '$.research_task_id'), ''),"
+                           " json_extract(metadata_json, '$.research_recording.research_task_ids[0]'), '') != ''")
+            clauses.append("(json_extract(metadata_json, '$.research_recording.status') IS NULL"
+                           " OR json_extract(metadata_json, '$.research_recording.handoff_version') IS NOT 1"
+                           " OR json_extract(metadata_json, '$.research_recording.status') = 'recording_failed'"
+                           " OR json_extract(metadata_json, '$.research_recording.task_status') IS NOT status"
+                           " OR json_extract(metadata_json, '$.research_recording.attempt_id') IS NOT json_extract(metadata_json, '$.attempt_id')"
+                           " OR json_extract(metadata_json, '$.research_recording.artifact_sha256')"
+                           " IS NOT COALESCE(json_extract(metadata_json, '$.artifact_sha256'), ''))")
+        rows = self._read_rows("SELECT * FROM runtime_tasks WHERE " + " AND ".join(clauses)
+                              + " ORDER BY updated_at DESC", args)
         return [TaskRecord.from_row(row).to_dict() for row in rows]
 
     def _filter_task_list(
@@ -609,6 +743,20 @@ class TaskStore:
             ]
         return tasks
 
+    def _query_task_list(self, clauses, params, *, blocking_only, include_terminal, limit):
+        # 先过滤、后分页；机器汇合可显式取消分页，不能把未返回当成已完成。
+        if blocking_only:
+            clauses.append("json_extract(metadata_json, '$.blocks_final_report') = 1")
+        if not include_terminal:
+            clauses.append("status NOT IN (" + ",".join("?" for _ in TERMINAL_STATUSES) + ")")
+            params.extend(TERMINAL_STATUSES)
+        sql = "SELECT * FROM runtime_tasks WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC"
+        if limit is not None:
+            sql += " LIMIT ?"
+            params.append(max(1, min(int(limit or 100), 500)))
+        rows = self._read_rows(sql, tuple(params))
+        return [TaskRecord.from_row(row).to_dict() for row in rows]
+
     def tasks_for_scope(
         self,
         *,
@@ -617,15 +765,13 @@ class TaskStore:
         server_run_id: str = "",
         blocking_only: bool = False,
         include_terminal: bool = True,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[Dict]:
-        self.initialize()
         task_scope = str(task_scope_id or "").strip()
         work_scope = str(work_scope_id or "").strip()
         server_run = str(server_run_id or "").strip()
         if not (task_scope or work_scope or server_run):
             return []
-        limit = max(1, min(int(limit or 100), 500))
         clauses = []
         params: list[Any] = []
         if task_scope:
@@ -637,14 +783,9 @@ class TaskStore:
         if server_run:
             clauses.append("(server_run_id = ? OR json_extract(metadata_json, '$.server_run_id') = ?)")
             params.extend([server_run, server_run])
-        sql = "SELECT * FROM runtime_tasks WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC LIMIT ?"
-        params.append(limit)
-        with self._lock, self._connect() as conn:
-            rows = conn.execute(sql, tuple(params)).fetchall()
-        return self._filter_task_list(
-            [TaskRecord.from_row(row).to_dict() for row in rows],
+        return self._query_task_list(clauses, params,
             blocking_only=blocking_only,
-            include_terminal=include_terminal,
+            include_terminal=include_terminal, limit=limit,
         )
 
     def tasks_for_source(
@@ -654,14 +795,12 @@ class TaskStore:
         content_id: str = "",
         blocking_only: bool = False,
         include_terminal: bool = True,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[Dict]:
-        self.initialize()
         source = str(source_url or "").strip()
         content = str(content_id or "").strip()
         if not (source or content):
             return []
-        limit = max(1, min(int(limit or 100), 500))
         clauses = []
         params: list[Any] = []
         if source:
@@ -670,14 +809,9 @@ class TaskStore:
         if content:
             clauses.append("(content_id = ? OR json_extract(metadata_json, '$.content_id') = ?)")
             params.extend([content, content])
-        sql = "SELECT * FROM runtime_tasks WHERE " + " AND ".join(clauses) + " ORDER BY updated_at DESC LIMIT ?"
-        params.append(limit)
-        with self._lock, self._connect() as conn:
-            rows = conn.execute(sql, tuple(params)).fetchall()
-        return self._filter_task_list(
-            [TaskRecord.from_row(row).to_dict() for row in rows],
+        return self._query_task_list(clauses, params,
             blocking_only=blocking_only,
-            include_terminal=include_terminal,
+            include_terminal=include_terminal, limit=limit,
         )
 
     def wait_for_scope(
@@ -707,12 +841,14 @@ class TaskStore:
                     work_scope_id=work_scope_id,
                     blocking_only=blocking_only,
                     include_terminal=True,
+                    limit=None,
                 )
             return self.tasks_for_source(
                 source_url=source_url,
                 content_id=content_id,
                 blocking_only=blocking_only,
                 include_terminal=True,
+                limit=None,
             )
 
         while True:
@@ -720,7 +856,7 @@ class TaskStore:
             pending = [
                 task
                 for task in tasks
-                if str(task.get("status") or "") in {"queued", "running"}
+                if str(task.get("status") or "") not in TERMINAL_STATUSES
             ]
             elapsed = now_ts() - started
             if not pending or elapsed >= max_wait:
@@ -730,7 +866,7 @@ class TaskStore:
                     if str(task.get("status") or "") in TERMINAL_STATUSES
                 ]
                 failure_terminal = [
-                    task for task in terminal if str(task.get("status") or "") in {"failed", "cancelled", "skipped"}
+                    task for task in terminal if str(task.get("status") or "") != "completed"
                 ]
                 return {
                     "schema_version": "knowledgeradar-task-scope-wait/v1",
@@ -756,25 +892,13 @@ class TaskStore:
         *,
         blocking_only: bool = False,
         include_terminal: bool = True,
-        limit: int = 100,
+        limit: int | None = 100,
     ) -> list[Dict]:
-        self.initialize()
         session_id = str(research_session_id or "").strip()
         if not session_id:
             return []
-        limit = max(1, min(int(limit or 100), 500))
-        with self._lock, self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM runtime_tasks
-                WHERE json_extract(metadata_json, '$.research_session_id') = ?
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (session_id, limit),
-            ).fetchall()
-        tasks = [TaskRecord.from_row(row).to_dict() for row in rows]
-        return self._filter_task_list(tasks, blocking_only=blocking_only, include_terminal=include_terminal)
+        return self._query_task_list(["json_extract(metadata_json, '$.research_session_id') = ?"], [session_id],
+            blocking_only=blocking_only, include_terminal=include_terminal, limit=limit)
 
     def wait_for_session(
         self,
@@ -792,11 +916,12 @@ class TaskStore:
                 research_session_id,
                 blocking_only=blocking_only,
                 include_terminal=True,
+                limit=None,
             )
             pending = [
                 task
                 for task in tasks
-                if str(task.get("status") or "") in {"queued", "running"}
+                if str(task.get("status") or "") not in TERMINAL_STATUSES
             ]
             elapsed = now_ts() - started
             if not pending or elapsed >= max_wait:
@@ -806,7 +931,7 @@ class TaskStore:
                     if str(task.get("status") or "") in TERMINAL_STATUSES
                 ]
                 failure_terminal = [
-                    task for task in terminal if str(task.get("status") or "") in {"failed", "cancelled", "skipped"}
+                    task for task in terminal if str(task.get("status") or "") != "completed"
                 ]
                 return {
                     "schema_version": "knowledgeradar-task-session-wait/v1",
@@ -828,22 +953,28 @@ class TaskStore:
         running_seconds: int | None = None,
         queued_seconds: int | None = None,
         limit: int = 50,
+        unmanaged_only: bool = False,
     ) -> list[Dict]:
-        self.initialize()
         running_cutoff = now_ts() - float(running_seconds or DEFAULT_STALE_RUNNING_SECONDS)
         queued_cutoff = now_ts() - float(queued_seconds or DEFAULT_STALE_QUEUED_SECONDS)
         limit = max(1, min(int(limit or 50), 200))
-        with self._lock, self._connect() as conn:
-            rows = conn.execute(
+        owner_filter = ""
+        if unmanaged_only:
+            owner_filter = (" AND json_extract(metadata_json, '$.adapter') IS NOT 'durable_process'"
+                " AND NOT EXISTS (SELECT 1 FROM runtime_tasks parent"
+                " WHERE parent.task_id=json_extract(runtime_tasks.metadata_json, '$.durable_parent_task_id')"
+                " AND parent.status NOT IN ('completed','failed','cancelled','skipped','interrupted'))")
+        rows = self._read_rows(
                 """
                 SELECT * FROM runtime_tasks
-                WHERE (status = 'running' AND updated_at < ?)
-                   OR (status = 'queued' AND created_at < ?)
+                WHERE ((status = 'running' AND updated_at < ?)
+                   OR (status = 'queued' AND created_at < ?))
+                """ + owner_filter + """
                 ORDER BY updated_at ASC
                 LIMIT ?
                 """,
                 (running_cutoff, queued_cutoff, limit),
-            ).fetchall()
+            )
         return [TaskRecord.from_row(row).to_dict() for row in rows]
 
     def cleanup_stale_tasks(
@@ -858,22 +989,31 @@ class TaskStore:
             running_seconds=running_seconds,
             queued_seconds=queued_seconds,
             limit=limit,
+            unmanaged_only=True,
         )
         cleaned = []
         for task in stale:
             task_id = str(task.get("task_id") or "")
             if not task_id:
                 continue
-            cleaned.append(
-                self.mark_cancelled(
+            # 持久任务由自己的 deadline/owner 维护，不能被旧的年龄阈值取消。
+            metadata = task.get("metadata") or {}
+            if metadata.get("adapter") == "durable_process":
+                continue
+            parent = self.get_task(metadata.get("durable_parent_task_id", ""))
+            if parent and parent["status"] not in TERMINAL_STATUSES:
+                continue
+            updated = self._mark(
                     task_id,
-                    reason,
+                    "cancelled", finished=True, error=reason, error_code="cancelled",
+                    expected_updated_at=task["updated_at"],
                     metadata={
                         "cleanup_reason": reason,
                         "previous_status": task.get("status", ""),
                     },
                 )
-            )
+            if updated.get("status") == "cancelled" and updated.get("error") == reason:
+                cleaned.append(updated)
         return {
             "status": "ok",
             "cleaned_count": len(cleaned),
@@ -883,12 +1023,19 @@ class TaskStore:
 
     def heartbeat(self, task_id: str, metadata: Optional[Dict] = None) -> Dict:
         self.initialize()
+        metadata = self._writer_metadata(task_id, metadata)
         ts = now_ts()
-        current = self.get_task(task_id) or {}
-        merged_metadata = dict(current.get("metadata") or {})
-        if metadata:
-            merged_metadata.update(metadata)
         with self._lock, self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            current = conn.execute("SELECT status, metadata_json FROM runtime_tasks WHERE task_id=?", (task_id,)).fetchone()
+            merged_metadata = _json_loads(current["metadata_json"]) if current else {}
+            if current and metadata and (
+                any(key in metadata and merged_metadata.get(key) != metadata[key]
+                    for key in ("attempt_id", "execution_id"))
+                or (metadata.get("execution_id") and current["status"] != "running")
+            ):
+                return self.get_task(task_id) or {}
+            merged_metadata.update(metadata or {})
             conn.execute(
                 """
                 UPDATE runtime_tasks SET
@@ -901,42 +1048,43 @@ class TaskStore:
         return self.get_task(task_id) or {}
 
     def summary(self, recent_limit: int = 10) -> Dict:
-        self.initialize()
-        with self._lock, self._connect() as conn:
-            rows = conn.execute("SELECT status, COUNT(*) AS count FROM runtime_tasks GROUP BY status").fetchall()
-            platform_rows = conn.execute("SELECT platform, COUNT(*) AS count FROM runtime_tasks GROUP BY platform ORDER BY count DESC").fetchall()
-            type_rows = conn.execute("SELECT task_type, COUNT(*) AS count FROM runtime_tasks GROUP BY task_type ORDER BY count DESC").fetchall()
-            error_rows = conn.execute(
-                """
-                SELECT COALESCE(NULLIF(error_code, ''), 'unknown') AS error_code, COUNT(*) AS count
-                FROM runtime_tasks
-                WHERE status = 'failed'
-                GROUP BY COALESCE(NULLIF(error_code, ''), 'unknown')
-                ORDER BY count DESC
-                LIMIT 10
-                """
-            ).fetchall()
-            active_oldest = conn.execute(
-                """
-                SELECT MIN(COALESCE(started_at, created_at)) AS started
-                FROM runtime_tasks
-                WHERE status IN ('queued', 'running')
-                """
-            ).fetchone()["started"]
-            failed_rows = conn.execute(
-                """
-                SELECT * FROM runtime_tasks
-                WHERE status = 'failed'
-                ORDER BY updated_at DESC
-                LIMIT ?
-                """,
-                (max(1, min(int(recent_limit or 10), 20)),),
-            ).fetchall()
-            total = conn.execute("SELECT COUNT(*) AS count FROM runtime_tasks").fetchone()["count"]
-            recent_rows = conn.execute(
-                "SELECT * FROM runtime_tasks ORDER BY updated_at DESC LIMIT ?",
-                (max(1, min(int(recent_limit or 10), 50)),),
-            ).fetchall()
+        journal = self._read_rows("PRAGMA journal_mode")
+        rows = self._read_rows("SELECT status, COUNT(*) AS count FROM runtime_tasks GROUP BY status")
+        platform_rows = self._read_rows("SELECT platform, COUNT(*) AS count FROM runtime_tasks GROUP BY platform ORDER BY count DESC")
+        type_rows = self._read_rows("SELECT task_type, COUNT(*) AS count FROM runtime_tasks GROUP BY task_type ORDER BY count DESC")
+        error_rows = self._read_rows(
+            """
+            SELECT COALESCE(NULLIF(error_code, ''), 'unknown') AS error_code, COUNT(*) AS count
+            FROM runtime_tasks
+            WHERE status = 'failed'
+            GROUP BY COALESCE(NULLIF(error_code, ''), 'unknown')
+            ORDER BY count DESC
+            LIMIT 10
+            """
+        )
+        active_oldest = self._read_rows(
+            """
+            SELECT MIN(COALESCE(started_at, created_at)) AS started
+            FROM runtime_tasks
+            WHERE status IN ('queued', 'running')
+            """
+        )
+        failed_rows = self._read_rows(
+            """
+            SELECT * FROM runtime_tasks
+            WHERE status = 'failed'
+            ORDER BY updated_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(recent_limit or 10), 20)),),
+        )
+        active_oldest = active_oldest[0]["started"] if active_oldest else None
+        total = self._read_rows("SELECT COUNT(*) AS count FROM runtime_tasks")
+        total = total[0]["count"] if total else 0
+        recent_rows = self._read_rows(
+            "SELECT * FROM runtime_tasks ORDER BY updated_at DESC LIMIT ?",
+            (max(1, min(int(recent_limit or 10), 50)),),
+        )
         counts = {status: 0 for status in TASK_STATUSES}
         for row in rows:
             counts[row["status"]] = int(row["count"] or 0)
@@ -944,13 +1092,13 @@ class TaskStore:
         active_oldest_age_s = round(now_ts() - float(active_oldest), 3) if active_oldest else 0
         by_error_code = [{"error_code": row["error_code"] or "unknown", "count": int(row["count"] or 0)} for row in error_rows]
         return {
-            "status": "ok",
-            "detail": "SQLite task store 可读写",
+            "status": "ok" if journal else "not_initialized",
+            "detail": "SQLite task store 只读快照" if journal else "task store 尚未初始化",
             "db_path": self.db_path,
             "sqlite_policy": {
                 "schema": "knowledgeradar-runtime-sqlite-policy/v1",
                 "wal_requested": self._wal_enabled,
-                "journal_mode": self._journal_mode or "default",
+                "journal_mode": str(journal[0][0]) if journal else "uninitialized",
                 "timeout_s": 10,
             },
             "total": int(total or 0),
@@ -974,4 +1122,5 @@ _DEFAULT_STORE = TaskStore()
 
 
 def get_task_store() -> TaskStore:
-    return _DEFAULT_STORE
+    path = execution_value("KR_TASK_DB_PATH")
+    return TaskStore(path) if path and path != _DEFAULT_STORE.db_path else _DEFAULT_STORE

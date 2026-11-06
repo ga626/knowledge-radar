@@ -21,9 +21,8 @@ import httpx
 
 from .executables import managed_chrome_resolution_summary, resolve_managed_chrome
 from .process import silent_subprocess_popen, silent_subprocess_run
-from .profile_registry import account_pool_selection_summary, profile_registry_internal, raw_registry_for_platform, select_main_chain_profile
+from .profile_registry import profile_registry_internal, raw_registry_for_platform, select_main_chain_profile
 from .xhs_account_identity import identity_for_profile
-from .xhs_account_events import record_xhs_account_event
 from .browser_sessions import (
     browser_sessions_summary,
     manual_action_request_from_session,
@@ -46,37 +45,16 @@ MCP_TRANSPORT = os.environ.get("KR_MCP_TRANSPORT", "streamable-http").strip().lo
 # Dedicated runtime ports. XHS and Zhihu must not share one CDP port because
 # OpenClaw may call both tools concurrently with different persistent profiles.
 XHS_CHROME_DEBUG_PORT = os.environ.get("KR_XHS_CHROME_DEBUG_PORT") or os.environ.get("KR_CHROME_DEBUG_PORT", "12733")
-ZHIHU_CHROME_DEBUG_PORT = os.environ.get("KR_ZHIHU_CHROME_DEBUG_PORT", "12734")
 CHROME_DEBUG_PORT = XHS_CHROME_DEBUG_PORT
 CHROME_DEBUG_URL = f"http://127.0.0.1:{CHROME_DEBUG_PORT}"
 BROWSER_DATA_ROOT = os.path.join(str(browser_data_dir()), "browser_data")
 XHS_USER_DATA_DIR = os.path.join(BROWSER_DATA_ROOT, "xhs_user_data_dir")
-ZHIHU_USER_DATA_DIR = os.environ.get(
-    "KR_ZHIHU_USER_DATA_DIR",
-    os.path.join(str(browser_data_dir()), "profiles", "zhihu", "account_a"),
-)
 MANAGED_CHROME_USER_DATA_DIR = os.environ.get("KR_CHROME_USER_DATA_DIR", "")
 XHS_CHROME_USER_DATA_DIR = os.environ.get("KR_XHS_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_XHS", "")
-ZHIHU_CHROME_USER_DATA_DIR = os.environ.get("KR_ZHIHU_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_ZHIHU", "")
 MANAGED_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_CHROME_PROFILE_DIRECTORY", "Default")
 XHS_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_XHS_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_XHS", "")
-ZHIHU_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_ZHIHU_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_ZHIHU", "")
 XHS_STARTUP_URL = os.environ.get("KR_XHS_STARTUP_URL", "https://www.xiaohongshu.com/explore")
-ZHIHU_STARTUP_URL = os.environ.get("KR_ZHIHU_STARTUP_URL", "https://www.zhihu.com")
 
-# BOSS直聘专用配置（端口 12737，隔离试验）
-BOSS_CHROME_DEBUG_PORT = os.environ.get("KR_BOSS_CHROME_DEBUG_PORT", "12737")
-BOSS_USER_DATA_DIR = os.path.join(BROWSER_DATA_ROOT, "boss_user_data_dir")
-BOSS_CHROME_USER_DATA_DIR = os.environ.get("KR_BOSS_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_BOSS", "")
-BOSS_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_BOSS_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_BOSS", "")
-BOSS_STARTUP_URL = os.environ.get("KR_BOSS_STARTUP_URL", "https://www.zhipin.com/web/geek/jobs?city=101210100")
-BOSS_STEALTH_JS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "stealth.js")
-
-# 猎聘专用配置（端口 12738）
-LIEPIN_CHROME_DEBUG_PORT = os.environ.get("KR_LIEPIN_CHROME_DEBUG_PORT", "12738")
-LIEPIN_USER_DATA_DIR = os.path.join(BROWSER_DATA_ROOT, "liepin_user_data_dir")
-LIEPIN_CHROME_USER_DATA_DIR = os.environ.get("KR_LIEPIN_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_LIEPIN", "")
-LIEPIN_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_LIEPIN_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_LIEPIN", "")
 LIEPIN_STARTUP_URL = os.environ.get("KR_LIEPIN_STARTUP_URL", "https://www.liepin.com/zhaopin/?key=Python")
 
 # 智联招聘专用配置（端口 12749）
@@ -86,12 +64,7 @@ ZHILIAN_CHROME_USER_DATA_DIR = os.environ.get("KR_ZHILIAN_CHROME_USER_DATA_DIR")
 ZHILIAN_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_ZHILIAN_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_ZHILIAN", "")
 ZHILIAN_STARTUP_URL = os.environ.get("KR_ZHILIAN_STARTUP_URL", "https://sou.zhaopin.com/")
 
-# 脉脉专用配置（端口 12739）
-MAIMAI_CHROME_DEBUG_PORT = os.environ.get("KR_MAIMAI_CHROME_DEBUG_PORT", "12739")
-MAIMAI_USER_DATA_DIR = os.path.join(BROWSER_DATA_ROOT, "maimai_user_data_dir")
-MAIMAI_CHROME_USER_DATA_DIR = os.environ.get("KR_MAIMAI_CHROME_USER_DATA_DIR") or os.environ.get("KR_CHROME_USER_DATA_DIR_MAIMAI", "")
-MAIMAI_CHROME_PROFILE_DIRECTORY = os.environ.get("KR_MAIMAI_CHROME_PROFILE_DIRECTORY") or os.environ.get("KR_CHROME_PROFILE_DIRECTORY_MAIMAI", "")
-MAIMAI_STARTUP_URL = os.environ.get("KR_MAIMAI_STARTUP_URL", "https://maimai.cn/")
+MAIMAI_STARTUP_URL = os.environ.get("KR_MAIMAI_STARTUP_URL", "https://maimai.cn/community/home/recommended")
 
 # CNKI 授权浏览器专用配置（端口 12740）。只用于用户授权的只读元数据/引用导出流程。
 CNKI_CHROME_DEBUG_PORT = os.environ.get("KR_CNKI_CHROME_DEBUG_PORT", "12740")
@@ -121,24 +94,22 @@ STEALTH_CHROME_PLATFORMS = {
     for platform in os.environ.get("KR_STEALTH_CHROME_PLATFORMS", "").split(",")
     if platform.strip()
 }
-CORE_MANAGED_BROWSER_PLATFORMS = ("xhs", "zhihu", "boss", "liepin", "zhilian", "maimai", "cnki")
+RETIRED_BROWSER_PLATFORMS = {"zhilian", "coaj", "socolar"}
+BORROWED_BROWSER_PLATFORMS = {"boss", "liepin", "maimai", "zhihu"}
+CORE_MANAGED_BROWSER_PLATFORMS = ("cnki",)
 MANUAL_BROWSER_DEFAULT_PORTS = {
     "vip_oa": "12741",
-    "coaj": "12742",
     "ucdrs": "12743",
     "calis_thesis": "12744",
     "nstrs": "12745",
     "pubscholar": "12746",
-    "socolar": "12747",
 }
 MANUAL_BROWSER_STARTUP_URLS = {
     "vip_oa": "https://www.cqvip.com/search?k=ai",
-    "coaj": "https://www.coaj.cn/login",
     "ucdrs": "http://www.ucdrs.superlib.net/",
     "calis_thesis": "https://etd2.calis.edu.cn/",
     "nstrs": "https://www.nstrs.cn/cas",
     "pubscholar": "https://pubscholar.cn/",
-    "socolar": "https://www.socolar.com/",
 }
 MANAGED_BROWSER_PLATFORMS = CORE_MANAGED_BROWSER_PLATFORMS
 
@@ -153,10 +124,6 @@ MANUAL_BROWSER_AUTH_RULES = {
         "required_cookies": ("journalOA-token",),
         "cookie_domain_markers": ("cqvip.com", "fanyu.com"),
         "auth_state": "authenticated_with_journal_oa_token",
-    },
-    "coaj": {
-        "required_cookies": (),
-        "auth_state": "login_probe_not_configured",
     },
     "ucdrs": {
         "required_cookies": (),
@@ -174,11 +141,6 @@ MANUAL_BROWSER_AUTH_RULES = {
         "required_cookies": (),
         "required_local_storage_keys": ("x-finger", "client_finger"),
         "auth_state": "browser_fingerprint_session_present",
-    },
-    "socolar": {
-        "required_cookies": (),
-        "required_local_storage_keys": ("token", "refreshToken"),
-        "auth_state": "authenticated_with_socolar_token",
     },
 }
 
@@ -216,16 +178,10 @@ def _chrome_debug_port(platform: str = "xhs") -> str:
                 return os.environ.get("KR_XHS_ACCOUNT_B_CHROME_DEBUG_PORT", XHS_CHROME_DEBUG_PORT)
         return XHS_CHROME_DEBUG_PORT
     platform = base_platform
-    if platform == "zhihu":
-        return ZHIHU_CHROME_DEBUG_PORT
-    if platform == "boss":
-        return BOSS_CHROME_DEBUG_PORT
-    if platform == "liepin":
-        return LIEPIN_CHROME_DEBUG_PORT
+    if platform in BORROWED_BROWSER_PLATFORMS:
+        return ""  # borrowed: no managed CDP port
     if platform == "zhilian":
         return ZHILIAN_CHROME_DEBUG_PORT
-    if platform == "maimai":
-        return MAIMAI_CHROME_DEBUG_PORT
     if platform == "cnki":
         return CNKI_CHROME_DEBUG_PORT
     env_key = f"KR_{platform.upper()}_CHROME_DEBUG_PORT"
@@ -329,14 +285,14 @@ def _manual_profile_row_for_platform(platform: str) -> Dict:
 
 
 def _registered_browser_platforms() -> tuple[str, ...]:
-    platforms: list[str] = [*CORE_MANAGED_BROWSER_PLATFORMS, *MANUAL_BROWSER_DEFAULT_PORTS]
+    platforms: list[str] = [p for p in (*CORE_MANAGED_BROWSER_PLATFORMS, *MANUAL_BROWSER_DEFAULT_PORTS) if p not in RETIRED_BROWSER_PLATFORMS and p not in BORROWED_BROWSER_PLATFORMS]
     try:
         raw = (profile_registry_internal().get("raw") or {}).get("profiles") or []
         for row in raw:
             if not isinstance(row, dict):
                 continue
             platform = _browser_platform(str(row.get("platform") or ""))
-            if not platform:
+            if not platform or platform in RETIRED_BROWSER_PLATFORMS or platform in {"xhs", *BORROWED_BROWSER_PLATFORMS}:
                 continue
             is_browser_profile = bool(row.get("main_chain_allowed", False)) or str(row.get("channel_id") or "") == "authorized_browser_profile"
             is_browser_profile = is_browser_profile or str(row.get("browser_base") or "") in {"chrome_manual", "authorized_browser"}
@@ -359,8 +315,6 @@ def _startup_url_for_platform(platform: str) -> str:
         return os.environ[env_key]
     return {
         "xhs": XHS_STARTUP_URL,
-        "zhihu": ZHIHU_STARTUP_URL,
-        "boss": BOSS_STARTUP_URL,
         "liepin": LIEPIN_STARTUP_URL,
         "zhilian": ZHILIAN_STARTUP_URL,
         "maimai": MAIMAI_STARTUP_URL,
@@ -430,6 +384,8 @@ def _chrome_platform_lock(platform: str) -> threading.RLock:
 def _managed_chrome_profile_dir(platform: str = "xhs", *, target_profile_id: str = "") -> str:
     """Return the persistent Chrome profile for the requested platform."""
     platform, embedded_profile_id = _split_browser_resource(platform)
+    if platform in {"xhs", *BORROWED_BROWSER_PLATFORMS}:
+        return ""  # Daily browser belongs to the user, not the managed CDP pool.
     target_profile_id = target_profile_id or embedded_profile_id
     if target_profile_id:
         for row in raw_registry_for_platform(_registry_platform(platform)).get("profiles", []) or []:
@@ -456,53 +412,17 @@ def _managed_chrome_profile_dir(platform: str = "xhs", *, target_profile_id: str
         and os.environ.get("KR_XHS_FORCE_CHROME_USER_DATA_DIR", "0").strip().lower() in {"1", "true", "yes", "on"}
     ):
         return XHS_CHROME_USER_DATA_DIR
-    if platform == "zhihu" and ZHIHU_CHROME_USER_DATA_DIR:
-        return ZHIHU_CHROME_USER_DATA_DIR
-    if platform == "boss" and BOSS_CHROME_USER_DATA_DIR:
-        return BOSS_CHROME_USER_DATA_DIR
-    if platform == "liepin" and LIEPIN_CHROME_USER_DATA_DIR:
-        return LIEPIN_CHROME_USER_DATA_DIR
     if platform == "zhilian" and ZHILIAN_CHROME_USER_DATA_DIR:
         return ZHILIAN_CHROME_USER_DATA_DIR
-    if platform == "maimai" and MAIMAI_CHROME_USER_DATA_DIR:
-        return MAIMAI_CHROME_USER_DATA_DIR
     if platform == "cnki" and CNKI_CHROME_USER_DATA_DIR:
         return CNKI_CHROME_USER_DATA_DIR
     if MANAGED_CHROME_USER_DATA_DIR:
         return MANAGED_CHROME_USER_DATA_DIR
-    if platform == "xhs":
-        admitted = select_main_chain_profile("xiaohongshu")
-        if admitted.get("status") == "ok" and admitted.get("profile_dir"):
-            return str(admitted["profile_dir"])
-        selected = _select_xhs_account_pool_profile()
-        if selected:
-            return selected
-        if XHS_CHROME_USER_DATA_DIR:
-            return XHS_CHROME_USER_DATA_DIR
-        if os.environ.get("KR_XHS_ALLOW_LEGACY_PROFILE_FALLBACK", "0").strip().lower() not in {"1", "true", "yes", "on"}:
-            return ""
-    if platform == "zhihu":
-        admitted = select_main_chain_profile("zhihu")
-        if admitted.get("status") == "ok" and admitted.get("profile_dir"):
-            return str(admitted["profile_dir"])
-        return ZHIHU_USER_DATA_DIR
-    if platform == "boss":
-        admitted = select_main_chain_profile("boss")
-        if admitted.get("status") == "ok" and admitted.get("profile_dir"):
-            return str(admitted["profile_dir"])
-        return BOSS_USER_DATA_DIR
-    if platform == "liepin":
-        admitted = select_main_chain_profile("liepin")
-        if admitted.get("status") == "ok" and admitted.get("profile_dir"):
-            return str(admitted["profile_dir"])
-        return LIEPIN_USER_DATA_DIR
     if platform == "zhilian":
         admitted = select_main_chain_profile("zhilian")
         if admitted.get("status") == "ok" and admitted.get("profile_dir"):
             return str(admitted["profile_dir"])
         return ZHILIAN_USER_DATA_DIR
-    if platform == "maimai":
-        return MAIMAI_USER_DATA_DIR
     if platform == "cnki":
         admitted = select_main_chain_profile("cnki")
         if admitted.get("status") == "ok" and admitted.get("profile_dir"):
@@ -518,43 +438,19 @@ def _managed_chrome_profile_dir(platform: str = "xhs", *, target_profile_id: str
     return XHS_USER_DATA_DIR
 
 
-def _select_xhs_account_pool_profile() -> str:
-    try:
-        registry = profile_registry_internal()
-        selection = account_pool_selection_summary(platform="xiaohongshu", registry=registry)
-        recommended = str(selection.get("recommended_profile_id") or "")
-        if not recommended:
-            return ""
-        for profile in raw_registry_for_platform("xiaohongshu").get("profiles", []) or []:
-            if not isinstance(profile, dict):
-                continue
-            if str(profile.get("profile_id") or "") != recommended:
-                continue
-            profile_dir = str(profile.get("profile_dir") or "")
-            if profile_dir and os.path.isdir(os.path.abspath(os.path.expandvars(os.path.expanduser(profile_dir)))):
-                return profile_dir
-    except Exception as exc:
-        log.debug(f"XHS account-pool profile selection failed: {exc}")
-    return ""
 
 
 def _managed_chrome_profile_name(platform: str = "xhs") -> str:
     """Return Chrome's profile-directory name under the user-data-dir."""
+    if str(platform).split(":",1)[0] in BORROWED_BROWSER_PLATFORMS:
+        return ""
     env_specific = os.environ.get(f"KR_{_platform_env_name(platform)}_CHROME_PROFILE_DIRECTORY", "").strip()
     if env_specific:
         return env_specific
     if platform == "xhs" and XHS_CHROME_PROFILE_DIRECTORY:
         return XHS_CHROME_PROFILE_DIRECTORY
-    if platform == "zhihu" and ZHIHU_CHROME_PROFILE_DIRECTORY:
-        return ZHIHU_CHROME_PROFILE_DIRECTORY
-    if platform == "boss" and BOSS_CHROME_PROFILE_DIRECTORY:
-        return BOSS_CHROME_PROFILE_DIRECTORY
-    if platform == "liepin" and LIEPIN_CHROME_PROFILE_DIRECTORY:
-        return LIEPIN_CHROME_PROFILE_DIRECTORY
     if platform == "zhilian" and ZHILIAN_CHROME_PROFILE_DIRECTORY:
         return ZHILIAN_CHROME_PROFILE_DIRECTORY
-    if platform == "maimai" and MAIMAI_CHROME_PROFILE_DIRECTORY:
-        return MAIMAI_CHROME_PROFILE_DIRECTORY
     if platform == "cnki" and CNKI_CHROME_PROFILE_DIRECTORY:
         return CNKI_CHROME_PROFILE_DIRECTORY
     return MANAGED_CHROME_PROFILE_DIRECTORY or "Default"
@@ -597,6 +493,20 @@ def _cleanup_managed_chrome() -> None:
     _MANAGED_CHROME_OWNED_PIDS = set()
 
 
+def _managed_process_close_allowed(platform, pid, expected_profile=""):
+    from runtime.browser_channel import browser_resource_contract, may_close_process
+    from runtime.process_identity import process_identity
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu", "boss"} or not pid:
+        return False
+    actual = _chrome_user_data_dir_for_pid(pid)
+    expected = expected_profile or _managed_chrome_profile_dir(platform)
+    if not actual or not _same_windows_path(actual, expected):
+        return False
+    generation = process_identity(pid)
+    contract = browser_resource_contract(ownership="owned", resource_id=str(pid), generation=generation, driver="cdp")
+    return may_close_process(contract, process_identity(pid))
+
+
 def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str = "") -> None:
     """Close one managed Chrome instance while preserving the profile folder.
     
@@ -623,12 +533,6 @@ def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str
     if timer:
         timer.cancel()
     record_browser_event(platform, "cleanup_started", {"timer_cancelled": bool(timer)})
-    # 知乎平台清理时，同时取消会话刷新定时器
-    if platform == "zhihu":
-        global _zhihu_refresh_timer
-        if _zhihu_refresh_timer:
-            _zhihu_refresh_timer.cancel()
-            _zhihu_refresh_timer = None
     proc = _MANAGED_CHROME_PROCS.pop(platform, None)
     known_pid = _MANAGED_CHROME_PIDS.pop(platform, None)
     pid = _find_chrome_with_debug_port(platform) or known_pid
@@ -636,7 +540,7 @@ def _cleanup_managed_chrome_platform(platform: str, *, expected_profile_dir: str
         proc = None
     expected_profile = os.path.abspath(expected_profile_dir or _managed_chrome_profile_dir(platform)).lower()
     actual_profile = _chrome_user_data_dir_for_pid(pid).lower() if pid else ""
-    should_close = bool(pid and _same_windows_path(actual_profile, expected_profile))
+    should_close = bool(pid and _same_windows_path(actual_profile, expected_profile) and _managed_process_close_allowed(platform, pid, expected_profile))
     if should_close:
         profile_meta = _profile_metadata_for_platform(platform, profile_dir=actual_profile)
         set_browser_session_deadline(
@@ -778,25 +682,40 @@ def _schedule_chrome_idle_cleanup(
             log.info(f"Chrome 人工交互窗口等待明确完成或绝对到期: platform={platform}")
             return
         
-        with _chrome_platform_lock(platform):
-            pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
-            if not pid:
-                return
-            expected_profile = target_profile.lower()
-            actual_profile = _chrome_user_data_dir_for_pid(pid).lower()
-            if _same_windows_path(actual_profile, expected_profile):
-                log.info(f"Chrome 空闲超时，关闭受管实例: platform={platform}, pid={pid}")
-                _MANAGED_CHROME_PIDS[platform] = pid
-                _cleanup_managed_chrome_platform(platform, expected_profile_dir=target_profile)
-            else:
-                record_browser_event(
-                    platform,
-                    "idle_cleanup_skipped_profile_changed",
-                    {
-                        "expected_profile_hash": _profile_hash(target_profile),
-                        "actual_profile_hash": _profile_hash(actual_profile),
-                    },
-                )
+        # A worker's active counter lives in another process. Compete for its
+        # exact profile lease before cleanup, so a parent's old timer cannot
+        # close an in-flight child operation.
+        coordinator = get_runtime_lease_coordinator()
+        lease = coordinator.acquire_exclusive(
+            "browser_profile", _browser_profile_lease_key(platform, target_profile, target_meta),
+            owner=default_owner("chrome_idle_cleanup"), ttl_s=30,
+        )
+        if not lease.acquired:
+            record_browser_event(platform, "idle_cleanup_deferred_profile_lease", {})
+            _schedule_chrome_idle_cleanup(platform, profile_dir=target_profile)
+            return
+        try:
+            with _chrome_platform_lock(platform):
+                pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
+                if not pid:
+                    return
+                expected_profile = target_profile.lower()
+                actual_profile = _chrome_user_data_dir_for_pid(pid).lower()
+                if _same_windows_path(actual_profile, expected_profile):
+                    log.info(f"Chrome 空闲超时，关闭受管实例: platform={platform}, pid={pid}")
+                    _MANAGED_CHROME_PIDS[platform] = pid
+                    _cleanup_managed_chrome_platform(platform, expected_profile_dir=target_profile)
+                else:
+                    record_browser_event(
+                        platform,
+                        "idle_cleanup_skipped_profile_changed",
+                        {
+                            "expected_profile_hash": _profile_hash(target_profile),
+                            "actual_profile_hash": _profile_hash(actual_profile),
+                        },
+                    )
+        finally:
+            coordinator.release(lease.lease_id)
 
     set_browser_session_deadline(
         platform,
@@ -827,7 +746,7 @@ def restore_chrome_idle_cleanups() -> Dict[str, int]:
         if session.get("state") != "READY_SILENT":
             continue
         platform = str(session.get("platform") or "")
-        if not platform or platform in _CHROME_IDLE_TIMERS or _CHROME_KEEP_ALIVE.get(platform, False):
+        if not platform or platform.split(":", 1)[0] in {"xhs", *BORROWED_BROWSER_PLATFORMS} or platform in _CHROME_IDLE_TIMERS or _CHROME_KEEP_ALIVE.get(platform, False):
             continue
         pid = _MANAGED_CHROME_PIDS.get(platform) or _find_chrome_with_debug_port(platform)
         actual_profile = _chrome_user_data_dir_for_pid(pid) if pid else ""
@@ -847,6 +766,7 @@ def restore_chrome_idle_cleanups() -> Dict[str, int]:
         restored += 1
         overdue += int(deadline <= time.time())
     return {"restored": restored, "overdue": overdue}
+
 
 
 def reconcile_stale_xhs_manual_interactions() -> Dict[str, int]:
@@ -916,12 +836,8 @@ def finish_chrome_automation(platform: str, reason: str = "operation_end") -> No
         _schedule_chrome_idle_cleanup(platform)
 
 
-@contextmanager
-def chrome_active_operation(platform: str):
-    """Keep a managed Chrome instance alive while a platform operation is running."""
-    profile_dir = _managed_chrome_profile_dir(platform)
-    profile_meta = _profile_metadata_for_platform(platform)
-    lease_key = ":".join(
+def _browser_profile_lease_key(platform, profile_dir, profile_meta):
+    return ":".join(
         part
         for part in [
             str(platform or "unknown"),
@@ -932,12 +848,21 @@ def chrome_active_operation(platform: str):
         ]
         if part
     )
+
+
+@contextmanager
+def chrome_active_operation(platform: str):
+    """Keep a managed Chrome instance alive while a platform operation is running."""
+    platform = _browser_resource_key(platform)
+    profile_dir = _managed_chrome_profile_dir(platform)
+    profile_meta = _profile_metadata_for_platform(platform)
+    lease_key = _browser_profile_lease_key(platform, profile_dir, profile_meta)
     lease = get_runtime_lease_coordinator().acquire_exclusive(
         "browser_profile",
         lease_key,
         owner=default_owner("chrome_active_operation"),
-        ttl_s=max(60, _CHROME_IDLE_SECONDS + 60),
-        metadata={"platform": platform, "profile_id": profile_meta.get("profile_id", ""), "account_slot": profile_meta.get("account_slot", "")},
+        ttl_s=max(180, _CHROME_IDLE_SECONDS + 60),
+        metadata={"platform": platform, "profile_id": profile_meta.get("profile_id", ""), "account_slot": profile_meta.get("account_slot", ""), "ownership": "owned", "driver": "cdp"},
     )
     if not lease.acquired:
         raise RuntimeError(f"browser profile busy for {platform}; retry_after_s={lease.retry_after_s}")
@@ -1234,6 +1159,13 @@ def cancel_browser_interaction(
     It releases the coordination lease and records cancellation/expiry, but
     never marks a platform authenticated or replays the original search.
     """
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        if reason == "manual_interaction_expired":
+            return {"status": "waiting_for_user", "platform": str(platform).split(":", 1)[0]}
+        return _borrowed_browser_site(platform).cancel_login()
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
+        from runtime.xhs_opencli import cancel_login
+        return cancel_login()
     platform = _browser_resource_key(platform)
     if reason == "manual_interaction_expired":
         record_browser_event(platform, "manual_interaction_reminder_due", {"close_authorized": False})
@@ -1312,11 +1244,27 @@ def request_user_login(
     Returns:
         包含状态和提示信息的字典
     """
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        if str(reason or "").lower() in {"unknown", "degraded", "empty_results", "empty_detail", "collector_error"}:
+            return {"status": "blocked", "reason_code": "NO_MANUAL_ACTION_EVIDENCE"}
+        return _borrowed_browser_site(platform).request_login()
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
+        if str(reason or "").lower() in {"unknown", "degraded", "empty_results", "empty_detail", "collector_error"}:
+            return {"status": "blocked", "reason_code": "NO_MANUAL_ACTION_EVIDENCE"}
+        from runtime.xhs_opencli import request_login
+        return request_login()
     platform = _browser_platform(platform)
     base_platform, embedded_profile_id = _split_browser_resource(platform)
+    if base_platform in RETIRED_BROWSER_PLATFORMS:
+        return {"status": "unsupported", "platform": base_platform, "reason_code": "SOURCE_DISABLED",
+                "detail": "该来源已退出主动采集，不再启动登录或验证窗口。"}
     target_profile_id = target_profile_id or embedded_profile_id
     resource_key = _browser_resource_key(platform, target_profile_id)
     evidence = [str(item)[:160] for item in (trigger_evidence or []) if str(item).strip()]
+    if str(reason or "").lower() in {"unknown", "degraded", "empty_results", "empty_detail", "collector_error"}:
+        return {"status": "blocked", "validation_status": "EXPECTED_DEGRADED", "platform": base_platform,
+                "reason": reason, "reason_code": "NO_MANUAL_ACTION_EVIDENCE",
+                "detail": "采集异常或空结果不能证明需要登录，浏览器保持后台。"}
     # An automatic XHS prompt is safe only when it names one concrete profile
     # and carries direct platform evidence.  A stale platform-wide gate must
     # never choose an account or steal foreground focus on its own.
@@ -1524,13 +1472,6 @@ def request_user_login(
         event="user_login_waiting_for_user",
     )
     watcher = {}
-    if base_platform == "xhs" and profile_meta.get("profile_id"):
-        # The watcher observes this exact profile's CDP page.  It does not
-        # retry search or infer success from a QR/URL change; its auth probe is
-        # the only path that can auto-complete this interaction.
-        from .xhs_auth_watcher import start_xhs_auth_watcher
-
-        watcher = start_xhs_auth_watcher(str(profile_meta["profile_id"]))
     
     # 4. 返回提示信息，让调用方知道需要用户操作
     return {
@@ -1548,7 +1489,7 @@ def request_user_login(
         "action_required": "请在 Chrome 窗口中扫码登录",
         "next_step": (
             "扫码后系统会自动确认登录并收口；若需人工诊断，可调用 health_check(mode='browser_sessions')。"
-            if base_platform == "xhs"
+            if base_platform in {"xhs", "boss", "maimai"}
             else f"登录完成后，调用 health_check(mode='complete_browser_interaction:{base_platform}') 恢复普通浏览器生命周期"
         ),
         "auth_watcher": watcher,
@@ -1564,6 +1505,13 @@ def request_browser_interaction(
     source: str = "",
 ) -> Dict:
     """Start a durable human-interaction browser session for a platform."""
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        if str(reason or "").lower() in {"unknown", "degraded", "empty_results", "empty_detail", "collector_error"}:
+            return {"status": "blocked", "reason_code": "NO_MANUAL_ACTION_EVIDENCE"}
+        return _borrowed_browser_site(platform).request_login()
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
+        from runtime.xhs_opencli import request_login
+        return request_login()
     return request_user_login(
         platform,
         reason=reason,
@@ -1584,6 +1532,8 @@ def complete_user_login(platform: str, *, profile_id: str = "", profile_dir: str
     Returns:
         包含状态的字典
     """
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        return _borrowed_browser_site(platform).complete_login()
     platform = _browser_resource_key(platform, profile_id)
     log.info(f"用户登录完成: platform={platform}")
     _cancel_manual_interaction_expiry(platform)
@@ -1638,6 +1588,11 @@ def complete_browser_interaction(
     recovery_session: Optional[Dict] = None,
 ) -> Dict:
     """Mark a human-interaction browser session complete and restore silent mode."""
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        return _borrowed_browser_site(platform).complete_login()
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
+        from runtime.xhs_opencli import complete_login
+        return complete_login()
     pending = _pending_manual_interaction(_browser_resource_key(platform, profile_id))
     if profile_id and pending.get("profile_id") and profile_id != pending["profile_id"]:
         return {"status": "not_verified", "profile_id": profile_id, "reason": "pending_profile_mismatch"}
@@ -1684,36 +1639,7 @@ def complete_browser_interaction(
                 observe_account(profile_id or resource_key, platform, "auth_verified", source="complete_browser_interaction", reason="auth_probe_passed")
             result["manual_state_auto_recovered"] = True
             result["recovery_probe_status"] = probe_result.get("status")
-            # Browser-session recovery and XHS account-pool recovery are two
-            # different states.  Only bind them after a successful probe for
-            # the explicitly selected profile; never clear a risk state merely
-            # because a user closed a browser window.
-            if platform.strip().lower() in {"xhs", "xiaohongshu", "小红书"} and profile_id and not recovery_session:
-                account_recovery = record_xhs_account_event(
-                    profile_id,
-                    "OK",
-                    last_tool="complete_browser_interaction",
-                    notes=["authenticated_probe=true", "profile_bound=true"],
-                )
-                result["account_pool_recovery"] = {
-                    "status": account_recovery.get("status"),
-                    "profile_id": account_recovery.get("profile_id"),
-                    "state": account_recovery.get("state"),
-                }
-                # Delayed import avoids the failure-tag -> chrome-manager
-                # import cycle during process startup.
-                from .tool_trace import record_trace_child
 
-                record_trace_child(
-                    "platform_state_transition",
-                    metadata={
-                        "status": "ok",
-                        "platform": "xiaohongshu",
-                        "transition": "authenticated_probe_to_healthy",
-                        "manual_action": False,
-                        "reason": "verified_profile_recovery",
-                    },
-                )
     return result
 
 
@@ -1900,80 +1826,6 @@ def _read_browser_storage_names(platform: str) -> Dict[str, list[str]]:
         return {"local_storage": [], "session_storage": []}
 
 
-def _probe_xhs_browser_auth(*, target_profile_id: str = "", include_platform_state: bool = False) -> Dict:
-    """Use Xiaohongshu's platform probe behind the common browser-auth contract."""
-    try:
-        from collectors.platform.xiaohongshu import _xhs_login_state_ok, xiaohongshu_account_state
-
-        resource_key = _browser_resource_key("xhs", target_profile_id)
-        if not _ensure_chrome_debugging(resource_key, visible=False, detach=False, target_profile_id=target_profile_id):
-            return {
-                "status": "degraded",
-                "platform": "xhs",
-                "profile_id": target_profile_id,
-                "auth_state": "cdp_unavailable",
-                "manual_action_required": False,
-                "detail": "后台登录态探针无法启动或连接指定小红书浏览器。",
-                "retryable": True,
-            }
-        state = xiaohongshu_account_state(_chrome_debug_url(resource_key))
-        result = {
-            "platform": "xhs",
-            "profile_id": target_profile_id,
-            "manual_action_required": False,
-        }
-        if _xhs_login_state_ok(state):
-            result.update(
-                {
-                    "status": "ok",
-                    "auth_state": "authenticated_with_platform_confirmation",
-                    "detail": "小红书平台登录态已确认；无需拉前台。",
-                }
-            )
-        elif state.get("has_verify_prompt"):
-            result.update(
-                {
-                    "status": "needs_interaction",
-                    "auth_state": "security_verification_required",
-                    "manual_action_required": True,
-                    "reason_code": "SECURITY_VERIFICATION",
-                    "detail": "小红书页面明确要求安全验证。",
-                }
-            )
-        elif state.get("has_login_prompt") or state.get("guest") is True or state.get("code") in {-100, -101}:
-            result.update(
-                {
-                    "status": "needs_interaction",
-                    "auth_state": "login_required",
-                    "manual_action_required": True,
-                    "reason_code": "LOGIN_REQUIRED",
-                    "detail": "小红书平台明确要求登录。",
-                }
-            )
-        else:
-            result.update(
-                {
-                    "status": "unknown",
-                    "auth_state": "platform_state_unconfirmed",
-                    "detail": "小红书未给出可确认的登录身份；不会据此误报需要重新登录。",
-                    "retryable": True,
-                }
-            )
-        if include_platform_state:
-            result["_platform_state"] = state
-        return result
-    except Exception as exc:
-        return {
-            "status": "degraded",
-            "platform": "xhs",
-            "profile_id": target_profile_id,
-            "auth_state": "probe_error",
-            "manual_action_required": False,
-            "detail": f"小红书平台登录态探针异常: {type(exc).__name__}",
-            "retryable": True,
-        }
-    finally:
-        finish_chrome_automation(_browser_resource_key("xhs", target_profile_id), reason="browser_auth_probe")
 
 
 def probe_browser_auth(platform: str, *, target_profile_id: str = "", _include_platform_state: bool = False) -> Dict:
@@ -1984,26 +1836,15 @@ def probe_browser_auth(platform: str, *, target_profile_id: str = "", _include_p
     the foreground only when a probe or platform error proves user action is
     needed.
     """
+    if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
+        return _borrowed_browser_site(platform).probe_auth()
+    if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
+        from runtime.xhs_opencli import invoke
+        return invoke("session_probe")
     platform = _browser_platform(platform)
-    if platform == "xhs":
-        return _probe_xhs_browser_auth(
-            target_profile_id=target_profile_id,
-            include_platform_state=_include_platform_state,
-        )
-    if platform == "boss":
-        try:
-            from collectors.platform.boss import probe_boss_auth_state
-
-            return probe_boss_auth_state(keepalive=True)
-        except Exception as exc:
-            return {
-                "status": "degraded",
-                "platform": platform,
-                "auth_state": "probe_error",
-                "manual_action_required": False,
-                "detail": str(exc),
-                "retryable": True,
-            }
+    if platform == "maimai":
+        from collectors.platform.maimai import probe_maimai_auth_state
+        return probe_maimai_auth_state()
     if platform not in managed_browser_platforms():
         return {
             "status": "error",
@@ -2128,7 +1969,7 @@ def chrome_runtime_summary() -> Dict:
                 "startup_url": _startup_url_for_platform(platform),
             },
             "main_chain_gate": {
-                "requires_main_chain_allowed_profile": platform in {"xhs", "zhihu", "boss", "liepin", "cnki"},
+                "requires_main_chain_allowed_profile": platform in {"xhs", "boss", "liepin", "cnki"},
                 "legacy_fallback_allowed": os.environ.get("KR_XHS_ALLOW_LEGACY_PROFILE_FALLBACK", "0").strip().lower() in {"1", "true", "yes", "on"} if platform == "xhs" else True,
                 "profile_selected": bool(profile_dir),
             },
@@ -2181,6 +2022,8 @@ def chrome_runtime_quick_summary() -> Dict:
 
 def _close_chrome_via_cdp(platform: str) -> bool:
     """Close the browser through CDP so the persistent profile is flushed cleanly."""
+    if not _managed_process_close_allowed(platform, _find_chrome_with_debug_port(platform)):
+        return False
     try:
         resp = httpx.get(f"{_chrome_debug_url(platform)}/json/version", timeout=3)
         if resp.status_code != 200:
@@ -2222,7 +2065,11 @@ def _ensure_chrome_debugging(
     target_profile_id: str = "",
 ) -> bool:
     """Ensure the platform's persistent-profile Chrome CDP endpoint is ready."""
+    if str(platform).split(":", 1)[0] in {"xhs", "xiaohongshu", *BORROWED_BROWSER_PLATFORMS}:
+        return False
     platform = _browser_resource_key(platform, target_profile_id)
+    if _split_browser_resource(platform)[0] in RETIRED_BROWSER_PLATFORMS:
+        return False
     if platform == "xhs" and len(_active_xhs_profile_resources()) > 1:
         record_browser_event(
             platform,
@@ -2252,10 +2099,7 @@ def _cleanup_stale_chrome(platform: str) -> None:
     if pid:
         log.info(f"清理残留 Chrome (端口 {debug_port} 占用): platform={platform}, pid={pid}")
         try:
-            silent_subprocess_run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                capture_output=True, timeout=10,
-            )
+            _force_kill_chrome_tree(platform, pid, "stale_debug_port")
         except Exception as e:
             log.debug(f"清理 Chrome PID={pid} 失败: {e}")
         time.sleep(0.5)
@@ -2275,10 +2119,7 @@ def _cleanup_stale_chrome(platform: str) -> None:
                     orphan_pid = int(parts[-1])
                     if orphan_pid != pid:
                         log.info(f"清理残留 Chrome (profile 相同): platform={platform}, pid={orphan_pid}")
-                        silent_subprocess_run(
-                            ["taskkill", "/PID", str(orphan_pid), "/T", "/F"],
-                            capture_output=True, timeout=10,
-                        )
+                        _force_kill_chrome_tree(platform, orphan_pid, "stale_profile")
                 except (ValueError, IndexError):
                     pass
     except Exception as e:
@@ -2288,6 +2129,9 @@ def _cleanup_stale_chrome(platform: str) -> None:
 def _force_kill_chrome_tree(platform: str, pid: int, reason: str) -> bool:
     """Force-close a verified managed Chrome process tree and record the action."""
     if not pid:
+        return False
+    if not _managed_process_close_allowed(platform, pid):
+        record_browser_event(platform, "cleanup_denied_resource_contract", {"reason": reason, "pid": pid})
         return False
     if _pending_manual_interaction(platform):
         record_browser_event(platform, "force_kill_deferred_manual_interaction", {"reason": reason, "pid": pid})
@@ -2432,60 +2276,6 @@ def _retire_legacy_edge_session(platform: str, pid: int, expected_profile: str) 
     return retired
 
 
-def _inject_stealth_js(debug_port: str) -> bool:
-    """Inject stealth.js anti-debug script via CDP for BOSS直聘."""
-    try:
-        if not os.path.isfile(BOSS_STEALTH_JS_PATH):
-            log.warning(f"stealth.js 不存在: {BOSS_STEALTH_JS_PATH}")
-            return False
-        with open(BOSS_STEALTH_JS_PATH, "r", encoding="utf-8") as f:
-            js_source = f.read()
-        inject_code = r"""
-        (async () => {
-          const port = process.argv[1];
-          const jsSource = process.argv[2];
-          const version = await fetch(`http://127.0.0.1:${port}/json/version`).then(r => r.json());
-          const ws = new WebSocket(version.webSocketDebuggerUrl);
-          await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-          let seq = 0;
-          const pending = new Map();
-          ws.onmessage = event => {
-            const message = JSON.parse(event.data);
-            if (message.id && pending.has(message.id)) {
-              pending.get(message.id)(message);
-              pending.delete(message.id);
-            }
-          };
-          const send = (method, params) => new Promise(resolve => {
-            const id = ++seq;
-            pending.set(id, resolve);
-            ws.send(JSON.stringify({ id, method, params }));
-          });
-          await send('Page.enable', {});
-          const result = await send('Page.addScriptToEvaluateOnNewDocument', { source: jsSource });
-          console.log(JSON.stringify({ ok: true, identifier: result.result?.identifier }));
-          ws.close();
-        })().catch(error => {
-          console.error(error && error.stack ? error.stack : String(error));
-          process.exit(1);
-        });
-        """
-        proc = silent_subprocess_run(
-            ["node", "-e", inject_code, str(debug_port), js_source],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        )
-        if proc.returncode == 0:
-            log.info("stealth.js 注入成功 (BOSS直聘反调试)")
-            return True
-        log.warning(f"stealth.js 注入失败: {proc.stderr.strip()}")
-        return False
-    except Exception as e:
-        log.warning(f"stealth.js 注入异常: {e}")
-        return False
 
 
 def _ensure_chrome_debugging_locked(
@@ -2495,6 +2285,8 @@ def _ensure_chrome_debugging_locked(
     detach: bool = False,
     target_profile_id: str = "",
 ) -> bool:
+    if _split_browser_resource(platform)[0] == "xhs":
+        return False
     import urllib.request
 
     global _MANAGED_CHROME_PROCS, _MANAGED_CHROME_PROFILE_DIRS, _MANAGED_CHROME_PIDS, _MANAGED_CHROME_OWNED_PIDS
@@ -2600,8 +2392,6 @@ def _ensure_chrome_debugging_locked(
                 )
             _MANAGED_CHROME_PROFILE_DIRS[platform] = profile_dir
             _schedule_chrome_idle_cleanup(platform)
-            if platform == "zhihu":
-                _start_zhihu_session_refresh()
             return True
         if actual_profile:
             if _handle_same_platform_profile_switch(platform, port_pid, actual_profile, expected_profile):
@@ -2645,8 +2435,6 @@ def _ensure_chrome_debugging_locked(
                 metadata={"reuse": True, "profile_unconfirmed": True},
                 event="browser_reused_profile_unconfirmed",
             )
-            if platform == "zhihu":
-                _start_zhihu_session_refresh()
             return True
     except Exception:
         pass
@@ -2700,8 +2488,6 @@ def _ensure_chrome_debugging_locked(
                     event=ready_event,
                 )
                 _schedule_chrome_idle_cleanup(platform)
-                if platform == "zhihu":
-                    _start_zhihu_session_refresh()
                 return True
             except Exception:
                 time.sleep(0.25)
@@ -2840,11 +2626,6 @@ def _ensure_chrome_debugging_locked(
                 event=ready_event,
             )
             _schedule_chrome_idle_cleanup(platform)
-            if platform == "zhihu":
-                _start_zhihu_session_refresh()
-            # BOSS直聘：注入 stealth.js 反调试脚本
-            if platform == "boss":
-                _inject_stealth_js(debug_port)
             return True
         except Exception:
             time.sleep(1)
@@ -2862,77 +2643,9 @@ def _ensure_chrome_debugging_locked(
     return False
 
 
-# ── 知乎会话定期刷新 ──────────────────────────────────────────────────
-_zhihu_refresh_timer: Optional[threading.Timer] = None
-_ZHIHU_REFRESH_INTERVAL = 6 * 3600  # 6 小时
 
 
-def _start_zhihu_session_refresh() -> None:
-    """启动知乎会话定期刷新（每 6 小时访问一次知乎首页）。"""
-    global _zhihu_refresh_timer
 
-    def _refresh() -> None:
-        try:
-            # 检查知乎 Chrome 是否在运行
-            zhihu_pid = _MANAGED_CHROME_PIDS.get("zhihu")
-            if not zhihu_pid:
-                log.debug("知乎 Chrome 未运行，跳过会话刷新")
-                return
-
-            # 通过 CDP 获取页面列表
-            import urllib.request
-            debug_url = _chrome_debug_url("zhihu")
-            req = urllib.request.Request(
-                f"{debug_url}/json",
-                headers={"User-Agent": "Mozilla/5.0"},
-                method="GET",
-            )
-            resp = urllib.request.urlopen(req, timeout=5)
-            tabs = json.loads(resp.read().decode())
-
-            if not tabs:
-                log.debug("知乎 Chrome 无页面，跳过会话刷新")
-                return
-
-            # 使用 node 脚本通过 CDP 导航到知乎首页
-            ws_url = tabs[0].get("webSocketDebuggerUrl")
-            if not ws_url:
-                log.debug("知乎 Chrome 无 WebSocket URL，跳过会话刷新")
-                return
-
-            js_code = """
-            const ws = new (require('ws'))(process.argv[1]);
-            ws.on('open', () => {
-                ws.send(JSON.stringify({
-                    id: 1,
-                    method: 'Page.navigate',
-                    params: { url: 'https://www.zhihu.com' }
-                }));
-                setTimeout(() => { ws.close(); process.exit(0); }, 2000);
-            });
-            ws.on('error', (err) => { console.error(err.message); process.exit(1); });
-            """
-            proc = silent_subprocess_run(
-                ["node", "-e", js_code, ws_url],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                cwd=REPO_ROOT,
-            )
-            if proc.returncode == 0:
-                log.info("知乎会话刷新成功")
-            else:
-                log.warning(f"知乎会话刷新失败: {proc.stderr.strip()[:200]}")
-        except Exception as e:
-            log.warning(f"知乎会话刷新异常: {e}")
-        finally:
-            # 重新调度下一次刷新
-            _start_zhihu_session_refresh()
-
-    _zhihu_refresh_timer = threading.Timer(_ZHIHU_REFRESH_INTERVAL, _refresh)
-    _zhihu_refresh_timer.daemon = True
-    _zhihu_refresh_timer.start()
-    log.info(f"知乎会话定期刷新已启动（间隔 {_ZHIHU_REFRESH_INTERVAL // 3600} 小时）")
 
 
 def _chrome_arg_path(path: str) -> str:
@@ -3018,10 +2731,7 @@ def _chrome_user_data_dir_for_pid(pid: Optional[int]) -> str:
         command_line = " ".join(line.strip() for line in result.stdout.splitlines() if line.strip())
         for known_profile in (
             XHS_USER_DATA_DIR,
-            ZHIHU_USER_DATA_DIR,
             XHS_CHROME_USER_DATA_DIR,
-            ZHIHU_CHROME_USER_DATA_DIR,
-            BOSS_CHROME_USER_DATA_DIR,
             MANAGED_CHROME_USER_DATA_DIR,
         ):
             if known_profile and known_profile in command_line:
@@ -3185,3 +2895,9 @@ def _find_chrome_with_profile_dir(profile_dir: str) -> Optional[int]:
     except Exception as exc:
         log.debug(f"按 profile 查找 Chrome 失败: {exc}")
         return None
+
+
+def _borrowed_browser_site(platform):
+    from importlib import import_module
+    name = str(platform).lower().split(':',1)[0]
+    return import_module('collectors.platform.'+name)

@@ -1,0 +1,27 @@
+:root { color-scheme: dark; --bg: #071321; --text: #eaf7ff; --muted: #a9c4d4; --line: #24455f; --cyan: #5de8ff; --green: #50d59a; --amber: #f6b85c; }
+* { box-sizing: border-box; }
+html { width: 360px; }
+body { width: 360px; margin: 0; background: var(--bg); color: var(--text); font: 13px/1.6 "Microsoft YaHei", system-ui, sans-serif; }
+header { display: flex; align-items: center; gap: 12px; padding: 22px 20px 18px; border-bottom: 1px solid var(--line); }
+header img { flex: none; }
+header div { flex: 1; min-width: 0; }
+h1 { margin: 0; font-size: 16px; font-weight: 650; }
+header p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+#version { align-self: flex-start; color: var(--muted); font-size: 12px; }
+main { padding: 22px 20px; }
+.connection { display: flex; align-items: center; gap: 10px; }
+h2 { margin: 0; font-size: 18px; font-weight: 650; }
+#indicator { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--amber); }
+#indicator[data-state="connected"] { background: var(--green); }
+#description { margin: 10px 0 0; color: var(--text); overflow-wrap: anywhere; }
+.scope { margin: 14px 0 0; color: var(--muted); font-size: 12px; }
+button { margin-top: 18px; min-height: 40px; padding: 7px 14px; border: 1px solid var(--line); border-radius: 8px; background: #0c2137; color: var(--text); font: inherit; cursor: pointer; }
+button:hover { border-color: var(--cyan); background: #0f2942; }
+button:disabled { opacity: .6; cursor: wait; }
+button:focus-visible, summary:focus-visible { outline: 2px solid var(--cyan); outline-offset: 4px; }
+details { margin-top: 16px; font-size: 12px; color: var(--muted); }
+summary { cursor: pointer; text-underline-offset: 3px; }
+#error { overflow-wrap: anywhere; user-select: text; }
+footer { border-top: 1px solid var(--line); padding: 13px 20px; color: var(--muted); font-size: 12px; }
+[hidden] { display: none !important; }
+::selection { color: var(--bg); background: var(--cyan); }

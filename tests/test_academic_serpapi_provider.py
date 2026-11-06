@@ -3,11 +3,12 @@ import logging
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("paid_test_policy")
+
 from academic_providers.models import AcademicSearchRequest, AcademicWork
 from academic_providers.cnki_authorized_browser import _normalize_probe_result
 from academic_providers.citation_import import CitationImportError, CitationImportProvider, parse_citation_text
 from academic_providers.serpapi_scholar import SerpApiScholarAuthError, SerpApiScholarProvider
-from academic_providers.baidu_scholar import BaiduScholarAuthError, BaiduScholarProvider
 from academic_providers.service import (
     _CACHE,
     _dedupe,
@@ -34,7 +35,7 @@ def test_academic_provider_aliases_are_normalized() -> None:
     assert _normalize_provider_name("semantic_scholar") == "semanticscholar"
     assert _normalize_provider_name("semantic-scholar") == "semanticscholar"
     assert _normalize_provider_name("google_scholar") == "serpapi_scholar"
-    assert _normalize_provider_name("baidu_qianfan") == "baidu_scholar"
+    assert _normalize_provider_name("nssd_cn") == "nssd"
 
 
 def test_auto_order_does_not_spend_serpapi_by_default(monkeypatch) -> None:
@@ -44,13 +45,13 @@ def test_auto_order_does_not_spend_serpapi_by_default(monkeypatch) -> None:
     assert "serpapi_scholar" not in _provider_order(AcademicSearchRequest(query="knowledge graph", provider="auto"), "auto")
 
 
-def test_auto_order_does_not_enable_unprofiled_serpapi_when_quota_available(monkeypatch, tmp_path) -> None:
+def test_auto_order_enables_registered_serpapi_only_when_budget_available(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("SERPAPI_API_KEY", "dummy")
     monkeypatch.setenv("KR_ACADEMIC_ENABLE_SERPAPI", "true")
     monkeypatch.setenv("KR_ACADEMIC_SERPAPI_DAILY_LIMIT", "8")
     monkeypatch.setenv("KR_ACADEMIC_SERPAPI_USAGE_PATH", str(tmp_path / "usage.json"))
 
-    assert "serpapi_scholar" not in _provider_order(AcademicSearchRequest(query="knowledge graph", provider="auto"), "auto")
+    assert "serpapi_scholar" in _provider_order(AcademicSearchRequest(query="knowledge graph", provider="auto"), "auto")
 
 
 def test_auto_order_skips_serpapi_when_daily_limit_exhausted(monkeypatch, tmp_path) -> None:
@@ -72,7 +73,6 @@ def test_auto_order_skips_serpapi_when_daily_limit_exhausted(monkeypatch, tmp_pa
     ("env_var", "provider_cls", "query", "expected_error"),
     [
         ("SERPAPI_API_KEY", SerpApiScholarProvider, "知识图谱 医疗", SerpApiScholarAuthError),
-        ("BAIDU_QIANFAN_BEARER_TOKEN", BaiduScholarProvider, "人工智能", BaiduScholarAuthError),
     ],
 )
 def test_optional_commercial_academic_providers_require_credentials(
@@ -192,69 +192,11 @@ def test_auto_order_includes_arxiv_for_stem_english_query(monkeypatch) -> None:
     order = _provider_order(AcademicSearchRequest(query="LLM retrieval augmented generation", provider="auto"), "auto")
 
     assert "arxiv" in order
-    assert "ar5iv" in order
-    assert order.index("arxiv") < order.index("ar5iv")
+    assert "ar5iv" not in order
+    assert order.index("openalex") < order.index("arxiv")
     assert "baidu_scholar" not in order
 
 
-def test_baidu_scholar_maps_results(monkeypatch) -> None:
-    monkeypatch.setenv("BAIDU_QIANFAN_BEARER_TOKEN", "dummy")
-
-    class FakeResponse:
-        status_code = 200
-        text = ""
-
-        def raise_for_status(self) -> None:
-            return None
-
-        def json(self):
-            return {
-                "code": "0",
-                "requestId": "req-1",
-                "hasMore": False,
-                "data": [
-                    {
-                        "title": "中文知识图谱研究综述",
-                        "url": "https://xueshu.baidu.com/ndscholar/browse/detail?paperid=abc",
-                        "doi": "10.1234/example",
-                        "publishYear": 2024,
-                        "abstract": "摘要",
-                        "aiAbstract": "AI 摘要",
-                        "paperId": "abc",
-                        "keyword": "知识图谱",
-                        "publishInfo": {"journalName": "情报学报"},
-                    }
-                ],
-            }
-
-    class FakeClient:
-        def __init__(self, *args, **kwargs) -> None:
-            self.headers = kwargs.get("headers") or {}
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *args) -> None:
-            return None
-
-        def get(self, endpoint, params):
-            assert "baidu_scholar/search" in endpoint
-            assert params["wd"] == "中文知识图谱"
-            assert "enable_abstract" in params
-            assert "enable_ai_abstract" not in params
-            assert self.headers["Authorization"].startswith("Bearer ")
-            return FakeResponse()
-
-    monkeypatch.setattr("academic_providers.baidu_scholar.httpx.Client", FakeClient)
-
-    result = BaiduScholarProvider().search(AcademicSearchRequest(query="中文知识图谱", limit=1))
-
-    assert result[0].title == "中文知识图谱研究综述"
-    assert result[0].abstract == "AI 摘要"
-    assert result[0].source == "情报学报"
-    assert result[0].source_database == "baidu_scholar"
-    assert result[0].access_mode == "official_api"
-    assert result[0].full_text_status == "metadata_only"
 
 
 def test_academic_work_outputs_extended_access_and_verification_fields() -> None:
@@ -366,7 +308,7 @@ def test_citation_import_provider_reads_local_file(tmp_path) -> None:
     path = tmp_path / "cnki-export.ris"
     path.write_text("TY  - JOUR\nTI  - 本地导入论文\nPY  - 2025\nER  -\n", encoding="utf-8")
 
-    works = CitationImportProvider().search(AcademicSearchRequest(query=f"file:{path}", provider="citation_import"))
+    works = CitationImportProvider().search(AcademicSearchRequest(query=f"file:{path}", provider="citation_import", options={"approved_input_root":str(tmp_path), "input_sha256":__import__("hashlib").sha256(path.read_bytes()).hexdigest()}))
 
     assert works[0].title == "本地导入论文"
     assert works[0].source_database == "cnki"
@@ -377,7 +319,7 @@ def test_citation_import_provider_rejects_unsupported_file(tmp_path) -> None:
     path.write_text("not a citation export", encoding="utf-8")
 
     with pytest.raises(CitationImportError):
-        CitationImportProvider().search(AcademicSearchRequest(query=f"file:{path}", provider="citation_import"))
+        CitationImportProvider().search(AcademicSearchRequest(query=f"file:{path}", provider="citation_import", options={"approved_input_root":str(tmp_path), "input_sha256":__import__("hashlib").sha256(path.read_bytes()).hexdigest()}))
 
 
 def test_cnki_authorized_browser_status_is_explicit_and_not_auto(monkeypatch) -> None:
@@ -402,12 +344,11 @@ def test_chinese_academic_provider_status_is_layered(monkeypatch) -> None:
 
     status = academic_provider_status()
 
-    assert status["nssd"]["provider_tier"] == "p2_4_default_chinese_fulltext"
-    assert status["chinaxiv"]["provider_tier"] == "p2_4_default_chinese_fulltext"
-    assert status["baidu_scholar"]["validation_status"] == "EXPECTED_DEGRADED"
-    assert status["baidu_scholar"]["provider_tier"] == "expected_degraded_official_api_when_unprovisioned"
+    assert status["nssd"]["provider_tier"] == "intent_domain_discovery"
+    assert status["chinaxiv"]["provider_tier"] == "intent_domain_discovery"
+    assert "baidu_scholar" not in status
     assert status["wanfang"]["validation_status"] == "EXPECTED_DEGRADED"
-    assert status["wanfang"]["provider_tier"] == "expected_degraded_external_login_or_subscription"
+    assert status["wanfang"]["provider_tier"] == "optional_api_provider"
 
 
 def test_cnki_probe_result_normalizes_security_verification() -> None:

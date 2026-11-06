@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from runtime.execution_context import execution_value
 from dataclasses import asdict, dataclass
 import hashlib
 import os
@@ -97,3 +98,43 @@ def merge_scope_metadata(scope: TaskScope | Dict[str, Any] | None, metadata: Dic
         if value not in (None, ""):
             result.setdefault(key, value)
     return result
+
+
+def attach_detail_task_scope(result: Dict, research_session_id: str, scope: Dict | None = None, *, store_factory=None) -> Dict:
+    data = dict(result)
+    scope_data = dict(scope or {})
+    from runtime.tasks import get_task_store, compact_task_refs, TERMINAL_STATUSES
+    data["server_run_id"] = scope_data.get("server_run_id") or SERVER_RUN_ID
+    if scope_data:
+        data["work_scope_id"] = scope_data.get("work_scope_id", "")
+        data["task_scope_id"] = scope_data.get("task_scope_id", "")
+        data["scope_binding"] = scope_data
+    data["research_session_id"] = research_session_id
+    if not (research_session_id or scope_data):
+        return data
+    try:
+        store = (store_factory or get_task_store)()
+        tasks = store.tasks_for_scope(
+            task_scope_id=str(scope_data.get("task_scope_id") or ""),
+            work_scope_id=str(scope_data.get("work_scope_id") or ""),
+            blocking_only=False,
+            include_terminal=False,
+            limit=None,
+        )
+        if not tasks and research_session_id:
+            tasks = store.tasks_for_session(research_session_id, blocking_only=False, include_terminal=False, limit=None)
+        if execution_value("KR_DURABLE_WORKER") == "1":
+            current_task_id = execution_value("KR_DURABLE_TASK_ID", "")
+            tasks = [task for task in tasks if task.get("task_id") != current_task_id]
+        pending = [task for task in tasks if str(task.get("status") or "") not in TERMINAL_STATUSES]
+        blocking = [
+            task
+            for task in tasks
+            if bool((task.get("metadata") or {}).get("blocks_final_report"))
+            and str(task.get("status") or "") not in TERMINAL_STATUSES
+        ]
+        data["pending_tasks"] = compact_task_refs(pending, limit=20)
+        data["blocking_tasks"] = compact_task_refs(blocking, limit=20)
+    except Exception as exc:
+        data["pending_tasks_error"] = str(exc)[:160]
+    return data

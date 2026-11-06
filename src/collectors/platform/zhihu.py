@@ -1,635 +1,256 @@
-﻿"""Zhihu collection helpers migrated out of server.py."""
-
+"""知乎只读采集：借用 Browser Link，不导出凭据或持有浏览器进程。"""
 from __future__ import annotations
-
-import base64
-import json
-import logging
-import os
+from dataclasses import asdict, dataclass
+import hashlib
 import re
-from runtime.process import silent_subprocess_run
-import threading
-import time
-from typing import Dict, List, Optional
+from urllib.parse import urlencode, urlsplit
 
-import httpx
+ADAPTER_VERSION = 'zhihu-dom-v1'
+HOME = 'https://www.zhihu.com/'
+HOSTS = {'zhihu.com', 'www.zhihu.com', 'zhuanlan.zhihu.com'}
 
-from kr_core.collection import CollectionTrace, format_search_error, format_search_response
-from runtime.chrome_manager import ZHIHU_CHROME_DEBUG_PORT, _ensure_chrome_debugging, _managed_chrome_profile_dir, finish_chrome_automation
+@dataclass(frozen=True)
+class ZhihuTarget:
+    kind: str
+    identifier: str
+    url: str
+    question_id: str = ''
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-log = logging.getLogger("mcp-server")
-_NODE_PATH = None
-_ZHIHU_HTTP_LOCK = threading.Lock()
-_ZHIHU_HTTP_CLIENT: httpx.Client | None = None
-
-
-def _format_search_response(
-    platform: str,
-    items: List[Dict],
-    *,
-    trace: CollectionTrace | None = None,
-) -> Dict:
-    return format_search_response(platform, items, trace=trace)
-
-
-def _format_search_error(
-    platform: str,
-    error_item: Dict,
-    *,
-    trace: CollectionTrace | None = None,
-    strategy: str = "",
-) -> Dict:
-    return format_search_error(platform, error_item, trace=trace, strategy=strategy)
-
-
-def read_zhihu_cookies_from_profile() -> Optional[str]:
-    user_data_dir = _managed_chrome_profile_dir("zhihu")
-    profile_dir = os.path.join(user_data_dir, "Default")
-    cookie_db_path = os.path.join(profile_dir, "Network", "Cookies")
-    # Local State is always at the root of user-data-dir, NOT inside Default/
-    local_state_path = os.path.join(user_data_dir, "Local State")
-
-    if not os.path.isfile(cookie_db_path):
-        log.warning(f"知乎 Cookie 数据库不存在: {cookie_db_path}")
-        return None
-
-    try:
-        import ctypes
-        import ctypes.wintypes
-        import shutil
-        import sqlite3
-        import tempfile
-
-        aes_key = None
-        if os.path.isfile(local_state_path):
-            try:
-                with open(local_state_path, "r", encoding="utf-8") as f:
-                    local_state = json.load(f)
-                encrypted_key_b64 = local_state.get("os_crypt", {}).get("encrypted_key", "")
-                if encrypted_key_b64:
-                    encrypted_key = base64.b64decode(encrypted_key_b64)
-                    if encrypted_key[:5] == b"DPAPI":
-                        class DATA_BLOB(ctypes.Structure):
-                            _fields_ = [("cbData", ctypes.wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_byte))]
-
-                        key_data = encrypted_key[5:]
-                        blob_in = DATA_BLOB(len(key_data), ctypes.create_string_buffer(key_data, len(key_data)))
-                        blob_out = DATA_BLOB()
-
-                        if ctypes.windll.crypt32.CryptUnprotectData(
-                            ctypes.byref(blob_in), None, None, None, None, 0, ctypes.byref(blob_out)
-                        ):
-                            raw_key = ctypes.string_at(blob_out.pbData, blob_out.cbData)
-                            aes_key = raw_key
-                            ctypes.windll.kernel32.LocalFree(blob_out.pbData)
-            except Exception as e:
-                log.debug(f"Local State 读取失败: {e}")
-
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            tmp_path = tmp.name
-        shutil.copy2(cookie_db_path, tmp_path)
-
-        conn = sqlite3.connect(tmp_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT name, encrypted_value, value FROM cookies WHERE host_key LIKE '%zhihu.com%'"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        os.unlink(tmp_path)
-
-        if not rows:
-            log.warning("知乎 Cookie 数据库中无 zhihu.com 条目")
-            return None
-
-        def _decrypt_cookie_v10(encrypted_value: bytes, key: bytes) -> Optional[str]:
-            if len(encrypted_value) < 15:
-                return None
-            payload = encrypted_value[3:]
-            nonce = payload[:12]
-            ciphertext_and_tag = payload[12:]
-            try:
-                from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-                aesgcm = AESGCM(key)
-                plaintext = aesgcm.decrypt(nonce, ciphertext_and_tag, None)
-                return plaintext.decode("utf-8")
-            except Exception:
-                return None
-
-        cookie_parts = []
-        for name, encrypted_value, value in rows:
-            if value:
-                cookie_parts.append(f"{name}={value}")
-            elif encrypted_value and aes_key:
-                decrypted = _decrypt_cookie_v10(encrypted_value, aes_key)
-                if decrypted:
-                    cookie_parts.append(f"{name}={decrypted}")
-
-        if not cookie_parts:
-            log.warning("无法解密任何知乎 Cookie（可能缺少 cryptography 库或密钥解密失败）")
-            return None
-
-        cookie_str = "; ".join(cookie_parts)
-        log.info(f"从 Chrome Profile 读取到 {len(cookie_parts)} 个知乎 Cookie")
-        return cookie_str
-    except Exception as e:
-        log.error(f"读取知乎 Cookie 失败: {e}")
-        return None
-
-
-def _read_zhihu_cookies_from_cdp_node(port: Optional[int] = None) -> Optional[str]:
-    port = int(port or ZHIHU_CHROME_DEBUG_PORT)
-    js_code = r"""
-    (async () => {
-      const port = process.argv[1];
-      const version = await fetch(`http://127.0.0.1:${port}/json/version`).then(r => r.json());
-      const ws = new WebSocket(version.webSocketDebuggerUrl);
-      await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-      let seq = 0;
-      const pending = new Map();
-      ws.onmessage = event => {
-        const message = JSON.parse(event.data);
-        if (message.id && pending.has(message.id)) {
-          pending.get(message.id)(message);
-          pending.delete(message.id);
-        }
-      };
-      const send = (method, params, sessionId) => new Promise(resolve => {
-        const id = ++seq;
-        pending.set(id, resolve);
-        const message = { id, method, params };
-        if (sessionId) message.sessionId = sessionId;
-        ws.send(JSON.stringify(message));
-      });
-      const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then(r => r.json());
-      const page = targets.find(t => (t.url || '').includes('zhihu.com')) || targets.find(t => t.type === 'page');
-      if (!page) {
-        console.log(JSON.stringify({ cookies: [] }));
-        ws.close();
-        return;
-      }
-      const attached = await send('Target.attachToTarget', { targetId: page.id, flatten: true });
-      const sessionId = attached.result.sessionId;
-      await send('Network.enable', {}, sessionId);
-      const result = await send('Network.getAllCookies', {}, sessionId);
-      const cookies = (result.result.cookies || []).filter(c => (c.domain || '').includes('zhihu.com'));
-      console.log(JSON.stringify({ cookies }));
-      ws.close();
-    })().catch(error => {
-      console.error(error && error.stack ? error.stack : String(error));
-      process.exit(1);
-    });
-    """
-    try:
-        proc = silent_subprocess_run(
-            ["node", "-e", js_code, str(port)],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        )
-        if proc.returncode != 0:
-            log.debug(f"Read Zhihu cookies from CDP via Node failed: {proc.stderr.strip()}")
-            return None
-        data = json.loads(proc.stdout.strip() or "{}")
-        parts = [
-            f"{cookie['name']}={cookie['value']}"
-            for cookie in data.get("cookies", [])
-            if "zhihu.com" in cookie.get("domain", "")
-        ]
-        if not parts:
-            log.warning(f"Chrome CDP:{port} returned no Zhihu cookies via Node")
-            return None
-        log.info(f"Read {len(parts)} Zhihu cookies from Chrome CDP:{port} via Node")
-        return "; ".join(parts)
-    except Exception as e:
-        log.debug(f"Read Zhihu cookies from CDP via Node failed: {e}")
-        return None
-
-
-def read_zhihu_cookies_from_cdp(port: Optional[int] = None) -> Optional[str]:
-    node_cookie = _read_zhihu_cookies_from_cdp_node(port)
-    if node_cookie:
-        return node_cookie
-    try:
-        port = int(port or ZHIHU_CHROME_DEBUG_PORT)
-        version_url = f"http://127.0.0.1:{port}/json/version"
-        with httpx.Client(timeout=5) as client:
-            version = client.get(version_url).json()
-        browser_ws = version.get("webSocketDebuggerUrl")
-        if not browser_ws:
-            return None
-        from playwright.sync_api import sync_playwright
-        with sync_playwright() as p:
-            browser = p.chromium.connect_over_cdp(browser_ws)
-            context = browser.contexts[0] if browser.contexts else browser.new_context()
-            cookies = context.cookies(["https://www.zhihu.com", "https://zhuanlan.zhihu.com"])
-        parts = [f"{cookie['name']}={cookie['value']}" for cookie in cookies if "zhihu.com" in cookie.get("domain", "")]
-        if not parts:
-            return None
-        log.info(f"Read {len(parts)} Zhihu cookies from Chrome CDP:{port}")
-        return "; ".join(parts)
-    except Exception as e:
-        log.debug(f"Read Zhihu cookies from CDP failed: {e}")
-        return None
-
-
-def zhihu_sign(url: str, cookies: str) -> Dict:
-    global _NODE_PATH
-    if not globals().get("_NODE_PATH"):
-        _NODE_PATH = "node"
-    js_path = os.path.join(PROJECT_ROOT, "libs", "zhihu.js")
-    with open(js_path, mode="r", encoding="utf-8-sig") as f:
-        js_source = f.read()
-    input_json = json.dumps({"url": url, "cookies": cookies})
-    js_code = f"""
-    var data = JSON.parse(process.argv[1]);
-    {js_source}
-    var result = get_sign(data.url, data.cookies);
-    console.log(JSON.stringify(result));
-    """
-    try:
-        r = silent_subprocess_run(
-            [_NODE_PATH, "-e", js_code, input_json],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=10,
-        )
-        if r.returncode == 0:
-            return json.loads(r.stdout.strip())
-        raise RuntimeError(f"Node sign failed: {r.stderr}")
-    except Exception as e:
-        raise RuntimeError(f"知乎签名失败: {e}")
-
-
-def zhihu_search_api(keyword: str, cookie_str: str, limit: int = 20) -> List[Dict]:
-    from urllib.parse import urlencode
-
-    uri = "/api/v4/search_v3"
-    if not os.path.isfile(os.path.join(PROJECT_ROOT, "libs", "zhihu.js")):
-        return zhihu_search_via_cdp_page(keyword, limit)
-
-    params = {
-        "gk_version": "gz-gaokao",
-        "t": "general",
-        "q": keyword,
-        "correction": 1,
-        "offset": 0,
-        "limit": min(limit, 20),
-        "filter_fields": "",
-        "lc_idx": 0,
-        "show_all_topics": 0,
-        "search_source": "Filter",
-        "time_interval": "",
-        "sort": "",
-        "vertical": "",
-    }
-    full_uri = uri + "?" + urlencode(params)
-    sign_res = zhihu_sign(full_uri, cookie_str)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "Referer": "https://www.zhihu.com/",
-        "Accept": "application/json, text/plain, */*",
-        "Accept-Language": "zh-CN,zh;q=0.9",
-        "Cookie": cookie_str,
-        "Priority": "u=1, i",
-        "X-Api-Version": "3.0.91",
-        "X-App-Za": "OS=Web",
-        "X-Requested-With": "fetch",
-        "X-Zse-93": "101_3_3.0",
-        "X-Zse-96": sign_res.get("x-zse-96", ""),
-        "X-Zst-81": sign_res.get("x-zst-81", ""),
-    }
-    api_url = f"https://www.zhihu.com/api/v4/search_v3?{urlencode(params)}"
-    last_exc: Exception | None = None
-    for attempt in range(2):
-        try:
-            resp = _zhihu_http_client().get(api_url, headers=headers)
-            break
-        except (httpx.ConnectError, httpx.ConnectTimeout, OSError) as exc:
-            last_exc = exc
-            if attempt == 0:
-                log.warning(f"知乎 API 连接异常，短退避后重试: {exc}")
-                _reset_zhihu_http_client()
-                time.sleep(1.2)
-                continue
-            raise
+def parse_target(url: str) -> ZhihuTarget:
+    """ID保持字符串；查询参数和尾斜杠不属于实体身份。"""
+    p = urlsplit(url)
+    if (p.scheme not in {'https', 'http'} or p.hostname not in HOSTS or p.username or p.password
+            or p.port not in {None, 443 if p.scheme == 'https' else 80}):
+        raise ValueError('invalid_zhihu_url')
+    path = p.path.rstrip('/')
+    if p.hostname == 'zhuanlan.zhihu.com':
+        m = re.fullmatch(r'/p/([0-9]+)', path)
+        if m: return ZhihuTarget('article', m[1], 'https://zhuanlan.zhihu.com/p/' + m[1])
     else:
-        raise last_exc or RuntimeError("知乎 API 连接异常")
-    if resp.status_code in (400, 401, 403):
-        raise RuntimeError(f"知乎 API 鉴权失败 (HTTP {resp.status_code})，Cookie 可能已过期")
-    resp.raise_for_status()
-    data = resp.json()
-    if data.get("error"):
-        raise RuntimeError(f"知乎 API 错误: {data['error'].get('message', '')}")
-    items = []
-    for entry in data.get("data", []):
-        obj = entry.get("object") or entry.get("target") or entry
-        content = obj.get("content") or obj.get("excerpt") or obj.get("description") or ""
-        question = obj.get("question") or {}
-        title = obj.get("title") or question.get("title") or entry.get("highlight", {}).get("title", "")
-        author = obj.get("author") or obj.get("member") or {}
-        url = obj.get("url") or obj.get("content_url") or obj.get("question_url") or entry.get("url") or ""
-        if url.startswith("http://api.zhihu.com/"):
-            url = url.replace("http://api.zhihu.com/", "https://www.zhihu.com/")
-        elif url.startswith("https://api.zhihu.com/"):
-            url = url.replace("https://api.zhihu.com/", "https://www.zhihu.com/")
-        item = {
-            "title": re.sub(r"<[^>]+>", "", str(title or "")),
-            "desc": re.sub(r"<[^>]+>", "", str(content or ""))[:200],
-            "author": author.get("name", "") if isinstance(author, dict) else "",
-            "url": url,
-            "votes": obj.get("voteup_count") or obj.get("vote_count") or 0,
-            "type": obj.get("type") or entry.get("type") or "",
-            "platform": "知乎",
-        }
-        if item["title"] or item["desc"] or item["url"]:
-            items.append(item)
-    return items
+        m = re.fullmatch(r'/question/([0-9]+)/answer/([0-9]+)', path)
+        if m: return ZhihuTarget('answer', m[2], f'{HOME}question/{m[1]}/answer/{m[2]}', m[1])
+        m = re.fullmatch(r'/(answer|question|zvideo)/([0-9]+)', path)
+        if m: return ZhihuTarget(m[1], m[2], f'{HOME}{m[1]}/{m[2]}', m[2] if m[1] == 'question' else '')
+    raise ValueError('unsupported_zhihu_target')
+
+def same_target(requested, actual):
+    return (requested.kind == actual.kind and requested.identifier == actual.identifier
+            and (not requested.question_id or requested.question_id == actual.question_id))
+
+def _site():
+    from runtime.native_site import NativeSite
+    return NativeSite('zhihu', '知乎', HOME, HOME + 'signin', _authenticated)
+
+def _authenticated(data):
+    return bool(data.get('authenticated_ui') and not data.get('risk') and not data.get('login'))
+
+def runtime_identity(): return {**_site().runtime_identity(), 'adapter_version': ADAPTER_VERSION}
+def interaction_status(): return _site().interaction_status()
+def request_login(): return _site().request_login()
+def complete_login(): return _site().complete_login()
+def cancel_login(): return _site().cancel_login()
+def probe_auth(): return _site().probe_auth()
+
+def failure(kind, *, url='', message='', **extra):
+    manual = kind in {'login_required', 'anti_bot_verification', 'request_outcome_unknown'}
+    messages = {
+        'access_forbidden': '知乎拒绝访问（403）；没有足够证据判定登录失效，不自动重试或换通道。',
+        'anti_bot_verification': '知乎要求安全验证或暂时限制访问；本人处理后显式继续。',
+        'rate_limited': '知乎返回限流；停止该支线，不自动重放。',
+        'login_required': '知乎明确要求登录；请在已配对的日常浏览器中登录后确认继续。',
+        'legal_restriction': '知乎返回法律/地区访问限制。',
+        'not_found': '该知乎内容已删除或不存在。',
+        'content_restricted': '该内容有付费或权限限制，未取得完整正文。',
+        'page_identity_changed': '页面实体与请求ID不一致，停止取数。',
+        'page_structure_changed': '未识别目标正文或明确空结果，可能是页面结构变化。',
+        'zhihu_adapter_incompatible': 'Browser Link 扩展尚不支持当前知乎适配器；需要与候选程序匹配的扩展版本。',
+    }
+    message = message or messages.get(kind, '知乎采集未完成：' + kind)
+    return {'platform': '知乎', 'url': url, 'status': 'needs_interaction' if manual else 'failed',
+            'failure_type': kind, 'content': '', 'items': [], 'total': 0,
+            'error': {'type': kind, 'error': message, 'message': message, 'failure_type': kind,
+                      'retryable': False, 'manual_action_required': manual},
+            'manual_action_required': manual, 'retryable': False,
+            'resume_policy': 'stop_no_auto_resume' if kind in {'anti_bot_verification', 'rate_limited', 'request_outcome_unknown'} else 'explicit_retry',
+            'recommended_action': "health_check(mode='request_browser_interaction:zhihu:manual_login')" if manual else '核对页面与通道状态后显式重试。', **extra}
+
+def _reader_comments(**payload):
+    """Normal reader controls through the existing OpenCLI driver; never API fallback."""
+    import json
+    from pathlib import Path
+    from runtime.opencli_bridge import invoke_page
+    requested = parse_target(payload.get('url', ''))
+    if requested.kind != 'answer':
+        return {'ok': False, 'code': 'comments_target_unsupported'}
+    script = Path(__file__).resolve().parents[3] / 'browser_link' / 'extension' / 'sites' / 'zhihu.js'
+    source = script.read_text(encoding='utf-8')
+    expression = ('(async()=>{globalThis.KRSites={};'
+        'globalThis.KRWaitForChange=async(signal,ms)=>new Promise(resolve=>setTimeout(resolve,ms));'
+        + source + ';return await KRSites.zhihu.extract("comments",'
+        + json.dumps({**payload, 'target':asdict(requested)}, ensure_ascii=False)
+        + ',new AbortController().signal)})()')
+    return invoke_page(session='zhihu', operation='comments', url=requested.url,
+        expression=expression, wait_selector='.AnswerItem', isolated_work=True)
 
 
-def _zhihu_http_client() -> httpx.Client:
-    global _ZHIHU_HTTP_CLIENT
-    with _ZHIHU_HTTP_LOCK:
-        if _ZHIHU_HTTP_CLIENT is None:
-            _ZHIHU_HTTP_CLIENT = httpx.Client(
-                timeout=httpx.Timeout(15.0),
-                follow_redirects=False,
-                limits=httpx.Limits(max_connections=4, max_keepalive_connections=2, keepalive_expiry=20.0),
-                trust_env=True,
-            )
-        return _ZHIHU_HTTP_CLIENT
+def _invoke(operation, **payload):
+    from runtime.execution_context import check_execution
+    check_execution()
+    response = _reader_comments(**payload) if operation == 'comments' else _site().invoke(operation, **payload)
+    check_execution()
+    if not response.get('ok'):
+        kind = response.get('failure_type') or response.get('code') or 'browser_link_failed'
+        if kind in {'unsupported_platform', 'unsupported_operation', 'invalid_site_url'}:
+            kind = 'zhihu_adapter_incompatible'
+        return {**response, **failure(kind), 'metadata': response.get('metadata', {}),
+                'request_executed': response.get('request_executed')}
+    data = response.get('data')
+    if not isinstance(data, dict) or data.get('adapter_version') != ADAPTER_VERSION:
+        return failure('zhihu_adapter_incompatible')
+    if data.get('failure_type') and not (operation=='comments' and isinstance(data.get('comments'),list) and data['comments']):
+        diagnostic = {key: data[key] for key in ('comment_diagnostics', 'auth_diagnostics') if isinstance(data.get(key), dict)}
+        return failure(data['failure_type'], url=data.get('url', ''), http_status=data.get('http_status'), request_executed=True,
+                       metadata={**response.get('metadata', {}), **diagnostic})
+    return response
 
+def legacy_search_zhihu(keyword: str, limit: int = 10):
+    keyword = keyword.strip()
+    if not keyword or not 1 <= limit <= 20:
+        return failure('invalid_request', message='keyword不能为空；limit必须在1到20之间。')
+    url = HOME + 'search?' + urlencode({'type': 'content', 'q': keyword})
+    response = _invoke('search', url=url, keyword=keyword, limit=limit)
+    if not response.get('ok'): return response
+    data = response['data']
+    rows, seen = [], set()
+    items = data.get('items') or []
+    if not isinstance(items, list): return failure('invalid_adapter_payload')
+    for row in items:
+        if not isinstance(row, dict): continue
+        try: target = parse_target(row.get('url', ''))
+        except (ValueError, TypeError): continue
+        key = (target.kind, target.identifier)
+        if key in seen or not row.get('title'): continue
+        seen.add(key)
+        rows.append({'title': str(row['title']), 'url': target.url, 'author': str(row.get('author') or ''),
+                     'desc': str(row.get('summary') or ''), 'content_type': target.kind, 'platform': '知乎',
+                     'metadata': {'target': asdict(target), 'body_verified': False, 'discovery_source': 'visible_search_dom'}})
+    if not rows and not data.get('empty_confirmed'): return failure('page_structure_changed')
+    return {'platform': '知乎', 'items': rows[:limit], 'total': min(len(rows), limit),
+            'metadata': {**response.get('metadata', {}), 'runtime_identity': runtime_identity(),
+                         'coverage': 'visible_results_bounded', 'empty_confirmed': not rows}}
 
-def _reset_zhihu_http_client() -> None:
-    global _ZHIHU_HTTP_CLIENT
-    with _ZHIHU_HTTP_LOCK:
-        client = _ZHIHU_HTTP_CLIENT
-        _ZHIHU_HTTP_CLIENT = None
-    if client is not None:
-        try:
-            client.close()
-        except Exception:
-            pass
+def _html_to_markdown(html):
+    from generic_web.collector import html_fragment_to_markdown
+    return html_fragment_to_markdown(html)
 
-
-def zhihu_search_via_cdp_page(keyword: str, limit: int = 20) -> List[Dict]:
-    """Read real result links from the existing authenticated browser page."""
-    from urllib.parse import quote
-    from playwright.sync_api import sync_playwright
-
-    selector = 'a[href*="/question/"], a[href*="/answer/"], a[href*="/p/"], a[href*="/zvideo/"]'
+def collect_detail(request):
+    from runtime.execution_context import check_execution
+    try: target = parse_target(request.url)
+    except (ValueError, TypeError): return failure('invalid_zhihu_url', url=request.url)
     try:
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{int(ZHIHU_CHROME_DEBUG_PORT)}")
-            context = browser.contexts[0]
-            page = next((page for page in context.pages if "zhihu.com" in page.url), None)
-            if page is None:
-                page = context.new_page()
-            page.goto("https://www.zhihu.com/search?type=content&q=" + quote(keyword), wait_until="domcontentloaded", timeout=20000)
-            page.wait_for_function(
-                "selector => Array.from(document.querySelectorAll(selector)).some(a => (a.innerText || a.textContent || '').trim().length >= 4)",
-                arg=selector, timeout=12000,
-            )
-            return page.evaluate(r"""({selector, limit}) => {
-                const seen = new Set();
-                const items = [];
-                for (const anchor of document.querySelectorAll(selector)) {
-                    const parsed = new URL(anchor.href);
-                    if (!['www.zhihu.com', 'zhihu.com', 'zhuanlan.zhihu.com'].includes(parsed.hostname)) continue;
-                    const title = (anchor.innerText || anchor.textContent || '').trim().replace(/\s+/g, ' ');
-                    if (title.length < 4 || seen.has(parsed.href)) continue;
-                    seen.add(parsed.href);
-                    const card = anchor.closest('[class*="SearchResult"], [class*="List-item"], article') || anchor.parentElement;
-                    items.push({title: title.slice(0, 120), desc: (card?.innerText || '').trim().slice(0, 220),
-                                author: '', url: parsed.href, platform: '知乎', type: 'web'});
-                    if (items.length >= limit) break;
-                }
-                return items;
-            }""", {"selector": selector, "limit": max(1, min(limit, 20))})
-    except Exception as exc:
-        log.debug("Zhihu CDP page search failed: %s", exc)
-        return []
-
-
-def _read_cookies_with_retry(max_retries: int = 3, delay_s: float = 2.0) -> Optional[str]:
-    """Read Zhihu cookies with CDP retry. Chrome may need time to load after launch."""
-    for attempt in range(max_retries):
-        cookie = read_zhihu_cookies_from_cdp()
-        if cookie:
-            return cookie
-        if attempt < max_retries - 1:
-            log.info(f"CDP Cookie 读取失败，等待 {delay_s}s 后重试 ({attempt+1}/{max_retries})")
-            time.sleep(delay_s)
-    # Last resort: try DPAPI (may work outside sandbox)
-    return read_zhihu_cookies_from_profile()
-
-
-def _bring_zhihu_to_front_for_login() -> None:
-    """已弃用：不再自动弹出 Chrome 窗口。登录请使用 request_user_login('zhihu')。"""
-    log.info("知乎登录态失效，请使用 request_user_login('zhihu') 手动登录")
-
-
-def legacy_search_zhihu(keyword: str, limit: int = 10) -> Dict:
-    log.info("search_zhihu: request received; limit=%s", limit)
-    limit = min(limit, 20)
-    trace = CollectionTrace("知乎", ["persistent_profile_cookie", "signed_api", "chrome_cdp_page_fallback"])
+        answer_limit = max(1, min(20, int(request.options.get('answer_limit', 10))))
+        comment_scope=request.options.get('comments') or {}
+        comment_limit=max(1,min(500,int(comment_scope.get('total_limit',request.options.get('comment_limit',20)))))
+    except (ValueError, TypeError, OverflowError):
+        return failure('invalid_request', url=request.url, message='answer_limit、comment_limit 必须为整数。')
+    response = _invoke('detail', url=target.url, target=asdict(target), answer_limit=answer_limit)
+    if not response.get('ok'): return {**response, 'url': request.url}
+    data = dict(response['data'])
     try:
-        _ensure_chrome_debugging("zhihu")
-        cookie_str = _read_cookies_with_retry()
-        if not cookie_str:
-            trace.add("persistent_profile_cookie", "failed", detail="cookie_missing", error_type="login_required", retryable=True)
-            return _format_search_error("知乎", {
-                "error": "知乎 Cookie 不存在或无法读取",
-                "hint": "未自动弹出浏览器。请通过统一浏览器人工交互入口拉起知乎 Profile，扫码/登录完成并复验后重试。",
-                "user_action_required": True,
-                "platform_state": "login_required",
-                "recommended_action": "request_browser_interaction('zhihu', 'login_required')",
-            }, trace=trace, strategy="persistent_profile_cookie")
-        trace.add("persistent_profile_cookie", "ok", detail="cookie_readable")
-        try:
-            browser_only = not os.path.isfile(os.path.join(PROJECT_ROOT, "libs", "zhihu.js"))
-            if browser_only:
-                trace.add("signed_api", "skipped", detail="restricted_signer_not_distributed")
-            strategy = "chrome_cdp_page_fallback" if browser_only else "signed_api"
-            items = zhihu_search_api(keyword, cookie_str, limit)
-            log.info(f"  -> {len(items)} 条结果")
-            if not items:
-                trace.add("signed_api", "failed", detail="empty_results", error_type="empty_results", retryable=True)
-                fallback_items = zhihu_search_via_cdp_page(keyword, limit)
-                if fallback_items:
-                    trace.add("chrome_cdp_page_fallback", "ok", item_count=len(fallback_items))
-                    return _format_search_response("知乎", fallback_items, trace=trace)
-                trace.add("chrome_cdp_page_fallback", "failed", detail="empty_results", error_type="empty_results", retryable=True)
-                return format_search_response("知乎", [], trace=trace, metadata={"note": "知乎搜索无结果，可能是关键词未匹配或内容被屏蔽"})
-            trace.add(strategy, "ok", item_count=len(items))
-            return _format_search_response("知乎", items, trace=trace)
-        except RuntimeError as e:
-            err_msg = str(e)
-            log.error(f"知乎 API 调用失败: {err_msg}")
-            if "403" in err_msg or "400" in err_msg or "鉴权" in err_msg:
-                trace.add("signed_api", "failed", detail=err_msg, error_type="login_required", retryable=True)
-                fallback_items = zhihu_search_via_cdp_page(keyword, limit)
-                if fallback_items:
-                    trace.add("chrome_cdp_page_fallback", "ok", item_count=len(fallback_items))
-                    return _format_search_response("知乎", fallback_items, trace=trace)
-                trace.add("chrome_cdp_page_fallback", "failed", detail="empty_results_after_auth_failure", error_type="empty_results", retryable=True)
-                return _format_search_error("知乎", {
-                    "error": f"知乎鉴权失败: {err_msg}",
-                    "hint": "未自动弹出浏览器。请通过统一浏览器人工交互入口拉起知乎 Profile，扫码/登录完成并复验后重试。",
-                    "user_action_required": True,
-                    "platform_state": "login_required",
-                    "recommended_action": "request_browser_interaction('zhihu', 'auth_failed')",
-                }, trace=trace, strategy="signed_api")
-            trace.add("signed_api", "failed", detail=err_msg, error_type="request_failed", retryable=True)
-            return _format_search_error("知乎", {"error": f"知乎搜索失败: {err_msg}"}, trace=trace, strategy="signed_api")
-        except httpx.TimeoutException:
-            trace.add("signed_api", "failed", detail="timeout", error_type="request_failed", retryable=True)
-            return _format_search_error("知乎", {"error": "知乎 API 请求超时（>15s），请稍后重试", "retryable": True}, trace=trace, strategy="signed_api")
-        except Exception as e:
-            log.error(f"知乎搜索异常: {e}")
-            trace.add("signed_api", "failed", detail=str(e), error_type="request_failed", retryable=True)
-            fallback_items = zhihu_search_via_cdp_page(keyword, limit)
-            if fallback_items:
-                trace.add("chrome_cdp_page_fallback", "ok", item_count=len(fallback_items))
-                return _format_search_response("知乎", fallback_items, trace=trace)
-            trace.add("chrome_cdp_page_fallback", "failed", detail="empty_results_after_exception", error_type="empty_results", retryable=True)
-            return _format_search_error("知乎", {"error": f"知乎搜索异常: {str(e)}"}, trace=trace, strategy="signed_api")
-    finally:
-        finish_chrome_automation("zhihu", reason="zhihu_search")
-
-
-def _confirm_zhihu_cookie_state(retries: int = 2, delay_s: float = 1.2) -> str:
-    """Retry cookie read once or twice to avoid transient CDP/profile read misses."""
-    last_cookie = ""
-    for attempt in range(max(1, retries)):
-        last_cookie = read_zhihu_cookies_from_cdp() or read_zhihu_cookies_from_profile() or ""
-        if last_cookie:
-            return last_cookie
-        if attempt + 1 < retries:
-            time.sleep(delay_s)
-    return last_cookie
-
-
-def inspect_zhihu_cookie_health(warn_within_hours: int = 72) -> Dict:
-    profile_dir = os.path.join(_managed_chrome_profile_dir("zhihu"), "Default")
-    cookie_db_path = os.path.join(profile_dir, "Network", "Cookies")
-    cookie_str = _confirm_zhihu_cookie_state(retries=2, delay_s=1.0)
-    if cookie_str:
-        return {
-            "status": "ok",
-            "detail": "知乎当前登录态可读",
-            "platform": "zhihu",
-            "login_required": False,
-            "cookie_source": "cdp" if read_zhihu_cookies_from_cdp() else "profile",
-            "cookie_count": len(cookie_str.split("; ")),
-        }
-
-    if not os.path.isfile(cookie_db_path):
-        return {
-            "status": "degraded",
-            "detail": f"知乎 Cookie 数据库不存在: {cookie_db_path}",
-            "platform": "zhihu",
-            "login_required": True,
-            "retryable": True,
-        }
-
-    try:
-        import shutil
-        import sqlite3
-        import tempfile
-
-        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as tmp:
-            tmp_path = tmp.name
-        shutil.copy2(cookie_db_path, tmp_path)
-
-        conn = sqlite3.connect(tmp_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            "SELECT name, value, encrypted_value, expires_utc, host_key FROM cookies "
-            "WHERE host_key LIKE '%zhihu.com%'"
-        )
-        rows = cursor.fetchall()
-        conn.close()
-        os.unlink(tmp_path)
-
-        if not rows:
-            return {
-                "status": "degraded",
-                "detail": "知乎 Cookie 数据库中无 zhihu.com 条目，且 CDP 未读到有效登录态",
-                "platform": "zhihu",
-                "login_required": True,
-                "retryable": True,
-            }
-
-        now_ts = time.time()
-        expiry_points = []
-        has_session_cookie = False
-        for name, value, encrypted_value, expires_utc, host_key in rows:
-            if not expires_utc or float(expires_utc) <= 0:
-                has_session_cookie = True
-                continue
-            expiry_ts = float(expires_utc) / 1_000_000 - 11_644_473_600
-            expiry_points.append((expiry_ts, name, host_key))
-
-        if not expiry_points:
-            return {
-                "status": "ok",
-                "detail": "知乎 Cookie 可读，未找到可计算的过期时间",
-                "platform": "zhihu",
-                "login_required": False,
-                "cookie_source": "profile",
-                "cookie_mode": "session",
-            }
-
-        soonest_ts, soonest_name, soonest_host = min(expiry_points, key=lambda item: item[0])
-        remaining_s = round(soonest_ts - now_ts, 0)
-        remaining_h = round(remaining_s / 3600, 1)
-        if remaining_s <= 0:
-            return {
-                "status": "degraded",
-                "detail": f"知乎 Cookie 已过期或即将失效: {soonest_name}@{soonest_host}",
-                "platform": "zhihu",
-                "login_required": True,
-                "retryable": True,
-                "cookie_source": "profile",
-                "expires_in_s": remaining_s,
-                "expires_in_h": remaining_h,
-                "expires_at_unix": soonest_ts,
-            }
-        if remaining_s <= warn_within_hours * 3600:
-            return {
-                "status": "degraded",
-                "detail": f"知乎 Cookie 即将过期: {soonest_name}@{soonest_host}，剩余约 {remaining_h} 小时",
-                "platform": "zhihu",
-                "login_required": False,
-                "retryable": True,
-                "cookie_source": "profile",
-                "expires_in_s": remaining_s,
-                "expires_in_h": remaining_h,
-                "expires_at_unix": soonest_ts,
-            }
-        return {
-            "status": "ok",
-            "detail": f"知乎 Cookie 有效，最早过期项剩余约 {remaining_h} 小时",
-            "platform": "zhihu",
-            "login_required": False,
-            "cookie_source": "profile",
-            "expires_in_s": remaining_s,
-            "expires_in_h": remaining_h,
-            "expires_at_unix": soonest_ts,
-            "session_cookie_present": has_session_cookie,
-        }
-    except Exception as e:
-        return {
-            "status": "degraded",
-            "detail": f"知乎 Cookie 健康检查异常: {e}",
-            "platform": "zhihu",
-            "login_required": False,
-            "retryable": True,
-        }
+        observed = parse_target(data.get('url', ''))
+        declared = data.get('target') or {}
+        if not isinstance(declared, dict) or not same_target(target, observed) or declared.get('identifier') != target.identifier or declared.get('kind') != target.kind:
+            return failure('page_identity_changed', url=request.url)
+    except (ValueError, TypeError): return failure('page_identity_changed', url=request.url)
+    chunks = [data.get('body_html', '')]
+    parts = data.get('parts', 1)
+    if type(parts) is not int or not 1 <= parts <= 64 or not isinstance(chunks[0], str):
+        return failure('invalid_content_snapshot', url=request.url)
+    for index in range(1, parts):
+        check_execution()
+        part = _invoke('detail', url=observed.url, target=asdict(observed), snapshot_id=data.get('snapshot_id'), read_part=index)
+        if not part.get('ok'): return {**part, 'url': request.url, 'collected_parts': len(chunks), 'expected_parts': parts}
+        row = part['data']
+        if (row.get('snapshot_id') != data.get('snapshot_id') or row.get('part') != index
+                or row.get('body_sha256') != data.get('body_sha256') or not isinstance(row.get('body_html'), str)):
+            return failure('content_snapshot_changed', url=request.url)
+        chunks.append(row['body_html'])
+    html = ''.join(chunks)
+    if hashlib.sha256(html.encode('utf-8')).hexdigest() != data.get('body_sha256'):
+        return failure('content_snapshot_changed', url=request.url)
+    text = _html_to_markdown(html)
+    manifest = data.get('media_manifest') or []
+    directory = data.get('answer_directory') or []
+    if not isinstance(manifest, list) or not all(isinstance(row, dict) and isinstance(row.get('url'), str) for row in manifest):
+        return failure('invalid_adapter_payload', url=request.url)
+    if not isinstance(directory, list): return failure('invalid_adapter_payload', url=request.url)
+    valid_directory = []
+    for row in directory:
+        if not isinstance(row, dict): return failure('invalid_adapter_payload', url=request.url)
+        try: answer = parse_target(row.get('url', ''))
+        except (ValueError, TypeError): return failure('page_identity_changed', url=request.url)
+        if target.kind != 'question' or answer.kind != 'answer' or answer.question_id != target.identifier:
+            return failure('page_identity_changed', url=request.url)
+        if answer.identifier not in {r['identifier'] for r in valid_directory}:
+            valid_directory.append({**row, **asdict(answer), 'body_verified': False})
+    directory = valid_directory[:answer_limit]
+    if not text and not manifest and target.kind != 'question': return failure('page_structure_changed', url=request.url)
+    result = {'platform': '知乎', 'status': 'ok', 'url': observed.url, 'requested_url': request.url,
+              'title': str(data.get('title') or ''), 'author': str(data.get('author') or ''),
+              'published_at': data.get('published_at', ''), 'updated_at': data.get('updated_at', ''),
+              'target': asdict(observed), 'content': text, 'content_type': target.kind, 'body_verified': True,
+              'body_complete': data.get('body_complete') is True, 'body_source': data.get('body_source', 'visible_dom'),
+              'media_manifest': manifest, 'images': [r['url'] for r in manifest if r.get('type') == 'image'],
+              'answer_directory': directory, 'directory_coverage': data.get('directory_coverage', 'not_applicable'),
+              'comments_collected': False, 'comments_status': 'not_requested',
+              'collection_identity': runtime_identity(), 'metadata': response.get('metadata', {})}
+    result['completed_stages'] = ['body', 'media']
+    result['source_presentation'] = {'platform': '知乎', 'source_site': urlsplit(observed.url).hostname,
+                                     'processing_method': result['body_source']}
+    if target.kind == 'question':
+        links = '\n'.join('- [' + str(row.get('title') or '回答') + '](' + row['url'] + ')'
+                          for row in result['answer_directory'] if isinstance(row, dict) and row.get('url'))
+        result['content'] = text + ('\n\n## 已加载回答目录\n\n' + links if links else '')
+        if not result['content']:
+            result['content_observation'] = 'observed_empty_original_text'
+    if request.options.get('include_transcript'):
+        has_av = target.kind == 'zvideo' or any(row.get('type') in {'audio', 'video'} for row in manifest)
+        result['transcript_result'] = {'status':'missing','reason':'unsupported_zhihu_video'} if has_av else {'status': 'not_applicable', 'reason': 'no_video_in_observed_manifest'}
+        if has_av: result['status'] = 'partial'
+    if not result['body_complete']: result.update(status='partial', body_gap=data.get('body_gap') or 'visible_body_only')
+    if target.kind == 'zvideo': result.update(status='partial', transcript_status='unsupported_zhihu_video', body_complete=False)
+    if request.options.get('include_comments', request.enable_comment_filtering):
+        comments = _invoke('comments', url=observed.url, target=asdict(observed), limit=comment_limit, scope=comment_scope)
+        if not comments.get('ok'):
+            result.update(status='partial', comments_status=comments.get('failure_type', 'comments_failed'),
+                          comments_gap=comments.get('failure_type', 'comments_failed'), comments_failure=comments)
+        else:
+            c = comments['data']
+            try:
+                if not same_target(observed, parse_target(c.get('url', ''))): raise ValueError('identity')
+            except (ValueError, TypeError): result.update(status='partial', comments_status='page_identity_changed')
+            else:
+                rows = c.get('comments') or []
+                if not isinstance(rows, list) or not all(isinstance(row, dict) and isinstance(row.get('content'), str) for row in rows):
+                    result.update(status='partial', comments_status='invalid_adapter_payload')
+                    return result
+                c['comments'] = rows[:comment_limit]
+                satisfied = c.get('request_satisfied') is True
+                complete = satisfied or bool(c.get('empty_confirmed'))
+                result.update(comments=c.get('comments') or [], comments_collected=bool(c.get('comments') or c.get('empty_confirmed')),
+                              comments_empty_confirmed=bool(c.get('empty_confirmed')),
+                              comments_complete=complete,
+                              comments_exhausted=c.get('exhausted') is True,
+                              comments_source=c.get('comment_source', 'visible_dom'),
+                              comments_status=c.get('failure_type') or ('empty_confirmed' if c.get('empty_confirmed') else 'bounded_request_satisfied' if satisfied else 'visible_comments_bounded'),
+                              comments_coverage={**(c.get('coverage') or {}),
+                                                 'scope': (c.get('coverage') or {}).get('scope', 'visible_roots_and_expanded_replies'),
+                                                 'limit': c.get('limit'), 'request_satisfied': complete,
+                                                 'has_more': c.get('has_more', True), 'exhausted': c.get('exhausted') is True,
+                                                 'next': 'explicit_detail_request'},
+                              comments_gap='' if complete else c.get('failure_type') or (c.get('coverage') or {}).get('stop_reason') or 'reader_window_not_exhausted',
+                              comments_metadata={'gaps':[{'reason':c['failure_type']}] if c.get('failure_type') else [],
+                                'actual_order':(c.get('coverage') or {}).get('actual_order','platform_default'),
+                                'reader_diagnostic':c.get('comment_diagnostics') or {}, 'transport':comments.get('metadata') or {}})
+                if not result['comments_complete']: result['status'] = 'partial'
+    return result

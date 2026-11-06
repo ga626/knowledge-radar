@@ -6,7 +6,7 @@
       "display_name": "国家哲学社会科学文献中心",
       "provider_class": "academic_providers.nssd:NssdProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A",
         "B"
@@ -42,14 +42,14 @@
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
+      "role": "domain_discovery"
     },
     {
       "id": "chinaxiv",
       "display_name": "ChinaXiv",
       "provider_class": "academic_providers.chinaxiv:ChinaXivProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A",
         "B"
@@ -86,146 +86,59 @@
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
+      "role": "domain_discovery"
     },
     {
-      "id": "hanspub",
-      "display_name": "Hans Publishers",
-      "provider_class": "academic_providers.hanspub:HansPubProvider",
+      "id": "napstic_oa",
+      "display_name": "国家科技期刊平台开放获取库",
+      "provider_class": "academic_providers.napstic_oa:NapsticOaProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
-        "A",
-        "B"
+        "A"
       ],
       "languages": [
-        "zh",
-        "en"
+        "zh"
       ],
       "disciplines": [
-        "general"
-      ],
-      "content": {
-        "metadata": true,
-        "abstract": true,
-        "pdf_fulltext": true
-      },
-      "access": {
-        "login_required": false,
-        "payment_required": false,
-        "auth_mode": "anonymous_public"
-      },
-      "quota": {
-        "type": "none"
-      },
-      "speed": "medium",
-      "stability": "high",
-      "priority": {
-        "discovery": 86,
-        "fulltext": 86
-      },
-      "dedupe_ids": [
-        "doi",
-        "platform_id",
-        "title_year_author"
-      ],
-      "role": "default_chinese_fulltext"
-    },
-    {
-      "id": "oajrc",
-      "display_name": "OAJRC",
-      "provider_class": "academic_providers.oajrc:OajrcProvider",
-      "enabled": true,
-      "default_policy": "auto",
-      "wave": [
-        "A",
-        "B"
-      ],
-      "languages": [
-        "zh",
-        "en"
-      ],
-      "disciplines": [
-        "general"
-      ],
-      "content": {
-        "metadata": true,
-        "abstract": true,
-        "pdf_fulltext": true
-      },
-      "access": {
-        "login_required": false,
-        "payment_required": false,
-        "auth_mode": "anonymous_public"
-      },
-      "quota": {
-        "type": "none"
-      },
-      "speed": "medium",
-      "stability": "high",
-      "priority": {
-        "discovery": 85,
-        "fulltext": 85
-      },
-      "dedupe_ids": [
-        "doi",
-        "platform_id",
-        "title_year_author"
-      ],
-      "role": "default_chinese_fulltext"
-    },
-    {
-      "id": "sciopen",
-      "display_name": "SciOpen",
-      "provider_class": "academic_providers.sciopen:SciOpenProvider",
-      "enabled": true,
-      "default_policy": "auto",
-      "wave": [
-        "A",
-        "B"
-      ],
-      "languages": [
-        "zh",
-        "en"
-      ],
-      "disciplines": [
+        "general",
         "stem",
-        "general"
+        "biomed",
+        "social_science"
       ],
       "content": {
         "metadata": true,
         "abstract": true,
-        "html_fulltext": true,
-        "pdf_fulltext": true,
-        "direct_read_preferred": true
+        "html_fulltext": false,
+        "pdf_fulltext": false
       },
       "access": {
         "login_required": false,
         "payment_required": false,
-        "auth_mode": "anonymous_public"
+        "auth_mode": "anonymous_public_search"
       },
       "quota": {
-        "type": "none"
+        "type": "external"
       },
-      "speed": "medium",
-      "stability": "high",
+      "speed": "fast",
+      "stability": "medium",
       "priority": {
-        "discovery": 84,
-        "fulltext": 84
+        "discovery": 78,
+        "fulltext": 0
       },
       "dedupe_ids": [
         "doi",
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
+      "role": "domain_discovery"
     },
     {
       "id": "vip_oa",
       "display_name": "VIP/CQVIP intelligent reading",
       "provider_class": "academic_providers.vip_oa:VipOpenAccessProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "explicit",
       "wave": [
         "B"
       ],
@@ -260,7 +173,7 @@
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
+      "role": "authorized_fulltext"
     },
     {
       "id": "pubscholar",
@@ -306,91 +219,7 @@
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
-    },
-    {
-      "id": "ivy_publisher",
-      "display_name": "Ivy Publisher",
-      "provider_class": "academic_providers.ivy_publisher:IvyPublisherProvider",
-      "enabled": true,
-      "default_policy": "explicit",
-      "wave": [
-        "C"
-      ],
-      "languages": [
-        "en"
-      ],
-      "disciplines": [
-        "general"
-      ],
-      "content": {
-        "metadata": true,
-        "abstract": true,
-        "pdf_fulltext": true
-      },
-      "access": {
-        "login_required": false,
-        "payment_required": false,
-        "auth_mode": "anonymous_public"
-      },
-      "quota": {
-        "type": "none"
-      },
-      "speed": "medium",
-      "stability": "medium",
-      "priority": {
-        "discovery": 35,
-        "fulltext": 50
-      },
-      "dedupe_ids": [
-        "doi",
-        "platform_id",
-        "title_year_author"
-      ],
-      "role": "narrow_fulltext_supplement"
-    },
-    {
-      "id": "socolar",
-      "display_name": "Socolar",
-      "provider_class": "academic_providers.socolar:SocolarProvider",
-      "enabled": true,
-      "default_policy": "explicit",
-      "wave": [
-        "A",
-        "C"
-      ],
-      "languages": [
-        "zh",
-        "en",
-        "multilingual"
-      ],
-      "disciplines": [
-        "general"
-      ],
-      "content": {
-        "metadata": true,
-        "abstract": true
-      },
-      "access": {
-        "login_required": true,
-        "payment_required": false,
-        "auth_mode": "managed_browser_login"
-      },
-      "quota": {
-        "type": "none"
-      },
-      "speed": "slow",
-      "stability": "medium",
-      "priority": {
-        "discovery": 58,
-        "fulltext": 0
-      },
-      "dedupe_ids": [
-        "doi",
-        "platform_id",
-        "title_year_author"
-      ],
-      "role": "abstract_discovery_supplement"
+      "role": "primary_chinese_discovery"
     },
     {
       "id": "hkjo",
@@ -439,7 +268,7 @@
       "display_name": "SciEngine",
       "provider_class": "academic_providers.sciengine:SciEngineProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A",
         "B"
@@ -478,7 +307,7 @@
         "platform_id",
         "title_year_author"
       ],
-      "role": "default_chinese_fulltext"
+      "role": "domain_discovery"
     },
     {
       "id": "openalex",
@@ -527,7 +356,7 @@
       "display_name": "Crossref",
       "provider_class": "academic_providers.crossref:CrossrefProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A"
       ],
@@ -568,7 +397,7 @@
       "display_name": "Semantic Scholar",
       "provider_class": "academic_providers.semanticscholar:SemanticScholarProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "configured_supplement",
       "wave": [
         "A"
       ],
@@ -611,7 +440,7 @@
       "display_name": "Europe PMC",
       "provider_class": "academic_providers.europepmc:EuropePmcProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A",
         "B"
@@ -651,14 +480,14 @@
         "pmid",
         "title_year_author"
       ],
-      "role": "global_metadata"
+      "role": "domain_discovery"
     },
     {
       "id": "core",
       "display_name": "CORE",
       "provider_class": "academic_providers.core:CoreProvider",
       "enabled": true,
-      "default_policy": "auto",
+      "default_policy": "intent",
       "wave": [
         "A",
         "B"
@@ -793,7 +622,7 @@
         "arxiv_id",
         "title_year_author"
       ],
-      "role": "stem_preprint"
+      "role": "domain_discovery"
     },
     {
       "id": "ar5iv",
@@ -880,6 +709,252 @@
         "title_year_author"
       ],
       "role": "user_supplied"
+    },
+    {
+      "id": "calis_thesis",
+      "display_name": "学位论文",
+      "provider_class": "academic_providers.calis_thesis:CalisThesisProvider",
+      "enabled": true,
+      "default_policy": "intent",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "public_search"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "regional_discovery"
+    },
+    {
+      "id": "nstrs",
+      "display_name": "国家科技报告",
+      "provider_class": "academic_providers.nstrs:NstrsProvider",
+      "enabled": true,
+      "default_policy": "intent",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "public_search"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "technical_report"
+    },
+    {
+      "id": "toaj",
+      "display_name": "台湾期刊",
+      "provider_class": "academic_providers.toaj:ToajProvider",
+      "enabled": true,
+      "default_policy": "intent",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "public_search"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "regional_discovery"
+    },
+    {
+      "id": "ntur",
+      "display_name": "台大仓储",
+      "provider_class": "academic_providers.ntur:NturProvider",
+      "enabled": true,
+      "default_policy": "intent",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "public_search"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "regional_discovery"
+    },
+    {
+      "id": "serpapi_scholar",
+      "display_name": "SerpAPI Scholar",
+      "provider_class": "academic_providers.serpapi_scholar:SerpApiScholarProvider",
+      "enabled": true,
+      "default_policy": "configured_supplement",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "public_search"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "budgeted_supplement"
+    },
+    {
+      "id": "wanfang",
+      "display_name": "万方官方检索",
+      "provider_class": "academic_providers.wanfang:WanfangProvider",
+      "enabled": true,
+      "default_policy": "explicit",
+      "wave": [
+        "C"
+      ],
+      "languages": [
+        "zh",
+        "en"
+      ],
+      "disciplines": [
+        "general"
+      ],
+      "content": {
+        "metadata": true,
+        "abstract": true
+      },
+      "access": {
+        "login_required": false,
+        "payment_required": false,
+        "auth_mode": "official_api"
+      },
+      "quota": {
+        "type": "external"
+      },
+      "speed": "medium",
+      "stability": "medium",
+      "priority": {
+        "discovery": 50,
+        "fulltext": 0
+      },
+      "dedupe_ids": [
+        "doi",
+        "platform_id",
+        "title_year_author"
+      ],
+      "role": "authorized_metadata"
     }
   ]
 }

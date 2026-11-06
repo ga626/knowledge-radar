@@ -8,10 +8,11 @@ import time
 import threading
 import ssl
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.request import proxy_bypass_environment
+from dataclasses import dataclass
 
 import httpx
 
-SENSITIVE = re.compile(r"token|secret|password|passwd|authorization|credential|signature|api[_-]?key|access[_-]?key|session|cookie|auth|^code$", re.I)
 MAX_RESPONSE_BYTES = 4 * 1024 * 1024
 _DNS_CACHE = {}
 _DNS_LOCK = threading.Lock()
@@ -24,16 +25,29 @@ def _public_dns_for_fake_ip(host):
         old = _DNS_CACHE.get(host)
         if old and old[0] > time.monotonic():
             return old[1]
-    try:
-        with httpx.Client(proxy=get_httpx_proxy(), trust_env=False, timeout=8, follow_redirects=False) as client:
-            response = client.get("https://cloudflare-dns.com/dns-query", params={"name": host, "type": "A"}, headers={"Accept": "application/dns-json"})
-            response.raise_for_status()
-            body = response.json()
-        addresses = sorted({r["data"] for r in body.get("Answer", []) if r.get("type") in {1, 28}})
-        if body.get("Status") != 0 or not addresses or any(not ipaddress.ip_address(a).is_global for a in addresses):
-            raise ValueError("resolver returned no public address")
-    except (httpx.HTTPError, ValueError, KeyError) as exc:
-        raise URLPolicyError("public DNS validation unavailable for proxy Fake-IP target") from exc
+    addresses = []
+    # 固定两个解析器沿同一代理路线；首个网络不可达不再挡住全部Fake-IP网页。
+    # 任一解析器返回私网或明确NXDOMAIN仍立即拒绝，不能挑一个方便的答案放行。
+    for endpoint in ("https://cloudflare-dns.com/dns-query", "https://dns.alidns.com/resolve"):
+        try:
+            with httpx.Client(proxy=get_httpx_proxy(), trust_env=False, timeout=5, follow_redirects=False) as client:
+                response = client.get(endpoint, params={"name": host, "type": "A"}, headers={"Accept": "application/dns-json"})
+                response.raise_for_status()
+                body = response.json()
+            addresses = sorted({r["data"] for r in body.get("Answer", []) if r.get("type") in {1, 28}})
+            if body.get("Status") == 3:
+                raise URLPolicyError("target DNS name not found")
+            if any(not ipaddress.ip_address(a).is_global for a in addresses):
+                raise URLPolicyError("non-public target address forbidden")
+            if body.get("Status") == 0 and addresses:
+                break
+            addresses = []
+        except URLPolicyError:
+            raise
+        except (httpx.HTTPError, ValueError, KeyError, TypeError):
+            addresses = []
+    if not addresses:
+        raise URLPolicyError("public DNS validation unavailable for proxy Fake-IP target")
     with _DNS_LOCK:
         if len(_DNS_CACHE) >= 256:
             _DNS_CACHE.clear()
@@ -43,6 +57,27 @@ def _public_dns_for_fake_ip(host):
 
 class URLPolicyError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class ReadOnlyPost:
+    """适配器随代码声明的公开查询接口；不是 Agent 可随意指定的写入权限。"""
+    endpoint: str
+    fields: frozenset[str]
+    max_body_bytes: int = 16 * 1024
+    redirect_to_get: bool = False
+
+    def encode(self, url, form, headers):
+        parsed, _, _ = public_addresses(url, resolve=False)
+        if (url != self.endpoint or parsed.scheme != 'https' or parsed.query or parsed.fragment
+                or not isinstance(form, dict) or not form or set(form) - self.fields
+                or any(not isinstance(k, str) or type(v) not in (str, int, bool) for k, v in form.items())
+                or any(k.lower() in {'authorization','cookie','proxy-authorization'} for k in headers)):
+            raise URLPolicyError('read_only_post_declaration_mismatch')
+        content = urlencode(form).encode('utf-8')
+        if not 0 < len(content) <= min(self.max_body_bytes, 64*1024):
+            raise URLPolicyError('read_only_post_body_budget_exceeded')
+        return content
 
 
 def public_addresses(url: str, *, resolve: bool = True):
@@ -83,35 +118,12 @@ def public_addresses(url: str, *, resolve: bool = True):
     return parsed, host, addresses
 
 
-def redact_url(url):
-    try:
-        parsed = urlsplit(url)
-        host = parsed.hostname or ""
-        if ":" in host:
-            host = f"[{host}]"
-        if parsed.port:
-            host += f":{parsed.port}"
-        query = urlencode([(k, "[redacted]" if SENSITIVE.search(k) else v) for k, v in parse_qsl(parsed.query, keep_blank_values=True)])
-        return urlunsplit((parsed.scheme, host, parsed.path, query, ""))
-    except ValueError:
-        return "[invalid_url]"
+from kr_core.source_urls import SENSITIVE, redact_url, canonical_url, discovery_url, public_evidence_payload
 
 
-def canonical_url(url: str) -> str:
-    """公开身份不含访问令牌；原始 fetch URL 只留在取数调用内。"""
-    try:
-        parsed = urlsplit(url)
-        if parsed.scheme not in {"http", "https"}:
-            return url
-        safe = urlsplit(redact_url(url))
-        query = urlencode([(k, v) for k, v in parse_qsl(parsed.query, keep_blank_values=True) if not SENSITIVE.search(k)])
-        return urlunsplit((safe.scheme, safe.netloc, safe.path, query, ""))
-    except (ValueError, TypeError):
-        return "[invalid_url]"
-
-
-DETAIL_DOMAINS = {"小红书": ("xiaohongshu.com", "xhslink.com"), "知乎": ("zhihu.com",),
+DETAIL_DOMAINS = {"微信": ("mp.weixin.qq.com",), "小红书": ("xiaohongshu.com", "xhslink.com"), "知乎": ("zhihu.com",),
                   "BOSS直聘": ("zhipin.com",), "猎聘": ("liepin.com",),
+                  "智联招聘": ("zhaopin.com",), "脉脉": ("maimai.cn",), "V2EX": ("v2ex.com",),
                   "B站": ("bilibili.com", "b23.tv"), "YouTube": ("youtube.com", "youtu.be")}
 
 
@@ -124,16 +136,6 @@ def validate_detail_target(url, platform=""):
         raise URLPolicyError("detail platform and target host mismatch")
 
 
-def public_evidence_payload(value):
-    """在持久证据边界递归移除访问凭据，并清理文本内的受保护链接。"""
-    if isinstance(value, dict):
-        return {k: public_evidence_payload(v) for k, v in value.items()
-                if not re.fullmatch(r"(?:fetch_url|xsec_token|access_token|refresh_token|api_key|authorization|cookie|cookies|password|secret)", str(k), re.I)}
-    if isinstance(value, (tuple, list)):
-        return [public_evidence_payload(item) for item in value]
-    if isinstance(value, str):
-        return re.sub(r"https?://[^\s<>\"']+", lambda match: canonical_url(match.group()), value)
-    return value
 
 
 def reader_allowed(url):
@@ -156,12 +158,31 @@ class _TargetTLSContext(ssl.SSLContext):
         return super().wrap_socket(*args, server_hostname=self._target_host, **kwargs)
 
 
-def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None, follow_redirects=True):
+def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None, follow_redirects=True,
+                  readonly_post=None, form=None):
     original = url
     headers = dict(headers or {})
+    method, body = 'GET', None
+    if readonly_post is not None or form is not None:
+        if not isinstance(readonly_post, ReadOnlyPost):
+            raise URLPolicyError('read_only_post_declaration_required')
+        body = readonly_post.encode(url, form, headers)
+        method = 'POST'
+        headers = {k:v for k,v in headers.items() if k.lower() not in {'content-type','content-length'}}
+        headers['Content-Type'] = 'application/x-www-form-urlencoded'
+    deadline = time.monotonic() + float(timeout)
+    from runtime.execution_context import check_execution
     from runtime.proxy_config import get_httpx_proxy
     for _ in range(6):
+        check_execution()
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            raise httpx.TimeoutException('acquisition deadline exceeded')
         parsed, host, addresses = public_addresses(url)
+        check_execution()
+        remaining = deadline-time.monotonic()
+        if remaining <= 0:
+            raise httpx.TimeoutException('acquisition deadline exceeded during DNS')
         ip = addresses[0]
         ip_host = f"[{ip}]" if ":" in ip else ip
         port = parsed.port
@@ -171,9 +192,22 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
         if port:
             authority += f":{port}"
         # URL使用已验IP，TLS SNI与证书校验仍使用原主机名。
-        with httpx.Client(timeout=timeout, follow_redirects=False, headers=headers, proxy=get_httpx_proxy(), trust_env=False, verify=_TargetTLSContext(host)) as client:
-            with client.stream("GET", pinned, headers={"Host": authority}, extensions={"sni_hostname": host}) as response:
+        # 代理选择按原域名处理 NO_PROXY，再连接已验证 IP；每次重定向都重算，
+        # 不能因为固定 IP 而丢失域名的直连声明，也不放宽 DNS/重定向护栏。
+        proxy = None if proxy_bypass_environment(authority) else get_httpx_proxy()
+        with httpx.Client(timeout=remaining, follow_redirects=False, headers=headers, proxy=proxy, trust_env=False, verify=_TargetTLSContext(host)) as client:
+            with client.stream(method, pinned, content=body, headers={"Host": authority}, extensions={"sni_hostname": host}) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
+                    if method == 'POST':
+                        target = urljoin(url, response.headers.get('location', ''))
+                        # Some public search forms use POST/Redirect/GET. Only
+                        # an opted-in same-origin 302/303 may discard the body;
+                        # 307/308 never replay it, even on the same origin.
+                        if (not readonly_post.redirect_to_get or response.status_code not in {302,303}
+                                or not response.headers.get('location')
+                                or urlsplit(target)[:2] != urlsplit(url)[:2]):
+                            raise URLPolicyError('read_only_post_redirect_forbidden')
+                        method, body = 'GET', None
                     location = response.headers.get("location")
                     if not location:
                         raise URLPolicyError("redirect without location")
@@ -183,17 +217,20 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
                         raise URLPolicyError("HTTPS downgrade redirect forbidden")
                     if not follow_redirects:
                         return httpx.Response(response.status_code, headers={"location": target},
-                                              request=httpx.Request("GET", url))
+                                              request=httpx.Request(method, url))
                     if (urlsplit(url).hostname, urlsplit(url).port) != (urlsplit(target).hostname, urlsplit(target).port):
-                        headers = {key: value for key, value in headers.items() if key.lower() not in {"authorization", "cookie", "proxy-authorization", "referer"}}
+                        headers = {key: value for key, value in headers.items() if key.lower() not in {"authorization", "cookie", "proxy-authorization", "referer", "if-none-match", "if-modified-since"}}
                     url = target
                     continue
                 body = bytearray()
                 for chunk in response.iter_bytes(chunk_size=65536):
+                    check_execution()
+                    if time.monotonic() >= deadline:
+                        raise httpx.TimeoutException('acquisition deadline exceeded')
                     body.extend(chunk)
                     if len(body) > max_bytes:
                         raise URLPolicyError("response exceeds bounded extraction size")
                 decoded_headers = {k: v for k, v in response.headers.items() if k.lower() not in {"content-encoding", "content-length"}}
                 return httpx.Response(response.status_code, headers=decoded_headers, content=bytes(body),
-                                      request=httpx.Request("GET", url), extensions={"original_url": redact_url(original)})
+                                      request=httpx.Request(method, url), extensions={"original_url": redact_url(original)})
     raise URLPolicyError("redirect limit exceeded")

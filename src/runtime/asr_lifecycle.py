@@ -1,54 +1,17 @@
-"""隔离转写 worker 的生命周期合同；不在服务进程加载模型。"""
+"""只读查询本进程唯一ASR实例；不加载模型，不探测无关GPU。"""
 
-from __future__ import annotations
-import os
-import shutil
-from typing import Any, Dict
-from runtime.process import silent_subprocess_run
-
-
-def _gpu_memory_from_nvidia_smi() -> Dict[str, Any]:
-    exe = shutil.which("nvidia-smi")
-    if not exe:
-        return {"available": False, "reason": "nvidia-smi not found"}
-    try:
-        result = silent_subprocess_run(
-            [
-                exe,
-                "--query-gpu=memory.total,memory.used,memory.free",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=5,
-        )
-    except Exception as exc:
-        return {"available": False, "reason": str(exc)[:160]}
-    if result.returncode != 0:
-        return {"available": False, "reason": (result.stderr or result.stdout or "")[:160]}
-    line = (result.stdout or "").strip().splitlines()[0] if (result.stdout or "").strip() else ""
-    parts = [part.strip() for part in line.split(",")]
-    if len(parts) < 3:
-        return {"available": False, "reason": "unexpected nvidia-smi output"}
-    try:
-        total, used, free = (int(float(part)) for part in parts[:3])
-    except Exception:
-        return {"available": False, "reason": "failed to parse nvidia-smi output"}
-    return {"available": True, "total_mb": total, "used_mb": used, "free_mb": free}
+import sys
 
 
 def asr_lifecycle_summary():
-    from runtime.model_roles import ASR_COMPONENT
-
+    from runtime.model_roles import ASR_COMPONENT, ASR_ENGINE
+    worker = sys.modules.get('runtime.optional_media_worker')
     return {
-        "schema": "knowledgeradar-asr-lifecycle/v2",
-        "status": "implemented_isolated_worker",
-        "component": ASR_COMPONENT,
-        "mode": "task_burst",
-        "resident_model": False,
-        "concurrency_resource": "local_heavy",
-        "release_policy": "退出本次隔离子进程后释放模型内存；取消由任务服务终止其拥有的进程树",
-        "default_device": os.environ.get("KR_ASR_DEVICE", "cpu"),
-        "batch_size": 1,
-        "gpu": _gpu_memory_from_nvidia_smi(),
+        'schema': 'knowledgeradar-asr-lifecycle/v2',
+        'status': 'implemented_inprocess', 'component': ASR_COMPONENT, 'engine': ASR_ENGINE,
+        'mode': 'single_cached_model', 'resident_model': bool(getattr(worker, '_ASR_MODEL', None)),
+        'concurrency_resource': 'local_heavy',
+        'release_policy': '最多复用一个CPU INT8实例；native返回前保留租约，取消后拒绝迟到写入',
+        'default_device': 'cpu', 'compute_type': 'int8', 'batch_size': 1,
+        'gpu': {'available': False, 'reason': 'CPU_INT8_engine'},
     }

@@ -15,21 +15,14 @@ for path in (ROOT, SRC):
 from runtime import mcp_runtime
 
 
-def _load_runtime_cli_module():
-    import importlib.util
-
-    spec = importlib.util.spec_from_file_location("kr_mcp_runtime_test", ROOT / "scripts" / "kr_mcp_runtime.py")
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_runtime_cli_treats_restart_pending_as_successful_deferral(monkeypatch) -> None:
-    module = _load_runtime_cli_module()
-    monkeypatch.setattr(module, "request_runtime_refresh", lambda *_args, **_kwargs: {"status": "restart_pending"})
-
-    assert module.main(["--request", "--reason", "test", "--json"]) == 0
+def test_public_runtime_cli_preserves_busy_work(monkeypatch, capsys) -> None:
+    from runtime import cli
+    class Client:
+        def stop(self):
+            return {'status': 'busy', 'next_action': 'wait_for_accepted_work'}
+    monkeypatch.setattr(cli, 'OwnerClient', Client)
+    assert cli.main(['runtime', 'stop']) == 2
+    assert 'busy' in capsys.readouterr().out
 
 
 def test_pending_runtime_defers_without_calling_restart_when_busy(tmp_path: Path, monkeypatch) -> None:
@@ -74,9 +67,11 @@ def test_pending_runtime_restarts_once_when_idle(tmp_path: Path, monkeypatch) ->
     assert result["state"]["pending"] is False
 
 
-def test_http_restart_script_does_not_target_configured_stdio_processes() -> None:
-    script = (ROOT / "scripts" / "kr_restart_server.ps1").read_text(encoding="utf-8-sig")
-    assert "function Get-KrHttpServerProcesses" in script
-    assert "Get-KrServerProcesses" not in script
-    assert "$targetPids = @(Get-KrHttpServerProcesses" in script
-    assert "preserved_stdio_sessions = $true" in script
+def test_public_runtime_status_never_starts_or_stops_a_transport(monkeypatch) -> None:
+    from runtime.execution_owner import OwnerClient, source_identity, PROTOCOL
+    client = OwnerClient()
+    monkeypatch.setattr(client, 'descriptor', lambda: {'pid': 1, 'source_identity': source_identity(), 'protocol': PROTOCOL})
+    calls = []
+    monkeypatch.setattr(client, '_request', lambda descriptor, path, **kwargs: calls.append(path) or {'status': 'ready'})
+    assert client.status()['status'] == 'ready'
+    assert calls == ['status']

@@ -1,4 +1,12 @@
 import video_processor
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def isolate_cache(monkeypatch, tmp_path):
+    monkeypatch.setenv('KR_DATA_ROOT', str(tmp_path/'data'))
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path/'state'))
+    monkeypatch.setenv('KR_MEDIA_CACHE_DIR', str(tmp_path/'media'))
 
 
 def test_video_text_analysis_defaults_to_safe_bailian_model(monkeypatch) -> None:

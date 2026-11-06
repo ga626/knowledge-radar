@@ -39,7 +39,11 @@ class CitationImportProvider:
     def search(self, request: AcademicSearchRequest) -> List[AcademicWork]:
         text, import_source = self._load_input(request)
         items = parse_citation_text(text, import_source=import_source)
-        return items[: max(1, min(int(request.limit or 5), 20))]
+        offset = max(0, int(request.options.get('source_offset', 0)))
+        from .chinese_open_access import OpenAccessResults
+        result = OpenAccessResults(items[offset:offset + max(1, min(int(request.limit or 5), 20))], [])
+        result.continuation = {'source_offset':offset+len(result)} if offset+len(result)<len(items) else None
+        return result
 
     def _load_input(self, request: AcademicSearchRequest) -> Tuple[str, str]:
         raw = str(request.query or "").strip()
@@ -52,14 +56,25 @@ class CitationImportProvider:
             source_path = raw
 
         if source_path:
-            path = Path(source_path).expanduser()
+            path = Path(source_path).expanduser().resolve()
+            root = request.options.get('approved_input_root')
+            expected_sha = str(request.options.get('input_sha256') or '')
+            if not root or not re.fullmatch('[a-fA-F0-9]{64}', expected_sha):
+                raise CitationImportError('file import requires approved_input_root and input_sha256')
+            approved = Path(root).expanduser().resolve()
+            if not path.is_relative_to(approved) or path == approved:
+                raise CitationImportError('citation_import_outside_approved_root')
             if not path.exists() or not path.is_file():
                 raise CitationImportError(f"Citation import file not found: {source_path}")
             if path.stat().st_size > self.max_bytes:
                 raise CitationImportError(f"Citation import file exceeds max bytes: {self.max_bytes}")
             if path.suffix.lower() not in {".ris", ".bib", ".enw", ".txt"}:
                 raise CitationImportError("Citation import supports .ris, .bib, .enw, and .txt files")
-            return path.read_text(encoding="utf-8-sig", errors="replace"), str(path)
+            import hashlib
+            data = path.read_bytes()
+            if len(data) > self.max_bytes or hashlib.sha256(data).hexdigest() != expected_sha.lower():
+                raise CitationImportError('citation_import_changed_or_too_large')
+            return data.decode('utf-8-sig', errors='replace'), path.name
 
         if not raw:
             raise CitationImportError("Citation import requires a file path or citation text")

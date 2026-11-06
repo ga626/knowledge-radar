@@ -103,12 +103,13 @@ def _normalise_usage(data: Dict[str, Any]) -> Dict[str, Any]:
     prompt_tokens = int(usage.get("input_tokens") or usage.get("prompt_tokens") or 0)
     completion_tokens = int(usage.get("output_tokens") or usage.get("completion_tokens") or 0)
     cached_tokens = 0
-    prompt_details = usage.get("prompt_tokens_details")
+    prompt_details = usage.get("prompt_tokens_details") or usage.get("input_tokens_details")
     if isinstance(prompt_details, dict):
         cached_tokens = int(prompt_details.get("cached_tokens") or 0)
     output_details = usage.get("completion_tokens_details") or usage.get("output_tokens_details") or {}
     return {
         **usage,
+        "usage_reported": bool(("input_tokens" in usage or "prompt_tokens" in usage) and ("output_tokens" in usage or "completion_tokens" in usage)),
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "total_tokens": int(usage.get("total_tokens") or prompt_tokens + completion_tokens),
@@ -172,17 +173,22 @@ def _post_multimodal_generation(
     timeout: float,
 ) -> BailianResponse:
     started = time.perf_counter()
-    resp = httpx.post(
-        bailian_multimodal_endpoint(),
-        headers=_headers(),
-        json=payload,
-        timeout=timeout,
-    )
+    from runtime.paid_execution import paid_send, settle_usage
+    import json
+    headers = _headers()
+    with paid_send("bailian", payload, bound=len(json.dumps(payload, ensure_ascii=False).encode("utf-8")), endpoint=bailian_multimodal_endpoint()) as reservation:
+        resp = httpx.post(
+            bailian_multimodal_endpoint(),
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
     elapsed_s = time.perf_counter() - started
     if resp.status_code != 200:
         raise RuntimeError(f"DashScope {payload.get('model')} HTTP {resp.status_code}: {resp.text[:240]}")
     data = resp.json()
     usage = _normalise_usage(data)
+    settle_usage(reservation["reservation_id"], provider="bailian", model=payload.get("model"), usage=usage)
     return BailianResponse(
         content=_extract_content(data),
         provider=f"Bailian {payload.get('model')}",
@@ -198,17 +204,22 @@ def _post_chat_completion(
     timeout: float,
 ) -> BailianResponse:
     started = time.perf_counter()
-    resp = httpx.post(
-        f"{bailian_compatible_base_url()}/chat/completions",
-        headers=_headers(),
-        json=payload,
-        timeout=timeout,
-    )
+    from runtime.paid_execution import paid_send, settle_usage
+    import json
+    headers = _headers()
+    with paid_send("bailian", payload, bound=len(json.dumps(payload, ensure_ascii=False).encode("utf-8")), endpoint=bailian_compatible_base_url()) as reservation:
+        resp = httpx.post(
+            f"{bailian_compatible_base_url()}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=timeout,
+        )
     elapsed_s = time.perf_counter() - started
     if resp.status_code != 200:
         raise RuntimeError(f"DashScope {payload.get('model')} HTTP {resp.status_code}: {resp.text[:240]}")
     data = resp.json()
     usage = _normalise_usage(data)
+    settle_usage(reservation["reservation_id"], provider="bailian", model=payload.get("model"), usage=usage)
     return BailianResponse(
         content=_extract_chat_content(data),
         provider=f"Bailian {payload.get('model')}",
@@ -261,6 +272,7 @@ def call_multimodal_generation(
             breaker_key,
             "model",
             lambda: _post_multimodal_generation(payload, timeout=timeout),
+            attempts=1,
             retryable_exceptions=(httpx.HTTPError, RuntimeError),
             metadata={"model": request_model, "capability": capability, "provider": "bailian"},
         )
@@ -335,6 +347,7 @@ def call_text_model(
             breaker_key,
             "model",
             lambda: _post_chat_completion(payload, timeout=timeout),
+            attempts=1,
             retryable_exceptions=(httpx.HTTPError, RuntimeError),
             metadata={"model": request_model, "capability": capability, "provider": "bailian"},
         )

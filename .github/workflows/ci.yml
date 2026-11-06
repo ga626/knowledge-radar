@@ -47,7 +47,7 @@ jobs:
 
       - name: Set up console build runtime
         if: steps.scope.outputs.docs_only != 'true'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '24'
 
@@ -68,7 +68,7 @@ jobs:
 
       - name: Upload evaluation evidence even on failure
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: knowledgeradar-evaluation-${{ github.sha }}
           path: local/evaluation
@@ -88,10 +88,10 @@ jobs:
         if: steps.scope.outputs.docs_only != 'true'
         run: python scripts/verify_release_candidate.py --candidate-dir (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
 
-      - name: Upload verified candidate
-        if: steps.scope.outputs.docs_only != 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: knowledgeradar-candidate-${{ github.sha }}
-          path: release/candidates/v*-${{ github.sha }}
-          if-no-files-found: error
+      - name: Deliver experimental candidate to owner-only private storage
+        if: steps.scope.outputs.docs_only != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          KR_DELIVERY_OWNER: ${{ github.repository_owner }}
+          KR_PRIVATE_DELIVERY_REPOSITORY: ${{ vars.KR_PRIVATE_DELIVERY_REPOSITORY }}
+          KR_PRIVATE_DELIVERY_TOKEN: ${{ secrets.KR_PRIVATE_DELIVERY_TOKEN }}
+        run: python scripts/private_candidate_delivery.py --candidate (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName

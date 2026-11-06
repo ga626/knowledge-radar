@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-10-25",
+  "updated_at": "2026-11-06",
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -31,23 +31,30 @@
   ],
   "directories": [
     {
+      "path": "browser_link/",
+      "area": "dev_runtime",
+      "role": "KnowledgeRadar Browser Link：单一原生通道、随产品交付的本机Host源码及打包的站点内容脚本；不含账号、编译产物或运行状态。 知乎使用固定只读站点适配器：目标ID校验、可见正文与有界目录/评论、分段快照；不导出Cookie、不接受任意脚本或任意请求。 默认创建同Profile的非聚焦专属工作窗口，按租约/代际核验归属并回收；最小持久归属用于异常对账，不记录凭据。",
+      "codex_edit": "allowed_with_secret_scan",
+      "release": "include"
+    },
+    {
       "path": "src/runtime/",
       "area": "dev_runtime",
-      "role": "Task-local account failover and spend admission; one browser-session event source for account alerts, exact-profile recovery and desktop notification; installed component resolution. Fixed model roles; explicit isolated model preparation and installation; ASR/OCR share a bounded local heavy-worker lease.",
+      "role": "入口中立业务装配 composition、类型合同、唯一执行所有者、统一请求回执与维护边界；MCP只挂载应用合同，CLI批量复用同一执行内核。公共媒体获取/增强不含站点规则。 阶段③ research_index 在私密研究数据中维护增量候选、问题关系和变化投影；knowledge 只读固定水位及可回查证据。 研究归档的展示合同统一为项目/首次创建日期与任务，任务下按来源中文前缀平铺Markdown；证据版本、轮次与哈希留在KR内部，新布局不自动搬动旧成果。 归档维护按实际状态根定位；研究快照独立解析任务库和任务产物路径，记录来源布局并在新目录恢复时重绑定，不迁移现有数据。 公共PDF合同在pdf_text/document_contract中维护选页、加工身份、页账本和可恢复OCR；comments_contract/comments_view统一六平台评论和可回查筛选。浏览器资源由既有租约协调器管理，扩展只拥有专属工作窗口/页面，借用进程不关闭。 日常Chrome冷启动使用Windows非激活最小化的带随机标记空白窗口；独立短命守护仅回收该窗口，不关闭用户浏览器或读取Profile。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
     {
       "path": "src/",
       "area": "dev_runtime",
-      "role": "Python package source.",
+      "role": "Python package source. search_providers/catalog.py is the shared search capability directory; SearXNG is retired, with old configuration read only for compatibility. runtime/search_configuration.py owns versioned configuration snapshots. generic_web uses one bounded acquisition artifact and adapter-declared read-only POST; runtime/pdf_text.py completes missing PDF pages using the shared OCR path before public evidence submission. collectors/platform/zhihu.py owns Zhihu borrowed-browser collection and target contracts; detail_strategies/zhihu.py consumes collected snapshots and shared media/OCR with resumable checkpoints. Managed Zhihu CDP, disk Cookie and signer routes are retired; CNKI retains its separate managed channel. GitHub uses github_api for explicit read-only transport and identity, gh_cli_sidecar for unmodified repository discovery, github_content for commit-pinned objects and paged discussions, and detail_strategies/github.py to submit original text to shared evidence. Shared leases, task checkpoints and evidence storage own runtime state; no browser or separate evidence database is required. 微信由collectors/platform/wechat.py提供公开页面状态、账号身份、正文与清单解析；collectors/platform/wechat_media.py只从正常原文页解析具有精确媒体身份的资源，公共层下载/转写/存证；collectors/platform/weread.py在既有OpenCLI桥上提供公众号文章发现，不复制Profile或账号存储，use_cases/wechat_search.py复用公共配置和缓存；wechat_adapter及detail_strategies/wechat.py接公共任务、媒体和证据，浏览器只借用现有OpenCLI只读桥，不增加后台写入或独立存储。",
       "codex_edit": "allowed",
       "release": "include"
     },
     {
       "path": "src/onboarding/",
       "area": "dev_runtime",
-      "role": "同一显式 HTML 页面壳、原生 TypeScript 构建；研究账本只读投影、维护者身份门禁和显式成果导出。",
+      "role": "同一HTML页面壳与TypeScript构建；研究与交付回执只读投影、维护者门禁及组件安装；不执行任务交付。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
@@ -68,7 +75,7 @@
     {
       "path": "scripts/",
       "area": "dev_runtime",
-      "role": "Install, setup, validation, generation, and maintenance scripts.",
+      "role": "安装、配置、生成和维护脚本；verify_architecture_chain 以隔离owner验证获准的真实评论/PDF链路，保存源码身份、逐项覆盖与固定版本回读，不替代原生MCP或安装验收。",
       "codex_edit": "allowed",
       "release": "include"
     },
@@ -127,13 +134,6 @@
       "role": "Sanitized project state packets, open issue registers, and validation semantics for AI handoff.",
       "codex_edit": "allowed",
       "release": "exclude"
-    },
-    {
-      "path": "bridge/",
-      "area": "dev_runtime",
-      "role": "Node bridge and MCP integration helpers.",
-      "codex_edit": "allowed",
-      "release": "include_without_node_modules"
     },
     {
       "path": "runtime/",
@@ -222,7 +222,7 @@
     {
       "path": "src/use_cases/",
       "area": "dev_runtime",
-      "role": "业务用例编排，MCP门面委托单一实现。",
+      "role": "详情与本地材料的请求、任务交接和结果编排；MCP门面委托单一实现，不拥有账号、安装或第二份调度状态。",
       "codex_edit": "allowed",
       "release": "include"
     },
@@ -246,6 +246,13 @@
       "role": "项目持续评测账本：不可覆盖run与基线、去重资产和数据集快照、只读摘要及待审核候选；开发治理数据不打包。",
       "codex_edit": "local_only",
       "release": "exclude"
+    },
+    {
+      "path": "src/capability_manifest/",
+      "area": "dev_runtime",
+      "role": "Thin source-ecology catalog joins registered tools/platforms to one semantic declaration; no network probes, fixed research routing or inferred verification.",
+      "codex_edit": "allowed",
+      "release": "include"
     }
   ],
   "forbidden_release_patterns": [
@@ -308,7 +315,8 @@
     "runtime/README.md",
     "archive/INDEX.md",
     "release/README.md",
-    "docs/过程文档索引.md"
+    "docs/过程文档索引.md",
+    "docs/CAPABILITIES.md"
   ],
   "local_generated_docs": [
     "local/README.md",
@@ -317,7 +325,6 @@
   "watch_paths": [
     ".gitignore",
     "STRUCTURE.md",
-    "bridge/.npmrc",
     "config/package-manifest.product-lite.json",
     "config/public-source-manifest.json",
     "config/mcp-config-template.json",
@@ -358,7 +365,6 @@
     "config/runtime-artifacts.json",
     "config/optional-asr-win-py312.lock",
     "config/optional-docling-win-py312.lock",
-    "config/optional-ocr-win-py312.lock",
     "config/retirement-matrix.json",
     "config/license-source-inventory.json",
     "THIRD_PARTY_NOTICES.md",
@@ -373,11 +379,17 @@
     "scripts/kr_candidate_acceptance.py",
     "scripts/kr_browser_acceptance.py",
     "src/onboarding/__init__.py",
-    "src/onboarding/research_api.py"
+    "src/onboarding/research_api.py",
+    "scripts/verify_web_chain.py",
+    "scripts/verify_github_chain.py",
+    "scripts/verify_wechat_chain.py",
+    "scripts/verify_architecture_chain.py",
+    "scripts/generate_tool_manual.py",
+    "scripts/check_current_docs.py",
+    "scripts/check_mcp_tool_schema.py"
   ],
   "watch_path_globs": [
     ".npmrc",
-    "bridge/.npmrc",
     ".codex/hooks*.json",
     ".codex/hooks/*.py",
     ".githooks/*",
@@ -420,12 +432,26 @@
     "console_security": "回环、Host、Origin与Fetch-Metadata约束全部请求；Windows以精确客户端TCP四元组查PID并只读核对TokenUser SID，持句柄复核连接和进程活性，同用户固定网址直入、失败拒绝且Cookie不能绕过。读写API另校验CSRF；DPAPI密钥保护控制证明，非Windows保留票据与角色Cookie兼容；health不泄露CSRF。开发配置、缓存及状态独立，正式研究记录仅显式只读接入。",
     "console_lifecycle": "正式localhost:18882与开发localhost:18883各由一个宿主管理；同一Windows固定任务负责登录、失败重试和每分钟补启动，IgnoreNew避免重叠，无运行时限及电池停止。显式停止会暂停任务，重新打开恢复；开发任务仅维护者显式启用。宿主恢复退出或持续无响应的自有worker，持角色互斥锁后用身份与签名协议回收同身份孤儿worker再接管；端口冲突不抢占。",
     "offline_runtime": "Windows x64/Python3.12固定hash lock + wheelhouse；候选可verify-install，不注册宿主、不激活。",
-    "storage": "manifest-known media + active lease + per-file quarantine receipt；per_profile仅统计数据根内已登记且不重叠的profile，作为browser分类子集；不跟随联接、不删除未知文件。",
+    "storage": "manifest-known media + active lease + per-file quarantine receipt；per_profile仅统计数据根内已登记且不重叠的profile，作为browser分类子集；不跟随联接、不删除未知文件。 受管媒体下载与归档按卷跨进程预留；可选媒体配额含隔离区，正文无默认生命周期驱逐。",
     "legacy_accounts": "默认record_profile_state仅转发Observation；旧JSON兼容只读。显式path参数仅历史fixture使用。",
-    "protected_fetch": "公开canonical与内存profile令牌分离，任务输入/结果不落明文访问令牌；XHS复用src/media_platform内既有CDP适配器，不复制受限上游文件。",
+    "protected_fetch": "公开canonical与私有签名交接分离，任务输入/结果不落明文访问令牌。小红书固定OpenCLI日常浏览器桥接；KR只借用context，回收自有tab/session，不关闭用户浏览器。",
+    "platform_bindings": "显式注册搜索适配器、详情工厂、运行身份和详情后处理；公共用例与任务服务不识别小红书后端。旧平台逐个迁移，不建立自动插件框架；无消费者的旧小红书候选准入、账号池治理与路线评分执行模块删除，历史记录不删除。",
+    "borrowed_browser": "小红书保留OpenCLI；BOSS、猎聘与脉脉共用KR Browser Link。公共层仅负责原生通道、配对身份、代际、独占租约、取消和资源回收；HTTP不依赖浏览器。借用不授予进程关闭权，登录等待释放worker，风控锁须人工确认。",
+    "paid_fallback": "独立出口配额，无全局总预算：百炼10元/日；搜索按月免费credits或日次数，TikHub2个API请求/日，云OCR1.5免费且服从远端配额。未知价仅记录；同一账本跨进程预留，发送未知不自动重发。万方停用，未配置SerpAPI不纳费用管理。",
     "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。",
-    "optional_media": "可选ASR/OCR/解析器使用 config/optional-*-win-py312.lock 冻结全量 wheel 版本和 SHA；仅在获批隔离安装回执、精确代码/权重身份及输入授权根核验后启动独立进程；默认不下载或安装，复用资源租约。",
-    "evidence_export": "固定版本文本证据ZIP显式导出到全新专用收件箱；保留SHA、LF偏移映射和独立撤销边界，不自动扫描私人库或启用同步。"
+    "optional_media": "图片/扫描PDF仅经核心PDFium渲染后调用硅基流动PaddleOCR-VL 1.5，需密钥且会上传授权页面；失败不转CPU。文字PDF本地解析。ASR和Office解析沿用各自config/optional-*-win-py312.lock、独立安装回执、代码/权重身份及输入授权根；默认不下载模型，复用资源租约。 ASR唯一后端sherpa-onnx 2.0.1 CPU INT8，固定模型归档/文件SHA，按模型生成语言标签仅接受中文/英文；原Transformers安装回执不得复用。",
+    "evidence_export": "固定版本文本证据ZIP显式导出到全新专用收件箱；保留SHA、LF偏移映射和独立撤销边界，不自动扫描私人库或启用同步。",
+    "academic_sources": "以画像为唯一注册源并懒加载；发现仅返回书目及固定文献卡引用，慢来源经同一TaskService后台发现。选中卡片后由use_cases/academic_fulltext提交独立全文任务，兼容搜索快捷方式组合相同入口。academic_providers/identity区分作品、版本与获准位置；runtime/pdf_text统一有界下载、输入哈希、全页文字及授权缺页OCR。公共证据保留学术溯源与结构，元数据缓存不含任务引用，研究绑定独立。Semantic Scholar与arXiv跨进程限速；万方默认停用，VIP仅显式授权。复杂版面增强不默认安装模型。",
+    "community_browser": "脉脉、猎聘沿现有自有CDP过渡；本人登录、进程身份核对与空闲回收复用所有权合同，正文与可见评论独立标记。BOSS已迁到借用Chrome，不再作为自有Profile管理。智联退出主动搜索、详情与登录，仅保留历史解析/映射。",
+    "experimental_delivery": "公开CI不上传实验安装包；仅main可向核实为仅本人可访问的私有仓库交付。只有用户对同一制品明确说可以公开发布才允许公开。",
+    "installation_identity": "程序与runtime使用版本加制品元数据指纹的不可变目录；active保留installation_id供回滚，旧安装只读兼容。",
+    "resource_wait": "增强等待使用同一任务账本和跨进程资源租约；资源忙时queued让出执行槽，保留正文、deadline和费用幂等作用域，资源就绪后同任务继续，取消不复活。",
+    "research_archive": "任务稳定项目身份及显式目标绑定；同项目复用目录，状态缺失且目录已存在时要求显式绑定，不自动派生同名项目；Vault展示层按平台加主题命名，网页与学术保持大类，新平台可提供展示元数据，来源网站与处理方式在摘要呈现；身份、哈希及字节映射仅存KR内部；全文按固定水位流式分卷，同版双端create-only交付，既有交付保持原身份保护；查询不推进工作。",
+    "research_backup": "仅证据、研究与交付状态一致快照；恢复至新目录并停用授权与执行副作用，明确不含浏览器、密钥或整机备份。",
+    "document_processing_reuse": "runtime/document_cache基于原件哈希与公共PDF/模型合同复用固定处理快照；获准原件归现有media_cache/documents容量/TTL/租约，禁存储或HTTP no-store时不持久。页账本保留已成功OCR和未知请求，不自动重发未知页。快照在公共资产库以内部类型保存，不额外导出到Vault；跨入口共用租约，不携带平台账号或推断来源权限。PDF文字抽取在runtime/pdf_worker自有子进程执行，Windows Job限制内存，父进程控制期限和取消；无硬隔离能力则明确失败。",
+    "common_comments": "runtime/comments_contract按平台对象和讨论流统一ID/父根/覆盖/媒体；comments_view仅给可解释有界导航，原文固定回读。comment_media把短期签名位置放私有comment_media_fetch引用表、原件放公共媒体缓存、加工逐项断点放comment_media；不导出Cookie/本地路径，不因重复整理延长签名有效期，未知OCR/ASR结果不自动重发。能力注册不是逐平台真实验收结论。",
+    "github_objects": "官方只读API对象层；原生查询与公开范围，gh/REST单请求身份冻结，公共租约和冷却；固定commit/blob/原文行定位，Issue/PR多流按页窗和检查点恢复；正文进公共证据，原始内部快照不对检索或Vault展示。",
+    "xhs_media": "小红书沿用OpenCLI与公共媒体执行器；xhs类型化请求声明图片索引和评论窗口。公开媒体清单/逐项账本以原生文件身份或完整URL散列连接本地私有获取表，不向公开证据泄露签名地址；实际原件经公共下载安全校验和SHA核对。采集版本与模型加工身份分离，OCR图片定位/ASR块级时间/评论根关系进入同一固定证据库；请求未完成如实保留partial。连接只读检查区分后台服务与扩展；执行按需准备服务并等待获准绑定重连。"
   },
   "stable_research_reports": [],
   "research_report_scope": "Private research reports and their quality sidecars remain in the private source; public product docs use structural governance.",
@@ -453,5 +479,12 @@
   "required_structure_docs": [
     "STRUCTURE.md",
     "docs/AI_WORKING_GUIDE.md"
-  ]
+  ],
+  "updated": "2026-11-06",
+  "source_roles": {
+    "governance_root": "Private project rules and historical reports; not an installed product identity.",
+    "product_source": "Current explicit checkout; do not infer it from cwd or governance-root copies.",
+    "runtime_identity": "Installed active manifest and live process identity, verified separately."
+  },
+  "single_source_of_truth_scope": "private_governance_only; editable product source is the explicit current checkout, and installed identity is separate"
 }

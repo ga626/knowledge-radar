@@ -72,7 +72,7 @@ def test_europepmc_maps_open_access_pdf_and_html_urls(monkeypatch) -> None:
     assert captured["params"]["format"] == "json"
     assert results[0].source_database == "europepmc"
     assert results[0].url.endswith("?pdf=render")
-    assert results[0].full_text_status == "pdf_text_extractable"
+    assert results[0].full_text_status == "pdf_link_found"
     assert results[0].abstract == "Background. Machine learning predicts cancer outcomes."
     assert results[0].raw["pmcid"] == "PMC13220599"
 
@@ -81,4 +81,36 @@ def test_europepmc_is_profiled_for_biomed_auto_route() -> None:
     order = _provider_order(AcademicSearchRequest(query="clinical machine learning cancer", provider="auto"), "auto")
 
     assert "europepmc" in order
-    assert order.index("europepmc") > order.index("semanticscholar")
+    assert order.index("europepmc") > order.index("openalex")
+    if "semanticscholar" in order:
+        assert order.index("europepmc") < order.index("semanticscholar")
+
+
+def test_open_access_pmc_exposes_official_xml_before_landing_pages():
+    from academic_providers.fulltext import extract_academic_fulltext
+    import httpx
+    from unittest.mock import patch
+
+    work = EuropePmcProvider()._work_from_europepmc({
+        "title": "Test article", "pmcid": "PMC7092803", "isOpenAccess": "Y",
+        "fullTextUrlList": {"fullTextUrl": [{"availabilityCode": "OA", "documentStyle": "html",
+            "url": "https://europepmc.org/articles/PMC7092803"}]},
+    })
+    endpoint = "https://www.ebi.ac.uk/europepmc/webservices/rest/PMC7092803/fullTextXML"
+    seen = []
+    def fetch(url, **kwargs):
+        seen.append(url)
+        return httpx.Response(200, headers={"content-type": "application/xml"},
+            text="<article><body><sec><title>Results</title><p>" + "Actual body. " * 70 +
+                 "</p></sec></body></article>", request=httpx.Request("GET", url))
+    with patch("generic_web.url_policy.guarded_fetch", fetch):
+        result = extract_academic_fulltext("europepmc", work.url, work=work)
+    assert seen == [endpoint]
+    assert result.status == "PASS" and result.mode == "public_xml_text"
+    assert result.locators and result.locators[-1]["section"] == "Results"
+
+
+def test_pmc_identifier_does_not_imply_open_access_or_allow_path_injection():
+    for pmcid, access in [("PMC7092803", "N"), ("PMC7092803/other", "Y"), ("", "Y")]:
+        work = EuropePmcProvider()._work_from_europepmc({"pmcid": pmcid, "isOpenAccess": access})
+        assert not any("fullTextXML" in row.get("url", "") for row in work.raw["full_text_urls"])

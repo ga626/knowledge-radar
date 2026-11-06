@@ -41,33 +41,39 @@ def _download_file(client, url, target, expected):
             time.sleep(attempt + 1)
 
 
-def _download_model(model, revision, root):
+def _download_asr_model(role, root):
+    """固定官方归档SHA及六个文件SHA；不解包任意路径、链接或仓库脚本。"""
+    import tarfile
+    import shutil
     root.mkdir(parents=True, exist_ok=True)
-    with httpx.Client(timeout=120, follow_redirects=True) as client:
-        response = client.get(f"https://huggingface.co/api/models/{model}/revision/{revision}?blobs=true")
-        response.raise_for_status()
-        metadata = response.json()
-        if metadata.get("sha") != revision:
-            raise ValueError("upstream_model_revision_mismatch")
-        manifest = {}
-        for entry in metadata["siblings"]:
-            name = entry["rfilename"]
-            # 仅内建模型的安全权重/配置；不下载或执行仓库 Python、pickle 或脚本。
-            if not name.endswith(
-                (".safetensors", ".json", ".model", ".jinja", ".yml", ".yaml", ".pdiparams")
-            ) or name.startswith("."):
-                continue
+    archive = root.parent / (role['model'] + '.tar.bz2')
+    expected = role['weight_revision'].removeprefix('sha256:')
+    if not archive.is_file() or file_sha(archive) != expected:
+        with httpx.Client(timeout=120, follow_redirects=True) as client:
+            _download_file(client, role['weight_source'], archive, expected)
+    required = role['model_files']
+    with tarfile.open(archive, 'r:bz2') as bundle:
+        members = {member.name: member for member in bundle.getmembers()}
+        for name, digest in required.items():
+            member = members.get(role['model'] + '/' + name)
+            if member is None or not member.isfile() or member.size > 2 * 1024**3:
+                raise ValueError('invalid_asr_model_archive')
             target = (root / name).resolve()
-            if not target.is_relative_to(root.resolve()):
-                raise ValueError("unsafe_model_path")
+            if not target.is_relative_to(root.resolve()) or target.is_symlink():
+                raise ValueError('unsafe_model_path')
+            if target.is_file() and file_sha(target) == digest:
+                continue
             target.parent.mkdir(parents=True, exist_ok=True)
-            expected = (entry.get("lfs") or {}).get("sha256")
-            if not target.is_file() or (expected and file_sha(target) != expected):
-                _download_file(client, f"https://huggingface.co/{model}/resolve/{revision}/{name}", target, expected)
-            manifest[name] = file_sha(target)
-    if not manifest:
-        raise ValueError("empty_model_manifest")
-    return manifest
+            temporary = target.with_suffix(target.suffix + '.pending')
+            try:
+                with bundle.extractfile(member) as source, temporary.open('wb') as output:
+                    shutil.copyfileobj(source, output)
+                if file_sha(temporary) != digest:
+                    raise ValueError('downloaded_weight_hash_mismatch')
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return dict(required)
 
 
 def prepare_component(component, *, acknowledged=False):
@@ -127,7 +133,7 @@ def prepare_component(component, *, acknowledged=False):
     lock.write_bytes(resolved)
     model_root = root / "model"
     model_root.mkdir(exist_ok=True)
-    files = _download_model(role["model"], role["weight_revision"], model_root) if role["model_required"] else {}
+    files = _download_asr_model(role, model_root) if role["model_required"] else {}
     spec = {
         "installation_acknowledged": True,
         "license_review": "APPROVED",
@@ -140,12 +146,6 @@ def prepare_component(component, *, acknowledged=False):
         "model_files": files,
         "license_basis": {"code": role["code_license"], "weights": role["weight_license"], "source": role["source"]},
     }
-    if role.get("layout_model"):
-        layout = root / "layout"
-        spec.update(
-            layout_model_root=str(layout),
-            layout_model_files=_download_model(role["layout_model"], role["layout_revision"], layout),
-        )
     (root / "wheel-inventory.json").write_text(json.dumps(inventory, ensure_ascii=False, indent=2), encoding="utf-8")
     path = root / "install-spec.json"
     path.write_text(json.dumps(spec, ensure_ascii=False, indent=2), encoding="utf-8")

@@ -52,7 +52,7 @@ def _normalize_recruitment_detail(platform: str, url: str, result: Dict) -> Dict
         data.setdefault("error", "招聘详情页需要人工验证或登录")
         if result.get("hint"):
             data.setdefault("hint", result.get("hint"))
-    elif status in {"failed", "empty"}:
+    elif status in {"failed", "empty", "blocked", "cancelled", "timeout"} or result.get("error") or result.get("failure_type"):
         data.setdefault("failure_type", "empty_detail" if status == "empty" else "request_failed")
         data.setdefault("error", result.get("error") or "招聘详情页提取失败")
         if result.get("hint"):

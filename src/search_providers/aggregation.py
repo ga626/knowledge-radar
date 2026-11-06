@@ -4,59 +4,48 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Iterable, List
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 from .models import SearchProviderResult, WebSearchRequest
 
 
 def canonical_url(url: str) -> str:
-    try:
-        parsed = urlsplit(url.strip())
-        query = urlencode(
-            [(key, value) for key, value in parse_qsl(parsed.query, keep_blank_values=True) if not key.lower().startswith("utm_")]
-        )
-        path = parsed.path.rstrip("/") or parsed.path
-        return urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), path, query, ""))
-    except Exception:
-        return url.strip()
+    from generic_web.url_policy import discovery_url as canonical
+    return canonical(url)
 
 
-def aggregate_results(provider_items: Dict[str, List[SearchProviderResult]], limit: int) -> List[SearchProviderResult]:
-    seen: Dict[str, SearchProviderResult] = {}
-    for provider, items in provider_items.items():
-        for item in items:
-            key = canonical_url(item.url) or f"{item.title.lower()}::{provider}"
-            if key in seen:
-                existing = seen[key]
-                provenance = list((existing.raw or {}).get("provider_provenance") or [existing.source_provider])
-                if provider not in provenance:
-                    provenance.append(provider)
-                raw = dict(existing.raw or {})
-                raw["provider_provenance"] = provenance
-                seen[key] = SearchProviderResult(
-                    title=existing.title,
-                    url=existing.url,
-                    snippet=existing.snippet,
-                    source_provider=existing.source_provider,
-                    published_at=existing.published_at,
-                    retrieved_at=existing.retrieved_at,
-                    score=existing.score,
-                    raw=raw,
-                )
+def aggregate_results(provider_items: Dict[str, List[SearchProviderResult]], limit: int | None) -> List[SearchProviderResult]:
+    """RRF仅融合排名；稳定tie-break不依赖网络完成顺序，保留全部来源。"""
+    from dataclasses import replace
+    seen, votes, provenance = {}, {}, {}
+    for provider in sorted(provider_items):
+        provider_seen = set()
+        for rank, item in enumerate(provider_items[provider], 1):
+            key = canonical_url(item.url) or f"{item.title.casefold()}::{provider}"
+            if key in provider_seen:
                 continue
-            raw = dict(item.raw or {})
-            raw.setdefault("provider_provenance", [provider])
-            seen[key] = SearchProviderResult(
-                title=item.title,
-                url=item.url,
-                snippet=item.snippet,
-                source_provider=item.source_provider or provider,
-                published_at=item.published_at,
-                retrieved_at=item.retrieved_at,
-                score=item.score,
-                raw=raw,
-            )
-    return list(seen.values())[: max(1, int(limit or 5))]
+            provider_seen.add(key)
+            seen.setdefault(key, item)
+            raw = item.raw or {}
+            upstream = raw.get('upstream_engine')
+            engines = raw.get('engines') or ([raw['engine']] if raw.get('engine') else [])
+            family = provider.split(':')[0]
+            # Multiple instances do not create independent ranking votes. Known
+            # Repeated upstream engines collapse; provenance is retained.
+            groups = ['engine:'+str(upstream).lower()] if upstream else (
+                ['engine:'+str(e).lower() for e in engines] if engines else [family])
+            bucket = votes.setdefault(key, {})
+            for group in groups:
+                bucket[group] = max(bucket.get(group, 0), 1.0 / (60 + rank))
+            provenance.setdefault(key, []).append(provider)
+    ranks = {key: sum(value.values()) for key,value in votes.items()}
+    ordered = sorted(seen, key=lambda key: (-ranks[key], key))
+    if limit is not None:
+        ordered = ordered[:max(1, int(limit))]
+    return [replace(seen[key], raw={**(seen[key].raw or {}),
+                    "provider_provenance": provenance[key], "ranking": "rrf_v1",
+                    "rank_score": ranks[key], "ranking_support": sorted(votes[key]),
+                    "source_independence": "not_verified", "score_is_truth_confidence": False}) for key in ordered]
 
 
 @dataclass(frozen=True)
@@ -77,7 +66,7 @@ def coverage_decision(request: WebSearchRequest, items: Iterable[SearchProviderR
     if not successful_providers:
         triggers.append("no_successful_free_or_quality_provider")
     domains = {urlsplit(item.url).netloc.lower() for item in rows if item.url}
-    if min_results > 1 and len(rows) >= min_results and len(domains) <= 1:
+    if request.options.get('require_diverse_sources') and min_results > 1 and len(rows) >= min_results and len(domains) <= 1:
         triggers.append("domain_diversity_low")
     if request.freshness and not any(item.published_at for item in rows):
         triggers.append("freshness_required_missing")

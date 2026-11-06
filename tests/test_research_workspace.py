@@ -62,7 +62,7 @@ def test_original_finalizer_cannot_accept_unsupported_claims(tmp_path, monkeypat
     monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
     task = open_task(objective='研究原始完成门槛', budget='deep', considered=[{'source_ecology':'web'}])
     result = close_task(task_id=task['research_task_id'], ecology_outcomes=[{'source_ecology':'web','outcome':'used'}], stop_rationale='继续核验', key_claims=[{'id':'important','importance':'critical','supporting_evidence_ids':['invented']}], quality_status='pass')
-    assert result['status'] == 'needs_repair'
+    assert result['status'] == 'recorded_with_gaps'
     assert result['closeout']['critical_claims_without_receipts'] == ['important']
     assert not result['closeout']['quality_receipt_valid']
 
@@ -100,27 +100,85 @@ def test_readable_projection_groups_rounds_metrics_and_files(tmp_path, monkeypat
     assert not (tmp_path / 'state' / 'tasks.sqlite3').exists()
 
 
-def test_readonly_console_export_preserves_source_db_and_permission(tmp_path):
-    import base64
-    import io
-    import zipfile
+def test_pending_submission_is_visible_as_safe_repair_state(tmp_path, monkeypatch):
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path / 'state'))
+    task = open_task(objective='查看回执补偿状态', budget='fast', considered=[])
+    ledger_path = tmp_path / 'state' / 'research_tasks' / (task['research_task_id'] + '.json')
+    payload = json.loads(ledger_path.read_text(encoding='utf-8'))
+    payload['pending_submissions'] = [{
+        'trace_id': 'trace-pending', 'tool': 'search_web', 'status': 'ok',
+        'failure_code': 'recording_failed', 'source_ecology': 'generic_web_ecology',
+        'association': 'explicit_task_scope', 'receipt_kind': 'tool_call',
+        'attempts': 2, 'reason': 'PermissionError', 'updated_at': 'now',
+        'result': {'url': 'https://example.org/private', 'content': 'must not leak'},
+    }]
+    ledger_path.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    records = ResearchRecords(tmp_path / 'state')
+    inspected = research_action(records, 'inspect', task['research_task_id'])
+    assert inspected['metrics']['pending_submission_count'] == 1
+    assert inspected['metrics']['pending_submission_attempts'] == 2
+    public = __import__('onboarding.research_api', fromlist=['user_projection']).user_projection(inspected)
+    assert public['pending_submissions'] == [{
+        'trace_id': 'trace-pending', 'tool': 'search_web', 'status': 'ok',
+        'failure_code': 'recording_failed', 'source_ecology': 'generic_web_ecology',
+        'association': 'explicit_task_scope', 'receipt_kind': 'tool_call',
+        'attempts': 2, 'reason': 'PermissionError', 'updated_at': 'now',
+    }]
+    assert 'result' not in public['pending_submissions'][0]
+
+
+def test_inspect_reports_current_gaps_without_review_events_or_repair(tmp_path, monkeypatch):
+    from runtime import research_ledger as ledger
     from onboarding.research_api import workspace_api
-    root = tmp_path / 'assets'
-    asset = EvidenceAssets(root).put('https://example.org/evidence', '完整原文🙂末尾')
-    before = (root / 'index.sqlite3').read_bytes()
-    records = ResearchRecords(tmp_path, assets=EvidenceAssets(root, read_only=True))
-    payload = {'action':'export', 'version_ids':[asset['version_id']]}
-    with pytest.raises(ValueError, match='permission'):
-        workspace_api(records, payload)
-    exported = workspace_api(records, {**payload,'export_acknowledged':True})
-    raw = base64.b64decode(exported['data_base64'])
-    assert hashlib.sha256(raw).hexdigest() == exported['sha256']
-    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
-        manifest = json.loads(archive.read('manifest.json'))
-        assert manifest['source_reference_registration'] == 'not_registered_read_only_export'
-        document = manifest['sources'][0]['documents'][0]['file']
-        assert archive.read(document).decode() == '完整原文🙂末尾'
-    assert (root / 'index.sqlite3').read_bytes() == before
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path / 'state'))
+    task = open_task(objective='只读缺口辅助', budget='fast', considered=[])
+    path = ledger._path(task['research_task_id'])
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    payload['pending_submissions'] = [{'trace_id': 'pending', 'result': {'content': 'PRIVATE_BODY'}}]
+    path.write_text(json.dumps(payload), encoding='utf-8')
+    before = {str(item): item.read_bytes() for item in tmp_path.rglob('*') if item.is_file()}
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('query must not lock, write, review or repair the research ledger')
+    for name in ('_ledger_guard', '_write', 'record_event', 'review_task', 'repair_pending_submissions'):
+        monkeypatch.setattr(ledger, name, forbidden)
+    records = ResearchRecords(tmp_path / 'state', assets=EvidenceAssets(tmp_path / 'assets', read_only=True))
+    for _ in range(2):
+        inspected = workspace_api(records, {'action': 'inspect', 'task_id': task['research_task_id']}, developer=False)
+        assessment = inspected['gap_assessment']
+        assert assessment['read_only'] is True and 'event' not in assessment
+        assert assessment['counts']['pending_submission_count'] == 1
+        assert {row['code'] for row in assessment['gaps']} >= {'pending_receipt_submissions', 'no_candidates_recorded'}
+        assert 'PRIVATE_BODY' not in json.dumps(inspected)
+    after = {str(item): item.read_bytes() for item in tmp_path.rglob('*') if item.is_file()}
+    assert before == after
+
+
+def test_gap_projection_drops_unregistered_nested_payload():
+    from onboarding.research_api import user_projection
+    projected = user_projection({'gap_assessment': {
+        'status': 'assessed', 'read_only': True, 'event': {'content': 'PRIVATE_EVENT'},
+        'gaps': [{'code': 'candidate_only', 'meaning': '尚未核验', 'url': 'PRIVATE_URL'}],
+        'counts': {'candidate_count': 1, 'content': 'PRIVATE_COUNT'},
+        'result': {'content': 'PRIVATE_RESULT'},
+    }})
+    assert projected['gap_assessment'] == {
+        'status': 'assessed', 'read_only': True,
+        'gaps': [{'code': 'candidate_only', 'meaning': '尚未核验'}],
+        'counts': {'candidate_count': 1},
+    }
+    assert 'PRIVATE' not in json.dumps(projected)
+
+
+def test_console_rejects_legacy_export_without_modifying_source(tmp_path):
+    from onboarding.research_api import workspace_api
+    assets=EvidenceAssets(tmp_path/'assets')
+    assets.put('https://example.org/readonly','text')
+    before=(assets.root/'index.sqlite3').read_bytes()
+    records=ResearchRecords(tmp_path,assets=EvidenceAssets(assets.root,read_only=True))
+    with pytest.raises(ValueError,match='agent_command_required'):
+        workspace_api(records,{'action':'export','export_acknowledged':True})
+    assert (assets.root/'index.sqlite3').read_bytes()==before
 
 
 def test_task_name_survives_continuation_and_legacy_titles_do_not_merge(tmp_path, monkeypatch):

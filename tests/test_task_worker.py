@@ -1,4 +1,6 @@
 import time
+from types import SimpleNamespace
+import pytest
 
 from runtime.task_adapter import LocalTaskAdapter, LocalTaskSpec
 from runtime.task_worker import cleanup_stale_worker_tasks, task_worker_summary
@@ -18,7 +20,7 @@ def test_lifecycle_adapter_starts_legacy_task(monkeypatch, tmp_path):
         def start(self):
             started["value"] = True
 
-    monkeypatch.setattr("runtime.task_adapter.threading.Thread", FakeThread)
+    monkeypatch.setattr("runtime.task_adapter.threading", SimpleNamespace(Thread=FakeThread))
     adapter = LocalTaskAdapter(store)
     task = adapter.submit_lifecycle(
         LocalTaskSpec(task_id="legacy-1", task_type="legacy", platform="test", target="x"),
@@ -43,7 +45,7 @@ def test_lifecycle_adapter_records_resource_acquired(monkeypatch, tmp_path):
         def start(self):
             self.target(*self.args)
 
-    monkeypatch.setattr("runtime.task_adapter.threading.Thread", FakeThread)
+    monkeypatch.setattr("runtime.task_adapter.threading", SimpleNamespace(Thread=FakeThread))
     adapter = LocalTaskAdapter(store)
     adapter.submit_lifecycle(
         LocalTaskSpec(task_id="asr-1", task_type="bilibili_transcribe", platform="test", target="x"),
@@ -52,7 +54,7 @@ def test_lifecycle_adapter_records_resource_acquired(monkeypatch, tmp_path):
 
     task = store.get_task("asr-1")
     assert task["status"] == "completed"
-    assert task["metadata"]["resource_kind"] == "asr_cpu"
+    assert task["metadata"]["resource_kind"] == "local_heavy"
     assert task["metadata"]["limit"] == 1
 
 
@@ -91,3 +93,51 @@ def test_failed_task_can_be_requeued_with_same_id(tmp_path):
     assert task["finished_at"] is None
     assert task["error"] == ""
     assert task["error_code"] == ""
+
+
+@pytest.mark.parametrize('lifecycle', [False, True])
+def test_late_thread_cannot_write_into_replacement_attempt(monkeypatch, tmp_path, lifecycle):
+    from threading import Event, Thread
+    from runtime import task_adapter
+    store = TaskStore(str(tmp_path/'tasks.sqlite3'))
+    adapter = LocalTaskAdapter(store)
+    threads, entered, release = [], [Event(),Event()], [Event(),Event()]
+    def factory(**kwargs):
+        thread = Thread(**kwargs)
+        threads.append(thread)
+        return thread
+    monkeypatch.setattr(task_adapter, 'threading', SimpleNamespace(Thread=factory))
+    spec = LocalTaskSpec(task_id='same-id', task_type='fixture', platform='test', max_attempts=1)
+    submit = adapter.submit_lifecycle if lifecycle else adapter.submit
+    def work(index):
+        if lifecycle:
+            store.mark_running('same-id')
+        entered[index].set()
+        assert release[index].wait(8)
+        if index==0:
+            store.upsert_task('same-id','fixture','test',metadata={'late_upsert':True})
+            store.heartbeat('same-id', {'late_heartbeat':True})
+        if lifecycle:
+            store.mark_completed('same-id', metadata={'value':index})
+        return {'value':index}
+    try:
+        submit(spec, lambda:work(0))
+        assert entered[0].wait(3)
+        old = store.get_task('same-id')['metadata']['attempt_id']
+        store.cancel_task('same-id')
+        submit(spec, lambda:work(1))
+        assert entered[1].wait(3)
+        current = store.get_task('same-id')
+        assert current['metadata']['attempt_id']!=old
+        release[0].set()
+        threads[0].join(timeout=3)
+        current = store.get_task('same-id')
+        assert current['status']=='running'
+        assert not current['metadata'].get('late_upsert') and not current['metadata'].get('late_heartbeat')
+    finally:
+        for event in release:
+            event.set()
+        for thread in threads:
+            thread.join(timeout=3)
+    assert store.get_task('same-id')['status']=='completed'
+    assert store.get_task('same-id')['metadata']['value']==1

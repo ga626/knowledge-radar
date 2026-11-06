@@ -59,6 +59,17 @@ def test_console_guides_and_dashboard_never_expose_configuration_or_task_content
     assert "target" not in rendered
 
 
+def test_partial_body_progress_is_readable_without_internal_metadata():
+    row = {"task_type": "durable_content_detail", "platform": "小红书", "status": "running",
+           "updated_at": 20, "created_at": 1, "started_at": 2, "finished_at": None,
+           "metadata_json": json.dumps({"collection_available": True, "private": "secret"}), "error_code": ""}
+    result = product_status._public_task_row(row, now=30)
+    assert result["status_label"] == "正文已保存，正在补充识别"
+    assert "secret" not in json.dumps(result)
+    row.update(status="failed", error_code="paid_budget_not_configured")
+    assert product_status._public_task_row(row, now=30)["status_label"] == "费用额度未授权或已用完"
+
+
 def test_dashboard_task_activity_exposes_only_sanitized_task_progress(tmp_path, monkeypatch) -> None:
     database = tmp_path / "tasks.sqlite3"
     monkeypatch.setenv("KR_TASK_DB_PATH", str(database))
@@ -163,6 +174,7 @@ def test_per_profile_counts_registered_browser_subset_without_exporting_paths(tm
     (one / "state").write_bytes(b"aaaa")
     (two / "state").write_bytes(b"bb")
     monkeypatch.setenv("KR_DATA_ROOT", str(data))
+    monkeypatch.setenv("KR_MEDIA_CACHE_DIR", str(data / "state" / "media_cache"))
     monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [
         {"profile_id": "A", "profile_dir": str(one)}, {"profile_id": "B", "profile_dir": str(two)},
         {"profile_id": "external", "profile_dir": str(tmp_path / "private")},
@@ -181,6 +193,7 @@ def test_shared_profile_alias_is_counted_once_and_attributed_to_active_account(t
     child.mkdir(parents=True)
     (child / "file").write_bytes(b"aaaa")
     monkeypatch.setenv("KR_DATA_ROOT", str(tmp_path))
+    monkeypatch.setenv("KR_MEDIA_CACHE_DIR", str(tmp_path / "state" / "media_cache"))
     monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [
         {"profile_id": "old_alias", "profile_dir": str(browser), "account_pool_member": False},
         {"profile_id": "current", "profile_dir": str(browser), "account_pool_member": True},
@@ -237,13 +250,14 @@ def test_optional_capability_and_diagnostic_status_never_expose_paths_or_values(
     monkeypatch.setattr(product_status, "installation_summary", lambda: {"available": True, "message": "ok"})
     monkeypatch.setattr(product_status, "public_snapshot", lambda: {"fields": [{"key": "TAVILY_API_KEY", "configured": True}]})
 
+    monkeypatch.setattr("runtime.xhs_opencli.connection_status", lambda: {"connected": False})
     optional = product_status.optional_capabilities()
     diagnostic = product_status.diagnostic_snapshot()
 
     states = {row["id"]: row["status"] for row in optional}
     assert states["browser"] == "not_installed"  # Empty directory and APPLIED history do not prove a browser binary.
-    assert states["xhs_bridge"] == "ready"
-    assert {"media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6"}.issubset(states)
+    assert states["xhs_bridge"] == "needs_connection"  # Legacy bridge files do not prove an OpenCLI connection.
+    assert {"media_downloader", "transcription_model", "docling"}.issubset(states)
     assert str(data_root) not in json.dumps(diagnostic)
     assert "private bridge" not in json.dumps(diagnostic)
 
@@ -270,7 +284,7 @@ def test_local_component_catalog_groups_everything_by_user_goal(tmp_path, monkey
     assert set(groups) == {"web_automation", "platform_sessions", "media_understanding"}
     assert {"browser"} == {item["id"] for item in groups["web_automation"]["items"]}
     assert {"chrome", "node", "xhs_bridge"} == {item["id"] for item in groups["platform_sessions"]["items"]}
-    assert {"media_downloader", "transcription_model", "docling", "paddleocr-vl-1.6", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}
+    assert {"media_downloader", "transcription_model", "docling", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}
     assert "experimental" not in groups
     assert all_items["transcription_model"]["status"] == "not_installed"
     assert all_items["node"]["install_mode"] == "guided"
@@ -288,6 +302,17 @@ def test_optional_media_components_are_not_downloaded_with_the_plugin_body() -> 
     assert '"yt-dlp>=2024.8.6"' not in dependencies
     assert '"transcription_runtime"' not in installer_source
     assert '"transcription_model"' in installer_source
+
+
+def test_development_console_reports_source_instead_of_active_install(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("KR_CONSOLE_ROLE", "dev")
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("KR_INSTALL_ROOT", str(tmp_path / "not-an-install"))
+    monkeypatch.setattr("runtime.task_service.source_identity", lambda: "a" * 64)
+    summary = product_status.installation_summary()
+    assert summary["role"] == "dev" and summary["version"] == "源码 " + "a" * 12
+    assert "尚未安装" in summary["channel"]
+    assert str(tmp_path) not in json.dumps(summary)
 
 
 def test_data_move_console_plan_is_sanitized(monkeypatch) -> None:

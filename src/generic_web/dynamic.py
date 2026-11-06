@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-from runtime.process import silent_subprocess_run
-import sys
 import time
 from typing import Dict
 from urllib.parse import urlparse
 
 from .collector import collect_rendered_html
 from .models import GenericWebRequest, GenericWebResponse, utc_now_iso
-from runtime.executables import resolve_managed_chrome
-from runtime.chrome_manager import CHROMIUM_MODEL_POLICY_ARGS
 from runtime.tool_trace import record_trace_child
 from .url_policy import public_addresses, guarded_fetch, URLPolicyError
 
@@ -25,155 +19,128 @@ def collect_dynamic_url(request: GenericWebRequest, *, wait_ms: int = 3000) -> G
     except URLPolicyError as exc:
         return GenericWebResponse(url=request.url, collector="dynamic_playwright", fetched_at=utc_now_iso(),
                                   error={"type": "restricted_url", "message": str(exc), "collector": "dynamic_playwright"})
-    if not os.environ.get("KR_DYNAMIC_CHILD"):
-        return _collect_dynamic_url_subprocess(request, wait_ms=wait_ms)
-    return _collect_dynamic_url_current_process(request, wait_ms=wait_ms)
-
-
-def _collect_dynamic_url_subprocess(request: GenericWebRequest, *, wait_ms: int = 3000) -> GenericWebResponse:
-    started = time.time()
-    payload = {
-        "url": request.url,
-        "preferred_format": request.preferred_format,
-        "timeout": request.timeout,
-        "use_jina": request.use_jina,
-        "wait_ms": wait_ms,
-    }
-    script = (
-        "import json, os, sys; "
-        "sys.path.insert(0, r'%s'); "
-        "os.environ['KR_DYNAMIC_CHILD']='1'; "
-        "from generic_web import GenericWebRequest, collect_dynamic_url; "
-        "p=json.loads(sys.stdin.read()); "
-        "r=collect_dynamic_url(GenericWebRequest(url=p['url'], preferred_format=p.get('preferred_format','markdown'), timeout=p.get('timeout',25.0), use_jina=False), wait_ms=int(p.get('wait_ms',3000))); "
-        "print(json.dumps(r.to_mcp_dict(), ensure_ascii=False))"
-    ) % os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    from .browser_runtime import run
+    from runtime.execution_context import ExecutionStopped
     try:
-        proc = silent_subprocess_run(
-            [sys.executable, "-X", "utf8", "-c", script],
-            input=json.dumps(payload, ensure_ascii=False),
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            timeout=max(10, int(float(request.timeout or 25.0) + (wait_ms / 1000) + 20)),
-        )
-        if proc.returncode != 0:
-            raise RuntimeError((proc.stderr or proc.stdout or "dynamic subprocess failed")[-1000:])
-        data = json.loads((proc.stdout or "{}").strip())
-        return GenericWebResponse(
-            url=data.get("url") or request.url,
-            final_url=data.get("final_url") or request.url,
-            title=data.get("title") or "",
-            content=data.get("content") or "",
-            content_format=data.get("content_format") or request.preferred_format,
-            collector=data.get("collector") or "dynamic_playwright",
-            fetched_at=data.get("fetched_at") or utc_now_iso(),
-            elapsed_s=round(time.time() - started, 3),
-            metadata=data.get("metadata") or {},
-            error=data.get("error"),
-        )
+        return run(_collect_dynamic_url_async(request,wait_ms=wait_ms,started=time.time()), timeout=request.timeout)
+    except ExecutionStopped:
+        raise
     except Exception as exc:
-        return GenericWebResponse(
-            url=request.url,
-            final_url=request.url,
-            content_format=request.preferred_format,
-            collector="dynamic_playwright",
-            fetched_at=utc_now_iso(),
-            elapsed_s=round(time.time() - started, 3),
-            error={"type": "dynamic_failed", "message": str(exc), "collector": "dynamic_playwright"},
-        )
-
-
-def _collect_dynamic_url_current_process(request: GenericWebRequest, *, wait_ms: int = 3000) -> GenericWebResponse:
-    started = time.time()
-    if not _valid_http_url(request.url):
-        return GenericWebResponse(
-            url=request.url,
-            final_url=request.url,
-            content_format=request.preferred_format,
-            collector="dynamic_playwright",
-            fetched_at=utc_now_iso(),
-            elapsed_s=round(time.time() - started, 3),
-            error={"type": "invalid_url", "message": "Only http/https URLs are supported", "collector": "dynamic_playwright"},
-        )
-    try:
-        return asyncio.run(_collect_dynamic_url_async(request, wait_ms=wait_ms, started=started))
-    except Exception as exc:
-        return GenericWebResponse(
-            url=request.url,
-            final_url=request.url,
-            content_format=request.preferred_format,
-            collector="dynamic_playwright",
-            fetched_at=utc_now_iso(),
-            elapsed_s=round(time.time() - started, 3),
-            error={"type": "dynamic_failed", "message": str(exc), "collector": "dynamic_playwright"},
-        )
+        return GenericWebResponse(url=request.url,final_url=request.url,collector='dynamic_playwright',fetched_at=utc_now_iso(),
+            error={'type':'dynamic_failed','message':type(exc).__name__,'collector':'dynamic_playwright',
+                   'next_action':'Inspect acquisition failure; no shared or user browser was closed.'})
 
 
 async def _collect_dynamic_url_async(request: GenericWebRequest, *, wait_ms: int, started: float) -> GenericWebResponse:
-    from playwright.async_api import async_playwright
 
     timeout_ms = max(1000, int(float(request.timeout or 20.0) * 1000))
-    async with async_playwright() as p:
-        launch_options = {"headless": True, "args": CHROMIUM_MODEL_POLICY_ARGS}
-        chrome_exe = _find_chrome_exe()
-        if chrome_exe:
-            launch_options["executable_path"] = chrome_exe
-        browser = await p.chromium.launch(**launch_options)
-        try:
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                locale="zh-CN",
-                service_workers="block",
-            )
-            navigation_redirects = {}
-            async def guarded_route(route):
-                req = route.request
-                if req.method != "GET":
-                    await route.abort("blockedbyclient")
+    deadline = time.monotonic() + timeout_ms / 1000
+    resource_failures = []
+    resource_bytes, resource_count = 0, 0
+    fetch_slots = asyncio.Semaphore(6)
+    from .browser_runtime import context as owned_context
+    async with owned_context() as (context, browser_reused):
+        navigation_redirects = {}
+        async def guarded_route(route):
+            nonlocal resource_bytes, resource_count
+            req = route.request
+            # Text extraction does not need large galleries, video or fonts.
+            # Loading them kept the anonymous OCR landing page busy until
+            # the outer subprocess deadline, even after its text rendered.
+            if req.resource_type in {"image", "media", "font"}:
+                await route.abort("blockedbyclient")
+                return
+            declaration, form = None, None
+            if req.method == 'POST':
+                from urllib.parse import parse_qsl
+                declaration = next((d for d in request.readonly_posts if d.endpoint == req.url), None)
+                if declaration is None or not req.headers.get('content-type','').lower().startswith('application/x-www-form-urlencoded'):
+                    await route.abort('blockedbyclient')
+                    return
+                raw_body = req.post_data or ''
+                if len(raw_body.encode('utf-8')) > declaration.max_body_bytes:
+                    await route.abort('blockedbyclient')
                     return
                 try:
-                    navigation = req.is_navigation_request() and req.frame == page.main_frame
-                    fetched = await asyncio.to_thread(guarded_fetch, req.url, timeout=float(request.timeout), follow_redirects=not navigation)
-                    if navigation and fetched.status_code in {301, 302, 303, 307, 308}:
-                        # Playwright不会再次拦截HTTP重定向的下一跳。以空白成功页截住，
-                        # 再由显式goto逐跳导航，避免浏览器自行访问未验证目标。
-                        navigation_redirects[req.url] = fetched.headers["location"]
-                        await route.fulfill(status=200, headers={"content-type": "text/html"}, body="")
-                        return
-                    await route.fulfill(status=fetched.status_code, headers=dict(fetched.headers), body=fetched.content)
-                except (URLPolicyError, httpx.RequestError):
-                    await route.abort("blockedbyclient")
-            import httpx
-            await context.route("**/*", guarded_route)
-            if hasattr(context, "route_web_socket"):
-                async def close_socket(ws):
-                    await ws.close()
-                await context.route_web_socket("**/*", close_socket)
-            await context.add_init_script("window.WebSocket = class { constructor() { throw new Error('URL_POLICY_BLOCKED'); } }; window.RTCPeerConnection = undefined; window.WebTransport = undefined;")
-            page = await context.new_page()
-            target = request.url
-            for _ in range(6):
-                response = await page.goto(target, wait_until="domcontentloaded", timeout=timeout_ms)
-                redirected = navigation_redirects.pop(target, None)
-                if not redirected:
-                    break
-                target = redirected
-            else:
-                raise URLPolicyError("dynamic navigation redirect limit exceeded")
-            networkidle_status = "ready"
+                    pairs = parse_qsl(raw_body, keep_blank_values=True, max_num_fields=50)
+                except ValueError:
+                    await route.abort('blockedbyclient')
+                    return
+                form = dict(pairs)
+                if len(form) != len(pairs):
+                    await route.abort('blockedbyclient')
+                    return
+            elif req.method != "GET":
+                await route.abort("blockedbyclient")
+                return
+            resource_count += 1
+            if resource_count > 80 or resource_bytes >= 32 * 1024 * 1024:
+                resource_failures.append({'type': 'resource_budget_exceeded'})
+                await route.abort('blockedbyclient')
+                return
             try:
-                await page.wait_for_load_state("networkidle", timeout=min(timeout_ms, 8000))
-            except Exception as exc:
-                networkidle_status = f"not_reached:{type(exc).__name__}"
-            if wait_ms > 0:
-                await page.wait_for_timeout(min(wait_ms, 10000))
-            html = await page.content()
-            final_url = page.url
-            status_code = response.status if response else 200
-        finally:
-            await browser.close()
-
+                navigation = req.is_navigation_request() and req.frame == page.main_frame
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    await route.abort("timedout")
+                    return
+                for attempt in range(1 if declaration else 2):
+                    try:
+                        async with fetch_slots:
+                            remaining = deadline - time.monotonic()
+                            if remaining <= 0:
+                                raise httpx.TimeoutException('dynamic resource deadline exceeded')
+                            post_options = {'readonly_post':declaration, 'form':form} if declaration else {}
+                            fetched = await asyncio.to_thread(guarded_fetch, req.url, timeout=min(12.0, remaining), follow_redirects=not navigation,
+                                max_bytes=min(4 * 1024 * 1024, max(1,32 * 1024 * 1024-resource_bytes)), **post_options)
+                            resource_bytes += len(fetched.content)
+                            if resource_bytes > 32 * 1024 * 1024:
+                                raise URLPolicyError('dynamic resource budget exceeded')
+                        break
+                    except httpx.TransportError:
+                        remaining = deadline - time.monotonic()
+                        if declaration or attempt or remaining <= 1:
+                            raise
+                        await asyncio.sleep(0.2)
+                if navigation and fetched.status_code in {301, 302, 303, 307, 308}:
+                    # Playwright不会再次拦截HTTP重定向的下一跳。以空白成功页截住，
+                    # 再由显式goto逐跳导航，避免浏览器自行访问未验证目标。
+                    navigation_redirects[req.url] = fetched.headers["location"]
+                    await route.fulfill(status=200, headers={"content-type": "text/html"}, body="")
+                    return
+                await route.fulfill(status=fetched.status_code, headers=dict(fetched.headers), body=fetched.content)
+            except (URLPolicyError, httpx.RequestError) as exc:
+                from .url_policy import redact_url
+                if len(resource_failures) < 15:
+                    resource_failures.append({"url": redact_url(req.url), "type": type(exc).__name__})
+                await route.abort("blockedbyclient")
+        import httpx
+        await context.route("**/*", guarded_route)
+        if hasattr(context, "route_web_socket"):
+            async def close_socket(ws):
+                await ws.close()
+            await context.route_web_socket("**/*", close_socket)
+        await context.add_init_script("window.WebSocket = class { constructor() { throw new Error('URL_POLICY_BLOCKED'); } }; window.RTCPeerConnection = undefined; window.WebTransport = undefined;")
+        page = await context.new_page()
+        target = request.url
+        for _ in range(6):
+            response = await page.goto(target, wait_until="domcontentloaded", timeout=timeout_ms)
+            redirected = navigation_redirects.pop(target, None)
+            if not redirected:
+                break
+            target = redirected
+        else:
+            raise URLPolicyError("dynamic navigation redirect limit exceeded")
+        networkidle_status = "text_ready"
+        try:
+            await page.wait_for_function("document.body && document.body.innerText.trim().length >= 1", timeout=max(1, int((deadline-time.monotonic())*1000)))
+        except Exception as exc:
+            networkidle_status = f"text_not_ready:{type(exc).__name__}"
+        if wait_ms > 0:
+            await page.wait_for_timeout(min(wait_ms, 1000, max(0, (deadline-time.monotonic())*1000)))
+        html = await page.content()
+        final_url = page.url
+        status_code = response.status if response else 200
     cleaned = collect_rendered_html(
         request,
         html=html,
@@ -183,8 +150,12 @@ async def _collect_dynamic_url_async(request: GenericWebRequest, *, wait_ms: int
         render_metadata={
             "navigation_wait_until": "domcontentloaded",
             "networkidle": networkidle_status,
-            "additional_wait_ms": min(wait_ms, 10000),
+            "additional_wait_ms": min(wait_ms, 1000),
             "html_chars": len(html),
+            "readiness": networkidle_status,
+            "resource_failures": resource_failures,
+            "resource_bytes":resource_bytes, "resource_count":resource_count,
+            "browser_reused":browser_reused, "ownership":"owned", "identity":"anonymous_per_request",
         },
     )
     record_trace_child(
@@ -221,8 +192,3 @@ def _valid_http_url(url: str) -> bool:
         return True
     except URLPolicyError:
         return False
-
-
-def _find_chrome_exe() -> str:
-    selection = resolve_managed_chrome()
-    return selection.path if selection else ""

@@ -32,7 +32,9 @@ def test_empty_provider_and_failed_provider_are_not_all_failed(monkeypatch) -> N
     response = search_academic_metadata(AcademicSearchRequest(query="no matching paper", provider="auto"))
     assert response.error["type"] == "partial_provider_errors_no_results"
     assert response.metadata["completed_providers"] == ["openalex"]
-    assert response.metadata["degraded_reason"] == "no_relevant_results"
+    assert response.metadata["degraded_reason"] == "mixed_source_outcomes_no_results"
+    assert {row['provider']: row['outcome'] for row in response.metadata['provider_outcomes']} == {
+        'openalex': 'no_match', 'crossref': 'request_failed'}
 
 
 def test_builtin_academic_provider_profiles_are_valid_and_complete() -> None:
@@ -42,8 +44,9 @@ def test_builtin_academic_provider_profiles_are_valid_and_complete() -> None:
     assert set(profiles).issubset(set(providers))
     assert "coaj" not in profiles
     assert "baidu_scholar" not in profiles
-    assert "serpapi_scholar" not in profiles
-    assert {"coaj", "baidu_scholar", "serpapi_scholar"}.issubset(set(providers))
+    assert {"serpapi_scholar", "wanfang", "nstrs", "ntur", "toaj"}.issubset(profiles)
+    assert set(profiles) == set(providers)
+    assert not {"coaj", "baidu_scholar", "socolar", "hanspub", "paper_edu", "gooa"}.intersection(providers)
     assert profiles["pubscholar"].content.direct_read_preferred is True
     assert profiles["vip_oa"].access.login_required is True
     assert profiles["openalex"].runtime.speed == "fast"
@@ -61,7 +64,7 @@ def test_academic_registry_instantiates_same_provider_ids_as_compat_layer() -> N
     assert set(registry) == set(providers)
     assert set(registry).issubset(set(_providers()))
     assert registry["openalex"].provider.__class__.__name__ == "OpenAlexProvider"
-    assert registry["vip_oa"].profile.role == "default_chinese_fulltext"
+    assert registry["vip_oa"].profile.role == "authorized_fulltext"
 
 
 def test_academic_provider_status_exposes_capability_profile() -> None:
@@ -91,21 +94,11 @@ def test_profile_layer_keeps_current_auto_order_compatible(monkeypatch) -> None:
     monkeypatch.delenv("BAIDU_QIANFAN_BEARER_TOKEN", raising=False)
     monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
 
-    assert _provider_order(AcademicSearchRequest(query="人工智能 教育", provider="auto"), "auto")[:8] == [
-        "nssd",
-        "chinaxiv",
-        "hanspub",
-        "oajrc",
-        "sciopen",
-        "pubscholar",
-        "sciengine",
-        "vip_oa",
-    ]
-    assert _provider_order(AcademicSearchRequest(query="LLM retrieval augmented generation", provider="auto"), "auto")[:3] == [
-        "openalex",
-        "crossref",
-        "semanticscholar",
-    ]
+    monkeypatch.delenv("SEMANTIC_SCHOLAR_API_KEY", raising=False)
+    assert _provider_order(AcademicSearchRequest(query="人工智能 教育", provider="auto"), "auto") == [
+        "pubscholar", "openalex", "nssd", "chinaxiv", "sciengine", "napstic_oa", "arxiv"]
+    assert _provider_order(AcademicSearchRequest(query="LLM retrieval augmented generation", provider="auto"), "auto") == [
+        "openalex", "arxiv"]
 
 
 def test_profile_driven_planner_reports_query_intent_and_waves(monkeypatch) -> None:
@@ -118,9 +111,10 @@ def test_profile_driven_planner_reports_query_intent_and_waves(monkeypatch) -> N
 
     assert plan.intent.chinese_like is True
     assert plan.intent.language == "zh"
-    assert plan.provider_order[:3] == ["nssd", "chinaxiv", "hanspub"]
+    assert plan.provider_order[:3] == ["pubscholar", "openalex", "nssd"]
     assert "pubscholar" in plan.waves["A"]
-    assert "vip_oa" in plan.waves["B"]
+    assert "arxiv" in plan.required_providers
+    assert "vip_oa" not in plan.provider_order
 
 
 def test_academic_query_intent_detects_citation_import_and_arxiv() -> None:
@@ -147,7 +141,7 @@ def test_doi_like_auto_route_uses_unpaywall_without_affecting_keyword_route(monk
     doi_order = _provider_order(AcademicSearchRequest(query="doi:10.3390/ai6010017", provider="auto"), "auto")
 
     assert "unpaywall" not in keyword_order
-    assert doi_order[0] == "unpaywall"
+    assert doi_order == ["crossref", "unpaywall"]
 
 
 def test_metadata_relevance_selects_top_k_fulltext_candidates() -> None:
@@ -239,21 +233,23 @@ def test_search_main_flow_resolves_top_direct_read_fulltext_candidate(monkeypatc
                 "file_url": "https://pubscholar.cn/files/test.pdf",
                 "pdf_bytes_confirmed": True,
                 "text_extractable": True,
-                "text_probe": {"extractable": True, "text_length": 2048, "page_count": 8, "sample": "RAG full text sample"},
+                "text_probe": {"extractable": True, "text_length": 2048, "page_count": 8, "sample": "RAG full text sample", "text": "a" * 2048},
             }
 
     monkeypatch.setattr("academic_providers.service._providers", lambda: {"pubscholar": FakeProvider()})
     monkeypatch.setattr("academic_providers.service.academic_provider_status", lambda: {"pubscholar": {"status": "available"}})
     monkeypatch.setattr("academic_providers.fulltext.instantiate_academic_providers", lambda profiles=None: {"pubscholar": FakeFullTextProvider()})
 
-    result = search_academic_metadata(AcademicSearchRequest(query="retrieval augmented generation", provider="pubscholar", limit=1))
+    calls=[]
+    monkeypatch.setattr('runtime.task_service.TaskService.submit', lambda self,op,payload,**kw:calls.append((op,payload)) or {'task_id':'queued-paper','status':'queued'})
+    result = search_academic_metadata(AcademicSearchRequest(query="retrieval augmented generation", provider="pubscholar", limit=1, options={"resolve_fulltext": True, "_background_discovery":True}))
 
-    assert result.items[0].full_text_status == "direct_read_text_extractable"
-    assert result.items[0].verification_status == "fulltext_verified"
-    assert result.items[0].raw["fulltext_resolution"]["status"] == "PASS"
-    assert result.items[0].raw["fulltext_text_length"] == 2048
-    assert result.metadata["fulltext_resolution"]["applied"] is True
-    assert result.metadata["fulltext_resolution"]["resolved_count"] == 1
+    assert result.items[0].full_text_status == 'open_access_article_detail'
+    assert result.items[0].verification_status != 'fulltext_verified'
+    assert result.items[0].raw['fulltext_task']['task_id'] == 'queued-paper'
+    assert calls[0][0] == 'academic_fulltext'
+    assert result.metadata['fulltext_resolution']['applied'] is True
+    assert result.metadata['fulltext_resolution']['resolved_count'] == 0
 
 
 def test_search_main_flow_can_disable_direct_read_fulltext_resolution(monkeypatch) -> None:
@@ -280,14 +276,14 @@ def test_search_main_flow_can_disable_direct_read_fulltext_resolution(monkeypatc
 
     monkeypatch.setattr("academic_providers.service._providers", lambda: {"pubscholar": FakeProvider()})
     monkeypatch.setattr("academic_providers.service.academic_provider_status", lambda: {"pubscholar": {"status": "available"}})
-    monkeypatch.setattr("academic_providers.service.extract_academic_fulltext", fail_if_called)
+    monkeypatch.setattr("academic_providers.fulltext.extract_academic_fulltext", fail_if_called)
 
     result = search_academic_metadata(
         AcademicSearchRequest(
             query="retrieval augmented generation",
             provider="pubscholar",
             limit=1,
-            options={"resolve_fulltext": False},
+            options={"resolve_fulltext": False, "_background_discovery":True},
         )
     )
 
@@ -307,9 +303,9 @@ def test_overlap_supplement_profile_receives_small_relevance_penalty() -> None:
     )
     supplement = AcademicWork(
         title="Gesture recognition smart home disabilities",
-        url="https://example.org/socolar",
+        url="https://example.org/supplement",
         abstract="Gesture recognition smart home disabilities",
-        source_database="socolar",
+        source_database="serpapi_scholar",
         provider_confidence=0.8,
     )
 
@@ -343,6 +339,7 @@ def test_extract_academic_fulltext_normalizes_provider_status(monkeypatch) -> No
                     "text_length": 1234,
                     "page_count": 6,
                     "sample": "sample text",
+                    "text": "a" * 1234,
                 },
             }
 

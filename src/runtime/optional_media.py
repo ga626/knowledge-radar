@@ -1,14 +1,15 @@
-"""可选模型的隔离进程入口；无安装、下载或私有目录发现副作用。"""
+"""可选组件的同进程执行入口；推理不安装或下载。"""
 
 from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from functools import lru_cache
 from runtime.paths import runtime_state_dir
-from runtime.process import silent_subprocess_run, isolated_worker_run
-from runtime.model_roles import COMPONENTS
+from runtime.process import silent_subprocess_run
+from runtime.model_roles import COMPONENTS, CLOUD_OCR_COMPONENT
 
 
 def file_sha(path):
@@ -41,7 +42,9 @@ def component_plan(component):
     ready = False
     if receipt:
         try:
-            validate_receipt(component)
+            validated = validate_receipt(component)
+            from runtime.component_environment import component_environment
+            component_environment(component, validated)
             ready = True
         except (ValueError, OSError, KeyError):
             pass
@@ -102,27 +105,19 @@ def validate_receipt(component):
     python = Path(receipt["python"]).resolve()
     if not python.is_file() or file_sha(python) != receipt.get("python_sha256"):
         raise ValueError("optional_python_identity_mismatch")
-    if python == Path(__import__("sys").executable).resolve():
-        raise ValueError("isolated_python_required")
     if not (python.parent.parent / "pyvenv.cfg").is_file() and not (python.parent / "pyvenv.cfg").is_file():
         raise ValueError("isolated_environment_required")
     root = Path(receipt["model_root"]).resolve()
     manifest = receipt.get("model_files") or {}
+    required = COMPONENTS[component].get('model_files')
+    if required and manifest != required:
+        raise ValueError('optional_model_role_manifest_mismatch')
     if not manifest and COMPONENTS[component]["model_required"]:
         raise ValueError("local_model_manifest_required")
     for relative, digest in manifest.items():
         model = (root / relative).resolve()
         if not model.is_relative_to(root) or not model.is_file() or file_sha(model) != digest:
             raise ValueError("optional_model_identity_mismatch")
-    if component.startswith("paddle"):
-        layout = Path(str(receipt.get("layout_model_root") or "")).resolve()
-        layout_files = receipt.get("layout_model_files") or {}
-        if not layout_files:
-            raise ValueError("paddle_layout_model_required")
-        for relative, digest in layout_files.items():
-            model = (layout / relative).resolve()
-            if not model.is_relative_to(layout) or not model.is_file() or file_sha(model) != digest:
-                raise ValueError("optional_layout_identity_mismatch")
     return receipt
 
 
@@ -155,128 +150,113 @@ def select_component(payload):
     source = approved_source(payload)
     component = payload.get("component") or "auto"
     if component != "auto":
-        if component not in COMPONENTS and component != "pypdf":
+        if component not in COMPONENTS and component not in {"pypdf", CLOUD_OCR_COMPONENT}:
             raise ValueError("unsupported_optional_component")
         return component
     suffix = source.suffix.lower()
     if suffix == ".pdf":
-        from pypdf import PdfReader
-
-        reader = PdfReader(source)
-        if not reader.pages:
-            raise ValueError("empty_document")
-        # 任一无文本页需要整份文档 OCR，不能把混合 PDF 的文字页冒充全文。
-        return "pypdf" if all((page.extract_text() or "").strip() for page in reader.pages) else "paddleocr-vl-1.6"
+        # PDF completion belongs to the shared page-aware processor, including scans.
+        return 'pypdf'
     if suffix in {".docx", ".xlsx", ".pptx", ".html", ".htm", ".md"}:
         return "docling"
     if suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp"}:
-        return "paddleocr-vl-1.6"
+        return CLOUD_OCR_COMPONENT
     if suffix in {".wav", ".mp3", ".m4a", ".flac", ".ogg", ".mp4", ".webm", ".aac"}:
         return "qwen3-asr-0.6b"
     raise ValueError("unsupported_local_evidence_format")
 
 
 def run_optional(payload):
+    started = time.monotonic()
     source = approved_source(payload)
     component = select_component(payload)
+    validation_s = round(time.monotonic()-started, 3)
+    if component == CLOUD_OCR_COMPONENT:
+        from runtime.cloud_ocr import run_cloud_ocr
+        result = run_cloud_ocr(source, timeout_s=float(payload.get('timeout_s', 600)))
+        result['execution_timings'] = {'input_validation_s': validation_s, 'provider_s': result['elapsed_s']}
+        return _save_result(result, payload, started=started)
     if component == "pypdf":
-        from pypdf import PdfReader
-
-        blocks = [
-            {"page": i + 1, "kind": "paragraph", "text": page.extract_text() or ""}
-            for i, page in enumerate(PdfReader(source).pages)
-        ]
-        if any(not row["text"].strip() for row in blocks):
-            raise ValueError("pdf_requires_ocr")
-        return _save_result(
-            {
-                "status": "acquired",
-                "component": component,
-                "text": "\n\n".join(row["text"] for row in blocks),
-                "document_blocks": blocks,
-                "source_kind": "pdf_text",
-            },
-            payload,
-        )
+        from runtime.pdf_text import process_pdf
+        options = payload.get('document') or {}
+        parsed = process_pdf(str(source), timeout_s=float(payload.get('timeout_s', 600)),
+            page_numbers=options.get('page_numbers'),allow_ocr=options.get('include_ocr') is not False,
+            enhance_suspicious=options.get('include_ocr') is True,storage_allowed=options.get('storage_allowed',True))
+        if not parsed['text'].strip():
+            raise ValueError((parsed.get('ocr_errors') or [{}])[0].get('type', 'pdf_text_unavailable'))
+        return _save_result({'status': 'acquired', 'component': component, **parsed,
+                             'content_locators': parsed['locators'], 'source_kind': 'pdf_text',
+                             'missing_text_pages':parsed.get('missing_text_pages', parsed['empty_pages']),
+                             'ocr_recommendation':'inspect_ocr_gap' if not parsed.get('request_satisfied') else 'not_needed'}, payload, started=started)
+    receipt_started = time.monotonic()
     receipt = validate_receipt(component)
+    receipt_validation_s = round(time.monotonic()-receipt_started, 3)
     from runtime.asr_policy import AsrPolicy
 
-    language = AsrPolicy.for_request(payload.get("language")).language
-    worker = Path(__file__).with_name("optional_media_worker.py")
-    environment = {
-        key: os.environ[key]
-        for key in ("SystemRoot", "WINDIR", "PATH", "TEMP", "TMP", "LOCALAPPDATA")
-        if key in os.environ
-    }
-    cache = receipt_root() / "cache" / component
-    cache.mkdir(parents=True, exist_ok=True)
-    environment.update(USERPROFILE=str(cache), HOME=str(cache), HF_HOME=str(cache / "huggingface"),
-                       PADDLE_PDX_CACHE_HOME=str(cache / "paddlex"))
-    threads = max(1, min(8, int(os.environ.get("KR_LOCAL_MODEL_THREADS", "4"))))
-    environment.update(
-        HF_HUB_OFFLINE="1",
-        TRANSFORMERS_OFFLINE="1",
-        HF_HUB_DISABLE_TELEMETRY="1",
-        PYTHONIOENCODING="utf-8",
-        OMP_NUM_THREADS=str(threads),
-        MKL_NUM_THREADS=str(threads),
-        TOKENIZERS_PARALLELISM="false",
-        PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK="True",
-    )
-    from runtime.dependency_preflight import _ffmpeg_path
-
-    ffmpeg = _ffmpeg_path() if COMPONENTS[component]["kind"] == "asr" else ""
-    if COMPONENTS[component]["kind"] == "asr" and not ffmpeg:
-        raise ValueError("ffmpeg_not_installed")
-    request = {
-        "component": component,
-        "input_path": str(source),
-        "language": language,
-        "model_root": receipt["model_root"],
-        "expected_packages": receipt["package_versions"],
-        "layout_model_root": receipt.get("layout_model_root"),
-        "ffmpeg_exe": ffmpeg,
-        "device": os.environ.get("KR_ASR_DEVICE", "cpu")
-        if COMPONENTS[component]["kind"] == "asr"
-        else os.environ.get("KR_OCR_DEVICE", "cpu"),
-        "threads": threads,
-    }
+    language = AsrPolicy.for_request(payload.get("language")).language if COMPONENTS[component]['kind'] == 'asr' else ''
+    from runtime.component_environment import component_environment
+    component_environment(component, receipt, activate=True)
+    threads = max(1, min(8, int(os.environ.get('KR_LOCAL_MODEL_THREADS', '4'))))
+    request = {'component': component, 'input_path': str(source), 'input_sha256': payload['input_sha256'],
+               'language': language, 'model_root': receipt['model_root'], 'expected_packages': {},
+               'model_identity': file_sha(receipt_root() / (component + '.json')),
+               'device': 'cpu', 'threads': threads}
     from runtime.resource_concurrency import acquire_resource
 
-    with acquire_resource("local_heavy"):
-        response = isolated_worker_run(
-            [receipt["python"], "-I", "-X", "utf8", str(worker)],
-            input=json.dumps(request),
-            timeout=min(1800, max(1, float(payload.get("timeout_s", 600)))),
-            env=environment,
-        )
-    if response.returncode:
-        raise ValueError("optional_component_execution_failed")
-    if len(response.stdout) > 32 * 1024 * 1024:
-        raise ValueError("optional_component_output_too_large")
-    result = json.loads(response.stdout)
-    if result.get("status") != "acquired" or not str(result.get("text") or "").strip():
-        raise ValueError("optional_component_empty_or_failed")
-    return _save_result(result, payload, receipt=receipt)
+    with acquire_resource("local_heavy") as lease:
+        worker_started = time.monotonic()
+        from runtime.optional_media_worker import execute
+        from runtime.execution_context import check_execution
+        check_execution()
+        result = execute(request)
+        check_execution()
+        worker_s = round(time.monotonic()-worker_started, 3)
+    # 模型对有效音频明确返回无语音时，没有文字是正常结果；不能将解码失败/未知空输出当成功。
+    metrics = result.get('asr_metrics') or {}
+    no_speech = (component == 'qwen3-asr-0.6b' and result.get('speech_status') == 'no_speech_detected'
+                 and metrics.get('chunks', 0) > 0 and metrics.get('audio_duration_s', 0) > 0)
+    if result.get('status') != 'acquired' or (not str(result.get('text') or '').strip() and not no_speech):
+        raise ValueError('optional_component_empty_or_failed')
+    result['execution_timings'] = {'input_validation_s': validation_s,
+        'receipt_validation_s': receipt_validation_s, 'processing_s': worker_s,
+        'resource_wait_s': round(float(lease.get('lease_wait_s', 0)) + float(lease.get('wait_s', 0)), 3)}
+    return _save_result(result, payload, receipt=receipt, started=started)
 
 
-def _save_result(result, payload, *, receipt=None):
+def _save_result(result, payload, *, receipt=None, started=None):
     from kr_core.evidence_store import EvidenceStore
+    from kr_core.evidence_coverage import content_coverage
 
     result["content"] = result["text"]
     component = result["component"]
+    if component == 'pypdf':
+        result['document'] = {key: result[key] for key in (
+            'input_sha256', 'page_count', 'pages_read', 'requested_pages', 'page_ledger',
+            'request_satisfied', 'source_pages_exhausted', 'processing_identity', 'resume',
+            'original_asset', 'coverage', 'processing_method', 'missing_text_pages',
+            'quality_warnings') if key in result}
     result["collector"] = component
+    result['input_sha256'] = payload['input_sha256']
+    result['coverage'] = result.get('coverage') or ('processed_audio_chunks' if result.get('source_kind') == 'asr' else 'partial')
+    result['content_coverage'] = content_coverage(result)
+    result['content_coverage']['parts']['content']['coverage'] = result['coverage']
+    # 新归档合同生成新证据版本；不改写旧版本的未知覆盖结论。
+    result['detail_metadata'] = {**(result.get('detail_metadata') or {}),
+                                 'strategy': ('local-evidence/page-ledger-ocr-v4:' if component == 'pypdf' else 'local-evidence/v2:') + component}
     identity_url = "https://local-evidence.invalid/sha256/" + payload["input_sha256"]
-    EvidenceStore().append_detail(
+    archive_started = time.monotonic()
+    EvidenceStore().record_detail(
         platform="local_asr" if component.startswith("qwen3-asr") else "local_document",
         url=identity_url,
         response=result,
     )
+    result.setdefault('execution_timings', {})['evidence_archive_s'] = round(time.monotonic()-archive_started, 3)
+    if started is not None:
+        result['execution_timings']['total_s'] = round(time.monotonic()-started, 3)
     return {
         **result,
         "input_sha256": payload["input_sha256"],
         "install_receipt_sha256": file_sha(receipt_root() / (component + ".json")) if receipt else "",
-        "coverage": "partial",
         "quality_status": "unmeasured",
     }
 
@@ -307,26 +287,58 @@ def uninstall_component(component, *, purge_downloads=False):
 
 
 def install_component(component, spec):
-    """失败时清理本次新建的隔离环境，允许按相同锁重试。"""
+    """显式安装或替换过期职责；失败恢复旧环境/回执，不在推理时升级。"""
     import shutil
-
+    import uuid
+    from runtime.file_write_lock import file_write_lock
+    from runtime.resource_concurrency import acquire_resource
     if component not in COMPONENTS:
-        raise ValueError("unsupported_optional_component")
+        raise ValueError('unsupported_optional_component')
+    if spec.get('installation_acknowledged') is not True or spec.get('license_review') != 'APPROVED':
+        raise ValueError('reviewed_installation_required')
     base = receipt_root().resolve()
-    target = base / "environments" / component
-    if target.exists() or (base / (component + ".json")).exists():
-        raise ValueError("optional_install_exists")
-    try:
-        return _install_component(component, spec)
-    except BaseException:
-        if (
-            target.exists()
-            and target.resolve().is_relative_to(base)
-            and not target.is_symlink()
-            and not target.is_junction()
-        ):
-            shutil.rmtree(target)
-        raise
+    target, receipt = base / 'environments' / component, base / (component + '.json')
+    backup = base / ('.replacing-' + component + '-' + uuid.uuid4().hex)
+    for path in (target, receipt, backup):
+        if not path.resolve().is_relative_to(base) or any(p.is_symlink() or p.is_junction() for p in (path, *path.parents)):
+            raise ValueError('unsafe_optional_component_directory')
+    base.mkdir(parents=True, exist_ok=True)
+    with acquire_resource('local_heavy'), file_write_lock(base / (component + '.install')):
+        replacing = target.exists() or receipt.exists()
+        if replacing:
+            if not target.is_dir() or not receipt.is_file():
+                raise ValueError('optional_install_incomplete_requires_review')
+            old = json.loads(receipt.read_text(encoding='utf-8'))
+            if old.get('schema') != 'knowledgeradar-optional-install/v1' or old.get('component') != component:
+                raise ValueError('invalid_optional_install_receipt')
+            if old.get('weight_revision') == COMPONENTS[component]['weight_revision']:
+                validate_receipt(component)
+                return {'status': 'installed_identity_verified', 'component': component, 'already_installed': True}
+            backup.mkdir()
+            target.rename(backup / 'environment')
+            try:
+                receipt.rename(backup / 'receipt.json')
+            except BaseException:
+                (backup / 'environment').rename(target)
+                backup.rmdir()
+                raise
+        try:
+            result = _install_component(component, spec)
+        except BaseException:
+            if target.exists():
+                shutil.rmtree(target)
+            receipt.unlink(missing_ok=True)
+            if replacing:
+                (backup / 'environment').rename(target)
+                (backup / 'receipt.json').rename(receipt)
+                backup.rmdir()
+            raise
+        if replacing:
+            try:
+                shutil.rmtree(backup)
+            except OSError:
+                result['retired_environment_cleanup_pending'] = backup.name
+        return result
 
 
 def _install_component(component, spec):
@@ -347,6 +359,9 @@ def _install_component(component, spec):
         raise ValueError("optional_frozen_lock_identity_mismatch")
     if COMPONENTS[component]["model_required"] and not spec.get("model_files"):
         raise ValueError("local_model_manifest_required")
+    required = COMPONENTS[component].get('model_files')
+    if required and spec.get('model_files') != required:
+        raise ValueError('optional_model_role_manifest_mismatch')
     lock, wheels = Path(spec["requirements_lock"]).resolve(), Path(spec["wheelhouse"]).resolve()
     if file_sha(lock) != spec["requirements_sha256"] or not wheels.is_dir():
         raise ValueError("optional_lock_identity_mismatch")
@@ -424,9 +439,6 @@ def _install_component(component, spec):
         "model_root": str(model_root),
         **{key: spec[key] for key in ("upstream_revision", "weight_revision", "model_files")},
     }
-    for key in ("layout_model_root", "layout_model_files"):
-        if key in spec:
-            receipt[key] = spec[key]
     base.mkdir(parents=True, exist_ok=True)
     destination = base / (component + ".json")
     with tempfile.NamedTemporaryFile(dir=base, suffix=".pending", delete=False, mode="w", encoding="utf-8") as handle:

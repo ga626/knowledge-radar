@@ -4,14 +4,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import re
-from typing import Dict, Iterable, List
+from typing import Dict, List
 
 from .models import AcademicSearchRequest
 from .profile import AcademicProviderProfile
-
-
-CHINESE_MAIN_CHAIN_ROLE = "default_chinese_fulltext"
-GLOBAL_METADATA_ROLE = "global_metadata"
 
 
 @dataclass(frozen=True)
@@ -29,6 +25,7 @@ class AcademicRoutePlan:
     provider_order: List[str]
     intent: AcademicQueryIntent
     waves: Dict[str, List[str]] = field(default_factory=dict)
+    required_providers: List[str] = field(default_factory=list)
 
 
 def plan_academic_search(
@@ -36,31 +33,69 @@ def plan_academic_search(
     provider_name: str,
     profiles: Dict[str, AcademicProviderProfile],
     *,
-    baidu_available: bool = False,
     core_available: bool = False,
     serpapi_available: bool = False,
+    semantic_available: bool = False,
+    wanfang_available: bool = False,
 ) -> AcademicRoutePlan:
     if provider_name != "auto":
         return AcademicRoutePlan(provider_order=[provider_name], intent=analyze_academic_query(request), waves={"explicit": [provider_name]})
     intent = analyze_academic_query(request)
-    if intent.chinese_like:
-        order = _chinese_order(profiles, citation_import_first=intent.citation_import, disciplines=intent.disciplines)
+    authorized = request.options.get('authorized_sources') or []
+    enabled = {name for name, profile in profiles.items() if profile.enabled and (
+        profile.default_policy != 'explicit' or (
+            name == 'wanfang' and wanfang_available and isinstance(authorized,(list,tuple,set)) and name in authorized))}
+    query = request.query.lower()
+    # 引文导入和 DOI 核对有自己的合同，不执行无意义的关键词广撒网。
+    if intent.citation_import:
+        order = ["citation_import"]
+        required = list(order)
+    elif intent.doi_like:
+        order = ["crossref"]
+        if not request.options.get("has_readable_fulltext"):
+            order.append("unpaywall")
+        required = list(order)
+    elif _exact_arxiv_id(request.query):
+        order, required = ['arxiv'], ['arxiv']
     else:
-        order = _global_metadata_order(profiles, citation_import_first=intent.citation_import, disciplines=intent.disciplines)
-    if intent.arxiv_like:
-        if "arxiv" in profiles and "arxiv" not in order:
-            order.append("arxiv")
-        if "ar5iv" in profiles and "ar5iv" not in order:
-            order.append("ar5iv")
-    if intent.doi_like and "unpaywall" in profiles and "unpaywall" not in order:
-        order.insert(0, "unpaywall")
-    if baidu_available and "baidu_scholar" in profiles and intent.chinese_like:
-        order.append("baidu_scholar")
-    if not core_available:
-        order = [name for name in order if name != "core"]
-    if serpapi_available and "serpapi_scholar" in profiles:
-        order.append("serpapi_scholar")
-    return AcademicRoutePlan(provider_order=_dedupe_order(order), intent=intent, waves=_waves(order, profiles))
+        primary = ["pubscholar", "openalex"] if intent.chinese_like else ["openalex"]
+        domain = []
+        disciplines = set(intent.disciplines)
+        if intent.chinese_like and disciplines & {"social_science", "humanities"}:
+            domain.append("nssd")
+        if intent.chinese_like and disciplines & {"cs", "stem", "biomed"}:
+            domain.extend(["chinaxiv", "sciengine"])
+        if intent.chinese_like:
+            domain.append("napstic_oa")
+        if intent.arxiv_like:
+            domain.append("arxiv")
+        if "biomed" in disciplines:
+            domain.append("europepmc")
+        # HKJO 是 explicit 来源；地域关键词不能越过画像中的显式选择边界。
+        if any(term in query for term in ("台湾", "taiwan", "臺灣")):
+            domain.extend(["toaj", "ntur"])
+        if any(term in query for term in ("学位", "博士论文", "硕士论文", "thesis", "dissertation")):
+            domain.append("calis_thesis")
+        if any(term in query for term in ("科技报告", "技术报告", "technical report")):
+            domain.append("nstrs")
+        required = _dedupe_order(primary + domain)
+        supplement = []
+        if semantic_available:
+            supplement.append("semanticscholar")
+        if core_available and (request.options.get("resolve_fulltext") or any(
+            term in query for term in ("仓储", "开放全文", "repository", "open access")
+        )):
+            supplement.append("core")
+        authorized = request.options.get("authorized_sources") or []
+        if wanfang_available and isinstance(authorized, (list, tuple, set)) and "wanfang" in authorized:
+            supplement.append("wanfang")
+        if serpapi_available:
+            supplement.append("serpapi_scholar")
+        order = _dedupe_order(required + supplement)
+    order = [name for name in order if name in enabled]
+    required = [name for name in required if name in enabled]
+    waves = {"A": required, "C": [name for name in order if name not in required]}
+    return AcademicRoutePlan(provider_order=order, intent=intent, waves=waves, required_providers=required)
 
 
 def analyze_academic_query(request: AcademicSearchRequest) -> AcademicQueryIntent:
@@ -74,65 +109,6 @@ def analyze_academic_query(request: AcademicSearchRequest) -> AcademicQueryInten
         chinese_like=chinese_like,
         disciplines=_detect_disciplines(query),
     )
-
-
-def _chinese_order(profiles: Dict[str, AcademicProviderProfile], *, citation_import_first: bool, disciplines: List[str]) -> List[str]:
-    prefix = ["citation_import"] if citation_import_first and "citation_import" in profiles else []
-    main_chain = _sort_by_profile_priority(
-        (
-            profile
-            for profile in profiles.values()
-            if profile.role == CHINESE_MAIN_CHAIN_ROLE and profile.default_policy == "auto"
-        ),
-        priority_key="fulltext",
-        disciplines=disciplines,
-    )
-    global_metadata = _global_metadata_order(profiles, citation_import_first=False, disciplines=disciplines)
-    return prefix + [profile.id for profile in main_chain] + [name for name in global_metadata if name not in prefix]
-
-
-def _global_metadata_order(profiles: Dict[str, AcademicProviderProfile], *, citation_import_first: bool, disciplines: List[str]) -> List[str]:
-    prefix = ["citation_import"] if citation_import_first and "citation_import" in profiles else []
-    preferred = ["openalex", "crossref", "semanticscholar"]
-    ordered = [name for name in preferred if name in profiles]
-    remaining = _sort_by_profile_priority(
-        (
-            profile
-            for profile in profiles.values()
-            if profile.role == GLOBAL_METADATA_ROLE and profile.id not in set(ordered)
-        ),
-        priority_key="discovery",
-        disciplines=disciplines,
-    )
-    return prefix + ordered + [profile.id for profile in remaining]
-
-
-def _sort_by_profile_priority(
-    profiles: Iterable[AcademicProviderProfile],
-    *,
-    priority_key: str,
-    disciplines: List[str] | None = None,
-) -> List[AcademicProviderProfile]:
-    discipline_set = set(disciplines or [])
-    return sorted(
-        profiles,
-        key=lambda profile: (
-            -int(profile.runtime.priority.get(priority_key, 0)),
-            -len(discipline_set.intersection(profile.disciplines)),
-            profile.id,
-        ),
-    )
-
-
-def _waves(order: List[str], profiles: Dict[str, AcademicProviderProfile]) -> Dict[str, List[str]]:
-    waves: Dict[str, List[str]] = {}
-    for provider_id in order:
-        profile = profiles.get(provider_id)
-        if not profile:
-            continue
-        for wave in profile.wave:
-            waves.setdefault(wave, []).append(provider_id)
-    return waves
 
 
 def _dedupe_order(order: List[str]) -> List[str]:
@@ -169,13 +145,18 @@ def _looks_like_chinese_query(query: str) -> bool:
 
 def _looks_like_arxiv_query(query: str) -> bool:
     lowered = str(query or "").lower()
-    if any("\u4e00" <= ch <= "\u9fff" for ch in lowered):
-        return False
-    return any(marker in lowered for marker in ["ai", "machine learning", "deep learning", "cs.", "physics", "math", "preprint", "llm", "rag"])
+    return bool(_exact_arxiv_id(query)) or bool(re.search(r"\b(ai|llm|rag|arxiv|physics|math|preprint)\b|machine learning|deep learning|cs\.", lowered)) or any(
+        marker in lowered for marker in ("人工智能", "机器学习", "深度学习", "预印本", "大模型", "物理", "数学")
+    )
 
 
 def _looks_like_doi_query(query: str) -> bool:
     return bool(re.search(r"10\.\d{4,9}/[-._;()/:A-Z0-9]+", str(query or ""), flags=re.IGNORECASE))
+
+
+def _exact_arxiv_id(query):
+    from .identity import arxiv_identifier
+    return arxiv_identifier(query)
 
 
 def _detect_disciplines(query: str) -> List[str]:
@@ -187,5 +168,9 @@ def _detect_disciplines(query: str) -> List[str]:
         "social_science": ["education", "economics", "policy", "governance", "psychology", "management", "law", "教育", "经济", "政策", "治理", "心理", "管理", "法律", "法学", "社会"],
         "humanities": ["history", "literature", "philosophy", "文化", "历史", "文学", "哲学"],
     }
-    disciplines = [name for name, terms in markers.items() if any(term in lowered for term in terms)]
+    def matches(term: str) -> bool:
+        if term.isascii():
+            return bool(re.search(r"\b" + re.escape(term) + r"\b", lowered))
+        return term in lowered
+    disciplines = [name for name, terms in markers.items() if any(matches(term) for term in terms)]
     return disciplines or ["general"]

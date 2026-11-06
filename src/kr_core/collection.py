@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional
 
-from runtime.chrome_manager import XHS_CHROME_DEBUG_PORT
 from runtime.failure_tags import detect_failure_tags, describe_failure_tags
-from runtime.recruitment_address import attach_recruitment_address_contract
 from .affordance import attach_result_affordance
 
 
@@ -24,8 +22,10 @@ ERROR_TYPE_ALIASES = {
 }
 
 ERROR_TYPE_NORMALIZED = {
+    "recruitment_gate_unavailable": "recruitment_gate_unavailable",
     "anti_bot": "anti_bot_verification",
     "ambiguous_page_state": "ambiguous_page_state",
+    "auth_state_unconfirmed": "auth_state_unconfirmed",
     "city_mismatch": "city_mismatch",
     **{name: name for name in ("rate_limited", "dependency_missing", "configuration_error", "city_mapping_missing",
                                "login_required", "anti_bot_verification", "cdp_unavailable", "empty_results", "request_failed", "parse_failed")},
@@ -144,7 +144,7 @@ def normalize_error_type(raw_type: Any, message: str = "", platform_state: str =
         return "login_required"
     if any(token in text for token in ("429", "rate", "限流")):
         return "rate_limited"
-    if any(token in text for token in ("cdp", "chrome", XHS_CHROME_DEBUG_PORT, "12734")):
+    if any(token in text for token in ("cdp", "chrome")):
         return "cdp_unavailable"
     if any(token in text for token in ("parse", "解析")):
         return "parse_failed"
@@ -167,8 +167,10 @@ def normalize_search_error(
         platform_state=str(error_item.get("platform_state") or ""),
     )
     retryable = bool(error_item.get("retryable"))
-    if error_type in {"anti_bot_verification", "login_required", "rate_limited", "cdp_unavailable", "empty_results"}:
+    if error_type in {"login_required", "rate_limited", "cdp_unavailable", "empty_results"}:
         retryable = True
+    if error_type in {"anti_bot_verification", "recruitment_gate_unavailable"}:
+        retryable = False
 
     normalized = dict(error_item)
     normalized["error"] = message
@@ -189,80 +191,7 @@ def normalize_search_error(
         normalized.setdefault("manual_action_required", True)
         normalized.setdefault("login_required", False)
         normalized.setdefault("recommended_fallback", "external_search_then_detail")
-    normalized.update(search_error_evidence_contract(platform, normalized, error_type=error_type))
     return normalized
-
-
-def _is_recruitment_platform(platform: str) -> bool:
-    text = str(platform or "").strip().lower()
-    return any(token in text for token in ("boss", "boss直聘", "猎聘", "liepin", "智联", "zhilian", "脉脉", "maimai", "v2ex"))
-
-
-def _is_web_fallback(item: Dict[str, Any]) -> bool:
-    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-    text = " ".join(str(value or "") for value in (item.get("source"), item.get("strategy"), metadata.get("strategy"), metadata.get("fallback_from")))
-    return "web_search_fallback" in text
-
-
-def recruitment_item_evidence_contract(platform: str, item: Dict[str, Any]) -> Dict[str, Any]:
-    """Attach claim permissions for recruitment search candidates."""
-
-    if not _is_recruitment_platform(platform):
-        return {}
-    if _is_web_fallback(item):
-        return {
-            "failure_class": "",
-            "evidence_strength": "weak_open_index",
-            "market_claim_allowed": False,
-            "salary_claim_allowed": False,
-        }
-    normalized_platform = str(platform or "").strip().lower()
-    if normalized_platform in {"v2ex"} or str(platform or "").strip() == "V2EX":
-        return {
-            "failure_class": "",
-            "evidence_strength": "community_job_post",
-            "market_claim_allowed": False,
-            "salary_claim_allowed": False,
-        }
-    return {
-        "failure_class": "",
-        "evidence_strength": "medium_search_summary",
-        "market_claim_allowed": True,
-        "salary_claim_allowed": False,
-    }
-
-
-def search_error_evidence_contract(platform: str, error_item: Dict[str, Any], *, error_type: str = "") -> Dict[str, Any]:
-    """Attach stable semantics for errors so reports do not infer market facts."""
-
-    if not _is_recruitment_platform(platform):
-        return {}
-    value = str(error_type or error_item.get("type") or error_item.get("failure_type") or "").lower()
-    manual = bool(error_item.get("manual_action_required"))
-    if manual or value in {"login_required", "anti_bot_verification"}:
-        failure_class = "platform_boundary_or_manual_lifecycle"
-        evidence_strength = "blocked_no_claim"
-    elif value in {"cdp_unavailable", "cdp_runtime_error", "cdp_method_error", "cdp_target_error", "cdp_version_error", "collector_script_error", "parse_failed", "request_failed", "selector_miss", "network_timeout"}:
-        failure_class = "tool_error"
-        evidence_strength = "tool_error"
-    elif value in {"rate_limited"}:
-        failure_class = "rate_limited"
-        evidence_strength = "blocked_no_claim"
-    elif value in {"city_mapping_missing"}:
-        failure_class = "city_mapping_missing"
-        evidence_strength = "blocked_no_claim"
-    elif value in {"empty_results", "city_mismatch"}:
-        failure_class = value
-        evidence_strength = "no_result_signal"
-    else:
-        failure_class = "tool_or_platform_unknown"
-        evidence_strength = "tool_error"
-    return {
-        "failure_class": failure_class,
-        "evidence_strength": evidence_strength,
-        "market_claim_allowed": False,
-        "salary_claim_allowed": False,
-    }
 
 
 def trace_metadata(trace: Optional[CollectionTrace]) -> Dict[str, Any]:
@@ -279,13 +208,6 @@ def format_search_response(
     enriched_items = []
     for item in items:
         next_item = attach_result_affordance(platform, item)
-        if _is_recruitment_platform(platform):
-            next_item = attach_recruitment_address_contract(next_item, platform=platform)
-        for key, value in recruitment_item_evidence_contract(platform, next_item).items():
-            if next_item.get(key) in (None, "") or (
-                key == "evidence_strength" and next_item.get(key) in GENERIC_AFFORDANCE_EVIDENCE_STRENGTHS
-            ):
-                next_item[key] = value
         enriched_items.append(next_item)
     data: Dict[str, Any] = {
         "items": enriched_items,

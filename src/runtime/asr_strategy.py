@@ -144,13 +144,14 @@ def _default_downloader_probe(platform: str, allow: bool) -> SubtitleProbeResult
 
 def _select_local_asr_profile(request: AsrStrategyInput, policy: AsrPolicy) -> dict[str, Any]:
     from runtime.model_roles import ASR_MODEL_REF
-
+    if policy.device != 'cpu' or policy.compute_type != 'int8':
+        raise ValueError('unsupported_asr_profile:CPU_INT8_required')
     return {
         "model_ref": ASR_MODEL_REF,
         "device": policy.device,
         "compute_type": policy.compute_type,
         "status": "single_selected_engine",
-        "selection_reason": "字幕缺失时按需启动隔离 0.6B worker；无备用引擎",
+        "selection_reason": "字幕缺失时同进程调用 sherpa-onnx 0.6B INT8；无备用引擎",
     }
 
 
@@ -230,7 +231,7 @@ def build_asr_strategy_plan(
                 kind="local_asr",
                 status="selected",
                 resource_kind=resource,
-                engine=str(local_profile.get("model_ref") or "local:qwen3-asr/0.6b-hf"),
+                engine=str(local_profile.get("model_ref") or "local:qwen3-asr/0.6b-onnx-int8"),
                 reason=f"subtitle/cache miss; {local_profile.get('selection_reason')}",
                 blocks_final_report=request.needs_final_transcript,
                 metadata={

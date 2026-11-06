@@ -11,7 +11,7 @@ import random
 import sqlite3
 import threading
 import time
-from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Tuple, Type
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Type
 
 from runtime.paths import runtime_log_dir
 
@@ -356,7 +356,10 @@ class DegradationPolicy:
                 )
                 if index + 1 >= attempts or not retryable:
                     break
-        raise RuntimeError(str(last_error) if last_error else "degradation retry failed")
+        # 保留费用阻断、授权和传输异常的类型，供调用方做明确分类。
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("degradation retry failed")
 
     def summary(self, recent_limit: int = 20) -> Dict[str, Any]:
         self.initialize()

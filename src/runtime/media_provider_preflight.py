@@ -37,10 +37,9 @@ def classify_provider_error(error: Any) -> dict[str, Any]:
 def preflight_contract(model_ref: str, *, capability: str = "native_video", canary_passed: bool = False) -> dict[str, Any]:
     ref = str(model_ref or "").strip()
     provider, _, model = ref.partition(":")
-    known_model = model.lower() not in {"", "qwen-turbo"}
-    canary_required = provider.lower() in {"bailian", "dashscope"} or model.lower() in {
-        "qwen3.7-flash", "qwen3.7-plus", "qwen3.8-max"
-    }
+    from .model_roles import ASR_MODEL_REF, OCR_MODEL_REF, CLOUD_MODEL_REF
+    known_model = ref in {ASR_MODEL_REF, OCR_MODEL_REF, CLOUD_MODEL_REF}
+    canary_required = ref == CLOUD_MODEL_REF
     return {
         "schema": SCHEMA,
         "model_ref": ref,

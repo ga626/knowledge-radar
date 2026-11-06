@@ -102,16 +102,6 @@ def _replace_mcp_block(text: str, block: str) -> str:
     return text + separator + "\n" + block + "\n"
 
 
-def _replace_rule_block(text: str, fragment: str) -> str:
-    marker = "## KnowledgeRadar Perception"
-    if marker in text:
-        start = text.index(marker)
-        tail = text.find("\n## ", start + len(marker))
-        end = len(text) if tail == -1 else tail + 1
-        return text[:start] + fragment.rstrip() + "\n\n" + text[end:]
-    return fragment.rstrip() + "\n\n" + text.lstrip()
-
-
 def _backup(paths: list[Path], backup_dir: Path) -> None:
     backup_dir.mkdir(parents=True, exist_ok=True)
     for path in paths:
@@ -202,7 +192,7 @@ def _receipt(plugin_destination: Path, source_dirty: bool, plugin_identity: dict
     }
 
 
-def install(*, apply: bool, config_path: Path, agents_path: Path, plugin_destination: Path, backup_dir: Path) -> dict[str, object]:
+def install(*, apply: bool, config_path: Path, plugin_destination: Path, backup_dir: Path) -> dict[str, object]:
     if not ENTRYPOINT.exists():
         raise RuntimeError(f"missing entrypoint: {ENTRYPOINT}")
     if not PLUGIN_SOURCE.exists():
@@ -211,11 +201,8 @@ def install(*, apply: bool, config_path: Path, agents_path: Path, plugin_destina
     if not python_exe.exists():
         python_exe = Path(sys.executable).resolve()
     config_text = _canonical_config(ROOT, python_exe)
-    rule_fragment = _utf8(CODEX_PRODUCT / "AGENTS.knowledgeradar.md")
     current_config = _utf8(config_path) if config_path.exists() else ""
-    current_agents = _utf8(agents_path) if agents_path.exists() else ""
     rendered_config = _replace_mcp_block(current_config, config_text)
-    rendered_agents = _replace_rule_block(current_agents, rule_fragment)
     parsed = tomllib.loads(rendered_config)
     server = parsed["mcp_servers"]["knowledgeradar"]
     if str(server["args"][-1]) != str(ENTRYPOINT) or parsed["mcp_servers"]["knowledgeradar"]["env"]["KR_MCP_TRANSPORT"] != "stdio":
@@ -227,14 +214,12 @@ def install(*, apply: bool, config_path: Path, agents_path: Path, plugin_destina
     _backup(
         [
             config_path,
-            agents_path,
             plugin_destination.parent / "knowledgeradar-research.deployment-receipt.json",
             marketplace_path,
         ],
         backup_dir,
     )
     _write_utf8(config_path, rendered_config)
-    _write_utf8(agents_path, rendered_agents)
     plugin_identity = _copy_plugin(plugin_destination)
     marketplace_path = _update_marketplace(plugin_destination)
     dirty = bool(_git("status", "--porcelain"))
@@ -243,7 +228,6 @@ def install(*, apply: bool, config_path: Path, agents_path: Path, plugin_destina
     return {
         "status": "APPLIED",
         "config": str(config_path),
-        "agents": str(agents_path),
         "plugin": str(plugin_destination),
         "marketplace": str(marketplace_path),
         "receipt": str(receipt_path),
@@ -255,20 +239,18 @@ def install(*, apply: bool, config_path: Path, agents_path: Path, plugin_destina
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Install the current KnowledgeRadar Codex product contract.")
-    parser.add_argument("--apply", action="store_true", help="write the user config, rule block and plugin source")
+    parser.add_argument("--apply", action="store_true", help="write the user config and plugin source; never write global rules")
     parser.add_argument("--config", default="", help="Codex config.toml path")
-    parser.add_argument("--agents", default="", help="global AGENTS.md path")
     parser.add_argument("--plugin", default="", help="plugin source destination")
     parser.add_argument("--backup-dir", default="", help="backup destination")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
     home = _codex_home()
     config_path = Path(args.config).expanduser().resolve() if args.config else home / "config.toml"
-    agents_path = Path(args.agents).expanduser().resolve() if args.agents else home / "AGENTS.md"
     plugin_destination = Path(args.plugin).expanduser().resolve() if args.plugin else Path.home() / "plugins" / "knowledgeradar-research"
     backup_dir = Path(args.backup_dir).expanduser().resolve() if args.backup_dir else ROOT / "local" / "codex-mcp-repair-snapshot-2026-08-06"
     try:
-        result = install(apply=args.apply, config_path=config_path, agents_path=agents_path, plugin_destination=plugin_destination, backup_dir=backup_dir)
+        result = install(apply=args.apply, config_path=config_path, plugin_destination=plugin_destination, backup_dir=backup_dir)
     except (OSError, RuntimeError, KeyError, TypeError, tomllib.TOMLDecodeError) as exc:
         result = {"status": "FAIL", "error": str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))

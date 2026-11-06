@@ -17,8 +17,8 @@ def test_media_model_policy_defaults(monkeypatch) -> None:
     policy = MediaModelPolicy.from_env()
 
     assert policy.basic_text_models == ()
-    assert policy.asr_models == ("local:qwen3-asr/0.6b-hf",)
-    assert policy.ocr_models == ("paddleocr-vl-1.6",)
+    assert policy.asr_models == ("local:qwen3-asr/0.6b-onnx-int8",)
+    assert policy.ocr_models == ("siliconflow:PaddlePaddle/PaddleOCR-VL-1.5",)
     assert policy.frame_vision_models == ("bailian:qwen3.8-omni-flash",)
     assert policy.native_video_models == ("bailian:qwen3.8-omni-flash",)
     assert policy.native_audio_video_models == ("bailian:qwen3.8-omni-flash",)
@@ -46,7 +46,7 @@ def test_retired_models_do_not_reenter_local_roles(monkeypatch):
     monkeypatch.setenv('KR_ASR_MODELS', 'local:faster-whisper/base')
     monkeypatch.setenv('KR_OCR_MODELS', 'PaddlePaddle/PaddleOCR-VL-1.5')
     policy = MediaModelPolicy.from_env()
-    assert policy.asr_models == ('local:qwen3-asr/0.6b-hf',)
-    assert policy.ocr_models == ('paddleocr-vl-1.6',)
+    assert policy.asr_models == ('local:qwen3-asr/0.6b-onnx-int8',)
+    assert policy.ocr_models == ('siliconflow:PaddlePaddle/PaddleOCR-VL-1.5',)
     assert 'bailian:qwen3.7-flash' not in policy.capability_registry()
     assert classify_provider_error('HTTP 403 Access denied')['failure_class'] == 'AUTH_OR_PERMISSION'

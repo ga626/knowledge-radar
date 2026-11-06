@@ -3,6 +3,19 @@ import hashlib
 import pytest
 from kr_core.evidence_assets import EvidenceAssets
 from kr_core.evidence_store import EvidenceStore
+
+
+def test_academic_body_keeps_actual_fetch_url_in_fixed_evidence(tmp_path):
+    store = EvidenceStore(str(tmp_path / 'academic.jsonl'))
+    actual = 'https://www.ebi.ac.uk/europepmc/webservices/rest/PMC7092803/fullTextXML'
+    item = {'url': 'https://repository.example/article', 'title': 'Article', 'raw': {
+        'fulltext_resolution': {'text': 'Verified body. ' * 20, 'coverage': 'partial',
+            'mode': 'public_xml_text', 'provenance': {'provider_id': 'europepmc',
+                'source_url': 'https://repository.example/article', 'resolved_url': actual}}}}
+    store.append_academic_search(query='body', response={'items': [item]})
+    ref = item['evidence_assets'][0]
+    assert ref['source_url'] == actual
+    assert store.assets.fetch(ref['version_id'])['asset']['provenance']['resolved_url'] == actual
 from kr_core.evidence_coverage import content_coverage
 
 
@@ -80,6 +93,76 @@ def test_default_asset_root_shared(tmp_path, monkeypatch):
     response = {'content': '原文'}
     store.append_detail(platform='web', url='https://example.org', response=response)
     assert EvidenceAssets().fetch(response['evidence_assets'][0]['version_id'])['text'] == '原文'
+
+
+@pytest.mark.parametrize('component,source_kind,coverage,locator', [
+    ('pypdf', 'pdf_text', 'complete_selectable_text', {'page': 2, 'kind': 'paragraph'}),
+    ('qwen3-asr-0.6b', 'asr', 'processed_audio_chunks', {'start_s': 0., 'end_s': 12., 'kind': 'audio_chunk'}),
+])
+def test_local_processing_coverage_and_locator_survive_fixed_read_without_rewriting_legacy(
+    tmp_path, monkeypatch, component, source_kind, coverage, locator,
+):
+    from runtime.optional_media import _save_result
+    monkeypatch.setenv('KR_LOG_DIR', str(tmp_path / 'logs'))
+    monkeypatch.setenv('KR_EVIDENCE_ROOT', str(tmp_path / 'assets'))
+    text = 'parsed material'
+    input_sha = 'a' * 64
+    url = 'https://local-evidence.invalid/sha256/' + input_sha
+    legacy = {'content': text, 'collector': component,
+              'content_coverage': {'parts': {'content': {'coverage': 'unknown'}}},
+              'content_locators': [{'start': 0, 'end': len(text), **locator}]}
+    EvidenceStore().record_detail(platform='local_document', url=url, response=legacy)
+    old = legacy['evidence_assets'][0]
+    parsed = {'text': text, 'status': 'acquired', 'component': component,
+              'source_kind': source_kind, 'content_locators': legacy['content_locators']}
+    if source_kind == 'pdf_text':
+        parsed['coverage'] = coverage
+    result = _save_result(parsed, {'input_sha256': input_sha})
+    ref = result['evidence_assets'][0]
+    fetched = EvidenceAssets().fetch(ref['version_id'])
+    assert ref['version_id'] != old['version_id']
+    assert ref['coverage'] == coverage == result['content_coverage']['parts']['content']['coverage']
+    assert ref['provenance']['input_sha256'] == input_sha
+    assert fetched['text'] == text and fetched['locators'][0].items() >= locator.items()
+    assert EvidenceAssets().fetch(old['version_id'])['asset']['coverage'] == 'unknown'
+    assert result['quality_status'] == 'unmeasured'
+
+
+def test_archive_boundary_does_not_swallow_cancellation(tmp_path, monkeypatch):
+    from runtime.execution_context import ExecutionStopped
+    store = EvidenceStore(str(tmp_path/'events.jsonl'))
+    def cancelled(**_):
+        raise ExecutionStopped('execution_superseded_or_cancelled')
+    monkeypatch.setattr(store, 'append_detail', cancelled)
+    response = {'content': 'late body'}
+    with pytest.raises(ExecutionStopped):
+        store.record_detail(platform='fixture', url='https://example.org', response=response)
+    assert 'evidence_storage_gaps' not in response
+    assert not (tmp_path/'events.jsonl').exists()
+
+
+def test_evidence_large_records_survive_multiple_processes(tmp_path):
+    import json, os, subprocess, sys
+    from pathlib import Path
+    path = tmp_path / 'shared.jsonl'
+    code = '''
+import os,sys
+sys.path.insert(0,os.environ['PYTHONPATH'])
+from kr_core.evidence_store import EvidenceStore, EvidenceRecord
+store = EvidenceStore(sys.argv[1])
+for i in range(12):
+    store.append(EvidenceRecord('detail','test','https://example.org',
+        {'writer':sys.argv[2],'index':i,'content':'中文🙂'*20000}))
+'''
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / 'src'), PYTHONIOENCODING='utf-8')
+    processes = [subprocess.Popen([sys.executable, '-X', 'utf8', '-c', code, str(path), str(i)], env=env,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE) for i in range(3)]
+    for process in processes:
+        _, err = process.communicate(timeout=20)
+        assert process.returncode == 0, err.decode('utf-8')
+    rows = [json.loads(line)['payload'] for line in path.read_text(encoding='utf-8').splitlines()]
+    assert {(row['writer'], row['index']) for row in rows} == {(str(w), i) for w in range(3) for i in range(12)}
+    assert all(row['content'] == '中文🙂'*20000 for row in rows)
 
 
 def test_three_media_counterexamples_and_queryable_pending():

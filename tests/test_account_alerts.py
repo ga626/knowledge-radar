@@ -47,7 +47,7 @@ def test_registered_name_number_and_slot_survive_the_manual_action_contract():
 
 
 def test_closed_window_never_becomes_verified_account(monkeypatch):
-    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "xiaohongshu", "account_slot": "xhs_account_a"}]}})
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "boss", "display_label":"A9331"}]}})
     monkeypatch.setattr(account_alerts, "identity_for_profile", lambda _: {"display_label": "A9331"})
     monkeypatch.setattr(account_alerts, "browser_sessions_summary", lambda **_: {"sessions": [{"profile_id": "A", "state": "CLOSED"}]})
     row = account_alerts.account_alert_snapshot()["accounts"][0]
@@ -64,7 +64,7 @@ def test_preview_does_not_dispatch_windows_notification(monkeypatch):
 
 
 def test_closing_unverified_login_window_keeps_recovery_pending(monkeypatch):
-    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "xiaohongshu"}]}})
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "boss"}]}})
     monkeypatch.setattr(account_alerts, "identity_for_profile", lambda _: {"display_label": "A9331"})
     monkeypatch.setattr(account_alerts, "browser_sessions_summary", lambda **_: {"sessions": [{"profile_id": "A", "state": "CLOSED", "metadata": {"account_recovery_pending": True}}]})
     assert account_alerts.account_alert_snapshot()["pending_count"] == 1
@@ -72,12 +72,12 @@ def test_closing_unverified_login_window_keeps_recovery_pending(monkeypatch):
 
 def test_verify_recovery_requires_probe_before_any_cleanup(monkeypatch):
     from runtime import chrome_manager
-    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "xiaohongshu"}]}})
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "boss"}]}})
     probes = []
     monkeypatch.setattr(chrome_manager, "probe_browser_auth", lambda platform, **kwargs: probes.append((platform,kwargs)) or {"status": "needs_interaction", "manual_action_required": True})
     monkeypatch.setattr(chrome_manager, "complete_browser_interaction", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("do not close or declare recovered")))
     assert account_alerts.recover_account("A", "verify")["status"] == "not_verified"
-    assert probes == [("xhs", {"target_profile_id": "A"})]
+    assert probes == [("boss", {"target_profile_id": "A"})]
 
 
 def test_probe_exception_releases_recovery_owner(tmp_path, monkeypatch):
@@ -85,7 +85,7 @@ def test_probe_exception_releases_recovery_owner(tmp_path, monkeypatch):
     from runtime import chrome_manager
     from runtime.account_observations import AccountObservationStore
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
-    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "xiaohongshu"}]}})
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "A", "platform": "boss"}]}})
     monkeypatch.setattr(chrome_manager, "probe_browser_auth", lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("probe")))
     with pytest.raises(RuntimeError, match="probe"):
         account_alerts.recover_account("A", "verify")
@@ -104,7 +104,7 @@ def test_late_failure_cannot_reopen_browser_after_success(monkeypatch):
     monkeypatch.setattr(chrome_manager, "_chrome_debug_port", lambda _: "9331")
     monkeypatch.setattr(account_observations, "observe_account", lambda *a, **k: {"accepted": False})
     monkeypatch.setattr(chrome_manager, "upsert_browser_session", lambda **k: (_ for _ in ()).throw(AssertionError("stale failure must not open a recovery session")))
-    result = chrome_manager.request_user_login("xhs", target_profile_id="A", trigger_evidence=["login_required"])
+    result = chrome_manager.request_user_login("cnki", target_profile_id="A", trigger_evidence=["login_required"])
     assert result["status"] == "superseded" and released == ["own"]
 
 
@@ -120,21 +120,22 @@ def test_resolved_failure_closes_only_owned_notification_helper(tmp_path):
     assert closed == ["helper"]
 
 
-def test_pending_failure_replay_keeps_registered_slot_and_number(tmp_path, monkeypatch):
+def test_daily_browser_failure_notification_uses_current_binding(tmp_path,monkeypatch):
     from runtime.account_observations import AccountObservationStore
-    from runtime import profile_registry
-    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
-    monkeypatch.delenv("KR_CONSOLE_READ_ONLY", raising=False)
-    monkeypatch.delenv("KR_DESKTOP_NOTIFICATIONS_DISABLED", raising=False)
-    store = AccountObservationStore()
-    store.observe("B", "xiaohongshu", "needs_login", source="interrupted_call")
-    monkeypatch.setattr(profile_registry, "profile_registry_internal", lambda: {"raw": {"profiles": [{"profile_id": "B", "platform": "xiaohongshu", "display_label": "B4973", "account_slot": "xhs_account_b"}]}})
-    calls = []
-    monkeypatch.setattr(desktop_notification, "notify_account_failure", lambda payload: calls.append(payload) or {"status": "fixture"})
-    assert len(desktop_notification.drain_notification_outbox()) == 1
-    assert calls[0]["slot_label"] == "B" and calls[0]["account_number"] == "4973"
-    store.observe("B", "xiaohongshu", "auth_verified", source="probe")
-    assert desktop_notification.drain_notification_outbox() == []
+    from runtime import xhs_opencli as oc,profile_registry
+    monkeypatch.setenv("KR_STATE_DIR",str(tmp_path))
+    monkeypatch.setenv("KR_XHS_OPENCLI_CONTEXT_ID","daily")
+    monkeypatch.delenv("KR_CONSOLE_READ_ONLY",raising=False)
+    monkeypatch.delenv("KR_DESKTOP_NOTIFICATIONS_DISABLED",raising=False)
+    binding=oc.account_binding_id()
+    store=AccountObservationStore();store.observe(binding,"xhs","needs_login",source="call")
+    monkeypatch.setattr(profile_registry,"profile_registry_internal",lambda:{"raw":{"profiles":[]}})
+    calls=[]
+    monkeypatch.setattr(desktop_notification,"notify_account_failure",lambda payload:calls.append(payload) or {"status":"fixture"})
+    assert len(desktop_notification.drain_notification_outbox())==1
+    assert calls[0]["display_label"]=="日常Chrome主账号"
+    store.observe(binding,"xhs","auth_verified",source="probe")
+    assert desktop_notification.drain_notification_outbox()==[]
 
 
 def test_notification_uses_data_not_interpolated_powershell(monkeypatch, tmp_path):
@@ -155,3 +156,18 @@ def test_notification_uses_data_not_interpolated_powershell(monkeypatch, tmp_pat
     assert result["status"] == "dispatched"
     assert result["delivery_confirmed"] is False
     assert not any("private" in arg for arg in captured["command"])
+
+
+def test_daily_browser_risk_or_disconnect_cannot_display_verified(tmp_path, monkeypatch):
+    from runtime import xhs_opencli as oc
+    from runtime.account_observations import AccountObservationStore
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("KR_XHS_OPENCLI_CONTEXT_ID", "daily")
+    monkeypatch.setattr(account_alerts, "profile_registry_internal", lambda: {"raw": {"profiles": []}})
+    monkeypatch.setattr(account_alerts, "browser_sessions_summary", lambda **k: {"sessions": []})
+    AccountObservationStore().observe(oc.account_binding_id(), "xhs", "business_verified", source="fixture")
+    for connected, risk in ((True, True), (False, False)):
+        monkeypatch.setattr(oc, "connection_status", lambda: {"connected": connected, "risk_stopped": risk, "login": {}})
+        row = account_alerts.account_alert_snapshot()["accounts"][0]
+        assert not row["verified"] and not row["login_verified"]
+        assert row["login_status"] != "verified" and row["status_category"] != "verified"

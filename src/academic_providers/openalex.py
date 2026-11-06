@@ -29,17 +29,24 @@ class OpenAlexProvider:
             "endpoint": self.endpoint,
             "requires_api_key": False,
             "api_key_configured": bool(self.api_key),
-            "quota": {"free_credit_per_day_usd": 1.0, "source": "OpenAlex API key policy"},
+            "quota": {"free_credit_per_day_usd": 1.0 if self.api_key else 0.10, "source": "OpenAlex API key policy"},
             "degraded_reason": "" if self.api_key else "OPENALEX_API_KEY not configured; unauthenticated compatibility mode may still work but is not the productized stable path",
         }
 
     def search(self, request: AcademicSearchRequest) -> List[AcademicWork]:
         limit = max(1, min(int(request.limit or 5), 20))
+        if int(request.options.get('source_offset',0)) % limit:
+            raise ValueError('source_offset_must_be_multiple_of_limit; use source_cursor or keep limit unchanged')
         params = {
             "search": request.query,
             "per-page": limit,
-            "select": "id,doi,display_name,publication_year,authorships,primary_location,open_access,abstract_inverted_index",
+            "select": "id,doi,display_name,publication_year,authorships,primary_location,open_access,abstract_inverted_index,type,locations,is_retracted",
         }
+        params['page'] = max(1, int(request.options.get('source_offset', 0)) // limit + 1)
+        cursor = request.options.get('source_cursor')
+        if cursor:
+            params.pop('page', None)
+            params['cursor'] = cursor
         mailto = request.options.get("mailto")
         if mailto:
             params["mailto"] = mailto
@@ -47,12 +54,21 @@ class OpenAlexProvider:
             params["api_key"] = self.api_key
         try:
             with httpx.Client(timeout=self.timeout, headers={"User-Agent": "KnowledgeRadar/academic-pilot"}) as client:
-                response = client.get(self.endpoint, params=params)
+                from runtime.paid_execution import paid_send
+                import json
+                safe_params = {k: v for k, v in params.items() if k != "api_key"}
+                with paid_send("openalex", safe_params, bound=len(json.dumps(safe_params).encode("utf-8")), endpoint=self.endpoint, authenticated=bool(self.api_key)):
+                    response = client.get(self.endpoint, params=params)
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
             raise OpenAlexError(str(exc)) from exc
-        return [self._work_from_openalex(item) for item in data.get("results") or [] if isinstance(item, dict)]
+        from .chinese_open_access import OpenAccessResults
+        rows = OpenAccessResults([self._work_from_openalex(item) for item in data.get('results') or [] if isinstance(item, dict)], [])
+        following = (data.get('meta') or {}).get('next_cursor')
+        rows.continuation = {'source_cursor':following} if following else (
+            {'source_offset':int(request.options.get('source_offset',0))+len(rows)} if len(rows)==limit else None)
+        return rows
 
     def _work_from_openalex(self, item: Dict[str, Any]) -> AcademicWork:
         primary_location = item.get("primary_location") if isinstance(item.get("primary_location"), dict) else {}
@@ -79,15 +95,19 @@ class OpenAlexProvider:
             oa_status=str(open_access.get("oa_status") or ""),
             license=str(primary_location.get("license") or ""),
             source_database=self.name,
+            document_type=str(item.get("type") or "unknown"),
+            version=str(primary_location.get("version") or "unknown"),
             access_mode="public_api",
             full_text_status="oa_available" if open_access.get("is_oa") else "metadata_only",
             provider_confidence=0.86,
-            verification_status="doi_matched" if doi else "unverified",
-            license_scope="open" if open_access.get("is_oa") else "unknown",
+            verification_status="doi_present" if doi else "unverified",
+            license_scope="license_declared" if primary_location.get("license") else "unknown",
             raw={
                 "openalex_id": item.get("id"),
                 "primary_location": primary_location,
                 "open_access": open_access,
+                "locations": item.get("locations") or [],
+                "is_retracted":item.get("is_retracted", "unknown"),
             },
         )
 

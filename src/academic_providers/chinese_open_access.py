@@ -23,6 +23,57 @@ DEFAULT_HEADERS = {
 }
 
 
+class ChineseOpenAccessError(RuntimeError):
+    def __init__(self, diagnostics):
+        super().__init__('provider_fetch_failed')
+        self.diagnostics = diagnostics
+
+
+class OpenAccessResults(list):
+    def __init__(self, items, diagnostics):
+        super().__init__(items)
+        self.diagnostics = diagnostics
+
+
+def _fetch_diagnostic(exc):
+    status = exc.response.status_code if isinstance(exc, httpx.HTTPStatusError) else None
+    kind = ('rate_limited' if status == 429 else 'access_denied' if status in {401, 403}
+            else 'provider_http_error' if status else 'timeout' if isinstance(exc, httpx.TimeoutException)
+            else 'transport_error' if isinstance(exc, httpx.RequestError) else 'parse_error')
+    return {'type': kind, 'http_status': status, 'message': type(exc).__name__,
+            'retryable': status not in {400, 401, 403, 404}, 'backoff_suggested': status == 429}
+
+
+def public_json_search(provider, request, fetch_records, make_work):
+    """Run a verified public search API; missing schema is never a zero hit."""
+    from runtime.proxy_config import get_httpx_proxy
+    try:
+        with httpx.Client(timeout=provider.timeout_s, follow_redirects=True, headers=DEFAULT_HEADERS,
+                          proxy=get_httpx_proxy(), trust_env=False) as client:
+            records = fetch_records(client)
+        if not isinstance(records, list):
+            return OpenAccessResults([], [{'type': 'search_response_unparsed', 'retryable': False,
+                                          'message': '检索响应缺少已验证的记录列表'}])
+        works = [make_work(row) for row in records if isinstance(row, dict)]
+        works = [work for work in works if work and work.title and work.url]
+        if records and not works:
+            return OpenAccessResults([], [{'type': 'search_response_unparsed', 'retryable': False,
+                                          'message': '检索返回记录，但文章字段不符合合同'}])
+        return OpenAccessResults(works[:max(1, min(request.limit, 20))], [] if works else [
+            {'type': 'no_match', 'retryable': False, 'message': '已执行主题检索，接口返回空记录列表'}])
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
+        return OpenAccessResults([], [_fetch_diagnostic(exc)])
+
+
+def json_response(response):
+    response.raise_for_status()
+    return response.json()
+
+
+def clean_api_text(value):
+    return html.unescape(re.sub(r'<[^>]+>', '', str(value or ''))).strip()
+
+
 @dataclass(frozen=True)
 class OpenAccessPlatformConfig:
     name: str
@@ -43,6 +94,7 @@ class OpenAccessPlatformConfig:
     direct_pdf_samples: Sequence[str] = field(default_factory=tuple)
     landing_samples: Sequence[str] = field(default_factory=tuple)
     pdf_url_markers: Sequence[str] = field(default_factory=lambda: (".pdf", "type=pdf", "attachtype=pdf", "download"))
+    article_url_markers: Sequence[str] = field(default_factory=tuple)
 
 
 class ChineseOpenAccessProvider:
@@ -78,12 +130,24 @@ class ChineseOpenAccessProvider:
         limit = max(1, min(int(request.limit or 5), 20))
         works: List[AcademicWork] = []
         seen = set()
-        with httpx.Client(timeout=self.timeout_s, follow_redirects=True, headers=DEFAULT_HEADERS) as client:
+        diagnostics = []
+        completed = 0
+        from runtime.proxy_config import get_httpx_proxy
+        with httpx.Client(timeout=self.timeout_s, follow_redirects=True, headers=DEFAULT_HEADERS,
+                          proxy=get_httpx_proxy(), trust_env=False) as client:
             for url in list(self.search_urls(request))[: self.max_pages]:
-                works.extend(self._collect_from_url(client, url, request, seen, limit))
+                try:
+                    collected = self._collect_from_url(client, url, request, seen, limit)
+                    works.extend(collected)
+                    diagnostics.extend(getattr(collected, 'diagnostics', []))
+                    completed += 1
+                except (httpx.HTTPError, ValueError) as exc:
+                    diagnostics.append({**_fetch_diagnostic(exc), 'url': url})
                 if len(works) >= limit:
-                    return works[:limit]
-        return works[:limit]
+                    break
+        if diagnostics and not completed:
+            raise ChineseOpenAccessError(diagnostics)
+        return OpenAccessResults(works[:limit], diagnostics)
 
     def search_urls(self, request: AcademicSearchRequest) -> Sequence[str]:
         return (self.config.homepage,)
@@ -96,11 +160,11 @@ class ChineseOpenAccessProvider:
         seen: set,
         limit: int,
     ) -> List[AcademicWork]:
-        try:
-            response = client.get(url)
-            response.raise_for_status()
-        except Exception:
-            return []
+        response = client.get(url)
+        return self._collect_response(response, url, request, seen, limit)
+
+    def _collect_response(self, response, url, request, seen, limit):
+        response.raise_for_status()
 
         content_type = response.headers.get("content-type", "").lower()
         if "pdf" in content_type or response.content[:5] == b"%PDF-":
@@ -119,6 +183,16 @@ class ChineseOpenAccessProvider:
             return []
 
         text = response.text
+        if any(marker in text for marker in ('initAliyunCaptcha', 'denied by UA ACL', 'Forbid_code:', 'Security Verification')) or re.search(r"var\s+arg1\s*=\s*['\"][A-Fa-f0-9]+['\"]", text):
+            return OpenAccessResults([], [{'type': 'access_verification_required', 'url': str(response.url),
+                'http_status': response.status_code, 'retryable': False,
+                'message': '检索页返回安全验证、脚本 Cookie 挑战或访问控制页面，未到文章解析层'}])
+        if re.search(r'<title[^>]*>[^<]*(?:维护|暂停服务)[^<]*</title>', text, re.I):
+            return OpenAccessResults([], [{'type': 'provider_maintenance', 'url': str(response.url),
+                'http_status': response.status_code, 'retryable': False, 'message': '站点标题明确为维护或暂停服务公告'}])
+        if re.search(r'<title[^>]*>\s*404\s*</title>', text, re.I):
+            return OpenAccessResults([], [{'type': 'search_route_unavailable', 'url': str(response.url),
+                'http_status': response.status_code, 'retryable': False, 'message': 'HTTP 200 但页面标题为 404；检索路由不可用'}])
         results: List[AcademicWork] = []
         for link_url, label in self._extract_links(text, str(response.url)):
             if link_url in seen:
@@ -131,13 +205,24 @@ class ChineseOpenAccessProvider:
                     title=label or f"{self.config.display_name} full-text link",
                     url=link_url,
                     request=request,
-                    full_text_status="direct_pdf" if self._looks_like_pdf_url(link_url, label) else "open_landing_page",
+                    full_text_status="direct_pdf" if self._looks_like_pdf_url(link_url, label) else "article_landing_unverified",
                     confidence=0.78,
                     raw={"source_url": url, "link_label": label},
                 )
             )
             if len(results) >= limit:
                 break
+        if not results:
+            visible = re.sub(r'<(script|style)\b.*?</\1>', '', text, flags=re.I | re.S)
+            visible = re.sub(r'<[^>]+>', ' ', visible)
+            explicit_empty = bool(re.search(r'没有找到相关结果|未找到.*(?:文献|论文|结果)|暂无(?:搜索)?结果|no\s+(?:search\s+)?results\s*(?:found)?', visible, re.I))
+            homepage_only = str(url).rstrip('/') == self.config.homepage.rstrip('/')
+            kind = 'search_not_implemented' if homepage_only else 'no_match' if explicit_empty else 'search_response_unparsed'
+            return OpenAccessResults([], [{'type': kind, 'url': str(response.url), 'http_status': response.status_code,
+                'retryable': False, 'message': '仅扫描首页，未执行主题检索' if homepage_only else '检索页明确报告无匹配' if explicit_empty else 'HTTP 成功但未解析出文章；可能是脚本壳、路由或解析规则不适配，不能判定无内容'}])
+        if str(url).rstrip('/') == self.config.homepage.rstrip('/'):
+            return OpenAccessResults(results, [{'type': 'search_not_implemented', 'url': str(response.url),
+                'retryable': False, 'message': '候选来自首页，未执行主题检索；需要 Codex 另行判断相关性'}])
         return results
 
     def _extract_links(self, text: str, base_url: str) -> Iterable[tuple[str, str]]:
@@ -151,6 +236,10 @@ class ChineseOpenAccessProvider:
             yield urljoin(base_url, href), label
 
     def _looks_like_full_text_link(self, url: str, label: str) -> bool:
+        if len(label.strip()) > 8 and not url.split('#', 1)[-1].lower() == 'references' and any(
+            marker.lower() in url.lower() for marker in self.config.article_url_markers
+        ):
+            return True
         lowered_label = label.lower()
         if any(marker in lowered_label for marker in ["pdf", "full paper", "全文", "下载"]):
             return True
@@ -178,11 +267,13 @@ class ChineseOpenAccessProvider:
             source=self.config.display_name,
             oa_status="open" if full_text_status in {"direct_pdf", "open_landing_page"} else "",
             source_database=self.config.name,
+            document_type={'chinaxiv': 'preprint', 'nssd': 'journal-article',
+                           'hkjo': 'journal-article', 'toaj': 'journal-article'}.get(self.config.name, 'unknown'),
             access_mode=self.config.access_mode,
             full_text_status=full_text_status,
             provider_confidence=confidence,
             verification_status="provider_link_extracted",
-            license_scope="open_or_platform_terms",
+            license_scope="unknown",
             degraded_reason="" if self.config.available else self.config.degraded_reason,
             raw={"query": request.query, **raw},
         )

@@ -2,12 +2,15 @@ import pytest
 
 from understanding import bailian
 
+pytestmark = pytest.mark.usefixtures("paid_test_policy")
+
 
 class FakePolicy:
     def is_open(self, key):
         return {"open": False}
 
-    def retry_with_jitter(self, key, scope, fn, retryable_exceptions=(), metadata=None):
+    def retry_with_jitter(self, key, scope, fn, retryable_exceptions=(), metadata=None, attempts=None):
+        assert attempts == 1
         return fn()
 
     def record_degradation(self, *args, **kwargs):
@@ -227,17 +230,17 @@ def test_call_text_model_uses_openai_compatible_endpoint(monkeypatch) -> None:
     monkeypatch.setattr(bailian.httpx, "post", fake_post)
 
     content, provider, usage = bailian.call_text_model(
-        model="bailian:qwen-turbo",
+        model="bailian:qwen3.8-omni-flash",
         system_prompt="system",
         user_prompt="user",
         max_tokens=64,
     )
 
     assert content == "text result"
-    assert provider == "Bailian qwen-turbo"
+    assert provider == "Bailian qwen3.8-omni-flash"
     assert usage["cached_tokens"] == 12
     assert captured["url"].endswith("/chat/completions")
-    assert captured["json"]["model"] == "qwen-turbo"
+    assert captured["json"]["model"] == "qwen3.8-omni-flash"
     assert fake_usage.records[0]["metadata"]["schema"] == "openai-compatible"
 
 

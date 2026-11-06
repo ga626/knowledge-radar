@@ -80,6 +80,7 @@ class SerpApiScholarProvider:
             params["start"] = request.options["start"]
         with httpx.Client(timeout=self.timeout, headers={"User-Agent": "KnowledgeRadar/academic-pilot"}) as client:
             try:
+                # 未配置的可选来源不参与本轮费用管理；沿用自身显式授权与日配额。
                 response = client.get(self.endpoint, params=params)
                 if response.status_code in {401, 403}:
                     raise SerpApiScholarAuthError(f"SerpAPI auth failed (HTTP {response.status_code})")

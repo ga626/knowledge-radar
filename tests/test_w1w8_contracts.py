@@ -21,7 +21,7 @@ def test_query_families_are_agent_supplied_and_unknown_ecology_not_discarded():
     assert query_families('中文目标')[0]['origin'] == 'agent_draft'
 
 
-def test_original_finalizer_blocks_pending_and_withdrawn_evidence(tmp_path, monkeypatch):
+def test_finalizer_records_pending_and_withdrawn_evidence_without_approving_agent(tmp_path, monkeypatch):
     from runtime.research_ledger import open_task, record_tool_receipt, close_task
     monkeypatch.setenv('KR_STATE_DIR',str(tmp_path/'state'))
     monkeypatch.setenv('KR_EVIDENCE_ROOT',str(tmp_path/'assets'))
@@ -34,12 +34,12 @@ def test_original_finalizer_blocks_pending_and_withdrawn_evidence(tmp_path, monk
     receipt=record_tool_receipt(task_id=task['research_task_id'],trace_id='trace-1',tool='fixture',status='ok',result={'evidence_assets':[ref],'task':{'task_id':'background-1','status':'completed'}})['receipt']
     kwargs=dict(task_id=task['research_task_id'],ecology_outcomes=[{'source_ecology':'web','outcome':'used','receipt_ids':[receipt['receipt_id']]}],stop_rationale='fixture only',key_claims=[{'id':'claim-1','importance':'high','supporting_evidence_ids':[ref['version_id']],'supporting_receipt_ids':[receipt['receipt_id']]}],quality_status='pass')
     result=close_task(**kwargs)
-    assert result['status']=='needs_repair' and result['closeout']['pending_background_tasks']==['background-1']
+    assert result['status']=='recorded_with_gaps' and result['closeout']['pending_background_tasks']==['background-1']
     store.mark_completed('background-1')
-    assert close_task(**kwargs)['status']=='accepted_for_decision'
+    assert close_task(**kwargs)['status']=='recorded'
     assets.withdraw(ref['source_id'])
     result=close_task(**kwargs)
-    assert result['status']=='needs_repair' and result['closeout']['unavailable_evidence_versions']==[ref['version_id']]
+    assert result['status']=='recorded_with_gaps' and result['closeout']['unavailable_evidence_versions']==[ref['version_id']]
 
 
 def test_optional_components_block_before_execution(tmp_path, monkeypatch):

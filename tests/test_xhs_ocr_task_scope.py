@@ -14,7 +14,7 @@ def test_xhs_ocr_registers_scope_metadata(monkeypatch, tmp_path: Path) -> None:
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(image_mod.httpx, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(image_mod, "guarded_fetch", lambda *args, **kwargs: _Response())
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(
         image_mod,
@@ -65,7 +65,7 @@ def test_xhs_ocr_processes_multiple_images_with_limit(monkeypatch, tmp_path: Pat
         assert len(kwargs["images_base64"]) == 2
         return ('{"text":"第一张\\n第二张","items":[],"visual_summary":"两张图摘要"}', "test-model")
 
-    monkeypatch.setattr(image_mod.httpx, "get", fake_get)
+    monkeypatch.setattr(image_mod, "guarded_fetch", fake_get)
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(image_mod, "call_multimodal_models", fake_call_multimodal_models)
 
@@ -102,7 +102,7 @@ def test_xhs_ocr_skips_obvious_avatar_images(monkeypatch, tmp_path: Path) -> Non
         requested_urls.append(url)
         return _Response()
 
-    monkeypatch.setattr(image_mod.httpx, "get", fake_get)
+    monkeypatch.setattr(image_mod, "guarded_fetch", fake_get)
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(
         image_mod,
@@ -144,7 +144,7 @@ def test_xhs_ocr_prefers_sns_webpic_over_platform_assets(monkeypatch, tmp_path: 
         requested_urls.append(url)
         return _Response()
 
-    monkeypatch.setattr(image_mod.httpx, "get", fake_get)
+    monkeypatch.setattr(image_mod, "guarded_fetch", fake_get)
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(
         image_mod,
@@ -185,7 +185,7 @@ def test_xhs_ocr_parses_fenced_json_response(monkeypatch, tmp_path: Path) -> Non
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(image_mod.httpx, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(image_mod, "guarded_fetch", lambda *args, **kwargs: _Response())
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(
         image_mod,

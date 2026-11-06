@@ -14,8 +14,8 @@ def filter_valuable_comments(
     seen, kept, results = set(), [], []
     for index, comment in enumerate(comments, 1):
         identity = comment.get("comment_id") or comment.get("rpid") or comment.get("id")
-        key = ("id", str(identity)) if identity else (
-            "text", str(comment.get("user") or ""), str(comment.get("content") or "")
+        key = ("id", str(comment.get("discussion_kind") or ""), str(identity), str(comment.get("content") or comment.get("body") or "")) if identity else (
+            "text", str(comment.get("user") or comment.get("author") or ""), str(comment.get("content") or comment.get("body") or "")
         )
         duplicate = key in seen
         seen.add(key)

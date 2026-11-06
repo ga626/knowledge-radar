@@ -6,10 +6,9 @@ and normalizes the selected Qwen3-ASR worker options, but does not load models o
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 import hashlib
 import os
-import re
 from pathlib import Path
 
 from runtime.paths import runtime_state_dir
@@ -18,6 +17,24 @@ from runtime.model_roles import ASR_COMPONENT, ASR_MODEL_REF
 
 DEFAULT_ASR_MODELS = (ASR_MODEL_REF,)
 P2_ASR_ENGINE_CANDIDATES = DEFAULT_ASR_MODELS
+
+# 字幕偏好与音频识别分开；这里规范化模型已知的语言，不限制字幕为中英。
+LANGUAGE_NAMES = dict(zip(
+    'zh en yue ar de es fr hi id it ja ko ms nl pl pt ru sv th tr vi cs da fi fil hu el fa ro mk'.split(),
+    ('Chinese English Cantonese Arabic German Spanish French Hindi Indonesian Italian Japanese Korean '
+     'Malay Dutch Polish Portuguese Russian Swedish Thai Turkish Vietnamese Czech Danish Finnish Filipino '
+     'Hungarian Greek Persian Romanian Macedonian').split()))
+
+
+def normalize_language(value):
+    value = str(value or '').strip().lower()
+    if value in {'', 'auto', 'mixed', 'zh-en'}:
+        return ''
+    names = {name.lower(): code for code, name in LANGUAGE_NAMES.items()}
+    code = names.get(value, value.replace('_', '-').split('-')[0])
+    if code not in LANGUAGE_NAMES:
+        raise ValueError('invalid_asr_language')
+    return code
 
 
 def _split_models(value: str | None) -> tuple[str, ...]:
@@ -31,11 +48,11 @@ def transcript_cache_key(
     content_id: str,
     audio_path: str = "",
     audio_hash: str = "",
-    engine: str = "transformers_native",
+    engine: str = "sherpa_onnx_int8",
     model: str = ASR_COMPONENT,
     device: str = "cpu",
-    compute_type: str = "float32",
-    language: str = "zh",
+    compute_type: str = "int8",
+    language: str = "",
     vad: bool = False,
     beam: int = 1,
 ) -> dict[str, object]:
@@ -45,10 +62,10 @@ def transcript_cache_key(
         "platform": platform or "unknown",
         "content_id": content_id or "unknown",
         "audio_hash": resolved_audio_hash or "unknown",
-        "engine": engine or "transformers_native",
+        "engine": engine or "sherpa_onnx_int8",
         "model": model or ASR_COMPONENT,
         "device": device or "cpu",
-        "compute": compute_type or "float32",
+        "compute": compute_type or "int8",
         "language": language or "",
         "vad": bool(vad),
         "beam": int(beam or 1),
@@ -78,22 +95,24 @@ def _file_hash(path: str) -> str:
 class AsrPolicy:
     models: tuple[str, ...] = DEFAULT_ASR_MODELS
     device: str = "cpu"
-    compute_type: str = "float32"
+    compute_type: str = "int8"
     beam_size: int = 1
     vad_enabled: bool = False
-    language: str = "zh"
+    language: str = ""
     model_cache_dir: str = ""
     batch_size: int = 1
 
     @classmethod
-    def from_env(cls) -> "AsrPolicy":
+    def from_env(cls, *, language: str | None = None) -> "AsrPolicy":
+        if (os.environ.get('KR_ASR_DEVICE') or 'cpu').strip() != 'cpu':
+            raise ValueError('unsupported_asr_device:CPU_INT8_required')
         return cls(
             models=_split_models(os.environ.get("KR_ASR_MODELS")),
-            device=(os.environ.get("KR_ASR_DEVICE") or "cpu").strip() or "cpu",
-            compute_type="float16" if (os.environ.get("KR_ASR_DEVICE") or "cpu").startswith("cuda") else "float32",
+            device="cpu",
+            compute_type="int8",
             beam_size=1,
             vad_enabled=False,
-            language=(os.environ.get("KR_ASR_LANGUAGE") or "zh").strip() or "zh",
+            language=normalize_language(os.environ.get("KR_ASR_LANGUAGE") if language is None else language),
             model_cache_dir=str(runtime_state_dir() / "optional_components"),
             batch_size=1,
         )
@@ -104,15 +123,7 @@ class AsrPolicy:
 
     @classmethod
     def for_request(cls, language: str | None = None) -> "AsrPolicy":
-        policy = cls.from_env()
-        if language is None:
-            return policy
-        normalized = str(language).strip().lower()
-        if normalized == "auto":
-            normalized = ""
-        if normalized and not re.fullmatch("[a-z]{2,3}", normalized):
-            raise ValueError("invalid_asr_language")
-        return replace(policy, language=normalized)
+        return cls.from_env(language=language)
 
     def compact(self) -> dict[str, object]:
         return {

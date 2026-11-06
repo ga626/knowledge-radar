@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-doc-index/v1",
-  "generated_at": "2026-10-25T08:53:26.408976+00:00",
+  "generated_at": "2026-11-06T04:47:48.511036+00:00",
   "generator": "scripts/generate_docs_index.py",
   "documents": [
     {
@@ -36,6 +36,16 @@
     {
       "path": "docs/API_KEYS.md",
       "title": "API 与服务商配置",
+      "doc_type": "docs",
+      "status": "current",
+      "scope": "KnowledgeRadar",
+      "evidence": "",
+      "has_evidence": false,
+      "updated_at": ""
+    },
+    {
+      "path": "docs/CAPABILITIES.md",
+      "title": "来源能力指南（自动生成）",
       "doc_type": "docs",
       "status": "current",
       "scope": "KnowledgeRadar",
@@ -176,16 +186,6 @@
     {
       "path": "docs/RELEASE_CANDIDATE.md",
       "title": "发布候选合同",
-      "doc_type": "docs",
-      "status": "current",
-      "scope": "KnowledgeRadar",
-      "evidence": "",
-      "has_evidence": false,
-      "updated_at": ""
-    },
-    {
-      "path": "docs/SEARXNG.md",
-      "title": "SearXNG",
       "doc_type": "docs",
       "status": "current",
       "scope": "KnowledgeRadar",

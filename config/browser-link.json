@@ -1,0 +1,10 @@
+{
+  "name": "KnowledgeRadar Browser Link",
+  "host": "com.knowledgeradar.browser_link",
+  "protocol": 1,
+  "extension_ids": [],
+  "store_url": null,
+  "distribution": "not_published",
+  "max_inflight": 2,
+  "per_site_inflight": 1
+}

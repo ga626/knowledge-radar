@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from runtime.execution_context import execution_value
 import json
 import logging
 import hashlib
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 import os
 import re
 import time
@@ -13,17 +13,17 @@ from typing import Any, Dict, List
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+from generic_web.url_policy import guarded_fetch
 
 from runtime.cost_latency import TTLCache, attach_runtime_metadata, budget_envelope, stable_key
 from runtime.tasks import compact_task_ref, get_task_store
 
 import base64
 from media_policy import MediaModelPolicy
-from .bailian import call_frame_images_model
 
 
 def configured_models(kind):
-    return MediaModelPolicy.from_env().frame_vision_models
+    return MediaModelPolicy.from_env().ocr_models
 
 
 def image_bytes_to_base64(content):
@@ -33,19 +33,29 @@ def image_bytes_to_base64(content):
 def call_multimodal_models(
     *, models, system_prompt, user_text, images_base64, temperature=0.1, max_tokens=1800, timeout=120
 ):
-    return call_frame_images_model(
-        images_base64,
-        model=models[0].removeprefix("bailian:"),
-        system_prompt=system_prompt,
-        prompt=user_text,
-        max_tokens=max_tokens,
-        timeout=timeout,
-    )[:2]
+    from runtime.cloud_ocr import recognize_image, normalize_image_bytes
+    from runtime.model_roles import OCR_MODEL_REF
+    from runtime.resource_concurrency import acquire_resource
+    if tuple(models) != (OCR_MODEL_REF,):
+        raise ValueError('unsupported_ocr_role')
+    texts = []
+    usage = {}
+    started = time.monotonic()
+    with acquire_resource('provider_siliconflow'), httpx.Client(follow_redirects=False) as client:
+        for encoded in images_base64:
+            remaining = timeout - (time.monotonic() - started)
+            if remaining <= 0:
+                raise TimeoutError('cloud_ocr_deadline_exceeded')
+            text, observed = recognize_image(client, normalize_image_bytes(base64.b64decode(encoded)), timeout=min(60, remaining))
+            texts.append(text)
+            for key in ('prompt_tokens', 'completion_tokens', 'total_tokens'):
+                if isinstance(observed.get(key), int):
+                    usage[key] = usage.get(key, 0) + observed[key]
+    return json.dumps({'text': '\n\n'.join(texts), 'items': [], 'visual_summary': '', 'usage': usage}, ensure_ascii=False), OCR_MODEL_REF
 
 
 log = logging.getLogger("mcp-server")
 
-_OCR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="kr-xhs-ocr")
 _OCR_ARTIFACT_CACHE = TTLCache(
     "xhs.ocr.artifact", ttl_s=float(os.environ.get("KR_XHS_OCR_ARTIFACT_TTL_S", "86400")), max_items=256
 )
@@ -127,7 +137,7 @@ def _select_xhs_ocr_images(images: List[Any], max_images: int) -> tuple[List[str
         if not url:
             continue
         reason = _image_noise_reason(url)
-        row: Dict[str, Any] = {"index": index, "url": url[:240], "selected": False}
+        row: Dict[str, Any] = {"index": index, "url": url, "selected": False}
         if reason:
             row["rejected_reason"] = reason
             fallback.append(row)
@@ -158,6 +168,7 @@ def _select_xhs_ocr_images(images: List[Any], max_images: int) -> tuple[List[str
     preview = []
     for row in [*ranked, *fallback]:
         item = dict(row)
+        item['url'] = str(item['url'])[:240]
         item["selected"] = int(item.get("index") or 0) in selected_indexes
         preview.append(item)
         if len(preview) >= 10:
@@ -191,6 +202,7 @@ def _xhs_ocr_task_identity(selected_urls: List[str], base_metadata: Dict[str, An
     content_id = str(base_metadata.get("content_id") or "").strip()
     policy = str(os.environ.get("KR_XHS_OCR_TRIGGER_POLICY") or "image_presence").strip().lower()
     model_family = ",".join(configured_models("image"))
+    parent = execution_value('KR_DURABLE_TASK_ID', '') or str(base_metadata.get('task_scope_id') or '')
     identity = json.dumps(
         {
             "content_id": content_id,
@@ -202,7 +214,7 @@ def _xhs_ocr_task_identity(selected_urls: List[str], base_metadata: Dict[str, An
         sort_keys=True,
     )
     stable_part = content_id or "\n".join(normalized_urls)
-    task_id = f"xhs_ocr_{hashlib.sha1(f'{stable_part}\n{policy}\n{model_family}'.encode('utf-8')).hexdigest()[:16]}"
+    task_id = f"xhs_ocr_{hashlib.sha1(f'{stable_part}\n{policy}\n{model_family}\n{parent}'.encode('utf-8')).hexdigest()[:16]}"
     return task_id, hashlib.sha1(identity.encode("utf-8")).hexdigest()[:16]
 
 
@@ -254,10 +266,13 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
     image_url = selected_urls[0]
 
     task_id, identity_hash = _xhs_ocr_task_identity(selected_urls, base_metadata)
-    artifact_key = stable_key("xhs.ocr.artifact", selected_urls)
+    artifact_key = stable_key("xhs.ocr.artifact", [_normalized_image_url(url) for url in selected_urls],
+                              str(base_metadata.get('content_id') or ''), configured_models('image'))
     cached = _OCR_ARTIFACT_CACHE.get(artifact_key, allow_stale=True)
     if cached:
-        cached["task_id"] = task_id
+        # 缓存正文可以跨父任务复用，但不能捏造一个没有入库的新子任务 ID。
+        if not task_store.get_task(str(cached.get('task_id') or '')):
+            cached.pop('task_id', None)
         cached.setdefault("metadata", {})
         cached["metadata"].setdefault("artifact_cache_key", artifact_key)
         cached["metadata"].setdefault("ocr_identity_hash", identity_hash)
@@ -275,7 +290,7 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
         content_id=str(base_metadata.get("content_id") or ""),
         identity_hash=identity_hash,
     )
-    if existing_task:
+    if existing_task and existing_task.get('status') in {'queued', 'running'}:
         status = str(existing_task.get("status") or "")
         return {
             "status": "degraded" if status in {"queued", "running"} else "ok",
@@ -330,11 +345,7 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
         metadata=metadata,
     )
 
-    max_wait_s = 12
-    try:
-        max_wait_s = int(os.environ.get("KR_XHS_OCR_SYNC_TIMEOUT_SECONDS", "8"))
-    except Exception:
-        max_wait_s = 8
+    max_wait_s = 120  # 父级 durable 任务控制总 deadline。
 
     def _run_ocr() -> Dict:
         inner_started = time.time()
@@ -342,11 +353,11 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
         task_store.heartbeat(task_id, metadata={"phase": "download_image"})
         images_b64: List[str] = []
         for current_url in selected_urls:
-            resp = httpx.get(
+            resp = guarded_fetch(
                 current_url,
                 headers={"User-Agent": "Mozilla/5.0", "Referer": "https://www.xiaohongshu.com/"},
                 timeout=20,
-                follow_redirects=True,
+                max_bytes=12 * 1024 * 1024,
             )
             resp.raise_for_status()
             images_b64.append(image_bytes_to_base64(resp.content))
@@ -406,6 +417,7 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
             "text": text,
             "items": items,
             "visual_summary": visual_summary,
+            "usage": parsed.get('usage') or {},
             "ocr_signal_strength": signal_strength,
             "elapsed_s": round(elapsed, 2),
             "metadata": {
@@ -427,33 +439,13 @@ def ocr_first_xhs_image(images: List[str], task_metadata: Dict[str, Any] | None 
         )
 
     try:
-        future = _OCR_EXECUTOR.submit(_run_ocr)
-        return future.result(timeout=max_wait_s)
-    except FutureTimeoutError:
-        elapsed = time.time() - started
-        log.warning(f"小红书首图 OCR 超过同步等待窗口，转为后台任务: task_id={task_id}, elapsed={elapsed:.2f}s")
-        task_store.heartbeat(task_id, metadata={"phase": "background_model_call", "sync_timeout_s": max_wait_s})
-        return {
-            "status": "degraded",
-            "task_id": task_id,
-            "engine": str(base_metadata.get("engine") or "configured_image_model"),
-            "image_url": image_url,
-            "image_urls": selected_urls,
-            "image_selection": image_selection,
-            "images_processed": len(selected_urls),
-            "reason": "ocr_running_in_background",
-            "text": "",
-            "items": [],
-            "ocr_signal_strength": "pending",
-            "ocr_empty_reason": "sync_timeout_background_task_running",
-            "elapsed_s": round(elapsed, 2),
-            "metadata": {
-                "artifact_cache_key": artifact_key,
-                "background_after_s": max_wait_s,
-                "recommended_next_action": "poll_get_task_status",
-            },
-        }
+        # 增强详情已在有 deadline 的 durable worker 中执行。
+        # 不另启会随父进程退出丢失正文的线程；OCR 随父任务固定归档。
+        return _run_ocr()
     except Exception as e:
+        from runtime.resource_concurrency import ResourceDeferred
+        if isinstance(e, ResourceDeferred):
+            raise
         elapsed = time.time() - started
         log.warning(f"小红书首图 OCR 失败: {e}")
         task_store.mark_failed(

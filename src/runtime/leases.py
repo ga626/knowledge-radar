@@ -373,6 +373,18 @@ class RuntimeLeaseCoordinator:
             ).fetchall()
         return [_row_summary(dict(row)) for row in rows]
 
+    def resource_leases(self, resource_kind: str, resource_key: str = "") -> list[Dict[str, Any]]:
+        """调度按资源读取全部持有者，不能借用面板的最近记录截断。"""
+        self.initialize()
+        self.expire_stale()
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM runtime_leases WHERE state='held' AND resource_kind=?"
+                + (" AND resource_key=?" if resource_key else ""),
+                (resource_kind, resource_key) if resource_key else (resource_kind,),
+            ).fetchall()
+        return [_row_summary(dict(row)) for row in rows]
+
     def summary(self, *, limit: int = 20, now: float | None = None) -> Dict[str, Any]:
         self.initialize()
         expired = self.expire_stale(now=now)

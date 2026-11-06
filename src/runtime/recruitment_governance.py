@@ -17,9 +17,11 @@ import logging
 import os
 import sqlite3
 import time
+import uuid
+import threading
+from contextvars import ContextVar
 from typing import Any, Dict
 
-from runtime.browser_sessions import browser_sessions_summary
 from runtime.leases import LeaseResult, default_owner, get_runtime_lease_coordinator
 from runtime.platform_risk import compute_platform_cooldown, normalize_platform_risk_event
 
@@ -31,10 +33,11 @@ DEFAULT_MIN_SEARCH_INTERVAL_S = 10  # 最小搜索间隔 10 秒
 DEFAULT_MAX_SEARCHES_PER_HOUR = 30  # 每小时最大搜索次数
 DEFAULT_MAX_FAILURES_PER_HOUR = 5
 DEFAULT_SEARCH_COOLDOWN_MAX_S = 7200
-LEASED_BROWSER_PLATFORMS = {"boss", "liepin", "zhilian"}
+LEASED_BROWSER_PLATFORMS = {"boss", "liepin", "maimai"}
 PLATFORM_LEASE_TTL_S = 180
 NO_COOLDOWN_REASONS = {
     "city_mapping_missing",
+    "anti_bot_verification",
     "empty_results",
     "no_results",
     "zero_results",
@@ -50,10 +53,36 @@ NO_COOLDOWN_REASONS = {
     "auth_preflight_failed",
     "tool_failure_needs_repair",
     "search_route_unreadable",
+    "request_outcome_unknown",
 }
+LOCAL_FAILURE_REASONS = {
+    "page_identity_changed",
+    "browser_navigation_interrupted",
+    "opencli_session_page_ambiguous",
+    "page_structure_or_not_ready",
+    "search_query_not_applied",
+    "empty_detail",
+    "detail_response_unparsed",
+    "search_response_unparsed",
+    "csrf_handshake_failed",
+    "opencli_dependency_or_output_invalid",
+    "opencli_identity_mismatch",
+    "opencli_pinned_dependency_missing",
+    "opencli_daily_browser_binding_required",
+    "browser_disconnected",
+    "collector_exception",
+    "invalid_boss_detail_url",
+    "err_invalid_url",
+    "unsupported_url",
+    "native_host_unavailable", "native_host_unreachable", "native_command_timeout",
+    "native_host_disconnected", "native_host_http_error", "native_host_invalid_result",
+    "browser_busy", "cancelled", "invalid_boss_url", "content_unavailable",
+}
+NO_COOLDOWN_REASONS |= LOCAL_FAILURE_REASONS
 
 # 平台配置
 PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
+    'v2ex': {'min_search_interval_s': 2, 'max_searches_per_hour': 120},
     "boss": {
         "search_cooldown_s": 1800,
         "search_cooldown_max_s": 7200,
@@ -104,6 +133,7 @@ def _get_conn() -> sqlite3.Connection:
     _ensure_optional_column(conn, "recruitment_search_gate", "account_slot", "TEXT DEFAULT ''")
     _ensure_optional_column(conn, "recruitment_search_gate", "keyword_norm", "TEXT DEFAULT ''")
     _ensure_optional_column(conn, "recruitment_search_gate", "city_norm", "TEXT DEFAULT ''")
+    _ensure_optional_column(conn, "recruitment_search_gate", "operation", "TEXT DEFAULT 'search'")
     conn.commit()
     return conn
 
@@ -127,6 +157,7 @@ def check_search_gate(
     account_slot: str = "",
     keyword: str = "",
     city: str = "",
+    operation: str = "search",
 ) -> Dict[str, Any]:
     """检查平台搜索门禁状态。
 
@@ -140,8 +171,8 @@ def check_search_gate(
         }
     """
     config = PLATFORM_CONFIG.get(platform, {})
-    min_interval = config.get("min_search_interval_s", DEFAULT_MIN_SEARCH_INTERVAL_S)
-    max_per_hour = config.get("max_searches_per_hour", DEFAULT_MAX_SEARCHES_PER_HOUR)
+    min_interval = config.get("min_search_interval_s", DEFAULT_MIN_SEARCH_INTERVAL_S) if operation == "search" else 0
+    max_per_hour = config.get("max_searches_per_hour", DEFAULT_MAX_SEARCHES_PER_HOUR) if operation == "search" else config.get("max_operations_per_hour", 120)
     max_failures_per_hour = config.get("max_failures_per_hour", DEFAULT_MAX_FAILURES_PER_HOUR)
     account_norm = _norm(account_slot)
     keyword_norm = _norm(keyword)
@@ -157,7 +188,11 @@ def check_search_gate(
         if account_norm:
             query += " AND (account_slot = ? OR account_slot = '')"
             params.append(account_norm)
-        query += " ORDER BY ts DESC LIMIT 1"
+        # 工具/解析错误不构成远端冷却，也不能遮住另一条真实风控记录。
+        excluded = sorted(NO_COOLDOWN_REASONS)
+        query += " AND lower(reason) NOT IN (" + ",".join("?" for _ in excluded) + ")"
+        params.extend(excluded)
+        query += " ORDER BY cooldown_until DESC LIMIT 1"
         row = conn.execute(query, tuple(params)).fetchone()
 
         if row and row[0] and row[0] > now and str(row[2] or "").lower() not in NO_COOLDOWN_REASONS:
@@ -176,8 +211,8 @@ def check_search_gate(
 
         # 检查最小间隔
         row = conn.execute(
-            "SELECT ts FROM recruitment_search_gate WHERE platform = ? ORDER BY ts DESC LIMIT 1",
-            (platform,)
+            "SELECT ts FROM recruitment_search_gate WHERE platform = ? AND operation = ? ORDER BY ts DESC LIMIT 1",
+            (platform, operation)
         ).fetchone()
 
         if row and (now - row[0]) < min_interval:
@@ -194,15 +229,16 @@ def check_search_gate(
         # 检查每小时频率
         hour_ago = now - 3600
         count = conn.execute(
-            "SELECT COUNT(*) FROM recruitment_search_gate WHERE platform = ? AND ts > ?",
-            (platform, hour_ago)
+            "SELECT COUNT(*) FROM recruitment_search_gate WHERE platform = ? AND operation = ? AND ts > ?",
+            (platform, operation, hour_ago)
         ).fetchone()[0]
 
+        count_excluded = sorted(LOCAL_FAILURE_REASONS | {'city_mapping_missing'})
         failure_query = (
             "SELECT COUNT(*) FROM recruitment_search_gate WHERE platform = ? AND ts > ? "
-            "AND outcome IN ('blocked', 'failed') AND lower(reason) != 'city_mapping_missing'"
+            "AND outcome IN ('blocked', 'failed') AND lower(reason) NOT IN (" + ",".join("?" for _ in count_excluded) + ")"
         )
-        failure_params: list[Any] = [platform, hour_ago]
+        failure_params: list[Any] = [platform, hour_ago, *count_excluded]
         if account_norm:
             failure_query += " AND (account_slot = ? OR account_slot = '')"
             failure_params.append(account_norm)
@@ -253,66 +289,15 @@ def check_search_gate(
     except Exception as e:
         log.debug(f"招聘策略门禁检查失败: {e}")
         return {
-            "allowed": True,
-            "reason": f"门禁检查异常，放行: {e}",
+            "allowed": False,
+            "reason": "门禁状态不可读取；停止本次采集以保护账号",
+            "reason_code": "recruitment_gate_unavailable",
+            "error_type": type(e).__name__,
             "cooldown_remaining_s": 0,
             "searches_this_hour": 0,
             "max_searches_per_hour": max_per_hour,
             "max_failures_per_hour": max_failures_per_hour,
             "scope": {"account_slot": account_norm, "keyword": keyword_norm, "city": city_norm},
-        }
-
-
-def _pending_manual_session(platform: str) -> Dict[str, Any]:
-    try:
-        summary = browser_sessions_summary(limit=10)
-    except Exception as exc:
-        return {"present": False, "error": str(exc)}
-    platform_norm = _norm(platform)
-    for item in summary.get("pending_interactions") or []:
-        if not isinstance(item, dict):
-            continue
-        if _norm(str(item.get("platform") or "")) != platform_norm:
-            continue
-        status = str(item.get("status") or "")
-        if status in {"pending_user", "waiting_for_user", "verifying"}:
-            return {
-                "present": True,
-                "status": status,
-                "interaction": item,
-                "reason": str(item.get("reason_code") or "manual_action_required"),
-            }
-    return {"present": False}
-
-
-def _recover_pending_manual_session(platform: str, pending: Dict[str, Any]) -> Dict[str, Any]:
-    """Clear stale manual sessions when a background auth probe proves login is ready."""
-
-    try:
-        from runtime.chrome_manager import complete_browser_interaction, probe_browser_auth
-
-        probe = probe_browser_auth(platform)
-        if probe.get("status") == "ok" and not probe.get("manual_action_required"):
-            complete = complete_browser_interaction(platform, probe_result=probe)
-            return {
-                "recovered": True,
-                "probe": probe,
-                "complete": {
-                    "status": complete.get("status"),
-                    "manual_state_auto_recovered": bool(complete.get("manual_state_auto_recovered")),
-                },
-            }
-        return {"recovered": False, "probe": probe}
-    except Exception as exc:
-        log.debug(f"招聘平台人工会话自愈探针失败: platform={platform}, pending={pending.get('reason')}: {exc}")
-        return {
-            "recovered": False,
-            "probe": {
-                "status": "degraded",
-                "auth_state": "probe_error",
-                "manual_action_required": False,
-                "detail": str(exc),
-            },
         }
 
 
@@ -322,11 +307,25 @@ def check_platform_admission(
     keyword: str = "",
     city: str = "",
     account_slot: str = "",
+    operation: str = "search",
+    resource: str = "browser",
 ) -> Dict[str, Any]:
     """Cheap read-only red/yellow/green check before browser-heavy recruitment calls."""
 
     platform_norm = _norm(platform)
-    gate = check_search_gate(platform_norm, account_slot=account_slot, keyword=keyword, city=city)
+    if platform_norm in LEASED_BROWSER_PLATFORMS:
+        from importlib import import_module
+        module = import_module('collectors.platform.' + platform_norm)
+        browser = module.admission()
+        # A site risk latch also stops HTTP, but an unrelated login wait does not.
+        if resource == 'http' and browser.get('reason') == 'pending_manual_interaction':
+            browser = {'allowed': True}
+        if not browser['allowed']:
+            reason = {'SECURITY_BLOCK': 'anti_bot_verification', 'rate_limited_remote': 'anti_bot_verification',
+                'outcome_latched': 'request_outcome_unknown', 'opencli_caller_timeout': 'request_outcome_unknown'}.get(browser['reason'], browser['reason'])
+            return {'allowed': False, 'reason_code': reason, 'reason': reason,
+                'manual_action_required': True, 'retry_after_s': 0}
+    gate = check_search_gate(platform_norm, account_slot=account_slot, keyword=keyword, city=city, operation=operation)
     if not gate.get("allowed"):
         retry_after = float(gate.get("cooldown_remaining_s") or 0)
         return {
@@ -334,7 +333,7 @@ def check_platform_admission(
             "platform": platform_norm,
             "admission": "red",
             "allowed": False,
-            "reason_code": "search_gate_blocked",
+            "reason_code": gate.get('reason_code') or "rate_limited",
             "reason": str(gate.get("reason") or "search_gate_blocked"),
             "retry_after_s": round(max(0.0, retry_after), 3),
             "manual_action_required": False,
@@ -345,42 +344,6 @@ def check_platform_admission(
             "gate": gate,
         }
 
-    if platform_norm in LEASED_BROWSER_PLATFORMS:
-        pending = _pending_manual_session(platform_norm)
-        if pending.get("present"):
-            recovery = _recover_pending_manual_session(platform_norm, pending)
-            if recovery.get("recovered"):
-                return {
-                    "schema": "knowledgeradar-recruitment-admission/v1",
-                    "platform": platform_norm,
-                    "admission": "open",
-                    "allowed": True,
-                    "reason_code": "pending_manual_interaction_auto_recovered",
-                    "reason": "已有人工会话已通过后台登录态探针自动恢复。",
-                    "retry_after_s": 0,
-                    "manual_action_required": False,
-                    "market_claim_allowed": True,
-                    "salary_claim_allowed": False,
-                    "gate": gate,
-                    "recovery": recovery,
-                }
-            return {
-                "schema": "knowledgeradar-recruitment-admission/v1",
-                "platform": platform_norm,
-                "admission": "red",
-                "allowed": False,
-                "reason_code": "pending_manual_interaction",
-                "reason": str(pending.get("reason") or "manual_action_required"),
-                "retry_after_s": 0,
-                "manual_action_required": True,
-                "failure_class": "blocked_no_claim",
-                "evidence_strength": "blocked_no_claim",
-                "market_claim_allowed": False,
-                "salary_claim_allowed": False,
-                "manual_interaction": pending.get("interaction") or {},
-                "gate": gate,
-                "recovery": recovery,
-            }
 
     return {
         "schema": "knowledgeradar-recruitment-admission/v1",
@@ -408,7 +371,7 @@ def acquire_platform_lease(
     owner = default_owner(
         "search_recruitment",
         project_root=os.environ.get("KR_PROJECT_ROOT", ""),
-        request_id=f"{platform_norm}:{_norm(keyword)}:{_norm(city)}",
+        request_id=uuid.uuid4().hex,
     )
     return get_runtime_lease_coordinator().acquire_exclusive(
         "recruitment_platform",
@@ -431,6 +394,7 @@ def record_search_outcome(
     account_slot: str = "",
     keyword: str = "",
     city: str = "",
+    operation: str = "search",
 ) -> None:
     """记录搜索结果，失败时自动设置冷却。
 
@@ -448,7 +412,7 @@ def record_search_outcome(
     should_cooldown = outcome in {"blocked", "failed"} and normalized_reason not in NO_COOLDOWN_REASONS
     event = normalize_platform_risk_event(
         platform=platform,
-        operation="search",
+        operation=operation,
         reason_code=reason,
         outcome=outcome,
         scope={"account_slot": account_slot, "keyword": keyword, "city": city},
@@ -473,13 +437,16 @@ def record_search_outcome(
 
     try:
         conn = _get_conn()
+        conn.execute('BEGIN IMMEDIATE')
+        latest = conn.execute('SELECT MAX(ts) FROM recruitment_search_gate WHERE platform = ?', (platform,)).fetchone()[0]
+        timestamp = max(now, float(latest) + .000001) if latest is not None else now
         conn.execute(
             """
             INSERT INTO recruitment_search_gate
-              (platform, ts, outcome, reason, cooldown_until, account_slot, keyword_norm, city_norm)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+              (platform, ts, outcome, reason, cooldown_until, account_slot, keyword_norm, city_norm, operation)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
-            (platform, now, outcome, reason, cooldown_until, _norm(account_slot), _norm(keyword), _norm(city)),
+            (platform, timestamp, outcome, reason, cooldown_until, _norm(account_slot), _norm(keyword), _norm(city), operation),
         )
         conn.commit()
         conn.close()
@@ -488,7 +455,10 @@ def record_search_outcome(
             log.warning(f"招聘平台 {platform} 搜索失败，冷却 {cooldown_s} 秒: {reason}")
 
     except Exception as e:
-        log.debug(f"记录招聘搜索结果失败: {e}")
+        raise RuntimeError('recruitment_accounting_unavailable') from e
+    finally:
+        if 'conn' in locals():
+            conn.close()
 
 
 def get_gate_summary(platform: str) -> Dict[str, Any]:
@@ -537,3 +507,93 @@ def _latest_cooldown_seconds(
         return max(0, int(float(row[0]) - float(row[1])))
     except Exception:
         return 0
+
+
+_active_operations = ContextVar('kr_recruitment_operations', default=())
+
+
+def execute_operation(platform, operation, call, *, keyword='', city='', resource='browser'):
+    """唯一招聘执行出口；嵌套门面不双计，站点知识不进入公共层。"""
+    key = (platform, operation)
+    if key in _active_operations.get():
+        return call()
+    admission = check_platform_admission(platform, keyword=keyword, city=city, operation=operation, resource=resource)
+    def blocked(reason, manual=False, retry=0):
+        return {'platform': {'boss':'BOSS直聘', 'liepin':'猎聘', 'maimai':'脉脉', 'v2ex':'V2EX'}.get(platform, platform),
+            'status': 'needs_interaction' if manual else 'blocked', 'items': [], 'failure_type': reason,
+            'error': {'failure_type': reason, 'type': reason, 'reason_code': reason, 'manual_action_required': manual, 'retry_after_s': retry},
+            'manual_action_required': manual, 'retryable': False, 'retry_after_s': retry,
+            'market_claim_allowed': False, 'salary_claim_allowed': False,
+            'metadata': {'admission': admission, 'request_executed': False}}
+    if not admission.get('allowed'):
+        return blocked(admission.get('reason_code', 'search_gate_blocked'), bool(admission.get('manual_action_required')), admission.get('retry_after_s', 0))
+    lease = acquire_platform_lease(platform, keyword=keyword, city=city) if platform in LEASED_BROWSER_PLATFORMS and resource == 'browser' else None
+    if lease and not lease.acquired:
+        from platform_adapters.common import defer_browser_busy
+        defer_browser_busy(platform, 'platform_lease_busy')
+        return blocked('platform_lease_busy', retry=lease.retry_after_s)
+    stop = threading.Event()
+    def renew():
+        while not stop.wait(45):
+            if not get_runtime_lease_coordinator().heartbeat(lease.lease_id, ttl_s=PLATFORM_LEASE_TTL_S):
+                return
+    heart = threading.Thread(target=renew, daemon=True, name='kr-recruitment-lease') if lease else None
+    if heart:
+        heart.start()
+    token = _active_operations.set((*_active_operations.get(), key))
+    started = time.monotonic()
+    result = None
+    try:
+        # 第二次准入在独占租约内，防止并行请求同时通过频控。
+        if lease:
+            admission = check_platform_admission(platform, keyword=keyword, city=city, operation=operation, resource=resource)
+            if not admission.get('allowed'):
+                return blocked(admission.get('reason_code', 'search_gate_blocked'), bool(admission.get('manual_action_required')))
+        try:
+            result = call()
+        except BaseException as exc:
+            from runtime.resource_concurrency import ResourceDeferred
+            if isinstance(exc, ResourceDeferred):
+                raise
+            record_search_outcome(platform, 'failed', 'collector_exception', keyword=keyword, city=city, operation=operation)
+            raise
+        if not isinstance(result, dict):
+            raise TypeError('recruitment_result_must_be_mapping')
+        if platform in LEASED_BROWSER_PLATFORMS:
+            from runtime.borrowed_observations import observe_borrowed_result
+            result = observe_borrowed_result(platform, result)
+        error = result.get('error') if isinstance(result.get('error'), dict) else {}
+        reason = str(result.get('failure_type') or error.get('failure_type') or '').split(':', 1)[0]
+        outcome = 'blocked' if result.get('manual_action_required') or error.get('manual_action_required') else 'failed' if result.get('error') else 'ok'
+        # 准入、参数及连接阶段没碰站点的失败不消耗站点频次。
+        executed = result.get('request_executed', result.get('metadata', {}).get('request_executed'))
+        if executed is not False and reason != 'city_mapping_missing':
+            record_search_outcome(platform, outcome, reason, keyword=keyword, city=city, operation=operation)
+        result.setdefault('metadata', {}).update(operation=operation, admission=admission)
+        result['metadata']['operation_elapsed_s'] = round(time.monotonic() - started, 3)
+        return result
+    finally:
+        _active_operations.reset(token)
+        stop.set()
+        if heart:
+            heart.join(timeout=2)
+        if lease:
+            release_platform_lease(lease.lease_id)
+
+
+def execute_browser_operation(platform, call):
+    """HTTP-first collectors acquire browser resources only at the dynamic fallback."""
+    from importlib import import_module
+    site = import_module('collectors.platform.' + platform)
+    admission = site.admission()
+    if not admission.get('allowed'):
+        return site._site().failure(admission.get('reason', 'browser_blocked'), request_executed=False)
+    lease = acquire_platform_lease(platform)
+    if not lease.acquired:
+        from platform_adapters.common import defer_browser_busy
+        defer_browser_busy(platform, 'platform_lease_busy')
+        return site._site().failure('platform_lease_busy', request_executed=False)
+    try:
+        return call()
+    finally:
+        release_platform_lease(lease.lease_id)

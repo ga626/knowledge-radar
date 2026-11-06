@@ -57,6 +57,7 @@ class WebSearchResponse:
     attempted_providers: List[str] = field(default_factory=list)
     error: Optional[Dict[str, Any]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
+    acquired_items: List[SearchProviderResult] = field(default_factory=list)
 
     def to_mcp_dict(self) -> Dict[str, Any]:
         data: Dict[str, Any] = {
@@ -67,6 +68,8 @@ class WebSearchResponse:
             "fallback_used": self.fallback_used,
             "attempted_providers": list(self.attempted_providers),
         }
+        if self.acquired_items:
+            data["acquired_items"] = [item.to_dict() for item in self.acquired_items]
         if self.error:
             data["error"] = dict(self.error)
         if self.metadata:

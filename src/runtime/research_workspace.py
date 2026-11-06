@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 from collections import Counter
 from runtime.paths import runtime_state_dir
+from runtime.research_ledger import assess_task_gaps
 from kr_core.evidence_assets import EvidenceAssets
 
 SCHEMA = 'knowledgeradar-research-records/v1'
@@ -145,6 +146,7 @@ def summarize_task(payload):
         'updated_at': payload.get('updated_at'),
         'round_count': len(task_rounds(payload)),
         'file_count': len(task_files(payload)),
+        'pending_submission_count': len(_items(payload, 'pending_submissions')),
     }
 
 
@@ -181,6 +183,8 @@ def task_rounds(payload):
             'source_ecology': event.get('source_ecology') or '', 'intent_label': event.get('intent_label') or '',
         })
     for receipt in _items(payload, 'tool_receipts'):
+        if receipt.get('receipt_kind') == 'background_completion':
+            continue
         key = _round_for_tool(receipt.get('tool'))
         grouped[key]['tool_receipts'].append({
             'at': receipt.get('at'), 'tool': receipt.get('tool'), 'status': receipt.get('status'),
@@ -208,17 +212,19 @@ def task_rounds(payload):
 
 def task_metrics(payload):
     receipts = _items(payload, 'tool_receipts')
+    calls = [item for item in receipts if item.get('receipt_kind') != 'background_completion']
     events = _items(payload, 'events')
-    statuses = Counter(str(item.get('status') or 'partial') for item in receipts)
-    tools = Counter(str(item.get('tool') or 'unknown') for item in receipts)
+    statuses = Counter(str(item.get('status') or 'partial') for item in calls)
+    tools = Counter(str(item.get('tool') or 'unknown') for item in calls)
     ecologies = {ecology for item in receipts + events for ecology in [str(item.get('source_ecology') or '') or _ecology_for_tool(item.get('tool'))] if ecology and ecology not in _INTERNAL_ECOLOGIES}
     planned_ecologies = {str(item.get('source_ecology') or '') for item in _items(payload, 'candidate_ecologies') if str(item.get('source_ecology') or '')}
     versions = {str(version) for receipt in receipts for version in receipt.get('evidence_versions', []) if str(version)}
     gaps = [item for item in _items(payload, 'claim_gaps') if str(item.get('status') or 'open') not in {'closed', 'resolved'}]
     closeout = payload.get('closeout') if isinstance(payload.get('closeout'), dict) else {}
     unresolved = len(gaps) + sum(len(closeout.get(key) or []) for key in ('missing_outcomes', 'critical_claims_without_support', 'critical_claims_without_receipts', 'pending_background_tasks', 'unavailable_evidence_versions'))
+    pending = _items(payload, 'pending_submissions')
     return {
-        'tool_calls': len(receipts),
+        'tool_calls': len(calls),
         'successful_calls': sum(statuses.get(status, 0) for status in ('ok', 'success', 'completed', 'pass')),
         'failed_calls': sum(statuses.get(status, 0) for status in ('failed', 'error')),
         'partial_calls': sum(statuses.get(status, 0) for status in ('partial', 'degraded')),
@@ -231,6 +237,8 @@ def task_metrics(payload):
         'unresolved_gap_count': unresolved,
         'event_count': len(events),
         'round_count': len(task_rounds(payload)),
+        'pending_submission_count': len(pending),
+        'pending_submission_attempts': sum(int(item.get('attempts') or 0) for item in pending),
     }
 
 
@@ -272,6 +280,12 @@ def task_files(payload, *, assets=None):
         if item:
             item['task_title'] = task_title
             files.append(item)
+    if assets is not None:
+        from runtime.knowledge import Search, search
+        indexed=search(assets,Search(action='search',task_id=task_id,kind='report',limit=50,max_chars=24000))
+        for hit in indexed['items']:
+            ref=hit['asset']
+            files.append({'file_id':'report:'+ref['version_id'],'name':ref['title'],'label':'固定报告版本','type':'report','task_id':task_id,'task_title':task_title,'round':'收口','version_id':ref['version_id'],'status':'available','readable':True})
     receipts = _items(payload, 'tool_receipts')
     if receipts:
         files.append({
@@ -312,11 +326,21 @@ def research_action(records, action, task_id='', *, payload=None):
         current = records.snapshot(task_id)
         if current.get('status') == 'unknown_task':
             return current
-        return current | {'readable_summary': summarize_task(current), 'rounds': task_rounds(current), 'metrics': task_metrics(current), 'files': task_files(current, assets=records.assets), 'view_model': VIEW_MODEL, 'read_only': True}
+        from runtime.knowledge_delivery import DeliveryStore
+        from runtime.research_archive import ResearchArchive
+        return current | {'archive':ResearchArchive(DeliveryStore(records.root,assets=records.assets)).status(task_id),'deliveries':DeliveryStore(records.root).for_task(task_id),'readable_summary': summarize_task(current), 'rounds': task_rounds(current), 'metrics': task_metrics(current), 'files': task_files(current, assets=records.assets), 'gap_assessment': assess_task_gaps(current, phase='before_delivery'), 'view_model': VIEW_MODEL, 'read_only': True}
     if action == 'files':
         return records.files(task_id, payload.get('limit', 20))
     if action == 'evidence_search':
-        return {'items': records.assets.search(payload.get('query', ''), limit=max(1, min(int(payload.get('limit', 30)), 100))), 'read_only': True}
+        from runtime.knowledge import Search, read
+        allowed=set(Search.model_fields)-{'action'}
+        data={k:v for k,v in payload.items() if k in allowed}
+        data['limit']=min(int(data.get('limit',20)),50)
+        page=read(Search(action='search',**data), records.assets)
+        # Human view retains asset metadata while using the same query/page contract.
+        page['items']=[{**hit['asset'], 'excerpt':hit['excerpt'], 'start':hit['start'], 'citation':hit['citation']} for hit in page['items']]
+        return page
     if action == 'evidence_fetch':
-        return records.assets.fetch(payload.get('version_id'), start=payload.get('start', 0), max_chars=payload.get('max_chars', 8000))
+        from runtime.knowledge import Fetch, read
+        return read(Fetch(action='fetch',version_id=payload.get('version_id'),start=payload.get('start',0),max_chars=payload.get('max_chars',8000)),records.assets)
     raise ValueError('read_only_research_action_required')

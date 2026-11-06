@@ -129,6 +129,7 @@ def main() -> int:
     docs_index_exit = run_generated_check("generate_docs_index.py")
     script_inventory_exit = run_generated_check("generate_script_lifecycle_inventory.py")
     process_docs_exit = run_generated_check("generate_process_docs_index.py")
+    current_docs_exit = subprocess.run([sys.executable, str(ROOT / "scripts/check_current_docs.py")], cwd=ROOT).returncode
     issues = package_manifest_issues(structure, package_manifest)
     issues.extend(watch_path_issues(structure))
     issues.extend(forbidden_local_state_issues(structure))
@@ -141,6 +142,9 @@ def main() -> int:
         issues.append("script lifecycle inventory is out of date: run scripts/generate_script_lifecycle_inventory.py")
     if process_docs_exit:
         issues.append("process docs index is out of date: run scripts/generate_process_docs_index.py")
+
+    if current_docs_exit:
+        issues.append("current tool/source documentation is out of date")
 
     if issues or exit_code or docs_index_exit or script_inventory_exit or process_docs_exit:
         print("Documentation drift check failed.")

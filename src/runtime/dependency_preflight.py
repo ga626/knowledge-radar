@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
 import os
 import platform
 import shutil
@@ -39,6 +41,8 @@ DEPENDENCIES: tuple[DependencySpec, ...] = (
     DependencySpec("pypdf", "pypdf", False, "academic PDF text extraction", "pip install pypdf"),
     DependencySpec("youtube-transcript-api", "youtube_transcript_api", False, "YouTube transcript fallback", "pip install youtube-transcript-api"),
     DependencySpec("yt-dlp", "yt_dlp", False, "video download for frame extraction", "install it from the local console"),
+    DependencySpec("av", "av", False, "in-process audio/video decoding", "repair the core installation"),
+    DependencySpec("numpy", "numpy", False, "bounded audio chunks", "repair the core installation"),
     DependencySpec("Pillow", "PIL", False, "QR/image utilities", "pip install Pillow"),
 )
 
@@ -91,6 +95,49 @@ def _chrome_path() -> str:
     return selection.path if selection else ""
 
 
+def _canonical_text_sha(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
+
+
+def runtime_artifact_identity_summary(root=None) -> Dict[str, object]:
+    """Compare the checked-in runtime manifest with the active source files."""
+    root = Path(root or Path(__file__).resolve().parents[2])
+    manifest_path = root / "config" / "runtime-artifacts.json"
+    lock_path = root / "config" / "runtime-win-py312.lock"
+    pyproject_path = root / "pyproject.toml"
+    result: Dict[str, object] = {
+        "schema": "knowledgeradar-runtime-artifact-identity/v1",
+        "status": "degraded",
+        "available": False,
+        "manifest_path": str(manifest_path),
+        "files": {},
+    }
+    try:
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        files = {
+            "runtime_lock": (lock_path, "lock_sha256"),
+            "pyproject": (pyproject_path, "pyproject_sha256"),
+        }
+        rows = {}
+        matches = True
+        for name, (path, expected_key) in files.items():
+            exists = path.is_file()
+            actual = _canonical_text_sha(path) if exists else ""
+            expected = str(manifest.get(expected_key) or "")
+            row = {"path": str(path), "exists": exists, "expected_sha256": expected,
+                   "actual_sha256": actual, "matches": bool(exists and expected and actual == expected)}
+            rows[name] = row
+            matches = matches and row["matches"]
+        result["files"] = rows
+        result["status"] = "ok" if matches else "degraded"
+        result["available"] = bool(matches)
+        result["detail"] = "运行清单与源码规范化哈希一致" if matches else "运行清单与源码哈希不一致"
+    except (OSError, ValueError, TypeError):
+        result["detail"] = "运行清单缺失或不可解析"
+        result["status"] = "degraded"
+    return result
+
+
 def external_dependency_preflight_summary() -> Dict[str, object]:
     ffmpeg = _ffmpeg_path()
     node = _env_path("KR_NODE_EXE") or shutil.which("node") or ""
@@ -140,7 +187,8 @@ def external_dependency_preflight_summary() -> Dict[str, object]:
             "version": _run_version(node, ["--version"]),
         },
     }
-    critical = ["chrome"]
+    tools["runtime_artifact_identity"] = runtime_artifact_identity_summary()
+    critical = ["chrome", "runtime_artifact_identity"]
     missing_critical = [name for name in critical if not bool(tools[name]["available"])]
     os_name = platform.system()
     status = "ok" if not missing_critical and os_name == "Windows" else "degraded"

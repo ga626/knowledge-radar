@@ -1,42 +1,133 @@
-from collectors.platform import boss
-from runtime import chrome_manager
+"""BOSS 借用浏览器合同；真实站点验证另行记证据。"""
+import pytest
+from conftest import patch_native
+from runtime import native_site
+from collectors.platform import boss as boss
+from runtime import chrome_manager as chrome
+
+@pytest.fixture(autouse=True)
+def isolated(monkeypatch,tmp_path):
+    monkeypatch.setenv("KR_STATE_DIR",str(tmp_path/"state"))
+    monkeypatch.setenv("KR_TASK_DB_PATH",str(tmp_path/"tasks.sqlite3"))
 
 
-def test_boss_search_url_uses_city_code_for_hangzhou() -> None:
-    url = boss._build_boss_search_url("AI产品运营", "杭州")
-
-    assert url == "https://www.zhipin.com/web/geek/jobs?query=AI%E4%BA%A7%E5%93%81%E8%BF%90%E8%90%A5&city=101210100"
-
-
-def test_boss_search_url_keeps_unknown_city_value() -> None:
-    url = boss._build_boss_search_url("Agent", "火星")
-
-    assert url == "https://www.zhipin.com/web/geek/jobs?query=Agent"
+def test_city_resolved_and_unknown_stops_without_browser(monkeypatch):
+    assert boss.search_url("AI产品运营","杭州").endswith("city=101210100")
+    patch_native(monkeypatch,lambda **_:pytest.fail("must not navigate"))
+    assert boss.search("Agent","火星",1)["failure_type"]=="city_mapping_missing"
 
 
-def test_boss_unknown_city_stops_before_browser() -> None:
-    result = boss.boss_search_via_cdp_state("Agent", "火星", 1)
-
-    assert result["failure_type"] == "city_mapping_missing"
-    assert result["manual_action_required"] is False
-    assert result["diagnostics"]["layers"]["params"]["status"] == "city_mapping_missing"
-
-
-def test_boss_startup_url_is_neutral_hangzhou_jobs_page() -> None:
-    assert chrome_manager.BOSS_STARTUP_URL == "https://www.zhipin.com/web/geek/jobs?city=101210100"
-    assert "Python" not in chrome_manager.BOSS_STARTUP_URL
-    assert "%E5%BC%80%E5%8F%91" not in chrome_manager.BOSS_STARTUP_URL
+def test_query_mismatch_is_not_success(monkeypatch):
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"query":"old","items":[{"title":"old"}]}})
+    result=boss.search("new")
+    assert result["failure_type"]=="search_query_not_applied"
+    assert not result["manual_action_required"]
 
 
-def test_local_rate_gate_is_not_a_login_or_captcha_event(monkeypatch):
-    monkeypatch.setattr(boss, "probe_boss_auth_state", lambda **_: {"status": "ok"})
-    monkeypatch.setattr(boss, "check_search_gate", lambda *_args, **_kwargs: {"allowed": False, "reason": "搜索间隔过短（需等待10秒）"})
-    result = boss.legacy_search_boss("产品经理", "", 1)
-    assert result["error"]["type"] == "rate_limited"
-    assert not result["error"]["manual_action_required"]
-    assert "anti_bot_verification" not in result["error"]["failure_tags"]
+def test_empty_page_distinct_from_empty_results(monkeypatch):
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"query":"q","empty":True,"items":[]}})
+    assert boss.search("q")["status"]=="empty"
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"query":"next","items":[]}})
+    # 使用独立词并移除频率等待，以观察解析合同。
+    from runtime import recruitment_governance as gate
+    monkeypatch.setattr(gate,"check_search_gate",lambda *a,**kw:{"allowed":True})
+    result=boss.search("next")
+    assert result["failure_type"]=="page_structure_or_not_ready"
+    assert not result["manual_action_required"]
 
 
-def test_visible_login_modal_overrides_background_cards():
-    state = boss._classify_boss_page_state({"url": "https://www.zhipin.com/web/geek/jobs", "loginModalCount": 1, "items": [{"title": "职位"}]})
-    assert state["auth_state"] == "login_required"
+def test_unknown_probe_does_not_invent_login(monkeypatch):
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{}})
+    assert boss.probe_auth()["auth_state"]=="unknown"
+    assert not boss.probe_auth()["manual_action_required"]
+
+
+def test_rate_gate_never_opens_login(monkeypatch):
+    from runtime import recruitment_governance as gate
+    monkeypatch.setattr(gate,"check_search_gate",lambda *a,**kw:{"allowed":False,"reason":"interval"})
+    patch_native(monkeypatch,lambda **_:pytest.fail("rate gate must not open a tab"))
+    assert boss.search("q")["failure_type"]=="rate_limited"
+
+
+def test_login_request_is_single_and_explicit_completion_resumes(monkeypatch):
+    calls=[]
+    patch_native(monkeypatch,lambda **kw: calls.append(kw) or {"ok":True,"data":{"login":True}})
+    assert chrome.request_user_login("boss",reason="login_required")["status"]=="waiting_for_user"
+    assert chrome.request_browser_interaction("boss")["status"]=="waiting_for_user"
+    assert len(calls)==1 and calls[0]["url"]==boss.LOGIN_URL
+    assert not boss.admission()["allowed"]
+    patch_native(monkeypatch,lambda **kw: {"ok":True,"data":{"authenticated_ui":True}})
+    assert chrome.complete_browser_interaction("boss")["status"]=="ok"
+    assert boss.admission()["allowed"]
+
+
+def test_challenge_latch_no_automatic_navigation_or_resume(monkeypatch):
+    calls=[]
+    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {"ok":False,"code":"SECURITY_BLOCK"})
+    assert boss.search("q")["failure_type"]=="anti_bot_verification"
+    assert boss.search("q2")["failure_type"]=="anti_bot_verification"
+    assert len(calls)==1
+    assert boss.interaction_status()=="blocked"
+    assert chrome.request_browser_interaction("boss")["status"]=="waiting_for_user"
+    assert calls[-1]["operation"]=="login" and calls[-1]["url"]==boss.LOGIN_URL
+    assert boss.interaction_status()=="blocked"
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"authenticated_ui":True}})
+    assert chrome.complete_browser_interaction("boss")["status"]=="ok"
+    assert boss.admission()["allowed"]
+
+
+def test_cancel_only_releases_owned_tab(monkeypatch):
+    calls=[]
+    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {"ok":True,"data":{"browser_closed":False}})
+    assert chrome.cancel_browser_interaction("boss")["status"]=="cancelled"
+    assert calls[0]["operation"]=="release_login"
+    assert not chrome._ensure_chrome_debugging("boss")
+    assert chrome._managed_chrome_profile_dir("boss")==""
+    assert "boss" not in chrome.managed_browser_platforms()
+
+
+def test_unknown_failure_cannot_raise_login_window(monkeypatch):
+    monkeypatch.setattr(boss,"request_login",lambda:pytest.fail("no login evidence"))
+    assert chrome.request_user_login("boss",reason="unknown")["reason_code"]=="NO_MANUAL_ACTION_EVIDENCE"
+
+
+def test_detail_identity_and_minimum_body(monkeypatch):
+    url="https://www.zhipin.com/job_detail/one.html"
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"url":url,"content":"岗位职责。"*40}})
+    assert boss.detail(url)["status"]=="ok"
+    assert boss.detail("http://127.0.0.1/job_detail/one")["failure_type"]=="invalid_boss_detail_url"
+    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"url":url.replace("one","two"),"content":"x"*200}})
+    assert boss.detail(url)["failure_type"]=="page_identity_changed"
+
+
+def test_borrowed_identity_does_not_grant_process_close():
+    assert boss.runtime_identity()["ownership"]=="borrowed"
+    assert chrome._managed_process_close_allowed("boss",42) is False
+    from runtime.browser_channel import browser_resource_contract,may_close_process
+    contract=browser_resource_contract(ownership="owned",resource_id="fixture",generation="old",driver="cdp")
+    assert not may_close_process(contract,"new")
+    assert may_close_process(contract,"old")
+
+
+def test_unknown_timeout_stops_without_inventing_captcha(monkeypatch):
+    calls=[]
+    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {'ok':False,'code':'native_command_timeout','request_executed':True})
+    result=boss.search('first')
+    assert result['failure_type']=='request_outcome_unknown'
+    assert boss.search('second')['failure_type']=='request_outcome_unknown'
+    assert len(calls)==1 and not boss.admission()['allowed']
+    boss.cancel_login()
+    assert not boss.admission()['allowed']
+
+
+@pytest.mark.parametrize('prior_deadline',[990,1010])
+def test_explicit_redisplay_renews_grace_without_reloading_login(monkeypatch,prior_deadline):
+    calls=[]
+    monkeypatch.setattr(boss.time,'time',lambda:1000)
+    native_site.write_state(boss.state_path(),{'expires_at':prior_deadline})
+    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {'ok':True,'data':{'login':True}})
+    assert boss.request_login(activate=True)['expires_at']==1300
+    assert calls[0]['operation']=='attention' and calls[0]['url']==''
+    assert boss._site().invoke('probe')['failure_type']=='login_required'
+    assert calls[-1]['operation']=='probe'
+    assert boss._site().state()['expires_at']==1300

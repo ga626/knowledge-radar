@@ -1,0 +1,65 @@
+{
+  "manifest_version": 3,
+  "name": "KnowledgeRadar Browser Link",
+  "version": "0.3.13",
+  "description": "KR 浏览器连接器：在本人授权的日常浏览器中读取研究资料。",
+  "permissions": [
+    "nativeMessaging",
+    "tabs",
+    "storage",
+    "alarms",
+    "tabGroups"
+  ],
+  "host_permissions": [
+    "https://www.zhipin.com/*",
+    "https://zhipin.com/*",
+    "https://www.liepin.com/*",
+    "https://liepin.com/*",
+    "https://maimai.cn/*",
+    "https://www.zhihu.com/*",
+    "https://zhihu.com/*",
+    "https://zhuanlan.zhihu.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icons/radar-16.png",
+    "32": "icons/radar-32.png",
+    "48": "icons/radar-48.png",
+    "128": "icons/radar-128.png"
+  },
+  "action": {
+    "default_popup": "status.html",
+    "default_title": "KR 浏览器连接器",
+    "default_icon": {
+      "16": "icons/radar-16.png",
+      "32": "icons/radar-32.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.zhipin.com/*",
+        "https://zhipin.com/*",
+        "https://www.liepin.com/*",
+        "https://liepin.com/*",
+        "https://maimai.cn/*",
+        "https://www.zhihu.com/*",
+        "https://zhihu.com/*",
+        "https://zhuanlan.zhihu.com/*"
+      ],
+      "js": [
+        "sites/routes.js",
+        "visibility.js",
+        "sites/registry.js",
+        "sites/boss.js",
+        "sites/liepin.js",
+        "sites/maimai.js",
+        "sites/zhihu.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}

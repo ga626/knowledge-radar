@@ -38,3 +38,15 @@ def test_platform_risk_still_blocks_search(monkeypatch, tmp_path):
     gate.record_search_outcome("boss", "blocked", "risk_control")
     monkeypatch.setattr(gate.time, "time", lambda: 10020.0)
     assert gate.check_search_gate("boss")["allowed"] is False
+
+
+def test_storage_failure_is_a_tool_error_not_an_account_challenge():
+    from runtime.recruitment_collection import format_search_error
+    from platform_adapters.common import response_from_legacy
+    result = format_search_error("BOSS直聘", {"error": "搜索被策略门禁拦截: 门禁状态不可读取",
+        "failure_type": "recruitment_gate_unavailable", "manual_action_required": False})
+    assert result["error"]["type"] == "recruitment_gate_unavailable"
+    assert result["error"]["failure_class"] == "tool_error"
+    assert result["error"]["retryable"] is False
+    adapted = response_from_legacy("BOSS直聘", result).to_mcp_dict()
+    assert not adapted["error"].get("manual_action_required")

@@ -6,6 +6,8 @@ import copy
 import hashlib
 import json
 import time
+import threading
+from concurrent.futures import Future, TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -13,11 +15,15 @@ from typing import Any, Dict, Optional
 @dataclass
 class SearchCache:
     ttl_s: int = 180
+    max_entries: int = 256
+    max_bytes: int = 8 * 1024 * 1024
     _items: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     _hits: int = 0
     _misses: int = 0
     _expired: int = 0
     _sets: int = 0
+    _lock: Any = field(default_factory=threading.RLock, repr=False)
+    _inflight: Dict = field(default_factory=dict, repr=False)
 
     def key(
         self,
@@ -65,6 +71,10 @@ class SearchCache:
         return {str(k): _normalize(v) for k, v in sorted((options or {}).items(), key=lambda item: str(item[0]))}
 
     def get(self, key: str) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            return self._get(key)
+
+    def _get(self, key):
         row = self._items.get(key)
         if not row:
             self._misses += 1
@@ -86,13 +96,66 @@ class SearchCache:
         return result
 
     def set(self, key: str, result: Dict[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            return self._set(key, result)
+
+    def _set(self, key, result):
         self._sets += 1
-        self._items[key] = {"created_at": time.time(), "result": copy.deepcopy(result)}
+        size = len(json.dumps(result, ensure_ascii=False, default=str).encode())
+        if size <= self.max_bytes:
+            self._items.pop(key, None)
+            self._items[key] = {"created_at": time.time(), "result": copy.deepcopy(result), "size":size}
+        while self._items and (len(self._items) > self.max_entries or sum(row['size'] for row in self._items.values()) > self.max_bytes):
+            self._items.pop(next(iter(self._items)))
         metadata = result.setdefault("metadata", {})
         metadata["cache"] = {"hit": False, "key": key, "ttl_s": self.ttl_s}
         return result
 
+    def run(self, key, fn):
+        """Coalesce only within one execution owner; cancellation never crosses tasks."""
+        from runtime.execution_context import check_execution, current_execution
+        execution = current_execution() or {}
+        owner = (execution.get('KR_DURABLE_TASK_ID','interactive'), execution.get('execution_id',''))
+        flight = (key, owner)
+        with self._lock:
+            check_execution()
+            cached = self._get(key)
+            if cached is not None:
+                return cached
+            future = self._inflight.get(flight)
+            leader = future is None
+            if leader:
+                future = self._inflight[flight] = Future()
+        if not leader:
+            while True:
+                check_execution()
+                try:
+                    result = copy.deepcopy(future.result(timeout=.1))
+                    result.setdefault('metadata', {})['inflight_reused'] = True
+                    return result
+                except FutureTimeout:
+                    if future.done():
+                        raise
+                    continue
+        try:
+            result = fn()
+            check_execution()
+            if isinstance(result, dict) and not result.get('error'):
+                self.set(key, result)
+            future.set_result(copy.deepcopy(result))
+            return result
+        except BaseException as exc:
+            future.set_exception(exc)
+            raise
+        finally:
+            with self._lock:
+                self._inflight.pop(flight, None)
+
     def summary(self) -> Dict[str, Any]:
+        with self._lock:
+            return self._summary()
+
+    def _summary(self):
         now = time.time()
         live = {k: v for k, v in self._items.items() if now - float(v.get("created_at", 0)) <= self.ttl_s}
         removed = len(self._items) - len(live)
@@ -106,6 +169,9 @@ class SearchCache:
             "schema": "knowledgeradar-search-cache-summary/v1",
             "ttl_s": self.ttl_s,
             "entries": len(self._items),
+            "max_entries": self.max_entries,
+            "max_bytes": self.max_bytes,
+            "inflight": len(self._inflight),
             "metrics": {
                 "hits": self._hits,
                 "misses": self._misses,

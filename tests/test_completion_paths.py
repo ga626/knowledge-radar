@@ -5,6 +5,17 @@ import json
 import zipfile
 from pathlib import Path
 import pytest
+
+
+def test_observed_empty_description_is_distinct_from_failed_or_missing_text():
+    from kr_core.evidence_coverage import content_coverage
+    data = {'content': '', 'transcript': 'Actual spoken words',
+        'content_observation': 'observed_empty_original_text'}
+    result = content_coverage(data, {'include_transcript': True})
+    assert result['request_satisfied']
+    assert result['parts']['content']['coverage'] == 'observed_empty_original_text'
+    assert not content_coverage({'content': '', 'transcript': 'Actual spoken words'})['request_satisfied']
+    assert not content_coverage({**data, 'failure_type': 'empty_detail'})['request_satisfied']
 from kr_core.evidence_assets import EvidenceAssets
 from kr_core.evidence_store import EvidenceStore
 from onboarding.research_api import workspace_api
@@ -67,32 +78,24 @@ def test_task_export_download_obsidian_and_audience_share_same_sources(tmp_path,
     report_ref = next(row for row in user['files'] if row['type']=='report')
     assert '结论末尾' in workspace_api(records,{'action':'file_fetch','task_id':task['research_task_id'],'file_id':report_ref['file_id']},developer=False)['text']
     payload={'task_id':task['research_task_id'],'version_ids':[ref['version_id']],'export_acknowledged':True,'include_report':True}
-    package=workspace_api(records,{**payload,'action':'export_task'},developer=False)
-    with zipfile.ZipFile(io.BytesIO(base64.b64decode(package['data_base64']))) as archive:
-        assert archive.read('report-1.md').decode() == report.read_text(encoding='utf-8')
-        manifest=json.loads(archive.read('manifest.json'))
-        assert manifest['sources'][0]['asset']['version_id'] == ref['version_id']
-    vault=tmp_path/'vault';vault.mkdir();note=vault/'人工笔记.md';note.write_text('保留',encoding='utf-8')
-    delivered=workspace_api(records,{**payload,'action':'export_obsidian','vault_path':str(vault)},developer=False)
-    assert Path(delivered['inbox']).is_relative_to(vault)
-    assert Path(delivered['inbox'],'report-1.md').is_file()
-    assert delivered['open_uri'].startswith('obsidian://open?path=')
-    repeated=workspace_api(records,{**payload,'action':'export_obsidian','vault_path':str(vault)},developer=False)
-    assert repeated['inbox'] == delivered['inbox'] and repeated['already_exported'] is True
-    assert note.read_text(encoding='utf-8')=='保留'
-    assert (path.read_bytes(),(assets.root/'index.sqlite3').read_bytes()) == before
+    for action in ('export_task','export_obsidian'):
+        with pytest.raises(ValueError,match='agent_command_required'):
+            workspace_api(records,{**payload,'action':action},developer=False)
+    assert (path.read_bytes(),(assets.root/'index.sqlite3').read_bytes())==before
 
 
 def test_real_tool_receipts_automatically_link_unique_candidate(tmp_path, monkeypatch):
     from runtime.tool_trace import traced_tool
     monkeypatch.setenv('KR_STATE_DIR',str(tmp_path/'state'))
+    monkeypatch.setenv('KR_EVIDENCE_ROOT', str(tmp_path/'assets'))
+    ref = EvidenceAssets().put('https://example.org/paper', '真实固定原文')
     task=open_task(objective='自动记录同一研究',budget='balanced',considered=[])
     @traced_tool('search_academic')
     def search(research_task_id=''):
         return {'items':[{'url':'https://example.org/paper','title':'论文'}]}
     @traced_tool('extract_web_page')
     def detail(research_task_id=''):
-        return {'url':'https://example.org/paper','evidence_assets':[{'version_id':'a'*64}]}
+        return {'url':'https://example.org/paper','evidence_assets':[ref]}
     search(research_task_id=task['research_task_id'])
     extracted=detail(research_task_id=task['research_task_id'])
     current=read_task(task_id=task['research_task_id'])
@@ -115,7 +118,7 @@ def test_transcript_nested_map_and_source_ecology(tmp_path):
 def test_model_main_path_has_no_old_qwen_engine_and_blocks_unapproved(tmp_path, monkeypatch):
     from runtime.optional_media import COMPONENTS, install_component
     monkeypatch.setenv('KR_OPTIONAL_COMPONENT_RECEIPTS_DIR',str(tmp_path/'components'))
-    assert COMPONENTS['qwen3-asr-0.6b']['package']=='transformers'
+    assert COMPONENTS['qwen3-asr-0.6b']['package']=='sherpa-onnx'
     with pytest.raises(ValueError,match='reviewed_installation'):
         install_component('qwen3-asr-0.6b',{})
     assert not (tmp_path/'components').exists()
@@ -165,5 +168,5 @@ def test_optional_install_failure_does_not_block_retry(tmp_path,monkeypatch):
     monkeypatch.setattr(optional_media,'_install_component',fail)
     for _ in range(2):
         with pytest.raises(RuntimeError,match='offline_install_failed'):
-            optional_media.install_component('qwen3-asr-0.6b',{})
+            optional_media.install_component('qwen3-asr-0.6b',{'installation_acknowledged':True,'license_review':'APPROVED'})
     assert not (root/'environments/qwen3-asr-0.6b').exists()

@@ -13,6 +13,7 @@ from typing import Any, Iterable
 
 STRUCTURED_JOB_PLATFORM = "structured_job_platform"
 COMMUNITY_JOB_BOARD = "community_job_board"
+COMMUNITY_DISCUSSION = "community_discussion"
 OPEN_WEB_SIGNAL = "open_web_signal"
 UNKNOWN_SOURCE = "unknown_source"
 

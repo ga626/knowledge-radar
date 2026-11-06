@@ -9,17 +9,16 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import Any
-from runtime.model_roles import ASR_MODEL_REF, CLOUD_MODEL_REF, OCR_COMPONENT
+from runtime.model_roles import ASR_MODEL_REF, CLOUD_MODEL_REF, OCR_MODEL_REF
 
 
 DEFAULT_ASR_MODELS = (ASR_MODEL_REF,)
-DEFAULT_OCR_MODELS = (OCR_COMPONENT,)
+DEFAULT_OCR_MODELS = (OCR_MODEL_REF,)
 DEFAULT_FRAME_VISION_MODELS = (CLOUD_MODEL_REF,)
 DEFAULT_NATIVE_VIDEO_MODELS = DEFAULT_FRAME_VISION_MODELS
 DEFAULT_NATIVE_AUDIO_VIDEO_MODELS = DEFAULT_FRAME_VISION_MODELS
 # 评论原文交给研究 Agent，不增加第二个云端文本模型。
 DEFAULT_COMMENT_FILTER_MODELS = ()
-CANARY_MODELS = ()
 
 DEFAULT_NATIVE_AUTO_MAX_DURATION_SECONDS = 300.0
 DEFAULT_NATIVE_AUTO_MAX_FRAMES = 16
@@ -71,7 +70,7 @@ class MediaModelPolicy:
     @classmethod
     def from_env(cls) -> "MediaModelPolicy":
         return cls(
-            basic_text_models=tuple(parse_model_list(os.environ.get("KR_BASIC_TEXT_MODELS"))),
+            basic_text_models=(),
             asr_models=DEFAULT_ASR_MODELS,
             ocr_models=DEFAULT_OCR_MODELS,
             frame_vision_models=DEFAULT_FRAME_VISION_MODELS,
@@ -134,28 +133,10 @@ class MediaModelPolicy:
                     "capabilities": [*previous.get("capabilities", []), key],
                     "input_modalities": list(dict.fromkeys([*previous.get("input_modalities", []), modality])),
                     "canary_required": ref.startswith("bailian:"),
-                    "blocked_default": ref.lower() in {"bailian:qwen-turbo", "qwen-turbo"} and key in {"native_video", "native_audio_video", "comment_filter"},
+                    "blocked_default": False,
                 }
-        for ref, modality, tier in CANARY_MODELS:
-            registry.setdefault(ref, {
-                "model_ref": ref,
-                "capability": "native_video",
-                "input_modality": modality,
-                "quality_tier": tier,
-                "canary_required": True,
-                "blocked_default": True,
-                "availability_evidence": "not_probed",
-            })
         return registry
 
     def ordered_models(self, key: str) -> tuple[str, ...]:
-        """Return candidates with known-bad legacy video models removed."""
-        models = self.models_for(key)
-        return tuple(
-            model
-            for model in models
-            if not (
-                str(model).lower().removeprefix("bailian:") == "qwen-turbo"
-                and key in {"native_video", "native_audio_video", "comment_filter"}
-            )
-        )
+        """Return the single role registry selection."""
+        return self.models_for(key)

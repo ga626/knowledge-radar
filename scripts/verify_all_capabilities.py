@@ -44,10 +44,7 @@ os.environ.setdefault("PYTHONIOENCODING", "utf-8")
 os.environ.setdefault("KR_LOG_DIR", str(DATA_ROOT / "logs") if DATA_ROOT else str(ROOT / "runtime" / "logs"))
 os.environ.setdefault("KR_STATE_DIR", str(DATA_ROOT / "state") if DATA_ROOT else str(ROOT / "runtime"))
 os.environ.setdefault("KR_CHROME_PREWARM", "0")
-os.environ.setdefault("KR_XHS_TIKHUB_BREAK_GLASS_AUTO", "1")
 os.environ.setdefault("KR_XHS_TIKHUB_BREAK_GLASS_DRY_RUN", "0")
-os.environ.setdefault("KR_XHS_TIKHUB_DAILY_BUDGET_USD", "0")
-os.environ.setdefault("KR_XHS_TIKHUB_MAX_CALLS_PER_TASK", "0")
 os.environ.setdefault("KR_BILIBILI_TRANSCRIBE_ON_DETAIL", "0")
 
 if str(SRC) not in sys.path:
@@ -545,6 +542,10 @@ def _server_tools(server: Any, *, safe: bool, wait_multimodal_s: float, include_
         "get_content_detail": lambda: server.get_content_detail("https://www.bilibili.com/video/BV1cUoDYaEdb"),
         "get_capabilities": lambda: server.get_capabilities(summary=True),
         "health_check": lambda: server.health_check(mode="summary"),
+        "read_knowledge": lambda: server.read_knowledge(__import__('runtime.knowledge',fromlist=['Search']).Search(action='search',query='kr-verification-no-content',limit=1)),
+        "control_task": lambda: {"status":"expected_degraded","error_type":"expected_degraded","reason":"Explicit task identity required; contract only, no task mutated.","contract":server.get_capabilities(tool_name='control_task')},
+        "update_research": lambda: {"status":"expected_degraded","error_type":"expected_degraded","reason":"Explicit research identity required; contract only, no research mutated.","contract":server.get_capabilities(tool_name='update_research')},
+        "manage_research_artifacts": lambda: {"status":"expected_degraded","error_type":"expected_degraded","reason":"Explicit destination grant required; contract only, no files written.","contract":server.get_capabilities(tool_name='manage_research_artifacts')},
         "manage_xiaohongshu_accounts": lambda: server.manage_xiaohongshu_accounts(action="summary"),
     }
     if include_multimodal:

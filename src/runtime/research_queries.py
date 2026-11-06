@@ -20,7 +20,7 @@ def query_families(objective, supplied=None):
             raise ValueError('query_must_be_1_to_500_characters')
         if row.get('intent') not in {'discovery', 'counterevidence', 'implementation', 'experience', 'citation_follow', 'gap_follow', 'pagination'}:
             raise ValueError('query_intent_required')
-        result.append({'family_id': str(row.get('family_id') or 'query-' + hashlib.sha256(query.encode()).hexdigest()[:16]), 'query': query, 'intent': row['intent'], 'language': str(row.get('language') or 'unknown')[:24], 'source_ecology': str(row.get('source_ecology') or '*'), 'parent_event_id': str(row.get('parent_event_id') or ''), 'gap_id': str(row.get('gap_id') or ''), 'origin': 'executor_supplied', 'translation_verified': False})
+        result.append({'family_id': str(row.get('family_id') or 'query-' + hashlib.sha256((query+'|'+str(row.get('source_ecology'))+'|'+str(row.get('intent'))).encode()).hexdigest()[:16]), 'query': query, 'intent': row['intent'], 'language': str(row.get('language') or 'unknown')[:24], 'source_ecology': str(row.get('source_ecology') or '*'), 'parent_event_id': str(row.get('parent_event_id') or ''), 'gap_id': str(row.get('gap_id') or ''), 'origin': 'executor_supplied', 'translation_verified': False})
     return result
 
 

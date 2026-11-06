@@ -3,6 +3,8 @@ import logging
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -86,3 +88,26 @@ def test_package_content_scan_reports_kind_but_not_secret_value(tmp_path):
     assert any("provenance_source_root" in issue for issue in issues)
     assert any("credential_assignment" in issue for issue in issues)
     assert all("super-secret-value-123" not in issue for issue in issues)
+
+
+@pytest.mark.parametrize('text', [
+    'https://maimai.cn/community/home/recommended',
+    'https://api.github.com/users/example',
+    'https://home.example/users/example',
+    '../home/example/relative.txt',
+])
+def test_package_scan_distinguishes_public_urls_and_relative_paths_from_user_paths(tmp_path, text):
+    (tmp_path / 'source.py').write_text('STARTUP_URL = ' + repr(text), encoding='utf-8')
+    assert not check_package_content(tmp_path)
+
+
+@pytest.mark.parametrize('text', [
+    'C:' + '\\Users\\example\\report.txt',
+    'C:' + '/Users/example/report.txt',
+    '/' + 'home/example/report.txt',
+    '/' + 'Users/example/report.txt',
+    'file:///' + 'home/example/report.txt',
+])
+def test_package_scan_still_rejects_real_user_paths(tmp_path, text):
+    (tmp_path / 'source.py').write_text('report=' + text, encoding='utf-8')
+    assert any('(absolute_user_path)' in issue for issue in check_package_content(tmp_path))

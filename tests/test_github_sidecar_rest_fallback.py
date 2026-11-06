@@ -1,179 +1,88 @@
-from __future__ import annotations
-
-import json
-from types import SimpleNamespace
-
+"""原sidecar入口的回归：不再用隐藏扩词/错误后换身份“兜底”。"""
 import pytest
-
-from collectors.platform import gh_cli_sidecar
-from kr_core.errors import ErrorCode, KnowledgeRadarError
-
-
-class _Response:
-    status_code = 200
-
-    def json(self):
-        return {
-            "items": [
-                {
-                    "full_name": "alibaba/spring-ai-alibaba",
-                    "html_url": "https://github.com/alibaba/spring-ai-alibaba",
-                    "description": "Agent and AI application framework",
-                    "language": "Java",
-                    "stargazers_count": 12345,
-                    "updated_at": "2026-06-01T00:00:00Z",
-                    "owner": {"login": "alibaba"},
-                }
-            ]
-        }
+from collectors.platform import gh_cli_sidecar as search
+from collectors.platform.github_api import GitHubError
+from runtime.cost_latency import TTLCache
 
 
-class _MixedResponse:
-    status_code = 200
-
-    def json(self):
-        return {
-            "items": [
-                {
-                    "full_name": "sindresorhus/awesome",
-                    "html_url": "https://github.com/sindresorhus/awesome",
-                    "description": "Awesome list of resources",
-                    "language": None,
-                    "stargazers_count": 400000,
-                    "updated_at": "2026-06-01T00:00:00Z",
-                    "owner": {"login": "sindresorhus"},
-                },
-                {
-                    "full_name": "assafelovic/gpt-researcher",
-                    "html_url": "https://github.com/assafelovic/gpt-researcher",
-                    "description": "Autonomous agent for deep research and report generation",
-                    "language": "Python",
-                    "stargazers_count": 24000,
-                    "updated_at": "2026-06-01T00:00:00Z",
-                    "owner": {"login": "assafelovic"},
-                },
-            ]
-        }
+class Client:
+    transport='rest'
+    identity='account-a'
+    attempts=[]
+    def __init__(self):
+        self.calls=[]
+        self.rows=[{'id':1, 'full_name':'o/weather', 'private':False, 'description':'Weather parser', 'stargazers_count':0},
+                   {'id':2, 'full_name':'o/research', 'private':False, 'description':'deep research autonomous agent report generation', 'stargazers_count':99999}]
+    def json(self, endpoint, *, params):
+        self.calls.append((endpoint,params))
+        return {'items':self.rows, 'total_count':200, 'incomplete_results':False}, {'link':'<https://api.github.com/search/repositories?page=2>; rel="next"'}
 
 
-class _QueryAwareResponse:
-    status_code = 200
-
-    def __init__(self, query: str):
-        self.query = query
-
-    def json(self):
-        if "gpt-researcher" in self.query:
-            return {
-                "items": [
-                    {
-                        "full_name": "assafelovic/gpt-researcher",
-                        "html_url": "https://github.com/assafelovic/gpt-researcher",
-                        "description": "An autonomous agent that conducts deep research on any data using any LLM providers",
-                        "language": "Python",
-                        "stargazers_count": 27695,
-                        "updated_at": "2026-06-01T00:00:00Z",
-                        "owner": {"login": "assafelovic"},
-                    }
-                ]
-            }
-        return _MixedResponse().json()
+@pytest.fixture
+def client(monkeypatch):
+    value=Client()
+    monkeypatch.setattr(search.GitHubClient, 'configured', lambda **kw: value)
+    monkeypatch.setattr(search, '_SEARCH_CACHE', TTLCache('test', ttl_s=300))
+    return value
 
 
-@pytest.fixture(autouse=True)
-def _disable_breaker(monkeypatch):
-    class Policy:
-        def is_open(self, _key):
-            return {"open": False}
-
-        def mark_success(self, *_args, **_kwargs):
-            return None
-
-        def mark_failure(self, *_args, **_kwargs):
-            return None
-
-    monkeypatch.setattr(gh_cli_sidecar, "get_degradation_policy", lambda: Policy())
+def test_query_qualifiers_and_upstream_order_are_preserved(client):
+    query='org:o language:Python "error handling"'
+    result=search.search_repositories(query, limit=2)
+    assert len(client.calls)==1
+    assert client.calls[0][1]['q']==query+' is:public'
+    assert result['items'][0]['title']=='o/weather'
+    assert result['metadata']['query_rewritten'] is False
+    assert result['metadata']['upstream_order_preserved'] is True
+    assert result['items'][0]['content_entrypoints']['readme']['arguments']['github']['kind']=='readme'
 
 
-def test_github_rest_fallback_runs_after_empty_gh_cli(monkeypatch) -> None:
-    monkeypatch.setattr(
-        gh_cli_sidecar,
-        "_run_gh",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr=""),
-    )
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", lambda *_args, **_kwargs: _Response())
-
-    result = gh_cli_sidecar.search_repositories("spring-ai-alibaba deepresearch deep research", limit=3)
-
-    assert result["fallback_used"] is True
-    assert result["attempted_providers"] == ["github", "github_rest"]
-    assert result["items"][0]["url"] == "https://github.com/alibaba/spring-ai-alibaba"
-    assert result["metadata"]["strategy"] == "github_rest_after_empty_cli"
+@pytest.mark.parametrize('query', ['中文 数据库', 'pentest vulnerability', 'job search', 'awesome skills'])
+def test_no_query_theme_or_language_bias(client, query):
+    result=search.search_repositories(query, limit=2)
+    assert result['items'][0]['title']=='o/weather'
+    assert len(client.calls)==1 and result['query']==query
 
 
-def test_github_rest_fallback_runs_after_gh_cli_error(monkeypatch) -> None:
-    def raise_login_required(*_args, **_kwargs):
-        raise KnowledgeRadarError(
-            "gh not logged in",
-            code=ErrorCode.REQUEST_FAILED,
-            platform="GitHub",
-            retryable=False,
-            metadata={"failure_code": "LOGIN_REQUIRED"},
-        )
-
-    monkeypatch.setattr(gh_cli_sidecar, "_run_gh", raise_login_required)
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", lambda *_args, **_kwargs: _Response())
-
-    result = gh_cli_sidecar.search_repositories("spring-ai-alibaba deepresearch deep research", limit=3)
-
-    assert result["fallback_used"] is True
-    assert result["items"][0]["source_provider"] == "github_rest"
-    assert result["metadata"]["cli_failure_code"] == "LOGIN_REQUIRED"
-    assert result["metadata"]["strategy"] == "github_rest_after_cli_error"
+def test_page_and_source_limit_are_explicit(client):
+    result=search.search_repositories('weather', limit=2, page=2)
+    assert client.calls[0][1]['page']==2
+    assert result['next_page']==3 and result['total_count']==200
+    assert result['coverage']['all_github_repositories_exhausted'] is False
+    with pytest.raises(GitHubError): search.search_repositories('x', limit=20, page=51)
 
 
-def test_github_rest_fallback_runs_after_plain_gh_exception(monkeypatch) -> None:
-    def raise_plain_auth_error(*_args, **_kwargs):
-        raise RuntimeError("gh auth missing probe")
-
-    monkeypatch.setattr(gh_cli_sidecar, "_run_gh", raise_plain_auth_error)
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", lambda *_args, **_kwargs: _Response())
-
-    result = gh_cli_sidecar.search_repositories("spring-ai-alibaba deepresearch deep research", limit=3)
-
-    assert result["fallback_used"] is True
-    assert result["items"][0]["source_provider"] == "github_rest"
-    assert result["metadata"]["cli_failure_code"] == "LOGIN_REQUIRED"
-    assert result["metadata"]["strategy"] == "github_rest_after_cli_error"
+def test_true_empty_is_success_without_extra_calls(client):
+    client.rows=[]
+    result=search.search_repositories('no matches', limit=2)
+    assert result['status']=='ok' and result['items']==[]
+    assert result['fallback_used'] is False and len(client.calls)==1
 
 
-def test_github_rest_reranks_relevant_repo_above_generic_awesome(monkeypatch) -> None:
-    monkeypatch.setattr(
-        gh_cli_sidecar,
-        "_run_gh",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr=""),
-    )
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", lambda *_args, **_kwargs: _MixedResponse())
-
-    result = gh_cli_sidecar.search_repositories("AI research report generator agent open source", limit=2)
-
-    assert result["items"][0]["url"] == "https://github.com/assafelovic/gpt-researcher"
-    assert result["items"][0]["relevance_score"] > result["items"][1]["relevance_score"]
+def test_error_never_becomes_empty_success(client, monkeypatch):
+    def failure(*a, **kw): raise GitHubError('PERMISSION_DENIED', '403 access denied')
+    monkeypatch.setattr(client, 'json', failure)
+    with pytest.raises(GitHubError) as exc: search.search_repositories('x')
+    assert exc.value.code=='PERMISSION_DENIED'
 
 
-def test_github_rest_aggregates_semantic_queries_before_ranking(monkeypatch) -> None:
-    monkeypatch.setattr(
-        gh_cli_sidecar,
-        "_run_gh",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr=""),
-    )
+def test_identity_cache_and_refresh(client):
+    search.search_repositories('weather')
+    cached=search.search_repositories('weather')
+    assert len(client.calls)==1 and cached['metadata']['network_reverified'] is False
+    client.identity='account-b'
+    search.search_repositories('weather')
+    assert len(client.calls)==2
+    search.search_repositories('weather', refresh=True)
+    assert len(client.calls)==3
+    for row in search._SEARCH_CACHE._items.values():row['created_at']=0
+    # TTL is enforced by the cache instead of allow_stale=True.
+    search._SEARCH_CACHE.ttl_s=-1
+    search.search_repositories('weather')
+    assert len(client.calls)==4
 
-    def fake_get(*_args, **kwargs):
-        return _QueryAwareResponse(str((kwargs.get("params") or {}).get("q") or ""))
 
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", fake_get)
-
-    result = gh_cli_sidecar.search_repositories("AI research report generator agent open source", limit=3)
-
-    assert result["items"][0]["url"] == "https://github.com/assafelovic/gpt-researcher"
-    assert any("gpt-researcher" in query for query in result["metadata"]["rest_attempted_queries"])
+def test_incomplete_search_and_private_scope_cannot_look_complete(client, monkeypatch):
+    monkeypatch.setattr(client, 'json', lambda *a, **kw: ({'items':[], 'incomplete_results':True, 'total_count':0},{}))
+    assert search.search_repositories('x')['status']=='partial'
+    with pytest.raises(GitHubError):search.search_repositories('is:private')

@@ -16,6 +16,30 @@ NOTE_ID_RE = re.compile(r"/(?:explore|search_result|discovery/item)/([^/?#]+)", 
 XSEC_TOKEN_RE = re.compile(r"[?&]xsec_token=([^&#]+)", re.I)
 
 
+def xhs_search_state_items_js() -> str:
+    """只读当前搜索页已加载的候选；DOM 的无签名链接不能替代执行地址。"""
+    return r"""(() => {
+      const unwrap = value => value && (value._value ?? value.value ?? value);
+      const state = window.__INITIAL_STATE__ || {};
+      const search = unwrap(state.search) || {};
+      const feeds = unwrap(search.feeds) || unwrap(search.notes) || unwrap(search.searchResult) || [];
+      const rows = Array.isArray(feeds) ? feeds : (feeds.items || feeds.list || []);
+      return (Array.isArray(rows) ? rows : []).slice(0, 200).flatMap(entry => {
+        const row = unwrap(entry) || {};
+        const card = unwrap(row.noteCard || row.note_card || row.note) || row;
+        const id = row.id || row.noteId || row.note_id || card.noteId || card.note_id || card.id;
+        const token = row.xsecToken || row.xsec_token || card.xsecToken || card.xsec_token || '';
+        const title = card.displayTitle || card.display_title || card.title || card.desc || '';
+        if (!id || !title) return [];
+        const user = card.user || {};
+        return [{noteId: String(id), xsecToken: String(token), title: String(title),
+          author: user.nickname || '', desc: card.desc || '',
+          likes: (card.interactInfo || card.interact_info || {}).likedCount || 0,
+          noteType: card.type || '', url: 'https://www.xiaohongshu.com/explore/' + id}];
+      });
+    })()"""
+
+
 def normalize_xhs_search_candidates(
     items: Iterable[Dict[str, Any]],
     *,

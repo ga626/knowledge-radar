@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+from generic_web.browser_runtime import owned_sync_browser
+
 import html
-from io import BytesIO
+import json
+import time
 import re
 from typing import Any, Dict, List
 from urllib.parse import quote, urljoin
 
 import httpx
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
 from runtime.asyncio_isolation import run_sync_in_worker_if_asyncio
 
 from .chinese_open_access import ChineseOpenAccessProvider, DEFAULT_HEADERS, OpenAccessPlatformConfig
 from .models import AcademicSearchRequest, AcademicWork, normalize_doi
+
+
+def sync_playwright():
+    from playwright.sync_api import sync_playwright as start
+    return start()
+
 
 
 PUBSCHOLAR_HEADERS = {
@@ -25,7 +31,7 @@ PUBSCHOLAR_HEADERS = {
     "Origin": "https://pubscholar.cn",
     "Referer": "https://pubscholar.cn/",
 }
-PUBSCHOLAR_USER_ID = "d78d0ec50d059fe95b075f42c24f4a0a"
+PUBSCHOLAR_USER_ID = ""
 ARTICLE_SEARCH_URL = "https://pubscholar.cn/hky/open/resources/api/v1/articles"
 ARTICLE_AGGREGATIONS_URL = "https://pubscholar.cn/hky/open/resources/api/v1/articles/aggregations"
 PUBSCHOLAR_MIN_EXTRACTED_TEXT_CHARS = 500
@@ -55,7 +61,7 @@ class PubScholarProvider(ChineseOpenAccessProvider):
         status.update(
             {
                 "network": "public_json_api_and_pdf_viewer",
-                "notes": "Article search and full-text PDF text extraction work anonymously; login is only for optional personalized/AI assistant functions.",
+                "notes": "Anonymous discovery and eligible PDF paths are implemented; current per-article availability and permissions must be verified. A metadata hit is not proof of readable full text.",
                 "text_extraction": {
                     "method": "pypdf_from_anonymous_pdf_file",
                     "minimum_chars": PUBSCHOLAR_MIN_EXTRACTED_TEXT_CHARS,
@@ -92,31 +98,40 @@ class PubScholarProvider(ChineseOpenAccessProvider):
         if not query:
             return []
 
+        self._open_access_only = bool(request.options.get('open_access_only', False))
+        self._source_offset = int(request.options.get('source_offset', 0))
         limit = max(1, min(int(request.limit or 5), 20))
-        fetch_limit = max(limit, min(20, limit * 3))
+        fetch_limit = limit
+        if self._source_offset % limit:
+            raise ValueError('source_offset_must_be_multiple_of_limit; keep pagination limit unchanged')
         try:
             data = self._search_with_httpx(query=query, limit=fetch_limit)
-        except Exception:
+        except Exception as exc:
+            from runtime.execution_context import ExecutionStopped, check_execution
+            if isinstance(exc, ExecutionStopped):
+                raise
+            check_execution()
             data = self._search_with_browser(query=query, limit=fetch_limit)
 
-        items = data.get("content") if isinstance(data, dict) else []
+        from .chinese_open_access import OpenAccessResults
+        items = data.get("content") if isinstance(data, dict) else None
         if not isinstance(items, list):
-            return []
+            return OpenAccessResults([], [{'type': 'parse_error', 'message': 'PubScholar 响应缺少 content 列表；不是零结果。', 'retryable': False}])
         works = [self._work_from_article(item, request) for item in items if isinstance(item, dict)]
         text_candidates = [work for work in works if work.raw.get("pdf_url")]
-        return text_candidates[:limit]
+        diagnostics = [] if items else [{'type': 'no_match',
+            'message': '接口明确返回空列表', 'retryable': False}]
+        # Search discovery is useful even when a separate article visit is needed
+        # to resolve its viewer. Do not discard all metadata as an empty search.
+        ordered = text_candidates + [work for work in works if not work.raw.get("pdf_url")]
+        result = OpenAccessResults(ordered[:limit], diagnostics)
+        result.continuation = {'source_offset':getattr(self,'_source_offset',0)+len(result)} if len(result)==limit else None
+        return result
 
     def _search_with_httpx(self, *, query: str, limit: int) -> Dict[str, Any]:
-        payload = {
-            "page": 1,
-            "size": limit,
-            "order_field": "default",
-            "order_direction": "desc",
-            "user_id": PUBSCHOLAR_USER_ID,
-            "lang": "zh",
-            "query": query,
-            "open_access": "openAccess",
-        }
+        payload = build_pubscholar_article_payload(query, limit=limit,
+            open_access=getattr(self, '_open_access_only', False))
+        payload['page'] = getattr(self, '_source_offset', 0) // limit + 1
         with httpx.Client(timeout=self.timeout_s, follow_redirects=True, headers=PUBSCHOLAR_HEADERS) as client:
             response = client.post(ARTICLE_SEARCH_URL, json=payload)
             response.raise_for_status()
@@ -132,40 +147,49 @@ class PubScholarProvider(ChineseOpenAccessProvider):
 
     def _search_with_browser_sync(self, *, query: str, limit: int) -> Dict[str, Any]:
         captured: List[Dict[str, Any]] = []
-        with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(headless=True, channel="chromium")
-            try:
-                page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
+        from runtime.execution_context import check_execution
+        if getattr(self, '_source_offset', 0):
+            raise ValueError('pubscholar_browser_paging_not_supported')
+        check_execution()
+        with sync_playwright() as playwright, owned_sync_browser(playwright) as browser:
+            page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
 
-                def on_response(response):
-                    if response.url != ARTICLE_SEARCH_URL:
-                        return
-                    request = response.request
-                    post_data = request.post_data or ""
-                    if '"open_access":"openAccess"' not in post_data.replace(" ", ""):
-                        return
-                    try:
-                        captured.append(response.json())
-                    except Exception:
-                        return
+            def on_response(response):
+                if response.url != ARTICLE_SEARCH_URL:
+                    return
+                request = response.request
+                post_data = request.post_data or ""
+                try:
+                    submitted = json.loads(post_data)
+                except (TypeError, ValueError):
+                    return
+                if submitted.get('query') != query:
+                    return
+                if getattr(self, '_open_access_only', False) and submitted.get('open_access') != 'openAccess':
+                    return
+                try:
+                    captured.append(response.json())
+                except Exception:
+                    return
 
-                page.on("response", on_response)
-                page.goto(self.config.homepage, wait_until="domcontentloaded", timeout=int(self.timeout_s * 1000) * 3)
-                search_box = page.locator('input[placeholder="发现你感兴趣的内容..."]')
-                search_box.wait_for(state="visible", timeout=12000)
-                search_box.fill(query, timeout=8000)
-                page.get_by_role("button", name="检索", exact=True).click(timeout=8000)
-                page.wait_for_timeout(2500)
+            page.on("response", on_response)
+            page.goto(self.config.homepage, wait_until="domcontentloaded", timeout=int(min(self.timeout_s,45) * 1000))
+            search_box = page.locator('input[placeholder="发现你感兴趣的内容..."]')
+            search_box.wait_for(state="visible", timeout=12000)
+            search_box.fill(query, timeout=8000)
+            page.get_by_role("button", name="检索", exact=True).click(timeout=8000)
+            if getattr(self, '_open_access_only', False):
                 page.locator('div.base-switch[role="switch"]').first.click(timeout=8000)
-                page.wait_for_timeout(4000)
-                if not captured:
-                    raise PlaywrightTimeoutError("PubScholar open-access article response was not captured")
-                data = captured[-1]
-                if isinstance(data, dict) and limit != 10 and len(data.get("content") or []) > limit:
-                    data = {**data, "content": list(data.get("content") or [])[:limit]}
-                return data
-            finally:
-                browser.close()
+            until = time.monotonic() + min(self.timeout_s, 30)
+            while not captured and time.monotonic() < until:
+                check_execution()
+                page.wait_for_timeout(200)
+            if not captured:
+                raise TimeoutError("PubScholar article response was not captured")
+            data = captured[-1]
+            if isinstance(data, dict) and limit != 10 and len(data.get("content") or []) > limit:
+                data = {**data, "content": list(data.get("content") or [])[:limit]}
+            return data
 
     def search_urls(self, request: AcademicSearchRequest):
         query = quote(str(request.query or "").strip())
@@ -178,9 +202,9 @@ class PubScholarProvider(ChineseOpenAccessProvider):
         article_url = _article_url(item)
         pdf_url = _first_pdf_file_url(item)
         source_url = pdf_url or article_url or str(item.get("link") or "")
-        full_text_status = "open_access_article_detail"
+        full_text_status = "open_access_article_detail" if item.get('open_access') else "article_detail_candidate"
         if pdf_url:
-            full_text_status = "pdf_text_extractable"
+            full_text_status = "pdf_link_found"
         elif item.get("local_links") or item.get("providers"):
             full_text_status = "open_pdf_viewer_candidate"
 
@@ -192,7 +216,7 @@ class PubScholarProvider(ChineseOpenAccessProvider):
             "pdf_url": pdf_url,
             "local_links_count": len(item.get("local_links") or []),
             "providers_count": len(item.get("providers") or []),
-            "open_access_filter": True,
+            "open_access_filter":getattr(self, "_open_access_only", False),
             "query": request.query,
         }
         return AcademicWork(
@@ -203,32 +227,32 @@ class PubScholarProvider(ChineseOpenAccessProvider):
             doi=normalize_doi(str(item.get("doi") or "")),
             abstract=_clean_pubscholar_html(item.get("abstracts") or item.get("abstract") or ""),
             source=_clean_pubscholar_html(item.get("journal") or item.get("source") or "PubScholar"),
-            oa_status="open",
+            oa_status="open" if pdf_url or item.get("open_access") else "unknown",
             source_database="pubscholar",
+            document_type=str(item.get('type') or item.get('cn_type') or 'unknown'),
             access_mode="anonymous_open_access_pdf_viewer",
             full_text_status=full_text_status,
             provider_confidence=0.88 if article_url else 0.74,
-            verification_status="open_access_filtered_result",
-            license_scope="open_or_platform_terms",
+            verification_status="open_access_filtered_result" if getattr(self,"_open_access_only",False) else "discovery_only",
+            license_scope="unknown",
             raw=raw,
         )
 
-    def verify_article_fulltext(self, article_url: str) -> Dict[str, Any]:
+    def verify_article_fulltext(self, article_url: str, *, include_ocr=None, document_options=None) -> Dict[str, Any]:
         """Verify that a PubScholar article detail page exposes an anonymous PDF viewer/file."""
-        return verify_pubscholar_article_fulltext(article_url, timeout_s=self.timeout_s)
+        return verify_pubscholar_article_fulltext(article_url, timeout_s=self.timeout_s, include_ocr=include_ocr, document_options=document_options)
 
-    def verify_pdf_text_url(self, file_url: str, *, referer: str = "https://pubscholar.cn/") -> Dict[str, Any]:
-        return verify_pubscholar_pdf_text_url(file_url, referer=referer, timeout_s=self.timeout_s)
+    def verify_pdf_text_url(self, file_url: str, *, referer: str = "https://pubscholar.cn/", include_ocr=None, document_options=None) -> Dict[str, Any]:
+        return verify_pubscholar_pdf_text_url(file_url, referer=referer, timeout_s=self.timeout_s, include_ocr=include_ocr, document_options=document_options)
 
 
-def build_pubscholar_article_payload(query: str, *, limit: int = 10, open_access: bool = True) -> Dict[str, Any]:
+def build_pubscholar_article_payload(query: str, *, limit: int = 10, open_access: bool = False) -> Dict[str, Any]:
     """Build the observed PubScholar article search payload."""
     payload: Dict[str, Any] = {
         "page": 1,
         "size": max(1, min(int(limit or 10), 20)),
         "order_field": "default",
         "order_direction": "desc",
-        "user_id": PUBSCHOLAR_USER_ID,
         "lang": "zh",
         "query": str(query or "").strip(),
     }
@@ -237,10 +261,10 @@ def build_pubscholar_article_payload(query: str, *, limit: int = 10, open_access
     return payload
 
 
-def verify_pubscholar_article_fulltext(article_url: str, *, timeout_s: float = 15.0) -> Dict[str, Any]:
+def verify_pubscholar_article_fulltext(article_url: str, *, timeout_s: float = 15.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
     url = str(article_url or "").strip()
     if _looks_like_pubscholar_pdf_candidate(url):
-        status = verify_pubscholar_pdf_text_url(url, referer="https://pubscholar.cn/", timeout_s=timeout_s)
+        status = verify_pubscholar_pdf_text_url(url, referer="https://pubscholar.cn/", timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options)
         status["article_url"] = url
         status.setdefault("viewer_url", "")
         return status
@@ -255,147 +279,73 @@ def verify_pubscholar_article_fulltext(article_url: str, *, timeout_s: float = 1
         }
 
     return run_sync_in_worker_if_asyncio(
-        lambda: _verify_pubscholar_article_fulltext_sync(url, timeout_s=timeout_s),
+        lambda: _verify_pubscholar_article_fulltext_sync(url, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options),
         timeout_s=max(30.0, timeout_s * 5),
         thread_name_prefix="kr-pubscholar",
     )
 
 
-def _verify_pubscholar_article_fulltext_sync(url: str, *, timeout_s: float = 15.0) -> Dict[str, Any]:
-    with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=True, channel="chromium")
-        try:
-            page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
-            resource_urls: List[str] = []
+def _verify_pubscholar_article_fulltext_sync(url: str, *, timeout_s: float = 15.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
+    with sync_playwright() as playwright, owned_sync_browser(playwright) as browser:
+        page = browser.new_page(viewport={"width": 1600, "height": 1000}, locale="zh-CN")
+        resource_urls: List[str] = []
 
-            def on_response(response):
-                response_url = response.url
-                if "/child/pdf-view/" in response_url or "/files?" in response_url or "/api/v2/article/" in response_url:
-                    resource_urls.append(response_url)
+        def on_response(response):
+            response_url = response.url
+            if "/child/pdf-view/" in response_url or "/files?" in response_url or "/api/v2/article/" in response_url:
+                resource_urls.append(response_url)
 
-            page.on("response", on_response)
-            page.goto(url, wait_until="domcontentloaded", timeout=int(timeout_s * 1000) * 4)
-            page.wait_for_timeout(4000)
-            body = _clean_pubscholar_html(page.locator("body").inner_text(timeout=8000))
-            file_urls = [item for item in resource_urls if "/files?" in item]
-            viewer_urls = [item for item in resource_urls if "/child/pdf-view/" in item or "/pdf-view/" in item]
-            file_url = file_urls[-1] if file_urls else ""
-            pdf_confirmed = False
-            pdf_probe: Dict[str, Any] = {}
-            text_probe: Dict[str, Any] = {
-                "extractable": False,
-                "text_length": 0,
-                "page_count": 0,
-                "sample": "",
-                "error": "",
-            }
-            if file_url:
-                with httpx.Client(timeout=timeout_s, follow_redirects=True, headers={**DEFAULT_HEADERS, "Referer": url}) as client:
-                    response = client.get(file_url)
-                    prefix = response.content[:8]
-                    pdf_confirmed = response.status_code == 200 and prefix.startswith(b"%PDF-")
-                    pdf_probe = {
-                        "status_code": response.status_code,
-                        "first_bytes_hex": prefix.hex(),
-                        "content_type": response.headers.get("content-type", ""),
-                        "content_length": response.headers.get("content-length", ""),
-                    }
-                    if pdf_confirmed:
-                        try:
-                            text_result = extract_pdf_text(response.content)
-                            extracted_text = text_result["text"]
-                            text_probe = {
-                                "extractable": len(extracted_text) >= PUBSCHOLAR_MIN_EXTRACTED_TEXT_CHARS,
-                                "text_length": len(extracted_text),
-                                "page_count": text_result["page_count"],
-                                "sample": extracted_text[:240],
-                                "error": "",
-                            }
-                        except Exception as exc:
-                            text_probe = {
-                                "extractable": False,
-                                "text_length": 0,
-                                "page_count": 0,
-                                "sample": "",
-                                "error": f"{type(exc).__name__}: {exc}",
-                            }
-            text_confirmed = bool(text_probe.get("extractable"))
-            return {
-                "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
-                "article_url": url,
-                "title": page.title(),
-                "has_fulltext_section": "全文浏览" in body,
-                "viewer_url": viewer_urls[0] if viewer_urls else "",
-                "file_url": file_url,
-                "pdf_bytes_confirmed": pdf_confirmed,
-                "text_extractable": text_confirmed,
-                "text_probe": text_probe,
-                "pdf_probe": pdf_probe,
-                "resource_counts": {
-                    "article_api": len([item for item in resource_urls if "/api/v2/article/" in item]),
-                    "viewer": len(viewer_urls),
-                    "file": len(file_urls),
-                },
-            }
-        finally:
-            browser.close()
-
-
-def verify_pubscholar_pdf_text_url(file_url: str, *, referer: str = "https://pubscholar.cn/", timeout_s: float = 15.0) -> Dict[str, Any]:
-    url = str(file_url or "").strip()
-    if not url.startswith(("http://", "https://")):
-        return {
-            "status": "unsupported_url",
-            "file_url": url,
-            "pdf_bytes_confirmed": False,
-            "text_extractable": False,
-            "text_probe": {"extractable": False, "text_length": 0, "page_count": 0, "sample": "", "error": "not_http_url"},
+        page.on("response", on_response)
+        page.goto(url, wait_until="domcontentloaded", timeout=int(min(timeout_s, 45) * 1000))
+        page.wait_for_timeout(4000)
+        body = _clean_pubscholar_html(page.locator("body").inner_text(timeout=8000))
+        file_urls = [item for item in resource_urls if "/files?" in item]
+        viewer_urls = [item for item in resource_urls if "/child/pdf-view/" in item or "/pdf-view/" in item]
+        file_url = file_urls[-1] if file_urls else ""
+        pdf_confirmed = False
+        pdf_probe: Dict[str, Any] = {}
+        text_probe: Dict[str, Any] = {
+            "extractable": False,
+            "text_length": 0,
+            "page_count": 0,
+            "sample": "",
+            "error": "",
         }
-    with httpx.Client(timeout=timeout_s, follow_redirects=True, headers={**DEFAULT_HEADERS, "Referer": referer}) as client:
-        response = client.get(url)
-    prefix = response.content[:8]
-    pdf_confirmed = response.status_code == 200 and prefix.startswith(b"%PDF-")
-    text_probe: Dict[str, Any] = {"extractable": False, "text_length": 0, "page_count": 0, "sample": "", "error": ""}
-    if pdf_confirmed:
-        try:
-            text_result = extract_pdf_text(response.content)
-            extracted_text = text_result["text"]
-            text_probe = {
-                "extractable": len(extracted_text) >= PUBSCHOLAR_MIN_EXTRACTED_TEXT_CHARS,
-                "text_length": len(extracted_text),
-                "page_count": text_result["page_count"],
-                "sample": extracted_text[:240],
-                "error": "",
-            }
-        except Exception as exc:
-            text_probe["error"] = f"{type(exc).__name__}: {exc}"
-    text_confirmed = bool(text_probe.get("extractable"))
-    return {
-        "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
-        "file_url": url,
-        "pdf_bytes_confirmed": pdf_confirmed,
-        "text_extractable": text_confirmed,
-        "text_probe": text_probe,
-        "pdf_probe": {
-            "status_code": response.status_code,
-            "first_bytes_hex": prefix.hex(),
-            "content_type": response.headers.get("content-type", ""),
-            "content_length": response.headers.get("content-length", ""),
-        },
-    }
+        if file_url:
+            resolved = verify_pubscholar_pdf_text_url(file_url, referer=url, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options)
+            pdf_confirmed = resolved['pdf_bytes_confirmed']
+            pdf_probe = resolved.get('pdf_probe', {})
+            text_probe = resolved['text_probe']
+        text_confirmed = bool(text_probe.get("extractable"))
+        return {
+            "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
+            "article_url": url,
+            "title": page.title(),
+            "has_fulltext_section": "全文浏览" in body,
+            "viewer_url": viewer_urls[0] if viewer_urls else "",
+            "file_url": file_url,
+            "pdf_bytes_confirmed": pdf_confirmed,
+            "text_extractable": text_confirmed,
+            "text_probe": text_probe,
+            "pdf_probe": pdf_probe,
+            "input_sha256": resolved.get("input_sha256", "") if file_url else "",
+            "pdf_processing": resolved.get("pdf_processing", {}) if file_url else {},
+            "resource_counts": {
+                "article_api": len([item for item in resource_urls if "/api/v2/article/" in item]),
+                "viewer": len(viewer_urls),
+                "file": len(file_urls),
+            },
+        }
 
 
-def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = 5) -> Dict[str, Any]:
-    """Extract selectable PDF text for PubScholar full-text validation."""
-    from pypdf import PdfReader
+def verify_pubscholar_pdf_text_url(file_url: str, *, referer: str = "https://pubscholar.cn/", timeout_s: float = 600.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
+    from runtime.pdf_text import fetch_pdf_document
+    return fetch_pdf_document(file_url, referer=referer, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options)
 
-    reader = PdfReader(BytesIO(pdf_bytes))
-    page_count = len(reader.pages)
-    text_chunks = []
-    for page in list(reader.pages)[: max(1, int(max_pages or 1))]:
-        text_chunks.append(page.extract_text() or "")
-    text = re.sub(r"\s+", " ", "\n".join(text_chunks)).strip()
-    return {"text": text, "page_count": page_count}
+
+def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int | None = None) -> Dict[str, Any]:
+    from runtime.pdf_text import extract_pdf_text as parse
+    return parse(pdf_bytes, max_pages=max_pages)
 
 
 def pubscholar_file_url_from_viewer_url(viewer_url: str) -> str:

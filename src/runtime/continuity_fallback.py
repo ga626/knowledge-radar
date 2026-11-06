@@ -10,6 +10,7 @@ so platform adapters and research evidence are not duplicated.
 from __future__ import annotations
 
 import asyncio
+import ast
 from contextlib import asynccontextmanager
 import hashlib
 import json
@@ -22,21 +23,44 @@ import uuid
 
 SCHEMA = "knowledgeradar-continuity-fallback/v1"
 READINESS_TOOLS = {"health_check", "get_capabilities"}
-EXPECTED_TOOL_NAMES = frozenset(
-    {
-        "kr_research", "finalize_research_task", "analyze_decision_logs", "get_task_status",
-        "kr_web_search", "search_github_repositories", "search_youtube", "search_wechat_articles",
-        "search_academic", "extract_web_page", "extract_dynamic_page", "search_bilibili",
-        "search_xiaohongshu", "search_zhihu", "search_recruitment", "get_capabilities", "health_check",
-        "get_content_detail", "manage_xiaohongshu_accounts", "record_research_candidates_tool",
-        "advance_research_candidate", "review_research_progress",
-    }
-)
+REQUIRED_TOOL_NAMES = frozenset({
+    "health_check", "get_capabilities", "kr_research", "get_task_status",
+    "get_content_detail", "finalize_research_task",
+})
+RETIRED_TOOL_NAMES = frozenset({"expand_keywords", "plan_research"})
 MAX_READINESS_ATTEMPTS = 2
 
 
 class FallbackContractError(ValueError):
     """The requested fallback call is outside the explicit L3 contract."""
+
+    def __init__(self, message: str, *, stage: str = "configuration", retryable: bool = False):
+        super().__init__(message)
+        self.code = message.split(":", 1)[0]
+        self.stage = stage
+        self.retryable = retryable
+        self.attempt_count = 1
+
+
+def _failure(exc: Exception, stage: str) -> FallbackContractError:
+    """Unwrap task-group errors without publishing arbitrary exception text."""
+    leaves = []
+
+    def collect(error):
+        if isinstance(error, BaseExceptionGroup):
+            for child in error.exceptions:
+                collect(child)
+        else:
+            leaves.append(error)
+
+    collect(exc)
+    contractual = next((item for item in leaves if isinstance(item, FallbackContractError)), None)
+    if contractual is not None:
+        return contractual
+    transport = bool(leaves) and all(isinstance(item, (OSError, TimeoutError)) for item in leaves)
+    return FallbackContractError(
+        "fallback_transport_failed" if transport else "fallback_protocol_failed",
+        stage=stage, retryable=transport and stage in {"connection", "initialization"})
 
 
 def default_codex_config_path() -> Path:
@@ -94,7 +118,7 @@ def configured_stdio_server(*, config_path: Path | None = None, project_root: Pa
     try:
         raw = tomllib.loads(config.read_text(encoding="utf-8-sig"))
     except (OSError, tomllib.TOMLDecodeError) as exc:
-        raise FallbackContractError(f"codex_config_unreadable:{exc}") from exc
+        raise FallbackContractError("codex_config_unreadable") from exc
     servers = raw.get("mcp_servers") if isinstance(raw, dict) else None
     entry = servers.get("knowledgeradar") if isinstance(servers, dict) else None
     if not isinstance(entry, dict) or entry.get("enabled") is False:
@@ -122,6 +146,7 @@ def configured_stdio_server(*, config_path: Path | None = None, project_root: Pa
         "cwd": str(cwd),
         "env": _as_string_map(entry.get("env")),
         "identity": identity,
+        "project_root": str(root),
     }
 
 
@@ -143,17 +168,70 @@ def _catalog_fingerprint(tools: list[str]) -> str:
     return f"sha256:{digest}"
 
 
-def _validate_tool_catalog(tools: list[str]) -> None:
+def _validate_tool_catalog(tools: list[str], expected_tools: list[str]) -> None:
     """Reject a partial or unexpected server before any tool is invoked."""
 
     actual = frozenset(tools)
-    if actual != EXPECTED_TOOL_NAMES:
-        missing = ",".join(sorted(EXPECTED_TOOL_NAMES - actual))
-        unexpected = ",".join(sorted(actual - EXPECTED_TOOL_NAMES))
+    expected = frozenset(expected_tools)
+    if len(tools) != len(actual):
+        raise FallbackContractError("configured_server_duplicate_tools", stage="catalog")
+    if actual != expected:
+        missing = ",".join(sorted(expected - actual))
+        unexpected = ",".join(sorted(actual - expected))
         raise FallbackContractError(
-            f"configured_server_tool_catalog_mismatch:expected={len(EXPECTED_TOOL_NAMES)}:actual={len(actual)}:"
-            f"missing={missing}:unexpected={unexpected}"
+            f"configured_server_tool_catalog_mismatch:expected={len(expected)}:actual={len(actual)}:"
+            f"missing={missing}:unexpected={unexpected}", stage="catalog"
         )
+
+
+def _declared_tool_catalog(server: dict[str, Any]) -> tuple[list[str], dict[str, str]]:
+    """Use the selected artifact's contract, or its explicit legacy decorators."""
+    root = Path(server["cwd"])
+    path = root / "config/codex-product/tool-contracts.json"
+    kind = "artifact_contract"
+    try:
+        if path.exists():
+            raw = path.read_bytes()
+            contract = json.loads(raw.decode("utf-8-sig"))
+            if not isinstance(contract, dict) or contract.get("schema") != "kr-tool-catalog/v1":
+                raise ValueError("invalid_contract")
+            names = [item["name"] for item in contract["tools"]]
+            if contract.get("tool_count") != len(names):
+                raise ValueError("invalid_count")
+        else:
+            # Pre-contract installations register top-level functions through
+            # this exact decorator. Never import a second server in this client.
+            kind = "legacy_source_registration"
+            path = root / "src/server.py"
+            raw = path.read_bytes()
+            tree = ast.parse(raw.decode("utf-8-sig"))
+            names = [
+                node.name for node in tree.body
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and any(isinstance(d, ast.Call) and isinstance(d.func, ast.Name)
+                        and d.func.id == "nonblocking_mcp_tool" and len(d.args) == 1
+                        and isinstance(d.args[0], ast.Name) and d.args[0].id == "mcp"
+                        and not d.keywords for d in node.decorator_list)
+            ]
+        if (not names or any(not isinstance(n, str) or not n.isidentifier() for n in names)
+                or len(set(names)) != len(names) or not REQUIRED_TOOL_NAMES <= set(names)
+                or RETIRED_TOOL_NAMES.intersection(names)):
+            raise ValueError("invalid_names")
+    except (OSError, ValueError, KeyError, TypeError, SyntaxError) as exc:
+        raise FallbackContractError("configured_server_tool_contract_invalid", stage="catalog") from exc
+    return names, {"kind": kind, "path": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def _revalidate_selection(server: dict[str, Any], catalog_identity: dict[str, str]) -> None:
+    selected = configured_stdio_server(config_path=Path(server["config_path"]), project_root=Path(server["project_root"]))
+    if any(selected.get(k) != server.get(k) for k in ("command", "args", "cwd", "env", "identity")):
+        raise FallbackContractError("configured_server_selection_changed", stage="identity")
+    try:
+        unchanged = hashlib.sha256(Path(catalog_identity["path"]).read_bytes()).hexdigest() == catalog_identity["sha256"]
+    except OSError:
+        unchanged = False
+    if not unchanged:
+        raise FallbackContractError("configured_server_tool_contract_changed", stage="identity")
 
 
 def _jsonable(value: Any) -> Any:
@@ -166,6 +244,22 @@ def _jsonable(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_jsonable(item) for item in value]
     return value
+
+
+def _business_failed(payload: dict[str, Any]) -> bool:
+    body = payload.get("structuredContent")
+    if not isinstance(body, dict):
+        blocks = payload.get("content") or []
+        if len(blocks) == 1 and isinstance(blocks[0], dict) and blocks[0].get("type") == "text":
+            try:
+                body = json.loads(blocks[0].get("text") or "")
+            except (ValueError, TypeError):
+                body = None
+    if not isinstance(body, dict):
+        return False
+    if "status" not in body and isinstance(body.get("result"), dict):
+        body = body["result"]
+    return body.get("ok") is False or (body.get("status") in {"error", "failed"} and bool(body.get("error")))
 
 
 @asynccontextmanager
@@ -193,28 +287,41 @@ async def _configured_session(server: dict[str, Any]) -> AsyncIterator[Any]:
     )
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
-            await session.initialize()
+            try:
+                await session.initialize()
+            except Exception as exc:
+                raise _failure(exc, "initialization") from exc
             yield session
 
 
 async def _invoke(server: dict[str, Any], tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
-    async with _configured_session(server) as session:
-        listing = await session.list_tools()
-        tools = sorted({str(item.name) for item in getattr(listing, "tools", [])})
-        _validate_tool_catalog(tools)
-        if tool not in tools:
-            raise FallbackContractError(f"configured_server_does_not_expose_tool:{tool}")
-        result = await session.call_tool(tool, arguments=arguments)
+    expected, catalog_identity = _declared_tool_catalog(server)
+    stage = "connection"
+    try:
+        async with _configured_session(server) as session:
+            stage = "catalog"
+            listing = await session.list_tools()
+            tools = sorted(str(item.name) for item in getattr(listing, "tools", []))
+            _validate_tool_catalog(tools, expected)
+            if tool not in tools:
+                raise FallbackContractError("configured_server_does_not_expose_tool", stage=stage)
+            _revalidate_selection(server, catalog_identity)
+            stage = "call"
+            result = await session.call_tool(tool, arguments=arguments)
+            stage = "cleanup"
+    except Exception as exc:
+        raise _failure(exc, stage) from exc
     payload = _jsonable(result)
     mcp_is_error = bool(getattr(result, "isError", False))
     if isinstance(payload, dict):
-        mcp_is_error = mcp_is_error or bool(payload.get("isError") or payload.get("is_error"))
+        mcp_is_error = mcp_is_error or bool(payload.get("isError") or payload.get("is_error")) or _business_failed(payload)
     return {
         "result": payload,
         "tools": tools,
         "tool_list_fingerprint": _catalog_fingerprint(tools),
         "tool_count": len(tools),
         "mcp_call_status": "error" if mcp_is_error else "ok",
+        "catalog_identity": catalog_identity,
     }
 
 
@@ -228,10 +335,15 @@ def _invoke_sync(server: dict[str, Any], tool: str, arguments: dict[str, Any]) -
             try:
                 result = asyncio.run(_invoke(server, tool, arguments))
                 return {**result, "attempt_count": attempt, "retry_failures": failures}
-            except (OSError, asyncio.TimeoutError) as exc:
-                failures.append(f"attempt_{attempt}:{type(exc).__name__}:{exc}")
-                if attempt == attempts:
-                    raise FallbackContractError(f"fallback_readiness_retry_exhausted:{'|'.join(failures)}") from exc
+            except Exception as exc:
+                failure = _failure(exc, "connection")
+                failure.attempt_count = attempt
+                failures.append(f"attempt_{attempt}:{failure.stage}:{failure.code}")
+                if not failure.retryable or attempt == attempts:
+                    if failure.retryable and tool in READINESS_TOOLS:
+                        failure = FallbackContractError("fallback_readiness_retry_exhausted", stage=failure.stage)
+                        failure.attempt_count = attempt
+                    raise failure from exc
     raise FallbackContractError("fallback_call_cannot_run_inside_existing_event_loop")
 
 

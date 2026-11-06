@@ -57,17 +57,10 @@
     "docs/PRIVACY_AND_LOCAL_STATE.md",
     "docs/PRODUCT_INSTALL.md",
     "docs/RELEASE_CANDIDATE.md",
-    "docs/SEARXNG.md",
     "docs/AI_WORKING_GUIDE.md",
     "docs/文档索引.md",
     "docs/reference/PLATFORM_TEMPLATE.md",
     ".github/**",
-    "bridge/package.json",
-    "bridge/package-lock.json",
-    "bridge/.npmrc",
-    "bridge/*.cjs",
-    "bridge/*.mjs",
-    "bridge/README.md",
     "config/recruitment_city_registry.json",
     "scripts/kr_eval/**",
     "scripts/kr_evaluate.py",
@@ -110,7 +103,12 @@
     "archive/INDEX.md",
     "scripts/kr_workspace.py",
     "scripts/kr_optional_media.py",
-    "scripts/build_console.mjs"
+    "scripts/build_console.mjs",
+    "scripts/kr_opencli.py",
+    "browser_link/extension/**",
+    "browser_link/host/**",
+    "config/browser-link.json",
+    "scripts/browser_link_install.py"
   ],
   "exclude": [
     ".codex/**",
@@ -203,6 +201,8 @@
     "runtime/*.json",
     "runtime/*.jsonl",
     "runtime/*.sqlite*",
-    "runtime/*.db"
+    "runtime/*.db",
+    "browser_link/**/*.exe",
+    "browser_link/**/*.test.mjs"
   ]
 }

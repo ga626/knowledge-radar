@@ -9,6 +9,13 @@ from .core import SCHEMA, dependencies, environment, file_hash, inventory, now, 
 from .runner import _pytest, comparison_identity, execute
 
 HOST_NODE = 'tests/test_product_console_launcher.py::test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable'
+HOST_NODES = (HOST_NODE, 'tests/test_product_runtime.py',
+              'tests/test_codex_stdio_contract.py::test_direct_stdio_probe_exposes_research_surface')
+
+
+def _covers(parent, child):
+    return (parent == child or child.startswith(parent.rstrip('/') + '/')
+            or child.startswith(parent + '::'))
 
 
 def docs_only_change(root, base):
@@ -19,6 +26,16 @@ def docs_only_change(root, base):
         return False  # 浅克隆/未知身份保守执行，不能默默免检。
     paths = proc.stdout.splitlines()
     return bool(paths) and all(p.startswith('docs/') or (p.endswith('.md') and '/' not in p) for p in paths)
+
+
+def run_documentation_checks(root):
+    """纯文档不跑业务，但不能免掉生成物与当前引用检查。"""
+    import sys
+    result = subprocess.run([sys.executable, str(root / 'scripts/check_current_docs.py')],
+                            cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=90)
+    return {'status': 'PASS' if result.returncode == 0 else 'FAIL',
+            'reason': 'documentation_only_change', 'business_tests': 'not_run',
+            'stdout': result.stdout, 'stderr': result.stderr, 'exit_code': result.returncode}
 
 
 def _matches(test, node):
@@ -39,17 +56,21 @@ def run_ci(root, suite, ledger, extra_nodes=()):
     started_at = now()
     tests_dir = folder / "pytest"
     tests_dir.mkdir()
-    has_host = (root / HOST_NODE.split('::')[0]).is_file() and any(HOST_NODE == n or HOST_NODE.startswith(n.rstrip('/') + ('/' if not n.endswith('.py') else '::')) for n in nodes)
-    offline_nodes = [n for n in nodes if n != HOST_NODE]
-    outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 600, "deselect": [HOST_NODE] if has_host else []}, tests_dir) if offline_nodes else {"verdict": "PASS", "returncode": 0}
+    host_nodes = list(dict.fromkeys(
+        host if _covers(node, host) else node
+        for host in HOST_NODES if (root / host.split('::')[0]).is_file()
+        for node in nodes if _covers(node, host) or _covers(host, node)))
+    offline_nodes = [n for n in nodes if not any(_covers(host, n) for host in host_nodes)]
+    outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 600,
+                            "deselect": host_nodes}, tests_dir) if offline_nodes else {"verdict": "PASS", "returncode": 0}
     junit = tests_dir / "junit.xml"
     tests = list(ET.parse(junit).iter("testcase")) if junit.is_file() else []
     evidence = [{"path": p.relative_to(folder).as_posix(), "sha256": file_hash(p)} for p in tests_dir.iterdir() if p.is_file()]
     batches = {"offline": outcome}
-    if has_host:
+    if host_nodes:
         host_dir = folder / 'host-process'
         host_dir.mkdir()
-        host = _pytest(root, {"nodes": [HOST_NODE], "timeout_seconds": 120, "owned_host_process": True}, host_dir)
+        host = _pytest(root, {"nodes": host_nodes, "timeout_seconds": 240, "owned_host_process": True}, host_dir)
         batches['owned_host_process'] = host
         host_junit = host_dir / 'junit.xml'
         if host_junit.is_file():

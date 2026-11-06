@@ -1,34 +1,22 @@
-import importlib.util
-import sys
 from pathlib import Path
 
 from capabilities import build_capabilities, validation_semantics_manifest
 from runtime.status_schema import ValidationStatus, classify_runtime_payload, classify_validation_status, validation_status_classes
 from search_providers.models import WebSearchRequest
-from search_providers.providers import AnySearchProvider, SearxngSearchProvider
+from search_providers.providers import AnySearchProvider
 
 
-def _load_validation_harness():
-    path = Path(__file__).resolve().parents[1] / "tools" / "kr_full_validation_harness.py"
-    spec = importlib.util.spec_from_file_location("kr_full_validation_harness_for_test", path)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+def test_current_evaluation_suite_has_explicit_layers_and_optional_provider_policy():
+    from scripts.kr_eval.core import load_suite, inventory
 
-
-def test_validation_harness_marks_optional_provider_cases() -> None:
-    harness = _load_validation_harness()
-    cases = {case.case_id: case for case in harness.low_risk_cases()}
-
-    assert cases["web_search_auto"].required is True
-    assert cases["web_search_auto"].role == "main_chain"
-    assert cases["web_search_searxng"].required is False
-    assert cases["web_search_searxng"].role == "optional_provider"
-    assert cases["web_search_anysearch"].required is False
-    assert cases["expand_keywords"].role == "legacy_helper"
+    root = Path(__file__).resolve().parents[1]
+    suite = load_suite(root)
+    assert inventory(root, suite)["issues"] == []
+    cases = {case["case_id"]: case for case in suite["cases"]}
+    assert cases["content.contracts"]["layer"] == "fixture"
+    assert cases["flow.search_to_detail"]["executor"] == "pytest"
+    assert cases["live.get_content_detail"]["auto"] is False
+    assert not (root / "tools/kr_full_validation_harness.py").exists()
 
 
 def test_anysearch_status_declares_optional_fallback(monkeypatch) -> None:
@@ -37,7 +25,7 @@ def test_anysearch_status_declares_optional_fallback(monkeypatch) -> None:
 
     status = AnySearchProvider().status()
 
-    assert status["role"] == "optional_fallback"
+    assert status["role"] == "preferred"
     assert status["degraded_ok"] is True
     assert status["configured"] is False
     assert status["available"] is False
@@ -49,17 +37,6 @@ def test_anysearch_status_declares_optional_fallback(monkeypatch) -> None:
         assert getattr(exc, "error_type", "") == "not_configured_optional"
     else:
         raise AssertionError("AnySearchProvider without endpoint/key should not run a network request")
-
-
-def test_searxng_status_declares_optional_fallback(monkeypatch) -> None:
-    monkeypatch.setenv("SEARXNG_BASE_URL", "http://127.0.0.1:1")
-
-    status = SearxngSearchProvider(timeout=0.2).status()
-
-    assert status["role"] == "optional_fallback"
-    assert status["degraded_ok"] is True
-    assert status["configured"] is True
-    assert status["available"] is False
 
 
 def test_capabilities_explain_expected_degraded_paths(tmp_path) -> None:
@@ -135,46 +112,22 @@ def test_runtime_error_normalization_keeps_manual_and_network_boundaries() -> No
     assert normalize_error_code("policy blocked") == "policy_denied"
 
 
-def test_required_blockers_are_strict() -> None:
-    harness = _load_validation_harness()
+def test_current_comparison_blocks_pass_regression_and_missing_cases():
+    from scripts.kr_eval.core import compare
 
-    results = [
-        harness.ValidationResult("required-ok", "tool", "PASS", 0.1, "low_risk", True, "main_chain"),
-        harness.ValidationResult("required-degraded", "tool", "EXPECTED_DEGRADED", 0.1, "low_risk", True, "main_chain"),
-        harness.ValidationResult("required-manual", "tool", "NEEDS_INTERACTION", 0.1, "low_risk", True, "main_chain"),
-        harness.ValidationResult("optional-degraded", "tool", "EXPECTED_DEGRADED", 0.1, "low_risk", False, "optional_provider"),
-    ]
+    def run(verdict):
+        return {"run_id": verdict, "target": "development_source", "environment": {"fingerprint": "fixture"},
+                "results": [{"case_id": "fixture", "verdict": verdict, "comparison_identity": "same", "layer": "fixture"}]}
 
-    blockers = harness.find_required_blockers(results)
-
-    assert [item.case_id for item in blockers] == ["required-manual"]
+    assert compare(run("PASS"), run("FAIL"))["gate"] == "BLOCKED"
+    missing = run("PASS")
+    missing["results"] = []
+    assert compare(run("PASS"), missing)["gate"] == "INCOMPLETE"
 
 
-def test_verify_all_tools_requires_academic_capability_profiles() -> None:
-    spec = importlib.util.spec_from_file_location(
-        "verify_all_tools_for_test",
-        Path(__file__).resolve().parents[1] / "scripts" / "verify_all_tools.py",
-    )
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-
-    ok_payload = {
-        "tools": {
-            "search_academic": {
-                "profile_schema": "knowledgeradar-academic-provider-profiles/v1",
-                "provider_capability_profiles": {
-                    "nssd": {},
-                    "pubscholar": {},
-                    "sciengine": {},
-                    "vip_oa": {},
-                },
-            }
-        }
-    }
-    bad_payload = {"tools": {"search_academic": {"provider_capability_profiles": {}}}}
-
-    assert module._academic_profile_payload_error("get_capabilities", ok_payload) == ""
-    assert "profile_schema" in module._academic_profile_payload_error("get_capabilities", bad_payload)
+def test_current_capabilities_require_academic_provider_profiles(tmp_path):
+    payload = build_capabilities(decision_log_path=str(tmp_path / "decisions.jsonl"), provider_status=lambda: {})
+    academic = payload["tools"]["search_academic"]
+    assert academic["profile_schema"] == "knowledgeradar-academic-provider-profiles/v1"
+    assert {"nssd", "pubscholar", "sciengine", "vip_oa"} <= set(academic["provider_capability_profiles"])
+    assert not (Path(__file__).resolve().parents[1] / "scripts/verify_all_tools.py").exists()

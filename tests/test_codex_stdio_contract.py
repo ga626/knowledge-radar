@@ -26,7 +26,9 @@ _public_product = _load_script("verify_codex_product")
 _stdio_probe = _public_product.stdio_probe
 
 
-def test_direct_stdio_probe_exposes_research_surface() -> None:
+def test_direct_stdio_probe_exposes_research_surface(tmp_path, monkeypatch) -> None:
+    unrelated_owner = tmp_path / "not-owned-by-probe"
+    monkeypatch.setenv("KR_OWNER_ROOT", str(unrelated_owner))
     result = _stdio_probe()
 
     assert result["status"] == "PASS", result
@@ -34,6 +36,7 @@ def test_direct_stdio_probe_exposes_research_surface() -> None:
     assert "kr_research" in result["tools"]
     assert "finalize_research_task" in result["tools"]
     assert "search_xiaohongshu" in result["tools"]
+    assert not unrelated_owner.exists()
 
 
 def test_marketplace_update_keeps_one_local_entry(tmp_path: Path) -> None:

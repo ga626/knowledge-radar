@@ -7,7 +7,6 @@ def _deps(provider_status):
     noop_dict = lambda: {}
     return HealthCheckDeps(
         bili_headers={},
-        xhs_bridge_path="",
         project_root=str(Path.cwd()),
         runtime_log_dir=str(Path.cwd()),
         mcp_server_log_path=str(Path.cwd() / "mcp.log"),
@@ -22,13 +21,6 @@ def _deps(provider_status):
         finish_chrome_automation=lambda platform, reason: None,
         find_chrome_exe=lambda: None,
         cleanup_chrome_platform=lambda platform: None,
-        read_zhihu_cookies_from_cdp=lambda: None,
-        read_zhihu_cookies_from_profile=lambda: None,
-        zhihu_sign=lambda cookie, path: {},
-        zhihu_search_api=lambda keyword, cookie, limit: [],
-        inspect_zhihu_cookie_health=lambda warn_within_hours: {},
-        inspect_xhs_login_health=lambda cdp_url, warn_within_hours: {},
-        probe_xhs_page_state=lambda cdp_url: {},
         bring_chrome_to_front=lambda platform: {},
         background_chrome=lambda platform: {},
         legacy_search_bilibili=lambda *args, **kwargs: {},
@@ -67,6 +59,17 @@ def test_web_search_provider_quota_exhausted_is_expected_degraded():
     assert result["status_class"] == "EXPECTED_DEGRADED"
     assert result["degraded_reason"] == "quota_exhausted"
     assert result["quota"]["tavily"]["status"] == "daily_exhausted"
+
+
+def test_current_quota_envelope_overrides_key_only_readiness():
+    service = HealthCheckService(_deps(lambda: {
+        "tavily": {"configured": True, "available": True},
+        "_quota": {"schema": "knowledgeradar-search-quota/v2", "providers": {
+            "tavily": {"status": "quota_exhausted", "remaining": "0", "unit": "credits"}}},
+    }))
+    result = service._check_web_search_provider()
+    assert result["degraded_reason"] == "quota_exhausted"
+    assert result["status_class"] == "EXPECTED_DEGRADED"
 
 
 def test_web_search_provider_available_free_backend_keeps_optional_failures_non_blocking():

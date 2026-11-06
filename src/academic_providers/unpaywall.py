@@ -9,6 +9,7 @@ from typing import Any, Dict, List
 import httpx
 
 from .models import AcademicSearchRequest, AcademicWork, normalize_doi
+from .chinese_open_access import OpenAccessResults
 
 
 class UnpaywallError(Exception):
@@ -44,7 +45,7 @@ class UnpaywallProvider:
     def search(self, request: AcademicSearchRequest) -> List[AcademicWork]:
         doi = _extract_doi(request.query)
         if not doi:
-            return []
+            return OpenAccessResults([], [{'type': 'invalid_query', 'message': 'Unpaywall 仅支持 DOI 查询；本次未执行接口请求。', 'retryable': False}])
         email = str(request.options.get("mailto") or self.email).strip()
         if not email:
             raise UnpaywallAuthError("Unpaywall requires an email address via options.mailto, KR_UNPAYWALL_EMAIL, or UNPAYWALL_EMAIL.")
@@ -82,17 +83,20 @@ class UnpaywallProvider:
             oa_status=str(item.get("oa_status") or ""),
             license=str(location.get("license") or ""),
             source_database=self.name,
+            document_type=str(item.get("genre") or "unknown"),
+            version=str(location.get("version") or "unknown"),
             access_mode="public_doi_api",
-            full_text_status="pdf_text_extractable" if pdf_url else ("oa_available" if is_oa and landing_url else "metadata_only"),
+            full_text_status="pdf_link_found" if pdf_url else ("oa_available" if is_oa and landing_url else "metadata_only"),
             provider_confidence=0.82 if is_oa else 0.72,
-            verification_status="doi_matched" if doi else "unverified",
-            license_scope="open" if is_oa else "unknown",
+            verification_status="doi_present" if doi else "unverified",
+            license_scope="license_declared" if location.get("license") else "unknown",
             raw={
                 "genre": item.get("genre"),
                 "host_type": location.get("host_type"),
                 "version": location.get("version"),
                 "url_for_pdf": pdf_url,
                 "url": landing_url,
+                "oa_locations":item.get("oa_locations") or [],
             },
         )
 

@@ -67,7 +67,7 @@ def build_detail_evidence(url: str, platform: str, result: Dict[str, Any], *, no
     credibility = {
         "B站": "medium（平台元数据、转写和评论来自实时详情链路）",
         "知乎": "medium-high（正文来自登录态页面/API提取）",
-        "小红书": "medium（正文/图片来自登录态页面和 bridge/CDP 提取）",
+        "小红书": "medium（正文、评论和媒体来自实时采集，具体渠道见出处记录）",
     }.get(platform, "medium")
     if not extracted:
         credibility = "low（详情失败或有效正文不足，不能支持结论）"

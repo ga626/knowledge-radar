@@ -46,24 +46,17 @@ def test_asr_strategy_selects_downloader_subtitle_hit(monkeypatch, tmp_path):
     assert [step.id for step in plan.steps] == ["platform_subtitle", "downloader_subtitle"]
 
 
-def test_asr_strategy_selects_local_gpu_asr_when_requested(monkeypatch, tmp_path):
-    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
-    policy = AsrPolicy(models=("local:qwen3-asr/0.6b-hf",), device="cuda", compute_type="float16")
-    miss = SubtitleProbeResult(platform="bilibili", status="miss", reason="no subtitles")
-
-    plan = build_asr_strategy_plan(AsrStrategyInput(platform="bilibili", platform_subtitle=miss, gpu_available=True), asr_policy=policy)
-
-    assert plan.selected_step_id == "local_asr"
-    selected = plan.steps[-1]
-    assert selected.resource_kind == RESOURCE_ASR_GPU
-    assert selected.engine == "local:qwen3-asr/0.6b-hf"
-    assert selected.metadata["benchmark_profile"]["status"] == "single_selected_engine"
-    assert selected.metadata["download_resource_kind"] == "media_download"
+def test_asr_strategy_rejects_retired_gpu_profile(monkeypatch, tmp_path):
+    import pytest
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path / 'runtime'))
+    policy = AsrPolicy(device='cuda', compute_type='float16')
+    with pytest.raises(ValueError, match='unsupported_asr_profile'):
+        build_asr_strategy_plan(AsrStrategyInput(platform='bilibili', gpu_available=True), asr_policy=policy)
 
 
 def test_asr_strategy_prefers_tiny_when_cpu_load_is_high(monkeypatch, tmp_path):
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "runtime"))
-    policy = AsrPolicy(models=("local:qwen3-asr/0.6b-hf", "local:qwen3-asr/0.6b-hf"), device="cpu", compute_type="int8")
+    policy = AsrPolicy(models=("local:qwen3-asr/0.6b-onnx-int8", "local:qwen3-asr/0.6b-onnx-int8"), device="cpu", compute_type="int8")
     miss = SubtitleProbeResult(platform="bilibili", status="miss", reason="no subtitles")
 
     plan = build_asr_strategy_plan(
@@ -73,14 +66,14 @@ def test_asr_strategy_prefers_tiny_when_cpu_load_is_high(monkeypatch, tmp_path):
 
     selected = plan.steps[-1]
     assert selected.resource_kind == RESOURCE_ASR_CPU
-    assert selected.engine == "local:qwen3-asr/0.6b-hf"
+    assert selected.engine == "local:qwen3-asr/0.6b-onnx-int8"
     assert selected.metadata["benchmark_profile"]["status"] == "single_selected_engine"
 
 
 def test_asr_strategy_manifest_has_one_engine_and_no_fallback():
     from runtime.asr_strategy import asr_strategy_manifest
     manifest = asr_strategy_manifest()
-    assert manifest['default_engine'] == 'local:qwen3-asr/0.6b-hf'
+    assert manifest['default_engine'] == 'local:qwen3-asr/0.6b-onnx-int8'
     assert manifest['engine_candidates'] == [manifest['default_engine']]
     assert manifest['active_fallback_chain'] == []
 
