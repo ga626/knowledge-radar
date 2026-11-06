@@ -193,14 +193,19 @@ def test_crashed_owner_never_replays_unknown_work_and_explicit_resume(running):
     slow = client.call('fixture_submit', {'sleep': 30, 'timeout_s': 90})
     until(lambda: client.call('get_task_status', {'task_id': slow['task_id']}), lambda x: x.get('status') == 'running')
     impatient = OwnerClient(root=client.root, timeout=.1)
-    impatient.call('fixture_effect', {'sleep': 4}, request_id='crash')
+    arguments = {'wait_for_release': True}
+    result = impatient.call('fixture_effect', arguments, request_id='crash')
+    assert result['error']['execution_state'] != 'not_started'
+    # 客户端超时不证明服务端已受理；确认持久回执后才模拟崩溃。
+    # release门闩保证慢runner也不会在kill前先产生副作用。
+    until(lambda: client.receipt('crash'), lambda x: x.get('status') == 'running')
     old = client.descriptor()['generation']
     child.kill()
     child.wait(timeout=10)
     launch()
     until(client.status, lambda x: x.get('status') == 'ready' and x.get('generation') != old)
     assert client.receipt('crash')['status'] == 'interrupted'
-    assert client.call('fixture_effect', {'sleep': 4}, request_id='crash')['status'] == 'error'
+    assert client.call('fixture_effect', arguments, request_id='crash')['status'] == 'error'
     assert not (path/'state/effects.txt').exists()
     assert client.call('get_task_status', {'task_id': slow['task_id']})['status'] == 'interrupted'
     retry = client.call('control_task', {'task_id': slow['task_id'], 'action': 'resume'})
