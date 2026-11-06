@@ -173,11 +173,19 @@ class OwnerClient:
             kwargs = {'cwd': str(source.parent), 'env': env, 'stdin': subprocess.DEVNULL,
                       'stdout': subprocess.DEVNULL, 'close_fds': True}
             if os.name == 'nt':
-                kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                # DETACHED_PROCESS只脱离控制台，仍会继承宿主的KILL_ON_JOB_CLOSE。
+                # 显式启动的安装owner独立于单次宿主/命令；禁止失败后退回短命子进程。
+                kwargs['creationflags'] = (subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
+                                           | subprocess.CREATE_BREAKAWAY_FROM_JOB)
             else:
                 kwargs['start_new_session'] = True
             with (self.root / 'startup.log').open('ab') as log:
-                child = subprocess.Popen(command, stderr=log, **kwargs)
+                try:
+                    child = subprocess.Popen(command, stderr=log, **kwargs)
+                except OSError as exc:
+                    if os.name == 'nt' and exc.winerror == 5:
+                        raise RuntimeError('execution_owner_job_breakaway_denied_start_from_user_terminal') from exc
+                    raise
             deadline = time.monotonic() + timeout
             while time.monotonic() < deadline:
                 current = self.status()
@@ -462,9 +470,14 @@ def serve(*, root=None, bootstrap=None):
         temporary = root / ('owner-' + generation + '.tmp')
         temporary.write_text(json.dumps(descriptor), encoding='utf-8')
         temporary.replace(path)
+        print(json.dumps({'event': 'execution_owner_ready', 'pid': descriptor['pid'],
+                          'generation': generation, 'source_identity': descriptor['source_identity']}),
+              file=sys.stderr, flush=True)
         try:
             httpd.serve_forever(poll_interval=.2)
         finally:
+            print(json.dumps({'event': 'execution_owner_stopped', 'pid': descriptor['pid'],
+                              'generation': generation}), file=sys.stderr, flush=True)
             # 锁内清理本代描述；不得误删后继代际状态。
             if path.exists() and json.loads(path.read_text(encoding='utf-8')).get('generation') == generation:
                 path.unlink()

@@ -443,7 +443,7 @@
     "evidence_export": "固定版本文本证据ZIP显式导出到全新专用收件箱；保留SHA、LF偏移映射和独立撤销边界，不自动扫描私人库或启用同步。",
     "academic_sources": "以画像为唯一注册源并懒加载；发现仅返回书目及固定文献卡引用，慢来源经同一TaskService后台发现。选中卡片后由use_cases/academic_fulltext提交独立全文任务，兼容搜索快捷方式组合相同入口。academic_providers/identity区分作品、版本与获准位置；runtime/pdf_text统一有界下载、输入哈希、全页文字及授权缺页OCR。公共证据保留学术溯源与结构，元数据缓存不含任务引用，研究绑定独立。Semantic Scholar与arXiv跨进程限速；万方默认停用，VIP仅显式授权。复杂版面增强不默认安装模型。",
     "community_browser": "脉脉、猎聘沿现有自有CDP过渡；本人登录、进程身份核对与空闲回收复用所有权合同，正文与可见评论独立标记。BOSS已迁到借用Chrome，不再作为自有Profile管理。智联退出主动搜索、详情与登录，仅保留历史解析/映射。",
-    "experimental_delivery": "公开CI不上传实验安装包；仅main可向核实为仅本人可访问的私有仓库交付。只有用户对同一制品明确说可以公开发布才允许公开。",
+    "experimental_delivery": "仅main CI向已核实本人私有仓库交付；内部tag为internal-v<version>-r<run_id>.<run_attempt>，原receipt绑定CI身份。草稿传齐ZIP/原receipt/SHA256SUMS并核摘要后发布私有预发布；不覆盖、不向公开Actions上传包，公开需另行认可同一原包。",
     "installation_identity": "程序与runtime使用版本加制品元数据指纹的不可变目录；active保留installation_id供回滚，旧安装只读兼容。",
     "resource_wait": "增强等待使用同一任务账本和跨进程资源租约；资源忙时queued让出执行槽，保留正文、deadline和费用幂等作用域，资源就绪后同任务继续，取消不复活。",
     "research_archive": "任务稳定项目身份及显式目标绑定；同项目复用目录，状态缺失且目录已存在时要求显式绑定，不自动派生同名项目；Vault展示层按平台加主题命名，网页与学术保持大类，新平台可提供展示元数据，来源网站与处理方式在摘要呈现；身份、哈希及字节映射仅存KR内部；全文按固定水位流式分卷，同版双端create-only交付，既有交付保持原身份保护；查询不推进工作。",
@@ -451,7 +451,8 @@
     "document_processing_reuse": "runtime/document_cache基于原件哈希与公共PDF/模型合同复用固定处理快照；获准原件归现有media_cache/documents容量/TTL/租约，禁存储或HTTP no-store时不持久。页账本保留已成功OCR和未知请求，不自动重发未知页。快照在公共资产库以内部类型保存，不额外导出到Vault；跨入口共用租约，不携带平台账号或推断来源权限。PDF文字抽取在runtime/pdf_worker自有子进程执行，Windows Job限制内存，父进程控制期限和取消；无硬隔离能力则明确失败。",
     "common_comments": "runtime/comments_contract按平台对象和讨论流统一ID/父根/覆盖/媒体；comments_view仅给可解释有界导航，原文固定回读。comment_media把短期签名位置放私有comment_media_fetch引用表、原件放公共媒体缓存、加工逐项断点放comment_media；不导出Cookie/本地路径，不因重复整理延长签名有效期，未知OCR/ASR结果不自动重发。能力注册不是逐平台真实验收结论。",
     "github_objects": "官方只读API对象层；原生查询与公开范围，gh/REST单请求身份冻结，公共租约和冷却；固定commit/blob/原文行定位，Issue/PR多流按页窗和检查点恢复；正文进公共证据，原始内部快照不对检索或Vault展示。",
-    "xhs_media": "小红书沿用OpenCLI与公共媒体执行器；xhs类型化请求声明图片索引和评论窗口。公开媒体清单/逐项账本以原生文件身份或完整URL散列连接本地私有获取表，不向公开证据泄露签名地址；实际原件经公共下载安全校验和SHA核对。采集版本与模型加工身份分离，OCR图片定位/ASR块级时间/评论根关系进入同一固定证据库；请求未完成如实保留partial。连接只读检查区分后台服务与扩展；执行按需准备服务并等待获准绑定重连。"
+    "xhs_media": "小红书沿用OpenCLI与公共媒体执行器；xhs类型化请求声明图片索引和评论窗口。公开媒体清单/逐项账本以原生文件身份或完整URL散列连接本地私有获取表，不向公开证据泄露签名地址；实际原件经公共下载安全校验和SHA核对。采集版本与模型加工身份分离，OCR图片定位/ASR块级时间/评论根关系进入同一固定证据库；请求未完成如实保留partial。连接只读检查区分后台服务与扩展；执行按需准备服务并等待获准绑定重连。",
+    "execution_owner": "安装级执行owner与连接独立；Windows显式启动脱离调用者Job，脱离失败明确拒绝而不静默降级。查询不启动或重放，未知结果按原请求回执对账；正常启动/退出只记PID与代际。"
   },
   "stable_research_reports": [],
   "research_report_scope": "Private research reports and their quality sidecars remain in the private source; public product docs use structural governance.",

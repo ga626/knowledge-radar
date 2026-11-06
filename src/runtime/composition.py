@@ -18,6 +18,7 @@ from pydantic import Field
 from runtime.application import application_tool
 from runtime.agent_contracts import DetailResult, TaskStatusResult, ResearchWorkflowResult
 from runtime.read_options import DocumentReadOptions, CommentReadOptions
+from runtime.research_queries import ResearchQuery
 from collectors.platform.github_content import GitHubReadOptions
 from runtime.xhs_opencli import XhsReadOptions
 from collectors.platform.wechat import WechatReadOptions
@@ -1178,7 +1179,7 @@ def kr_research(
     evidence_needs: Annotated[str, Field(description="可选证据需求，例如官方来源、学术、平台讨论、实现证据、近期性。")] = "",
     limit: Annotated[int, Field(description="first_wave 每个低风险来源返回候选数量。", ge=1, le=10)] = 5,
     research_task_id: Annotated[str, Field(description="可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。")]= "",
-    queries: Annotated[list[Dict] | None, Field(description="执行者给出的查询族；每项含query/intent/language/source_ecology/parent_event_id/gap_id。默认仅原语种草案，不伪造翻译。")] = None,
+    queries: Annotated[list[ResearchQuery] | None, Field(min_length=1, max_length=40, description="执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。")] = None,
     display_title: Annotated[str, Field(description="Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。", max_length=80)] = "",
     project_name: Annotated[str, Field(description="可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。", max_length=80)] = "",
     project_id: Annotated[str, Field(description="Codex明确选择的稳定项目ID，与显示名分离；不得按KR安装目录猜测。", max_length=200)] = "",

@@ -124,6 +124,68 @@ def test_prepare_native_uses_actual_host_pair_and_original_time(tmp_path):
         prepare_native_receipt(suite,transcript,'absent',case['case_id'],target,tmp_path/'absent')
 
 
+@pytest.mark.parametrize('fault', ['', 'namespace', 'tool', 'pair', 'duplicate', 'truncated'])
+def test_direct_native_receipt_preserves_pair_arguments_and_host_time(tmp_path, fault):
+    root, suite, ledger = repository(tmp_path)
+    case = suite['cases'][0]
+    _, target = receipt(tmp_path, case)
+    stamp = now()
+    value = {'content': '直接原生正文', 'runtime': target['runtime_identity']}
+    request = {'type': 'function_call', 'namespace': 'mcp__knowledgeradar',
+               'name': 'demo', 'call_id': 'direct-1', 'arguments': '{"limit":2}'}
+    output = {'type': 'function_call_output', 'call_id': 'direct-1',
+              'output': 'Wall time: 0.1 seconds\nOutput:\n' + json.dumps({'result': value})}
+    if fault == 'namespace': request['namespace'] = 'other'
+    if fault == 'tool': request['name'] = 'other'
+    if fault == 'pair': output['call_id'] = 'other'
+    if fault == 'truncated': output['output'] += ' [truncated]'
+    rows = [{'type': 'session_meta', 'payload': {'id': 'direct-session'}},
+            {'timestamp': stamp, 'payload': request}, {'timestamp': stamp, 'payload': output}]
+    if fault == 'duplicate': rows.append(rows[-1])
+    transcript = tmp_path/'direct.jsonl'
+    transcript.write_text('\n'.join(json.dumps(r) for r in rows), encoding='utf-8')
+    if fault:
+        with pytest.raises(ValueError):
+            prepare_native_receipt(suite, transcript, 'direct-1', case['case_id'], target, tmp_path/'direct')
+        assert not (ledger.path/'runs').exists()
+        return
+    result = prepare_native_receipt(suite, transcript, 'direct-1', case['case_id'], target, tmp_path/'direct')
+    envelope = json.loads(Path(result['receipt']).read_text())
+    assert envelope['checked_at'] == stamp
+    assert envelope['observation_time_source'] == 'host_output_timestamp'
+    assert envelope['input_sha256'] == digest({'limit': 2})
+    host = json.loads((tmp_path/'direct/host.json').read_text())
+    assert host['call_id_kind'] == 'codex_function_call'
+    assert import_receipt(root, suite, ledger, result['receipt'], target)['counts'] == {'PASS': 1}
+
+
+def test_reviewed_summary_contracts_bind_owner_and_full_tool_set(tmp_path):
+    actual = load_suite(ROOT)
+    contract = next(c for c in actual['cases'] if c['case_id'] == 'live.get_capabilities')['receipt_contract']
+    root, suite, ledger = repository(tmp_path)
+    suite['cases'][0]['receipt_contract'] = contract
+    suite['cases'][0]['case_id'] = 'live.get_capabilities'
+    path, target = receipt(tmp_path, suite['cases'][0])
+    # 用完整真实目录结构验证合同；错工具集合必须FAIL，不能只验数量。
+    target.update(runtime_identity='123:456', owner_generation='gen', runtime_source_identity='c'*64,
+                  contract_hash='d'*64, tool_names=['demo'], tool_count=1)
+    value = {'schema': 'kr-tool-catalog/v1', 'availability': 'declared_not_live_probe',
+             'tool_count': 1, 'contract_hash': 'd'*64, 'tools': [{'name': 'wrong'}],
+             'execution_owner': {'schema': 'kr-execution-owner/v1', 'protocol': 1, 'status': 'ready',
+                'process_identity': '123:456', 'generation': 'gen', 'source_identity': 'c'*64, 'contract_hash': 'd'*64}}
+    stamp = now()
+    request = {'type': 'function_call', 'namespace': 'mcp__knowledgeradar', 'name': 'get_capabilities',
+               'call_id': 'catalog', 'arguments': '{"summary":true}'}
+    rows = [{'type': 'session_meta', 'payload': {'id': 'catalog-session'}},
+            {'timestamp': stamp, 'payload': request}, {'timestamp': stamp, 'payload': {
+                'type': 'function_call_output', 'call_id': 'catalog', 'output': json.dumps({'result': value})}}]
+    source = tmp_path/'catalog.jsonl'
+    source.write_text('\n'.join(json.dumps(r) for r in rows), encoding='utf-8')
+    prepared = prepare_native_receipt(suite, source, 'catalog', 'live.get_capabilities', target, tmp_path/'catalog')
+    run = import_receipt(root, suite, ledger, prepared['receipt'], target)
+    assert run['counts'] == {'FAIL': 1} and 'tools' in run['results'][0]['failed_assertions']
+
+
 @pytest.mark.parametrize('fault', ['target','empty','runtime','host_pair','fake_dispatch','response','no_contract','time'])
 def test_bad_real_evidence_is_rejected_before_run(tmp_path,fault):
     root,suite,ledger=repository(tmp_path)

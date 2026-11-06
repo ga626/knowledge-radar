@@ -21,7 +21,9 @@
 | 前台 | 执行/导入后自动更新摘要；`publish-summary`可只更新投影。网站“设置与帮助→持续评测”只读，源码变化或摘要过期提示更新，不自动跑平台 |
 | 只写报告 | 文档最小检查；不调用全量产品、账号或付费评测 |
 
-所有全局参数放在子命令之前。真实回执必须有具体 `receipt_contract`；目前health/capabilities轻量摘要已有机器断言，其余业务按各case的 `receipt_requirements` 和success增量核对响应合同，未核对前不得赋PASS。宿主包装call_id明确标为 `codex_exec_wrapper`，不是服务端自己生成的调用ID。仅接受可配对的单一原生分发；混合脚本、截断输出、错身份、缺输入关联均拒绝。
+所有全局参数放在子命令之前。真实回执必须有具体 `receipt_contract`；health v2/capabilities目录摘要绑定当前execution_owner，其余业务按各case的 `receipt_requirements` 和success增量核对响应合同，未核对前不得赋PASS。旧exec包装call_id标为 `codex_exec_wrapper`，带namespace的直接function_call标为 `codex_function_call`，都不是服务端自己生成的调用ID。仅接受可配对的单一原生分发；重复配对、混合脚本、截断输出、错工具/namespace、错身份、缺输入关联均拒绝。优先保留响应中的runtime.generated_at；没有该字段的目录摘要使用原始宿主输出记录timestamp，并显式记observation_time_source，不能使用导入时间。
+
+两条轻量摘要的expected-target除source_commit/artifact_sha256外，还必须有runtime_identity（owner进程身份）、owner_generation、runtime_source_identity、contract_hash、tool_count、tool_names。源码/ZIP来自已核验安装回执，工具集合/指纹来自同一制品生成合同，owner来自同一观察窗口；不能从待判响应抄出“预期值”完成自证。完整集合与数量分别核验，不把当前工具数写死成永久常量。判据变更递增oracle_version，历史run保留原判据，不自动接受新baseline。
 
 ## 数据和费用
 

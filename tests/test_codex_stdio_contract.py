@@ -32,7 +32,9 @@ def test_direct_stdio_probe_exposes_research_surface(tmp_path, monkeypatch) -> N
     result = _stdio_probe()
 
     assert result["status"] == "PASS", result
-    assert result["tool_count"] >= 22
+    assert result['catalog_matches'] and result['initialized_notification_sent']
+    assert result['tools'] == sorted(item['name'] for item in json.loads(
+        (ROOT/'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))['tools'])
     assert "kr_research" in result["tools"]
     assert "finalize_research_task" in result["tools"]
     assert "search_xiaohongshu" in result["tools"]

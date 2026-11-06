@@ -133,10 +133,18 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             reader = threading.Thread(target=_reader, args=(process.stdout, lines), daemon=True)
             reader.start()
             _request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "knowledgeradar-public-verifier", "version": "1"}})
+            process.stdin.write(json.dumps({'jsonrpc': '2.0', 'method': 'notifications/initialized'}) + '\n')
+            process.stdin.flush()
             response = _request(process, lines, 2, "tools/list", {})
             names = sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
             missing = sorted(REQUIRED_TOOLS - set(names))
-            return {"status": "PASS" if not missing else "FAIL", "tool_count": len(names), "tools": names, "missing_required": missing}
+            expected_path = root / 'config/codex-product/tool-contracts.json'
+            expected = json.loads(expected_path.read_text(encoding='utf-8'))
+            expected_names = sorted(item['name'] for item in expected['tools'])
+            consistent = names == expected_names and len(names) == expected['tool_count']
+            return {"status": "PASS" if not missing and consistent else "FAIL", "tool_count": len(names),
+                    "tools": names, "missing_required": missing, 'catalog_matches': consistent,
+                    'initialized_notification_sent': True}
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             return {"status": "FAIL", "error": str(exc)}
         finally:

@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`35cc6705a2a5131a38d3db8a1cc66c029205e001262e85b86fdc6761dd6d47f1`
+合同指纹：`2ed10f3628846f1e62d72d46109da04821cd9f159962d9cea3463e099fecf9bc`
 
 ## advance_research_candidate
 
@@ -2882,6 +2882,66 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchQuery": {
+        "additionalProperties": false,
+        "description": "执行者查询族；枚举和约束直接投影到MCP/CLI同源合同。",
+        "properties": {
+          "family_id": {
+            "default": "",
+            "title": "Family Id",
+            "type": "string"
+          },
+          "gap_id": {
+            "default": "",
+            "title": "Gap Id",
+            "type": "string"
+          },
+          "intent": {
+            "enum": [
+              "discovery",
+              "counterevidence",
+              "implementation",
+              "experience",
+              "citation_follow",
+              "gap_follow",
+              "pagination"
+            ],
+            "title": "Intent",
+            "type": "string"
+          },
+          "language": {
+            "default": "unknown",
+            "maxLength": 24,
+            "title": "Language",
+            "type": "string"
+          },
+          "parent_event_id": {
+            "default": "",
+            "title": "Parent Event Id",
+            "type": "string"
+          },
+          "query": {
+            "maxLength": 500,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Query",
+            "type": "string"
+          },
+          "source_ecology": {
+            "default": "*",
+            "title": "Source Ecology",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query",
+          "intent"
+        ],
+        "title": "ResearchQuery",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "budget": {
@@ -2946,9 +3006,10 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "anyOf": [
           {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/$defs/ResearchQuery"
             },
+            "maxItems": 40,
+            "minItems": 1,
             "type": "array"
           },
           {
@@ -2956,7 +3017,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           }
         ],
         "default": null,
-        "description": "执行者给出的查询族；每项含query/intent/language/source_ecology/parent_event_id/gap_id。默认仅原语种草案，不伪造翻译。",
+        "description": "执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。",
         "title": "Queries"
       },
       "request_id": {

@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "35cc6705a2a5131a38d3db8a1cc66c029205e001262e85b86fdc6761dd6d47f1",
+  "contract_hash": "2ed10f3628846f1e62d72d46109da04821cd9f159962d9cea3463e099fecf9bc",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -2836,6 +2836,66 @@
       },
       "group": "research",
       "input_schema": {
+        "$defs": {
+          "ResearchQuery": {
+            "additionalProperties": false,
+            "description": "执行者查询族；枚举和约束直接投影到MCP/CLI同源合同。",
+            "properties": {
+              "family_id": {
+                "default": "",
+                "title": "Family Id",
+                "type": "string"
+              },
+              "gap_id": {
+                "default": "",
+                "title": "Gap Id",
+                "type": "string"
+              },
+              "intent": {
+                "enum": [
+                  "discovery",
+                  "counterevidence",
+                  "implementation",
+                  "experience",
+                  "citation_follow",
+                  "gap_follow",
+                  "pagination"
+                ],
+                "title": "Intent",
+                "type": "string"
+              },
+              "language": {
+                "default": "unknown",
+                "maxLength": 24,
+                "title": "Language",
+                "type": "string"
+              },
+              "parent_event_id": {
+                "default": "",
+                "title": "Parent Event Id",
+                "type": "string"
+              },
+              "query": {
+                "maxLength": 500,
+                "minLength": 1,
+                "pattern": "\\S",
+                "title": "Query",
+                "type": "string"
+              },
+              "source_ecology": {
+                "default": "*",
+                "title": "Source Ecology",
+                "type": "string"
+              }
+            },
+            "required": [
+              "query",
+              "intent"
+            ],
+            "title": "ResearchQuery",
+            "type": "object"
+          }
+        },
         "additionalProperties": false,
         "properties": {
           "budget": {
@@ -2900,9 +2960,10 @@
             "anyOf": [
               {
                 "items": {
-                  "additionalProperties": true,
-                  "type": "object"
+                  "$ref": "#/$defs/ResearchQuery"
                 },
+                "maxItems": 40,
+                "minItems": 1,
                 "type": "array"
               },
               {
@@ -2910,7 +2971,7 @@
               }
             ],
             "default": null,
-            "description": "执行者给出的查询族；每项含query/intent/language/source_ecology/parent_event_id/gap_id。默认仅原语种草案，不伪造翻译。",
+            "description": "执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。",
             "title": "Queries"
           },
           "request_id": {

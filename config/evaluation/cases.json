@@ -252,8 +252,8 @@
       "success": "注册名、签名、文档一致；不证明平台连通。"
     },
     {
-      "version": 2,
-      "oracle_version": 1,
+      "version": 3,
+      "oracle_version": 2,
       "capabilities": [
         "mcp.get_capabilities"
       ],
@@ -267,7 +267,7 @@
       "layer": "native_mcp",
       "auto": false,
       "ttl_seconds": 3600,
-      "success": "能力查询：原生返回23个已注册工具、平台及预算边界，响应进程与登记一致；不把配置就绪视为连通。",
+      "success": "原生轻量摘要绑定已核验安装、当前execution_owner代际及生成合同；工具集合与制品合同一致；不把声明就绪视为平台连通。",
       "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。",
       "receipt_requirements": {
         "tool": "get_capabilities",
@@ -281,24 +281,40 @@
         "tool": "get_capabilities",
         "assertions": [
           {
-            "field": "schema_version",
-            "equals": "knowledgeradar-capabilities-summary/v1"
+            "field": "schema",
+            "equals": "kr-tool-catalog/v1"
           },
           {
-            "field": "tool_surface.actual_mcp_tool_count",
-            "equals": 23
+            "field": "tool_count",
+            "equals_target": "tool_count"
           },
           {
-            "field": "tool_surface.actual_mcp_tools",
-            "nonempty": true
+            "field": "execution_owner.schema",
+            "equals": "kr-execution-owner/v1"
           },
           {
-            "field": "mcp_observability.response_process.registration_matches_response",
-            "equals": true
+            "field": "execution_owner.protocol",
+            "equals": 1
+          },
+          {
+            "field": "execution_owner.status",
+            "equals": "ready"
+          },
+          {
+            "field": "availability",
+            "equals": "declared_not_live_probe"
+          },
+          {
+            "field": "tools",
+            "names_equal_target": "tool_names"
           }
         ],
         "identity_fields": {
-          "mcp_observability.server_process.instance_id": "runtime_identity"
+          "execution_owner.process_identity": "runtime_identity",
+          "execution_owner.generation": "owner_generation",
+          "execution_owner.source_identity": "runtime_source_identity",
+          "execution_owner.contract_hash": "contract_hash",
+          "contract_hash": "contract_hash"
         }
       }
     },
@@ -436,8 +452,8 @@
       "success": "注册名、签名、文档一致；不证明平台连通。"
     },
     {
-      "version": 2,
-      "oracle_version": 1,
+      "version": 3,
+      "oracle_version": 2,
       "capabilities": [
         "mcp.health_check"
       ],
@@ -451,7 +467,7 @@
       "layer": "native_mcp",
       "auto": false,
       "ttl_seconds": 3600,
-      "success": "轻量健康查询：返回健康摘要、stdio响应进程与登记一致；只证明查询合同，不证明各平台业务成功。",
+      "success": "原生轻量摘要绑定已核验安装、当前execution_owner代际及生成合同；工具集合与制品合同一致；不把声明就绪视为平台连通。",
       "manual_reason": "未自动操作真实账号或付费服务；须有原生业务回执才能赋PASS。",
       "receipt_requirements": {
         "tool": "health_check",
@@ -466,29 +482,53 @@
         "assertions": [
           {
             "field": "schema_version",
-            "equals": "knowledgeradar-health-agent-summary/v1"
+            "equals": "knowledgeradar-health-agent-summary/v2"
+          },
+          {
+            "field": "tool_count",
+            "equals_target": "tool_count"
+          },
+          {
+            "field": "execution_owner.schema",
+            "equals": "kr-execution-owner/v1"
+          },
+          {
+            "field": "execution_owner.protocol",
+            "equals": 1
+          },
+          {
+            "field": "execution_owner.status",
+            "equals": "ready"
           },
           {
             "field": "status",
             "equals": "ok"
           },
           {
-            "field": "checks.mcp_observability.response_process.transport",
-            "equals": "stdio"
+            "field": "summary",
+            "equals": true
           },
           {
-            "field": "checks.mcp_observability.response_process.registration_matches_response",
-            "equals": true
+            "field": "providers",
+            "equals": "not_probed"
+          },
+          {
+            "field": "browser",
+            "equals": "not_probed"
           }
         ],
         "identity_fields": {
-          "checks.mcp_observability.server_process.instance_id": "runtime_identity"
+          "execution_owner.process_identity": "runtime_identity",
+          "execution_owner.generation": "owner_generation",
+          "execution_owner.source_identity": "runtime_source_identity",
+          "execution_owner.contract_hash": "contract_hash",
+          "contract_hash": "contract_hash"
         }
       }
     },
     {
-      "version": 4,
-      "oracle_version": 2,
+      "version": 5,
+      "oracle_version": 3,
       "capabilities": [
         "mcp.kr_research"
       ],
@@ -500,11 +540,11 @@
       "case_id": "surface.kr_research",
       "executor": "surface",
       "entry": "kr_research",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='task', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='研究/查证/感知任务目标。返回路线、来源生态和可选第一波证据。'))])], ctx=Load()), ctx=Load())), arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='plan_only'), Constant(value='first_wave'), Constant(value='deep_route')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='plan_only 只规划；first_wave 提交可取消的低风险后台搜索，返回任务句柄；deep_route 返回深度路线但不自动执行高风险详情。'))])], ctx=Load()), ctx=Load())), arg(arg='budget', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='fast'), Constant(value='balanced'), Constant(value='deep'), Constant(value='diagnostic')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='预算档位；控制建议深度和首轮数量，不固定工具序列。'))])], ctx=Load()), ctx=Load())), arg(arg='source_ecology_hints', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选来源生态提示，逗号分隔，如 academic_literature_ecology,github_repository_ecology。'))])], ctx=Load()), ctx=Load())), arg(arg='evidence_needs', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选证据需求，例如官方来源、学术、平台讨论、实现证据、近期性。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='first_wave 每个低风险来源返回候选数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=10))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。'))])], ctx=Load()), ctx=Load())), arg(arg='queries', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='Dict', ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='执行者给出的查询族；每项含query/intent/language/source_ecology/parent_event_id/gap_id。默认仅原语种草案，不伪造翻译。'))])], ctx=Load()), ctx=Load())), arg(arg='display_title', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。')), keyword(arg='max_length', value=Constant(value=80))])], ctx=Load()), ctx=Load())), arg(arg='project_name', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。')), keyword(arg='max_length', value=Constant(value=80))])], ctx=Load()), ctx=Load())), arg(arg='project_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='Codex明确选择的稳定项目ID，与显示名分离；不得按KR安装目录猜测。')), keyword(arg='max_length', value=Constant(value=200))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='plan_only'), Constant(value='balanced'), Constant(value=''), Constant(value=''), Constant(value=5), Constant(value=''), Constant(value=None), Constant(value=''), Constant(value=''), Constant(value='')])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='task', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='研究/查证/感知任务目标。返回路线、来源生态和可选第一波证据。'))])], ctx=Load()), ctx=Load())), arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='plan_only'), Constant(value='first_wave'), Constant(value='deep_route')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='plan_only 只规划；first_wave 提交可取消的低风险后台搜索，返回任务句柄；deep_route 返回深度路线但不自动执行高风险详情。'))])], ctx=Load()), ctx=Load())), arg(arg='budget', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='fast'), Constant(value='balanced'), Constant(value='deep'), Constant(value='diagnostic')], ctx=Load()), ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='预算档位；控制建议深度和首轮数量，不固定工具序列。'))])], ctx=Load()), ctx=Load())), arg(arg='source_ecology_hints', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选来源生态提示，逗号分隔，如 academic_literature_ecology,github_repository_ecology。'))])], ctx=Load()), ctx=Load())), arg(arg='evidence_needs', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选证据需求，例如官方来源、学术、平台讨论、实现证据、近期性。'))])], ctx=Load()), ctx=Load())), arg(arg='limit', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='int', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='first_wave 每个低风险来源返回候选数量。')), keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=10))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。'))])], ctx=Load()), ctx=Load())), arg(arg='queries', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Subscript(value=Name(id='list', ctx=Load()), slice=Name(id='ResearchQuery', ctx=Load()), ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='min_length', value=Constant(value=1)), keyword(arg='max_length', value=Constant(value=40)), keyword(arg='description', value=Constant(value='执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。'))])], ctx=Load()), ctx=Load())), arg(arg='display_title', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。')), keyword(arg='max_length', value=Constant(value=80))])], ctx=Load()), ctx=Load())), arg(arg='project_name', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。')), keyword(arg='max_length', value=Constant(value=80))])], ctx=Load()), ctx=Load())), arg(arg='project_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='Codex明确选择的稳定项目ID，与显示名分离；不得按KR安装目录猜测。')), keyword(arg='max_length', value=Constant(value=200))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='plan_only'), Constant(value='balanced'), Constant(value=''), Constant(value=''), Constant(value=5), Constant(value=''), Constant(value=None), Constant(value=''), Constant(value=''), Constant(value='')])",
       "layer": "contract",
       "auto": true,
       "success": "注册名、签名、文档一致；不证明平台连通。",
-      "change_reason": "稳定project_id输入，显示名不承担范围身份。"
+      "change_reason": "阶段一基础修复：ResearchQuery公开类型与意图枚举同步到现有表面合同。"
     },
     {
       "version": 2,
