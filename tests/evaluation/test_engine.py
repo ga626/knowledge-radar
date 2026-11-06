@@ -8,7 +8,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from scripts.kr_eval.core import (SCHEMA, Ledger, applicability, dependencies, environment,  # noqa: E402
-                                  load_suite, snapshot, status, write_new)
+                                  discover, inventory, load_suite, snapshot, status, write_new)
 from scripts.kr_eval.demo import demonstrate  # noqa: E402
 from scripts.kr_eval.runner import run_suite  # noqa: E402
 
@@ -139,3 +139,18 @@ def test_fixture_cannot_claim_native_or_installed_success(tmp_path):
     p.write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(ValueError, match="external evidence"):
         load_suite(root)
+
+
+@pytest.mark.parametrize('fault', ['signature', 'documentation'])
+def test_inventory_rejects_surface_drift_without_refreshing_reviewed_contract(tmp_path, fault):
+    root, suite, _ = fixture_repo(tmp_path)
+    case = suite['cases'][0]
+    case.update(executor='surface', entry='demo', signature=discover(root)['demo']['signature'])
+    assert not inventory(root, suite)['issues']
+    reviewed_signature = case['signature']
+    source = ('@mcp.tool()\ndef demo(new_option=False):\n    """demo"""\n    pass\n'
+              if fault == 'signature' else '@mcp.tool()\ndef demo():\n    pass\n')
+    (root / 'src/server.py').write_text(source, encoding='utf-8')
+    issue = 'surface_signature_drift' if fault == 'signature' else 'undocumented_entry'
+    assert {'code': issue, 'entry': 'demo', 'case_id': case['case_id']} in inventory(root, suite)['issues']
+    assert case['signature'] == reviewed_signature

@@ -142,6 +142,16 @@ def inventory(root, suite):
             issues.append({"code": "uncovered_capability", "capability_id": cap["capability_id"]})
     for name in sorted(registered - set(owners)):
         issues.append({"code": "uncovered_entry", "entry": name})
+    for case in suite['cases']:
+        if case['executor'] != 'surface':
+            continue
+        actual = found.get(case['entry'])
+        if actual is None:
+            continue  # 缺失入口由能力归属检查报告；不自动重写已审核快照。
+        if actual['signature'] != case['signature']:
+            issues.append({'code': 'surface_signature_drift', 'entry': case['entry'], 'case_id': case['case_id']})
+        if not actual['documented']:
+            issues.append({'code': 'undocumented_entry', 'entry': case['entry'], 'case_id': case['case_id']})
     return {"registered_count": len(found), "registered": found, "issues": issues,
             "retired": [c["capability_id"] for c in suite["catalog"]["capabilities"] if c["lifecycle"] == "retired"]}
 
