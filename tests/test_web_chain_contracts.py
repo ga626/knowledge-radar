@@ -175,9 +175,15 @@ def test_academic_reader_never_converts_cancellation_to_fulltext_unavailable(mon
 
 def test_one_dynamic_request_timeout_keeps_shared_browser_usable(monkeypatch):
     import asyncio
+    from contextlib import nullcontext
     from generic_web import browser_runtime as module
     module.close()
+    # 本例验证取消/复用，不把跨进程租约的磁盘耗时当成1秒浏览器SLA。
+    # 真实租约的互斥、释放与进程身份由test_resource_concurrency_leases覆盖。
+    monkeypatch.setattr('runtime.resource_concurrency.acquire_resource', lambda *a, **kw: nullcontext())
     opened,closed,launches=[],[],[]
+    entered = threading.Event()
+    cancelled = threading.Event()
     class PageContext:
         def __init__(self): self.id=len(opened);opened.append(self.id)
         async def close(self): closed.append(self.id)
@@ -187,13 +193,26 @@ def test_one_dynamic_request_timeout_keeps_shared_browser_usable(monkeypatch):
         async def close(self):pass
     async def launch():launches.append(1);module._BROWSER=Browser()
     monkeypatch.setattr(module,'_launch_browser',launch)
-    async def work(delay):
+    async def work(block):
         async with module.context() as (ctx,reused):
-            await asyncio.sleep(delay)
-            return reused
-    with pytest.raises(TimeoutError):module.run(work(1),timeout=.03)
-    assert module.run(work(.01),timeout=1) is True
-    module.close()
+            entered.set()
+            try:
+                if block:
+                    await asyncio.Event().wait()
+                return reused
+            finally:
+                if block:
+                    cancelled.set()
+    try:
+        with ThreadPoolExecutor(1) as pool:
+            pending = pool.submit(module.run, work(True), timeout=1)
+            assert entered.wait(5), 'request did not enter its browser context'
+            with pytest.raises(TimeoutError):
+                pending.result(timeout=5)
+        assert cancelled.wait(5), 'timed-out request did not receive cancellation'
+        assert module.run(work(False),timeout=5) is True
+    finally:
+        module.close()
     assert len(launches)==1 and sorted(opened)==sorted(closed)
 
 
