@@ -6,16 +6,10 @@ import argparse
 import hashlib
 import importlib.util
 import json
-import os
-import queue
-import subprocess
 import sys
 import tempfile
-import threading
-import time
 import zipfile
 from pathlib import Path
-from typing import Any
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,75 +63,20 @@ def safe_extract(archive: Path, destination: Path) -> Path:
     return destination / "KnowledgeRadar"
 
 
-def request(process: subprocess.Popen[str], lines: queue.Queue[str], request_id: int, method: str, params: dict[str, Any]) -> dict[str, Any]:
-    assert process.stdin is not None
-    process.stdin.write(json.dumps({"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}) + "\n")
-    process.stdin.flush()
-    deadline = time.monotonic() + 20
-    while time.monotonic() < deadline:
-        try:
-            message = json.loads(lines.get(timeout=0.2).strip())
-        except queue.Empty:
-            if process.poll() is not None:
-                raise RuntimeError(f"stdio server exited with {process.returncode}")
-            continue
-        except json.JSONDecodeError:
-            continue
-        if message.get("id") == request_id:
-            if "error" in message:
-                raise RuntimeError(json.dumps(message["error"], ensure_ascii=False))
-            return message
-    raise RuntimeError(f"timed out waiting for {method}")
-
-
-def stop_process(process: subprocess.Popen[str], readers: list[threading.Thread]) -> None:
-    """Release all child stdio handles before Windows cleans candidate state."""
-    if process.poll() is None:
-        process.terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=5)
-    for handle in (process.stdin, process.stdout, process.stderr):
-        if handle is not None:
-            handle.close()
-    for reader in readers:
-        reader.join(timeout=2)
-
-
 def stdio_probe(package_root: Path) -> list[str]:
-    env = dict(os.environ)
-    with tempfile.TemporaryDirectory(prefix="knowledgeradar-candidate-state-") as state:
-        env.update({
-            "PYTHONDONTWRITEBYTECODE": "1", "PYTHONPATH": str(package_root / "src"), "KR_MCP_TRANSPORT": "stdio",
-            "KR_PROJECT_ROOT": str(package_root), "KR_SOURCE_ROOT": str(package_root / "src"),
-            "KR_STATE_DIR": state, "KR_LOG_DIR": str(Path(state) / "logs"),
-        })
-        process = subprocess.Popen([sys.executable, "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(package_root / "src")) + ");runpy.run_path(" + repr(str(package_root / "src/server.py")) + ",run_name='__main__')"], cwd=package_root, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8")
-        lines: queue.Queue[str] = queue.Queue()
-        errors: queue.Queue[str] = queue.Queue()
-        readers: list[threading.Thread] = []
-        try:
-            assert process.stdout is not None
-            stdout_reader = threading.Thread(target=lambda: [lines.put(line) for line in iter(process.stdout.readline, "")], daemon=True)
-            stdout_reader.start()
-            readers.append(stdout_reader)
-            assert process.stderr is not None
-            stderr_reader = threading.Thread(target=lambda: [errors.put(line) for line in iter(process.stderr.readline, "")], daemon=True)
-            stderr_reader.start()
-            readers.append(stderr_reader)
-            request(process, lines, 1, "initialize", {"protocolVersion": "2025-03-26", "capabilities": {}, "clientInfo": {"name": "kr-release-candidate-verifier", "version": "1"}})
-            response = request(process, lines, 2, "tools/list", {})
-            return sorted(item["name"] for item in response.get("result", {}).get("tools", []) if isinstance(item, dict) and item.get("name"))
-        except RuntimeError as exc:
-            tail: list[str] = []
-            while not errors.empty():
-                tail.append(errors.get_nowait().strip())
-            detail = " ".join(item for item in tail[-8:] if item)
-            raise RuntimeError(f"{exc}; stderr: {detail[:1200]}") from exc
-        finally:
-            stop_process(process, readers)
+    """Use the same isolated owner lifetime as the public source verifier."""
+    scripts_path = str(ROOT / "scripts")
+    previous_path = list(sys.path)
+    try:
+        sys.path.insert(0, scripts_path)
+        from verify_codex_product import stdio_probe as isolated_stdio_probe
+
+        result = isolated_stdio_probe(package_root)
+    finally:
+        sys.path[:] = previous_path
+    if result.get("status") != "PASS":
+        raise RuntimeError("candidate stdio probe failed: " + str(result.get("error", result)))
+    return result["tools"]
 
 
 def verify(candidate_dir: Path) -> dict[str, object]:

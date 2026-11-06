@@ -87,6 +87,31 @@ def test_safe_extract_rejects_traversal(tmp_path: Path) -> None:
         raise AssertionError("unsafe archive was accepted")
 
 
+def test_candidate_probe_reuses_the_owned_state_and_cleanup_contract(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    calls = []
+
+    def probe(root):
+        calls.append(root)
+        return {'status': 'PASS', 'tools': sorted(verifier.EXPECTED_TOOLS)}
+
+    monkeypatch.setitem(sys.modules, 'verify_codex_product', SimpleNamespace(stdio_probe=probe))
+    assert verifier.stdio_probe(tmp_path) == sorted(verifier.EXPECTED_TOOLS)
+    assert calls == [tmp_path]
+
+
+def test_candidate_probe_propagates_the_shared_probe_failure(tmp_path, monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    import pytest
+
+    monkeypatch.setitem(sys.modules, 'verify_codex_product', SimpleNamespace(
+        stdio_probe=lambda root: {'status': 'FAIL', 'error': 'isolated owner did not exit'}))
+    with pytest.raises(RuntimeError, match='isolated owner did not exit'):
+        verifier.stdio_probe(tmp_path)
+
+
 def test_candidate_rejects_worktree_line_endings_in_runtime_identity(tmp_path: Path) -> None:
     import hashlib
     import pytest

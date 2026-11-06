@@ -18,7 +18,10 @@ CONTENT_PATTERNS = {
     "credential_assignment": re.compile(
         r"(?im)^[ \t]*(?:(?:[A-Z][A-Z0-9_]*(?:TOKEN|SECRET|PASSWORD))|(?:[A-Z][A-Z0-9_]*API[_-]?KEY)|API[_-]?KEY|authorization)[ \t]*=[ \t]*(?![<\"']?(?:your|example|replace|change|paste|todo|xxx)[\w-]*)(?:[^\s#]{8,})"
     ),
-    "absolute_user_path": re.compile(r"(?i)(?:[a-z]:\\users\\[^\\\s]+|/(?:users|home)/[^/\s]+)"),
+    "absolute_user_path": re.compile(
+        r"(?i)(?:[a-z]:[\\/]+users[\\/]+[^\\/\s]+"
+        r"|file:/+(?:users|home)/[^/\s]+|(?<![\w./])/(?:users|home)/[^/\s]+)"
+    ),
     "provenance_source_root": re.compile(r'"source_root"\s*:'),
 }
 
