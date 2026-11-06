@@ -71,6 +71,30 @@ def _stop_process(process: subprocess.Popen[str], reader: threading.Thread | Non
         reader.join(timeout=2)
 
 
+def _stop_probe_owner(state_root: Path, src: Path) -> None:
+    # Only the owner created inside this probe's temporary state belongs to us.
+    previous_path = list(sys.path)
+    try:
+        sys.path.insert(0, str(src))
+        from runtime.execution_owner import OwnerClient
+        from runtime.process_identity import process_identity
+
+        client = OwnerClient(root=state_root / "state" / "execution_owner")
+        descriptor = client.descriptor()
+        if descriptor is None:
+            return
+        result = client.stop()
+        if result.get("status") not in {"stopping", "unavailable"}:
+            raise RuntimeError("isolated probe owner could not stop: " + str(result.get("status")))
+        deadline = time.monotonic() + 10
+        while process_identity(descriptor["pid"]) == descriptor["process_identity"]:
+            if time.monotonic() >= deadline:
+                raise RuntimeError("isolated probe owner did not exit")
+            time.sleep(.05)
+    finally:
+        sys.path[:] = previous_path
+
+
 def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
     root = root.resolve()
     src = root / "src"
@@ -90,6 +114,7 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             "KR_RUNTIME_ENV_PATH": str(state_root / "data" / "config" / "runtime.env"),
             "KR_STATE_DIR": str(state_root / "state"),
             "KR_LOG_DIR": str(state_root / "logs"),
+            "KR_OWNER_ROOT": str(state_root / "state" / "execution_owner"),
         })
         process = subprocess.Popen(
             [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src)) + ");runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
@@ -116,6 +141,7 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             return {"status": "FAIL", "error": str(exc)}
         finally:
             _stop_process(process, reader)
+            _stop_probe_owner(state_root, src)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -328,3 +328,29 @@ def test_ci_separates_owned_host_process_without_repeating_offline_tests(tmp_pat
     assert calls[0]['deselect']==[ci.HOST_NODE]
     assert calls[1]['nodes']==[ci.HOST_NODE] and calls[1]['owned_host_process']
     assert len(run['ci_pytest']['batches'])==2
+
+
+@pytest.mark.parametrize('selection', ['tests/', 'tests/test_product_runtime.py::test_selected'])
+def test_ci_routes_owner_and_stdio_nodes_without_enabling_external_network(tmp_path, monkeypatch, selection):
+    root, suite, ledger = repository(tmp_path)
+    (root/'tests').mkdir()
+    for name in ('test_product_console_launcher.py', 'test_product_runtime.py', 'test_codex_stdio_contract.py'):
+        (root/'tests'/name).write_text('pass', encoding='utf-8')
+    calls = []
+
+    def fake_pytest(root, case, folder):
+        calls.append(case)
+        (folder/'junit.xml').write_text('<testsuites><testcase classname="tests.fixture" name="ok"/></testsuites>')
+        return {'verdict': 'PASS', 'returncode': 0}
+
+    monkeypatch.setattr(ci, '_pytest', fake_pytest)
+    _, passed = ci.run_ci(root, suite, ledger, [selection])
+    assert passed
+    if selection == 'tests/':
+        assert len(calls) == 2
+        assert calls[0]['deselect'] == list(ci.HOST_NODES)
+        assert calls[1]['nodes'] == list(ci.HOST_NODES)
+    else:
+        assert len(calls) == 1
+        assert calls[0]['nodes'] == [selection]
+    assert calls[-1]['owned_host_process'] is True

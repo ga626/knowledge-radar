@@ -150,8 +150,8 @@ def test_idle_cleanup_deadline_is_rehydrated_for_the_same_active_profile(monkeyp
         lambda limit: {
             "sessions": [
                 {
-                    "platform": "xhs",
-                    "profile_id": "xhs-c",
+                    "platform": "cnki",
+                    "profile_id": "cnki-c",
                     "state": "READY_SILENT",
                     "deadline_at": 0.0,
                 }
@@ -163,7 +163,7 @@ def test_idle_cleanup_deadline_is_rehydrated_for_the_same_active_profile(monkeyp
     monkeypatch.setattr(
         chrome_manager,
         "_profile_metadata_for_platform",
-        lambda _platform, **_kwargs: {"profile_id": "xhs-c", "account_slot": "xhs_account_c"},
+        lambda _platform, **_kwargs: {"profile_id": "cnki-c", "account_slot": "cnki_account_c"},
     )
     monkeypatch.setattr(
         chrome_manager,
@@ -171,12 +171,25 @@ def test_idle_cleanup_deadline_is_rehydrated_for_the_same_active_profile(monkeyp
         lambda platform, **kwargs: scheduled.append((platform, kwargs)),
     )
     chrome_manager._CHROME_IDLE_TIMERS.clear()
-    chrome_manager._CHROME_KEEP_ALIVE.pop("xhs", None)
+    chrome_manager._CHROME_KEEP_ALIVE.pop("cnki", None)
 
     restored = chrome_manager.restore_chrome_idle_cleanups()
 
     assert restored == {"restored": 1, "overdue": 1}
-    assert scheduled == [("xhs", {"profile_dir": active_profile, "deadline_at": 0.0, "restored": True})]
+    assert scheduled == [("cnki", {"profile_dir": active_profile, "deadline_at": 0.0, "restored": True})]
+
+
+def test_rehydration_never_adopts_borrowed_daily_browser(monkeypatch) -> None:
+    platforms = {"xhs", *chrome_manager.BORROWED_BROWSER_PLATFORMS}
+    monkeypatch.setattr(chrome_manager, "browser_sessions_summary", lambda limit: {
+        "sessions": [{"platform": p, "state": "READY_SILENT", "deadline_at": 0.0} for p in platforms]})
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("borrowed browser must never be adopted by managed cleanup")
+
+    monkeypatch.setattr(chrome_manager, "_find_chrome_with_debug_port", forbidden)
+    monkeypatch.setattr(chrome_manager, "_schedule_chrome_idle_cleanup", forbidden)
+    assert chrome_manager.restore_chrome_idle_cleanups() == {"restored": 0, "overdue": 0}
 
 
 def test_restart_reclaims_a_legacy_ready_session_without_a_persisted_deadline(monkeypatch, tmp_path) -> None:
@@ -185,14 +198,14 @@ def test_restart_reclaims_a_legacy_ready_session_without_a_persisted_deadline(mo
     monkeypatch.setattr(
         chrome_manager,
         "browser_sessions_summary",
-        lambda limit: {"sessions": [{"platform": "xhs", "profile_id": "xhs-c", "state": "READY_SILENT", "deadline_at": None}]},
+        lambda limit: {"sessions": [{"platform": "cnki", "profile_id": "cnki-c", "state": "READY_SILENT", "deadline_at": None}]},
     )
     monkeypatch.setattr(chrome_manager, "_find_chrome_with_debug_port", lambda _platform: 24680)
     monkeypatch.setattr(chrome_manager, "_chrome_user_data_dir_for_pid", lambda _pid: active_profile)
     monkeypatch.setattr(
         chrome_manager,
         "_profile_metadata_for_platform",
-        lambda _platform, **_kwargs: {"profile_id": "xhs-c", "account_slot": "xhs_account_c"},
+        lambda _platform, **_kwargs: {"profile_id": "cnki-c", "account_slot": "cnki_account_c"},
     )
     monkeypatch.setattr(
         chrome_manager,
@@ -201,12 +214,12 @@ def test_restart_reclaims_a_legacy_ready_session_without_a_persisted_deadline(mo
     )
     monkeypatch.setattr(chrome_manager.time, "time", lambda: 500.0)
     chrome_manager._CHROME_IDLE_TIMERS.clear()
-    chrome_manager._CHROME_KEEP_ALIVE.pop("xhs", None)
+    chrome_manager._CHROME_KEEP_ALIVE.pop("cnki", None)
 
     restored = chrome_manager.restore_chrome_idle_cleanups()
 
     assert restored == {"restored": 1, "overdue": 1}
-    assert scheduled == [("xhs", {"profile_dir": active_profile, "deadline_at": 500.0, "restored": True})]
+    assert scheduled == [("cnki", {"profile_dir": active_profile, "deadline_at": 500.0, "restored": True})]
 
 
 def test_restart_rejects_stale_xhs_manual_session_bound_to_another_profile(monkeypatch, tmp_path) -> None:
@@ -238,9 +251,9 @@ def test_restart_rejects_stale_xhs_manual_session_bound_to_another_profile(monke
 
 
 def test_explicit_manual_cancel_closes_only_the_expected_managed_profile(monkeypatch, tmp_path) -> None:
-    profile = str(tmp_path / "boss-profile")
-    chrome_manager._CHROME_KEEP_ALIVE["boss"] = True
-    chrome_manager._MANAGED_CHROME_PIDS["boss"] = 4321
+    profile = str(tmp_path / "cnki-profile")
+    chrome_manager._CHROME_KEEP_ALIVE["cnki"] = True
+    chrome_manager._MANAGED_CHROME_PIDS["cnki"] = 4321
     monkeypatch.setattr(chrome_manager, "_find_chrome_with_debug_port", lambda _platform: 4321)
     monkeypatch.setattr(chrome_manager, "_chrome_user_data_dir_for_pid", lambda _pid: profile)
     monkeypatch.setattr(chrome_manager, "_idle_cleanup_profile_dir", lambda _platform: profile)
@@ -250,11 +263,11 @@ def test_explicit_manual_cancel_closes_only_the_expected_managed_profile(monkeyp
     cleanup = []
     monkeypatch.setattr(chrome_manager, "_cleanup_managed_chrome_platform", lambda platform, *, expected_profile_dir="": cleanup.append((platform, expected_profile_dir)))
 
-    result = chrome_manager.cancel_browser_interaction("boss", reason="manual_interaction_cancelled", expected_profile_dir=profile)
+    result = chrome_manager.cancel_browser_interaction("cnki", reason="manual_interaction_cancelled", expected_profile_dir=profile)
 
     assert result["status"] == "cancelled"
-    assert "boss" not in chrome_manager._CHROME_KEEP_ALIVE
-    assert cleanup == [("boss", profile)]
+    assert "cnki" not in chrome_manager._CHROME_KEEP_ALIVE
+    assert cleanup == [("cnki", profile)]
     assert any(kwargs.get("event") == "manual_interaction_cancelled" for _args, kwargs in transitions)
     assert all(kwargs.get("metadata", {}).get("authenticated") is not True for _args, kwargs in transitions)
 
