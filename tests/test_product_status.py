@@ -7,6 +7,14 @@ from onboarding import product_status
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 
 
+def test_connection_and_distribution_states_never_claim_component_uninstalled():
+    rows = product_status._control_plane_capabilities([], [
+        {'id': 'opencli', 'label': 'OpenCLI', 'status': 'needs_connection'},
+        {'id': 'browser_link', 'label': 'Browser Link', 'status': 'distribution_pending'}])
+    assert rows[0]['state'] == 'needs_connection' and '连接' in rows[0]['detail']
+    assert rows[1]['state'] == 'distribution_pending' and '分发' in rows[1]['detail']
+
+
 def test_capability_packs_report_configuration_without_values() -> None:
     snapshot = {
         "fields": [
@@ -283,7 +291,7 @@ def test_local_component_catalog_groups_everything_by_user_goal(tmp_path, monkey
 
     assert set(groups) == {"web_automation", "platform_sessions", "media_understanding"}
     assert {"browser"} == {item["id"] for item in groups["web_automation"]["items"]}
-    assert {"chrome", "node", "xhs_bridge"} == {item["id"] for item in groups["platform_sessions"]["items"]}
+    assert {"chrome", "node", "xhs_bridge", "browser_link"} == {item["id"] for item in groups["platform_sessions"]["items"]}
     assert {"media_downloader", "transcription_model", "docling", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}
     assert "experimental" not in groups
     assert all_items["transcription_model"]["status"] == "not_installed"

@@ -175,10 +175,10 @@ class BorrowedSearchAdapter(LegacySearchAdapterMixin):
             return True  # 执行一次以返回准确的断连错误，不能永久排队。
         return not health.get('draining') and int(health.get('pending', 0)) < 2
 
-def defer_browser_busy(platform, code, *, request_executed=False):
+def defer_browser_busy(platform, code, *, request_executed=False, resource=''):
     """Only unsent local contention can safely return to the existing durable queue."""
     from runtime.execution_context import execution_value
     from runtime.resource_concurrency import ResourceDeferred
     if (execution_value('KR_DURABLE_WORKER') == '1' and request_executed is False
             and code in {'browser_busy', 'platform_lease_busy', 'channel_draining'}):
-        raise ResourceDeferred('browser_link:' + platform)
+        raise ResourceDeferred(resource or 'browser_link:' + platform)

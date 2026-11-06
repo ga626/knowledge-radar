@@ -160,6 +160,54 @@ def test_hard_deadline_and_explicit_retry(service):
     await_terminal(service, retry["task_id"])
 
 
+def test_cancel_resume_preserves_attempt_history_and_finalizes_current_request(service):
+    from runtime.research_ledger import open_task, record_tool_receipt, close_task
+    research = open_task(objective='cancel and resume', budget='balanced', considered=[])
+    tid = research['research_task_id']
+    original = service.submit('fixture_sleep', {'sleep': .5, 'value': 'resumed'}, timeout_s=15)
+    service.cancel(original['task_id'])
+    assert service.store.get_task(original['task_id'])['status'] == 'cancelled'
+    record_tool_receipt(task_id=tid, trace_id='original', tool='process_local_evidence', status='ok', result={'task': original})
+    resumed = service.retry(original['task_id'])
+    assert service.retry(original['task_id'])['task_id'] == resumed['task_id']
+    assert await_terminal(service, resumed['task_id'])['status'] == 'completed'
+    assert service.store.get_task(original['task_id'])['status'] == 'cancelled'
+    assert service.store.get_task(original['task_id'])['metadata']['continuation_task_id'] == resumed['task_id']
+    from unittest.mock import patch
+    with patch('runtime.tasks.get_task_store', return_value=service.store):
+        closed = close_task(task_id=tid, ecology_outcomes=[], stop_rationale='fixture completed', key_claims=[])
+    assert closed['closeout']['required_failed_tasks'] == []
+
+
+def test_background_github_original_survives_artifact_projection(service):
+    content = '[badge](https://example.org/badge?token=public-badge-value)'
+    original = {'platform': 'GitHub', 'content_fidelity': 'public_source_original', 'content_modified': False,
+        'provenance': {'github': {'public_only': True}}, 'content': content,
+        'comments': [{'body': content, 'diff_hunk': content, 'url': 'https://example.org/?token=private-value'}],
+        'url': 'https://github.com/example/repo?access_token=private-value', 'access_token': 'private-value'}
+    row = service.submit('fixture_echo', {'value': original}, timeout_s=15)
+    result = await_terminal(service, row['task_id'])['result']['value']
+    assert result['content'] == content and result['content_modified'] is False
+    assert result['comments'][0]['body'] == content and result['comments'][0]['diff_hunk'] == content
+    assert 'private-value' not in result['comments'][0]['url']
+    assert 'access_token' not in result and 'private-value' not in result['url']
+
+
+def test_scanned_pdf_without_ocr_returns_actionable_failure_and_no_asset(service, tmp_path):
+    import hashlib
+    from pypdf import PdfWriter
+    path = tmp_path / 'scan.pdf'
+    writer = PdfWriter(); writer.add_blank_page(width=200, height=200)
+    with path.open('wb') as stream: writer.write(stream)
+    row = service.submit('optional_media', {'input_path': str(path), 'approved_input_root': str(tmp_path),
+        'input_sha256': hashlib.sha256(path.read_bytes()).hexdigest(), 'component': 'auto',
+        'document': {'include_ocr': False}}, timeout_s=20)
+    result = await_terminal(service, row['task_id'], timeout=20)
+    assert result['status'] == 'failed'
+    assert result['result']['failure_type'] == 'pdf_text_unavailable_ocr_not_requested'
+    assert result['result']['evidence_assets'] == []
+
+
 def test_cancel_and_restart_recovery(service):
     row = service.submit("fixture_sleep", {"sleep": 3, "value": "cancel"}, timeout_s=10)
     service.store.cancel_task(row["task_id"])

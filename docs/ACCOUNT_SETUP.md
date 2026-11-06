@@ -1,6 +1,6 @@
 # 平台账号与登录恢复
 
-小红书继续使用 OpenCLI Browser Bridge。BOSS、猎聘动态页和脉脉共用 KnowledgeRadar Browser Link（KR 浏览器连接器），不挂 CDP 调试器、不再经 OpenCLI。两种连接都借用本人日常 Chrome；连接在线不等于站点已登录。无需搬 Cookie、建立账号池或维护 BOSS 专用浏览器。
+小红书与 BOSS 使用 OpenCLI Browser Bridge。知乎、猎聘动态页和脉脉共用 KnowledgeRadar Browser Link（KR 浏览器连接器），不挂 CDP 调试器、不再经 OpenCLI。两种连接都借用本人日常 Chrome；连接在线不等于站点已登录。无需搬 Cookie、建立账号池或维护 BOSS 专用浏览器。
 
 ## 日常使用
 

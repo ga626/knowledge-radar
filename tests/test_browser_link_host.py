@@ -16,8 +16,8 @@ import pytest
 ROOT=Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('observe,operation,expected', [('1','search',True), ('','search',False), ('1','probe',False)])
-def test_visible_diagnosis_is_process_opt_in_and_does_not_change_probe(monkeypatch,tmp_path,observe,operation,expected):
+@pytest.mark.parametrize('observe,operation,expected', [('1','search',False), ('','search',False), ('1','probe',False)])
+def test_routine_work_ignores_stale_observe_environment(monkeypatch,tmp_path,observe,operation,expected):
     from runtime.browser_link import BrowserLink
     monkeypatch.delenv('KR_DURABLE_TASK_ID',raising=False)
     monkeypatch.setenv('KR_BROWSER_LINK_OBSERVE',observe)

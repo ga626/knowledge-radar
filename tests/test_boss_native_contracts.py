@@ -17,7 +17,7 @@ def test_native_search_uses_public_governance_and_releases_lease(monkeypatch):
     monkeypatch.setattr(g, 'check_platform_admission', lambda *a, **k: {'allowed': True})
     def search(*a, **kw):
         assert g.get_runtime_lease_coordinator().resource_leases('recruitment_platform', 'boss')
-        return {'status': 'ok', 'items': [{'title': 'fixture'}], 'metadata': {'transport': 'content_script_native_messaging'}}
+        return {'status': 'ok', 'items': [{'title': 'fixture'}], 'metadata': {'transport': 'opencli'}}
     monkeypatch.setattr(native, '_search', search)
     public.search('fixture')
     assert not g.get_runtime_lease_coordinator().resource_leases('recruitment_platform', 'boss')
@@ -64,12 +64,12 @@ def test_risk_latches_in_native_state_and_stops_next_admission():
     assert admission()['reason'] == 'SECURITY_BLOCK' and not admission()['allowed']
 
 
-def test_native_identity_never_reads_opencli_configuration(monkeypatch):
+def test_boss_identity_uses_opencli_without_native_host(monkeypatch):
     from collectors.platform import boss as public
     from runtime import opencli_bridge
-    monkeypatch.setattr(opencli_bridge, 'connection_config', lambda: pytest.fail('unrelated driver identity'))
+    monkeypatch.setattr(opencli_bridge, 'connection_config', lambda: {'context_id':'daily-fixture'})
     result = public.runtime_identity()
-    assert result['driver'] == 'content_script_native_messaging' and not result['may_close_process']
+    assert result['driver'] == 'opencli' and not result['may_close_process']
 
 
 def test_registry_cancellation_delegates_to_adapter_only():
@@ -97,7 +97,7 @@ def test_cancel_binding_failure_cannot_prevent_worker_cleanup(monkeypatch):
         'ok': False, 'code': 'platform_cancel_failed', 'error_type': 'RuntimeError'}
 
 
-def test_native_detail_preparation_never_starts_opencli(monkeypatch):
+def test_detail_preparation_does_not_execute_browser_request(monkeypatch):
     from platform_adapters.boss_adapter import BossAdapter
     from runtime import opencli_bridge
     from kr_core import DetailRequest

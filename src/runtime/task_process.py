@@ -112,10 +112,10 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
                     result[key] = [ref for ref in result[key] if ref.get("task_id") != task_id]
         if (store.get_task(task_id) or {}).get("status") in TERMINAL_STATUSES:
             return
-        from generic_web.url_policy import public_evidence_payload
+        from kr_core.source_urls import public_result_payload
         artifact = {"schema": "knowledgeradar-task-artifact/v1", "task_id": task_id, **writer,
                     "origin_request_id": job.get('origin_request_id', ''),
-                    "identity": job["identity"], "result": public_evidence_payload(result)}
+                    "identity": job["identity"], "result": public_result_payload(result)}
         raw = json.dumps(artifact, ensure_ascii=False, sort_keys=True).encode("utf-8")
         pending_enhancement = stage == "collection" and isinstance(result, dict) and result.get("_enhancement_pending") is True
         name = ("collection-" if pending_enhancement else "result-") + writer["execution_id"]

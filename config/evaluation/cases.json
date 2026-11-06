@@ -1489,8 +1489,8 @@
     },
     {
       "case_id": "task.durable",
-      "version": 8,
-      "oracle_version": 8,
+      "version": 9,
+      "oracle_version": 9,
       "capabilities": [
         "task.lifecycle"
       ],
@@ -1506,7 +1506,17 @@
         "tests/test_w1w8_contracts.py",
         "tests/test_research_ledger.py",
         "tests/test_research_candidate_records.py",
-        "tests/test_tool_trace.py"
+        "tests/test_tool_trace.py",
+        "tests/test_boss_native_contracts.py",
+        "tests/test_boss_native_bridge.py",
+        "tests/test_recruitment_shared_execution.py",
+        "tests/test_recruitment_page_runner.py",
+        "tests/test_browser_link_integration.py",
+        "tests/test_browser_link_host.py::test_routine_work_ignores_stale_observe_environment",
+        "tests/test_opencli_readiness.py",
+        "tests/test_v2ex_city_filter.py",
+        "tests/test_product_status.py",
+        "tests/test_health_agent_summary.py"
       ],
       "layer": "integration",
       "auto": true,
@@ -1555,10 +1565,32 @@
         "src/runtime/asr_policy.py",
         "src/runtime/task_scope.py",
         "src/runtime/composition.py",
-        "src/runtime/mcp_server.py"
+        "src/runtime/mcp_server.py",
+        "tests/test_boss_native_contracts.py",
+        "tests/test_boss_native_bridge.py",
+        "tests/test_recruitment_shared_execution.py",
+        "tests/test_recruitment_page_runner.py",
+        "tests/test_browser_link_integration.py",
+        "tests/test_browser_link_host.py",
+        "tests/test_opencli_readiness.py",
+        "tests/test_v2ex_city_filter.py",
+        "tests/test_product_status.py",
+        "tests/test_health_agent_summary.py",
+        "src/collectors/platform/boss.py",
+        "src/collectors/platform/boss_dom.js",
+        "src/collectors/platform/v2ex.py",
+        "src/runtime/native_site.py",
+        "src/runtime/browser_link.py",
+        "src/runtime/channel_admission.py",
+        "src/runtime/opencli_page_runner.mjs",
+        "src/runtime/opencli_readiness.mjs",
+        "src/kr_core/source_urls.py",
+        "src/onboarding/product_status.py",
+        "tests/test_boss_dom.mjs",
+        "tests/test_browser_link_extension.mjs"
       ],
       "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。",
-      "change_reason": "PR前扫尾：保持Agent自主停止，修复中文重开条件被机器标签清洗。 PR前扫尾：测试样本及断言对齐公共媒体、评论覆盖和可读归档合同，保留完整性与回读检查。"
+      "change_reason": "六阶段首轮缺陷回归：公开原文、候选关联、评论预算、续接收口、浏览器路由与分发门禁；夹具通过不代表外部平台准入。"
     },
     {
       "case_id": "account.facts",

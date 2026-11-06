@@ -21,6 +21,15 @@ class NativeSite:
     login_url: str
     authenticated: object
 
+    def bridge(self):
+        return BrowserLink()
+
+    def transport_name(self):
+        return 'content_script_native_messaging'
+
+    def resource_name(self):
+        return 'browser_link:' + self.platform
+
     def state_path(self):
         return runtime_state_dir() / 'browser_link' / self.platform / 'interaction.json'
 
@@ -41,7 +50,7 @@ class NativeSite:
                 'failure_type': kind, 'error': {'type': kind, 'failure_type': kind, 'manual_action_required': manual},
                 'manual_action_required': manual, 'items': [], 'retryable': False,
                 'resume_policy': 'stop_no_auto_resume' if kind in {'anti_bot_verification', 'request_outcome_unknown'} else 'explicit_retry',
-                'metadata': {'transport': 'content_script_native_messaging', 'ownership': 'borrowed'}, **extra}
+                'metadata': {'transport': self.transport_name(), 'ownership': 'borrowed'}, **extra}
 
     def admission(self):
         state = self.state()
@@ -55,19 +64,20 @@ class NativeSite:
             gate = self.admission()
             if not gate['allowed']:
                 return self.failure(gate['reason'], request_executed=False)
-        response = BrowserLink().request(operation, {'url': url, **payload}, platform=self.platform)
+        response = self.bridge().request(operation, {'url': url, **payload}, platform=self.platform)
         data = response.get('data') or {}
         code = response.get('code') or response.get('failure_type') or ''
         if operation in {'search', 'detail', 'comments'}:
             from platform_adapters.common import defer_browser_busy
-            defer_browser_busy(self.platform, code, request_executed=response.get('request_executed'))
+            defer_browser_busy(self.platform, code, request_executed=response.get('request_executed'), resource=self.resource_name())
         if data.get('risk') or code == 'SECURITY_BLOCK':
             code = 'SECURITY_BLOCK'
         elif data.get('login') or data.get('detail_login_required'):
             code = 'AUTH_REQUIRED'
         if code and (not response.get('ok') or code in {'SECURITY_BLOCK', 'AUTH_REQUIRED'}):
             uncertain = response.get('request_executed') is not False and code in {
-                'native_command_timeout', 'native_host_unreachable', 'browser_disconnected', 'native_host_disconnected'}
+                'native_command_timeout', 'native_host_unreachable', 'browser_disconnected', 'native_host_disconnected',
+                'opencli_caller_timeout', 'COMMAND_RESULT_UNKNOWN'}
             if code == 'SECURITY_BLOCK' or uncertain:
                 with file_write_lock(self.state_path()):
                     current = self.state()
@@ -78,7 +88,7 @@ class NativeSite:
                 request_executed=response.get('request_executed', False))
             result['metadata']['transport_failure'] = code
             return result
-        response.setdefault('metadata', {}).update(transport='content_script_native_messaging', ownership='borrowed',
+        response.setdefault('metadata', {}).update(transport=self.transport_name(), ownership='borrowed',
             browser_process_owned=False, platform=self.platform)
         response['platform'] = self.display
         return response
@@ -151,4 +161,4 @@ class NativeSite:
             'profile': hashlib.sha256(str(state.get('profile_id', '')).encode()).hexdigest(), 'protocol': 1}
 
     def cancel_task(self, task_id):
-        return BrowserLink().cancel_task(task_id)
+        return self.bridge().cancel_task(task_id)

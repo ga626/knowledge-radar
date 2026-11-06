@@ -11,8 +11,6 @@
     "tabGroups"
   ],
   "host_permissions": [
-    "https://www.zhipin.com/*",
-    "https://zhipin.com/*",
     "https://www.liepin.com/*",
     "https://liepin.com/*",
     "https://maimai.cn/*",
@@ -40,8 +38,6 @@
   "content_scripts": [
     {
       "matches": [
-        "https://www.zhipin.com/*",
-        "https://zhipin.com/*",
         "https://www.liepin.com/*",
         "https://liepin.com/*",
         "https://maimai.cn/*",
@@ -53,7 +49,6 @@
         "sites/routes.js",
         "visibility.js",
         "sites/registry.js",
-        "sites/boss.js",
         "sites/liepin.js",
         "sites/maimai.js",
         "sites/zhihu.js",

@@ -318,6 +318,8 @@ class TaskService:
         with _SUBMIT_LOCK:
             existing = self.store.get_task(task_id)
             if existing:
+                if retry_of:
+                    self.store.link_continuation(retry_of, task_id)
                 self.start_maintenance()
                 return existing
             active = self.store.managed_tasks(adapter="durable_process", statuses=("queued", "running"))
@@ -341,6 +343,8 @@ class TaskService:
                               "owner_identity": process_identity(),
                               "source_identity": identity["source"], "deadline_at": job["submitted_at"] + timeout_s,
                               "phase": "queued", "blocks_final_report": True, "retry_of": retry_of})
+            if retry_of:
+                self.store.link_continuation(retry_of, task_id)
             if operation == "optional_media":
                 self._queue_enhancement(job, folder, execution_input, "collection")
             else:
@@ -614,6 +618,9 @@ class TaskService:
 
     def retry(self, task_id, *, timeout_s=None):
         task = self.store.get_task(task_id) or {}
+        continuation = (task.get('metadata') or {}).get('continuation_task_id')
+        if continuation:
+            return self.store.get_task(continuation) or task
         if task.get("status") not in {"failed", "cancelled", "interrupted", "waiting_for_user"}:
             return task
         if not task_id.startswith("durable-") or Path(task_id).name != task_id:

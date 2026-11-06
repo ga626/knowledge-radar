@@ -5,6 +5,13 @@ import httpx
 import pytest
 from runtime.browser_link import BrowserLink
 
+@pytest.fixture(autouse=True)
+def isolated_transport(monkeypatch,tmp_path):
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path/'state'))
+    monkeypatch.delenv('KR_DURABLE_TASK_ID',raising=False)
+    monkeypatch.setattr('runtime.browser_channel.ensure_borrowed_browser',
+        lambda *a,**kw:{'ok':False,'code':'browser_channel_not_connected','request_executed':False})
+
 class FakeClient:
 
     def __init__(self, response):
@@ -13,7 +20,9 @@ class FakeClient:
 
     def get(self, url, **kwargs):
         self.calls.append(('get', url, kwargs))
-        return self.response
+        body=self.response.json()
+        if body.get('connected') is False:return self.response
+        return httpx.Response(200,json={'connected':True,'protocol':1,'generation':'test-generation'})
 
     def post(self, url, **kwargs):
         self.calls.append(('post', url, kwargs))
@@ -35,15 +44,17 @@ def test_http_health_and_command_contract(tmp_path):
     bridge = BrowserLink(state_file=state, client=client)
     assert bridge.health()['ok']
     result = bridge.request('search', {'url': 'https://www.zhipin.com/web/geek/jobs?query=Python'}, platform='boss')
-    assert result['ok'] and client.calls[1][0] == 'post'
-    assert client.calls[1][2]['json']['operation'] == 'search'
+    assert result['ok']
+    assert next(call for call in client.calls if call[0]=='post')[2]['json']['operation'] == 'search'
 
 def test_closed_browser_is_not_retried(tmp_path):
     state = tmp_path / 'host.json'
     write_state(state, connected=False)
     client = FakeClient(httpx.Response(409, json={'ok': False, 'connected': False}))
     result = BrowserLink(state_file=state, client=client).request('detail', {'url': 'https://www.zhipin.com/job_detail/x.html'}, platform='boss')
-    assert result['failure_type'] == 'browser_disconnected'
+    assert result['failure_type'] == 'browser_channel_not_connected'
+    assert result['request_executed'] is False
+    assert not any(call[0]=='post' for call in client.calls)
 
 def test_timeout_requests_cancel(tmp_path):
     state = tmp_path / 'host.json'

@@ -29,3 +29,5 @@ def patch_native(monkeypatch, call):
             result.setdefault('data', {}).setdefault('query', payload.get('keyword', ''))
         return result
     monkeypatch.setattr(BrowserLink, 'request', invoke)
+    from collectors.platform.boss import BossOpenCLI
+    monkeypatch.setattr(BossOpenCLI, 'request', invoke)

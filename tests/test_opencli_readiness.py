@@ -6,6 +6,28 @@ import subprocess
 import pytest
 
 
+@pytest.mark.parametrize('mode', ['blank', 'repaired', 'presented', 'stuck'])
+def test_owned_viewport_does_not_reject_blank_before_navigation_and_bounds_repair(mode):
+    node = shutil.which('node')
+    if not node: pytest.skip('node unavailable')
+    helper = (Path(__file__).parents[1] / 'src/runtime/opencli_readiness.mjs').as_uri()
+    program = r'''
+const {ensureOwnedViewport}=await import(process.argv[1]);
+const mode=process.argv[2],calls=[];let width=0;
+const page={evaluate:async()=>({width,height:width?800:0}),
+ cdp:async method=>{calls.push(method);if(mode==='repaired')width=1280;},
+ wait:async()=>calls.push('wait')};
+const attention={observe:async value=>{calls.push(value);if(mode==='presented')width=1280;return {action:'foreground'};}};
+try{const result=await ensureOwnedViewport(page,attention,{requireLayout:mode!=='blank'});console.log(JSON.stringify({result,calls}));}
+catch(error){console.log(JSON.stringify({error:error.code,calls}));}
+'''
+    result = subprocess.run([node, '--input-type=module', '-e', program, helper, mode], capture_output=True, text=True, encoding='utf-8', check=True, timeout=10)
+    data = json.loads(result.stdout)
+    assert data.get('error') == ('browser_viewport_unavailable' if mode == 'stuck' else None)
+    assert data['calls'].count('Emulation.setDeviceMetricsOverride') == 1
+    assert sum(isinstance(c, dict) for c in data['calls']) == (1 if mode in {'presented', 'stuck'} else 0)
+
+
 @pytest.mark.parametrize('operation',['search','detail','comments','auth_verify'])
 def test_python_bridge_checks_bound_browser_before_dispatch(monkeypatch,tmp_path,operation):
     from runtime import opencli_bridge, browser_channel, process
@@ -114,3 +136,25 @@ catch(error){console.log(JSON.stringify({error:error.message,calls}));}
     assert ['disconnect'] in calls
     assert bool(result.get('error'))==(mode=='select-failed')
     if mode=='hidden':assert result['result']=={'visible':True,'focused':True,'source':'chrome_native'}
+
+
+@pytest.mark.parametrize('mode', ['ok', 'missing', 'switched', 'error'])
+def test_owned_navigation_never_replays_or_changes_target(mode):
+    node = shutil.which('node')
+    if not node: pytest.skip('node unavailable')
+    helper = (Path(__file__).parents[1] / 'src/runtime/opencli_readiness.mjs').as_uri()
+    program = r"""
+const {navigateOwnedPage}=await import(process.argv[1]);
+const mode=process.argv[2],calls=[];
+const page={getActivePage:()=> 'owned', tabs:async()=>mode==='missing'?[]:[{page:'owned'}],
+ setActivePage:id=>calls.push(['bind',id])};
+const client={sendCommandFull:async(method,opts)=>{calls.push([method,opts]);
+ if(mode==='error')throw new Error('unknown outcome');return {page:mode==='switched'?'other':'owned'};}};
+try{await navigateOwnedPage(page,client,{url:'https://example.org',session:'kr:xiaohongshu'});console.log(JSON.stringify({calls}));}
+catch(error){console.log(JSON.stringify({calls,error:error.code||error.message}));}
+"""
+    result=subprocess.run([node,'--input-type=module','-e',program,helper,mode],capture_output=True,text=True,encoding='utf-8',check=True,timeout=10)
+    data=json.loads(result.stdout)
+    assert sum(c[0]=='navigate' for c in data['calls']) == (0 if mode=='missing' else 1)
+    assert sum(c[0]=='bind' for c in data['calls']) == (1 if mode=='ok' else 0)
+    assert bool(data.get('error')) == (mode!='ok')

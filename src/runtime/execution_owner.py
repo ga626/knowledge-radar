@@ -292,8 +292,8 @@ class RequestReceipts:
         return None
 
     def finish(self, request_id, value):
-        from generic_web.url_policy import public_evidence_payload
-        value = public_evidence_payload(value)
+        from kr_core.source_urls import public_result_payload
+        value = public_result_payload(value)
         with self.connection() as conn:
             if isinstance(value, dict) and value.get('status') == 'error' and isinstance(value.get('error'), dict) and value['error'].get('execution_state') == 'not_started':
                 conn.execute('DELETE FROM requests WHERE id=?', (request_id,))

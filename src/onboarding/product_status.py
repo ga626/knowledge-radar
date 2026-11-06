@@ -239,13 +239,14 @@ def optional_capabilities() -> list[dict[str, Any]]:
         },
         {
             "id": "browser_link", "label": "KR 浏览器连接器",
-            "description": "BOSS、猎聘动态页和脉脉共用一个原生通道；账号留在日常Chrome。",
+            "description": "知乎、猎聘动态页和脉脉共用一个原生通道；账号留在日常Chrome。",
             "status": "ready" if browser_link_health.get('ok') else "needs_connection" if connector.get('extension_ids') else "distribution_pending",
+            "status_label": "已连接" if browser_link_health.get('ok') else "等待连接Chrome" if connector.get('extension_ids') else "等待扩展正式分发",
             "requirement": "浏览器站点必需，HTTP功能无需", "install_mode": "guided",
             "restart_required": False,
             "boundary": "Host随KR更新；首次扩展安装和权限由本人确认，不需要开发者模式。",
             "guide": {"official_url": connector.get('store_url'), "official_label": "KR 浏览器连接器官方商店页（发布后提供）",
-                "steps": ("确认商店扩展权限。", "在扩展中点击连接此浏览器，绑定本人日常Chrome。", "在站点工作标签登录；连接状态不等于账号登录状态。")},
+                "steps": ("确认商店扩展权限。", "扩展自动连接本机Host，保留本人日常Chrome身份。", "在站点工作标签登录；连接状态不等于账号登录状态。")},
         },
         {
             "id": "media_downloader",
@@ -308,7 +309,7 @@ def local_component_catalog() -> dict[str, Any]:
                     {
                         "id": "chrome",
                         "label": "Google Chrome",
-                        "description": "小红书复用你的日常Chrome；其他已接入平台继续使用各自受管会话。",
+                        "description": "小红书、BOSS与微信通过OpenCLI复用日常Chrome；知乎、猎聘动态页与脉脉使用KR浏览器连接器。",
                         "status": "ready" if chrome else "not_installed",
                         "requirement": "启用平台账号后必需",
                         "install_mode": "guided",
@@ -342,6 +343,7 @@ def local_component_catalog() -> dict[str, Any]:
                         },
                     },
                     selectable["xhs_bridge"],
+                    selectable["browser_link"],
                 ],
             },
             {
@@ -634,8 +636,12 @@ def _control_plane_capabilities(packs: list[dict[str, Any]], components: list[di
             {
                 "id": str(component["id"]),
                 "label": str(component["label"]),
-                "state": "local_ready" if ready else "not_installed",
-                "detail": "本地组件就绪" if ready else "尚未安装",
+                "state": "local_ready" if ready else str(component['status']),
+                "detail": "本地组件就绪" if ready else component.get('status_label') or {
+                    'needs_connection': '等待连接Chrome', 'distribution_pending': '等待扩展正式分发',
+                    'not_installed': '尚未安装', 'on_demand': '按需下载', 'missing': '未检测到',
+                    'unavailable': '运行时缺失', 'disabled': '默认关闭',
+                }.get(str(component['status']), '需要检查组件状态'),
             }
         )
     return rows

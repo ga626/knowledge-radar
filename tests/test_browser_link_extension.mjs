@@ -18,7 +18,7 @@ async function setup({paired=true,profile='paired-id',startupRace=false,create,s
   create:async options=>{created.push(options);const tab=create?await create(options):{id:nextId++,url:options.url,active:false,windowId:1};tabsById.set(tab.id,tab);return tab;},
   get:async id=>{if(!tabsById.has(id))throw Error('not found');return tabsById.get(id);},
   update:async(id,options)=>{updated.push({id,...options});const tab=tabsById.get(id);Object.assign(tab,options);
-   if(options.url){const platform=options.url.includes('zhipin')?'boss':options.url.includes('liepin')?'liepin':options.url.includes('zhihu.com')?'zhihu':'maimai';runtime.onMessage.emit({kind:'content-ready',url:options.url,platform},{id:'ext',frameId:0,tab:{id}},()=>{});}return tab;},
+   if(options.url){const platform=options.url.includes('liepin')?'liepin':options.url.includes('zhihu.com')?'zhihu':'maimai';runtime.onMessage.emit({kind:'content-ready',url:options.url,platform},{id:'ext',frameId:0,tab:{id}},()=>{});}return tab;},
   remove:async id=>{removed.push(id);tabsById.delete(id);tabs.onRemoved.emit(id);},
   sendMessage:async(id,message)=>{content.push({id,...message});if(sendMessage)return sendMessage(id,message);}};
  // Chrome defaults new groups to the current (user) window, moving tabIds.
@@ -33,9 +33,9 @@ async function setup({paired=true,profile='paired-id',startupRace=false,create,s
  vm.runInContext(source,context);
  if(startupRace){runtime.onInstalled.emit();runtime.onStartup.emit();}
  await tick();port.onMessage.emit({type:'hello_ack',protocol:1,generation:'gen'});
- const command=(id,platform='boss',operation='search',payload)=>port.onMessage.emit({type:'command',request_id:id,platform,operation,generation:'gen',timeout_ms:10000,
-  payload:payload || {url:platform==='boss'?'https://www.zhipin.com/web/geek/jobs?query=Python':platform==='liepin'?'https://www.liepin.com/zhaopin/?key=Python':'https://maimai.cn/community/home/recommended'}});
- const result=(id,platform='boss',data={})=>{const tab=content.find(c=>c.request_id===id)?.id;runtime.onMessage.emit({kind:'content-result',request_id:id,generation:'gen',platform,ok:true,data},
+ const command=(id,platform='liepin',operation='search',payload)=>port.onMessage.emit({type:'command',request_id:id,platform,operation,generation:'gen',timeout_ms:10000,
+  payload:payload || {url:platform==='liepin'?'https://www.liepin.com/zhaopin/?key=Python':'https://maimai.cn/community/home/recommended'}});
+ const result=(id,platform='liepin',data={})=>{const tab=content.find(c=>c.request_id===id)?.id;runtime.onMessage.emit({kind:'content-result',request_id:id,generation:'gen',platform,ok:true,data},
   {id:'ext',frameId:0,tab:{id:tab}},()=>{});};
  return {windowCreates,windowUpdates,groups,sent,content,created,updated,removed,alarms,timers,port,runtime,chrome,local,storage,tabsById,command,result,
   counts:()=>({connections,reloads,errorReads})};
@@ -80,7 +80,7 @@ test('different sites share port and use bounded per-site tabs',async()=>{
 });
 test('cancelled and cross-tab or cross-generation results never win',async()=>{
  const s=await setup();s.command('a');await tick();
- s.runtime.onMessage.emit({kind:'content-result',request_id:'a',generation:'gen',platform:'boss',ok:true},{id:'ext',frameId:0,tab:{id:999}},()=>{});
+ s.runtime.onMessage.emit({kind:'content-result',request_id:'a',generation:'gen',platform:'liepin',ok:true},{id:'ext',frameId:0,tab:{id:999}},()=>{});
  assert.equal(s.sent.filter(m=>m.type==='result').length,0);
  s.port.onMessage.emit({type:'cancel',request_id:'a'});s.result('a');await tick();
  assert.equal(s.sent.filter(m=>m.type==='result').length,1);assert.equal(s.sent.at(-1).code,'cancelled');
@@ -91,10 +91,10 @@ test('same loaded URL reuses document without repeated navigation',async()=>{
  assert.equal(s.content.filter(x=>x.kind==='extract').length,2);s.result('b');
 });
 test('login attention focuses once, no reload; passive probe creates no tab',async()=>{
- const s=await setup();s.command('probe','boss','probe',{});await tick();assert.equal(s.created.length,0);
+ const s=await setup();s.command('probe','liepin','probe',{});await tick();assert.equal(s.created.length,0);
  assert.equal(s.sent.find(x=>x.request_id==='probe').code,'work_tab_unavailable');
- s.command('login','boss','login',{url:'https://www.zhipin.com/web/user/'});await tick();s.result('login');await tick();
- s.command('attention','boss','attention',{});await tick();
+ s.command('login','liepin','login',{url:'https://www.liepin.com/web/user/'});await tick();s.result('login');await tick();
+ s.command('attention','liepin','attention',{});await tick();
  assert.equal(s.created.length,1);assert.equal(s.updated.filter(x=>x.url).length,1);
  assert.equal(s.sent.find(x=>x.request_id==='attention').ok,true);
 });
@@ -129,7 +129,7 @@ test('owned tab closed midrequest becomes explicit failure',async()=>{
 });
 test('user-navigated tabs are never commandeered',async()=>{
  const s=await setup();s.command('a');await tick();s.result('a');await tick();
- s.tabsById.get(7).url='https://www.zhipin.com/web/geek/recommend';
+ s.tabsById.get(7).url='https://www.liepin.com/web/geek/recommend';
  s.command('b');await tick();assert.equal(s.created.length,2);assert.equal(s.removed.length,0);
 });
 test('cancel during tab creation cannot navigate after completion',async()=>{
@@ -138,9 +138,9 @@ test('cancel during tab creation cannot navigate after completion',async()=>{
  assert.equal(s.updated.filter(x=>x.url||x.active).length,0);assert.equal(s.timers.size,0);assert.ok(s.removed.includes(7));
 });
 test('arbitrary JS and foreign URLs rejected before page actions',async()=>{
- const s=await setup();s.command('script','boss','evaluate',{source:'document.cookie'});await tick();
+ const s=await setup();s.command('script','liepin','evaluate',{source:'document.cookie'});await tick();
  assert.equal(s.sent.find(m=>m.request_id==='script').code,'unsupported_operation');
- s.command('wrong','boss','detail',{url:'https://example.com/'});await tick();
+ s.command('wrong','liepin','detail',{url:'https://example.com/'});await tick();
  assert.equal(s.sent.find(m=>m.request_id==='wrong').code,'invalid_site_url');assert.equal(s.updated.length,0);
 });
 
@@ -150,7 +150,7 @@ test('Zhihu routes exact hosts, reuses answer snapshot, and rejects cross-platfo
  s.command('part','zhihu','detail',{url,read_part:1,snapshot_id:'snapshot'});await tick();
  assert.equal(s.created.length,1);assert.equal(s.updated.filter(x=>x.url).length,1);
  assert.equal(s.content.filter(x=>x.kind==='extract').length,2);s.result('part','zhihu');await tick();
- s.command('foreign','zhihu','detail',{url:'https://www.zhipin.com/job_detail/a.html'});await tick();
+ s.command('foreign','zhihu','detail',{url:'https://www.liepin.com/job_detail/a.html'});await tick();
  assert.equal(s.sent.find(x=>x.request_id==='foreign').code,'invalid_site_url');
  s.command('article','zhihu','detail',{url:'https://zhuanlan.zhihu.com/p/123'});await tick();
  assert.equal(s.content.at(-1).platform,'zhihu');s.result('article','zhihu');
@@ -223,9 +223,9 @@ test('risk page is retained even when transport returned success',async()=>{
 
 test('diagnostic history stays bounded and foreign acknowledgements are ignored',async()=>{
  const s=await setup();s.command('a');await tick();
- s.runtime.onMessage.emit({kind:'content-started',request_id:'a',generation:'wrong',platform:'boss'},{id:'ext',frameId:0,tab:{id:7}},()=>{});
- for(let i=0;i<100;i++)s.chrome.tabs.onUpdated.emit(7,{status:'loading'},{id:7,url:'https://www.zhipin.com/web/geek/jobs?secret=hidden'});
- await tick();s.command('diag','boss','probe',{diagnostics_only:true});await tick();
+ s.runtime.onMessage.emit({kind:'content-started',request_id:'a',generation:'wrong',platform:'liepin'},{id:'ext',frameId:0,tab:{id:7}},()=>{});
+ for(let i=0;i<100;i++)s.chrome.tabs.onUpdated.emit(7,{status:'loading'},{id:7,url:'https://www.liepin.com/web/geek/jobs?secret=hidden'});
+ await tick();s.command('diag','liepin','probe',{diagnostics_only:true});await tick();
  const data=s.sent.find(x=>x.request_id==='diag').data;
  assert.equal(data.events.length,80);assert.ok(!data.events.some(x=>x.stage==='content_started'));
  assert.ok(!JSON.stringify(data).includes('secret'));
@@ -238,7 +238,7 @@ test('normal work uses an unfocused independent minimized window and closes only
  assert.equal(s.tabsById.get(7).windowId,17); // grouping must not move it to user window 1
  assert.equal(s.updated[0].muted,true);assert.ok(s.updated.slice(1).some(x=>x.url));
  s.result('a');await tick();s.tabsById.get(7).active=true;
- s.command('done','boss','release',{preserve_interaction:true});await tick();
+ s.command('done','liepin','release',{preserve_interaction:true});await tick();
  assert.deepEqual(s.removed,[7]);assert.equal(s.sent.find(x=>x.request_id==='done').data.work_page_closed,true);
 });
 
@@ -250,7 +250,7 @@ test('foreign targets do not create even a blank work window',async()=>{
 test('ownership marker mismatch forbids closing a recycled tab id',async()=>{
  const s=await setup();s.command('a');await tick();s.result('a');await tick();
  s.groups.set(107,{title:'user group'});
- s.command('release','boss','release',{});await tick();
+ s.command('release','liepin','release',{});await tick();
  assert.equal(s.removed.length,0);assert.equal(s.storage.ownedTabs.length,0);
 });
 
@@ -258,26 +258,26 @@ test('user foreground takeover stops pending work and relinquishes cleanup right
  const s=await setup();s.command('a');await tick();
  s.chrome.windows.onFocusChanged.emit(s.tabsById.get(7).windowId);await tick();
  assert.equal(s.sent.find(x=>x.request_id==='a').code,'user_took_work_window');
- s.command('release','boss','release',{});await tick();assert.equal(s.removed.length,0);
+ s.command('release','liepin','release',{});await tick();assert.equal(s.removed.length,0);
 });
 
 test('normal completion cleanup preserves a real risk handoff',async()=>{
- const s=await setup();s.command('a');await tick();s.result('a','boss',{risk:true});await tick();
- s.command('done','boss','release',{preserve_interaction:true});await tick();
+ const s=await setup();s.command('a');await tick();s.result('a','liepin',{risk:true});await tick();
+ s.command('done','liepin','release',{preserve_interaction:true});await tick();
  assert.equal(s.removed.length,0);assert.equal(s.sent.find(x=>x.request_id==='done').data.interaction_retained,true);
 });
 
 test('cleanup failure remains visible and keeps ownership for a safe later attempt',async()=>{
  const s=await setup();s.command('a');await tick();s.result('a');await tick();
  s.chrome.tabs.remove=async()=>{throw Error('chrome removal failed');};
- s.command('done','boss','release',{preserve_interaction:true});await tick();
+ s.command('done','liepin','release',{preserve_interaction:true});await tick();
  const receipt=s.sent.find(x=>x.request_id==='done').data;
  assert.equal(receipt.work_page_closed,false);assert.equal(receipt.cleanup_reason,'work_page_cleanup_failed');
  assert.ok(s.storage.ownedTabs.some(([,item])=>item.id===7));
 });
 
 
-const attentionMessage=(s,id,signals)=>s.runtime.onMessage.emit({kind:'content-attention',request_id:id,platform:'boss',generation:'gen',signals},
+const attentionMessage=(s,id,signals)=>s.runtime.onMessage.emit({kind:'content-attention',request_id:id,platform:'liepin',generation:'gen',signals},
  {id:'ext',frameId:0,tab:{id:7}},()=>{});
 
 test('only a concrete visible challenge foregrounds once and resolution returns to background',async()=>{
@@ -289,9 +289,9 @@ test('only a concrete visible challenge foregrounds once and resolution returns 
  s.chrome.windows.onFocusChanged.emit(17);await tick(); // Our own focus event is not user takeover.
  attentionMessage(s,'challenge',{interaction:{visible:true,kind:'slider'}});await tick();
  assert.equal(s.windowUpdates.filter(x=>x.focused).length,1);
- s.result('challenge','boss',{risk:true});await tick();
+ s.result('challenge','liepin',{risk:true});await tick();
  assert.equal(s.windowUpdates.at(-1).focused,true);
- s.runtime.onMessage.emit({kind:'content-attention-resolved',request_id:'challenge',platform:'boss',generation:'gen'},
+ s.runtime.onMessage.emit({kind:'content-attention-resolved',request_id:'challenge',platform:'liepin',generation:'gen'},
   {id:'ext',frameId:0,tab:{id:7}},()=>{});await tick();
  assert.equal(s.windowUpdates.at(-1).state,'minimized');
  assert.equal(s.updated.filter(x=>x.url).length,navigations);
@@ -301,7 +301,7 @@ test('confirmed hidden renderer failure gets one foreground attempt then returns
  const s=await setup();s.command('hidden');await tick();
  attentionMessage(s,'hidden',{visibility:{hidden:true,dom_ready:true,stalled:true,reason:'zero_viewport'}});await tick();
  assert.equal(s.windowUpdates.at(-1).focused,true);
- s.result('hidden','boss',{content:'same page'});await tick();
+ s.result('hidden','liepin',{content:'same page'});await tick();
  assert.equal(s.windowUpdates.at(-1).state,'minimized');
  assert.equal(s.created.length,1);
 });
@@ -309,7 +309,7 @@ test('confirmed hidden renderer failure gets one foreground attempt then returns
 test('foreign frame and stale generation cannot trigger presentation',async()=>{
  const s=await setup();s.command('a');await tick();
  for(const [id,gen,frame] of [[99,'gen',0],[7,'old',0],[7,'gen',1]]){
-  s.runtime.onMessage.emit({kind:'content-attention',request_id:'a',platform:'boss',generation:gen,
+  s.runtime.onMessage.emit({kind:'content-attention',request_id:'a',platform:'liepin',generation:gen,
    signals:{interaction:{kind:'captcha',visible:true}}},{id:'ext',frameId:frame,tab:{id}},()=>{});
  }
  await tick();assert.equal(s.windowUpdates.length,0);
@@ -325,9 +325,9 @@ test('cancellation returns a foreground handoff to background without replay',as
 test('resolved signal cannot minimize a page the user has navigated elsewhere',async()=>{
  const s=await setup();s.command('a');await tick();
  attentionMessage(s,'a',{interaction:{visible:true,kind:'login'}});await tick();
- s.result('a','boss',{login:true});await tick();s.tabsById.get(7).url='https://www.zhipin.com/user-owned';
+ s.result('a','liepin',{login:true});await tick();s.tabsById.get(7).url='https://www.liepin.com/user-owned';
  const count=s.windowUpdates.length;
- s.runtime.onMessage.emit({kind:'content-attention-resolved',request_id:'a',platform:'boss',generation:'gen'},
+ s.runtime.onMessage.emit({kind:'content-attention-resolved',request_id:'a',platform:'liepin',generation:'gen'},
   {id:'ext',frameId:0,tab:{id:7}},()=>{});await tick();
  assert.equal(s.windowUpdates.length,count);
 });
@@ -344,4 +344,11 @@ test('cancellation during an unfinished focus cannot leave a late foreground win
  s.port.onMessage.emit({type:'cancel',request_id:'race'});await tick();
  continueFocus();await tick();
  assert.equal(s.windowUpdates.at(-1).state,'minimized');
+});
+
+test('BOSS is absent from native routes and extension permissions',()=>{
+ const manifest=JSON.parse(readFileSync(new URL('../browser_link/extension/manifest.json',import.meta.url),'utf8'));
+ assert.ok(!JSON.stringify(manifest).includes('zhipin.com'));
+ const ctx=vm.createContext({URL});vm.runInContext(readFileSync(new URL('../browser_link/extension/sites/routes.js',import.meta.url),'utf8'),ctx);
+ assert.equal(ctx.KRSiteRoutes.boss,undefined);
 });

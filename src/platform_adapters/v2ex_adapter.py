@@ -30,10 +30,15 @@ def detail_strategy():
     from detail_strategies.legacy import LegacyDetailStrategy
     from collectors.platform.v2ex import detail
     from understanding.evidence import build_detail_evidence
-    return LegacyDetailStrategy(platform='V2EX', extractor=lambda request: detail(request.url,
-        include_comments=bool(request.options.get('include_comments', request.enable_comment_filtering)),
-        comment_limit=max(1, min(100, int(request.options.get('comment_limit', 50)))),
-        comment_page=request.options.get('comment_page',1),comment_offset=request.options.get('comment_offset',0)), evidence_builder=build_detail_evidence)
+    def extract(request):
+        comments = request.options.get('comments') or {}
+        # V2EX公开回复是平面流；不根据@昵称推测回复关系。
+        budget = min(int(comments.get('root_limit', 100)), int(comments.get('total_limit', request.options.get('comment_limit', 50))))
+        return detail(request.url,
+            include_comments=bool(request.options.get('include_comments', request.enable_comment_filtering)),
+            comment_limit=max(1, budget) if comments else max(1, min(100, budget)), comment_max_pages=max(1, min(20, int(comments.get('max_pages', 2)))),
+            comment_page=request.options.get('comment_page',1), comment_offset=request.options.get('comment_offset',0))
+    return LegacyDetailStrategy(platform='V2EX', extractor=extract, evidence_builder=build_detail_evidence)
 
 
 def register(target_registry):

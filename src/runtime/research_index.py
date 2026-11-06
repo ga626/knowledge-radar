@@ -18,6 +18,11 @@ def encoded(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def provenance_rows(value):
+    """保留来源的结构化身份，同时兼容旧的字符串列表。"""
+    return value if isinstance(value, list) else [value] if isinstance(value, (dict, str)) and value else []
+
+
 def identity(item, ecology=""):
     from kr_core.source_urls import discovery_url as canonical_url
     url = canonical_url(str(item.get("url") or item.get("source_url") or ""))
@@ -153,7 +158,8 @@ class ResearchIndex:
                     safe["url"] = canonical_url(safe["url"])
                 prior = conn.execute("SELECT value FROM current WHERE task_id=? AND kind='candidate' AND object_id=?", (task_id, cid)).fetchone()
                 old = json.loads(prior[0]) if prior else {}
-                safe["provider_provenance"] = sorted(set(old.get("provider_provenance",[]) + safe.get("provider_provenance",[])))
+                provenance = provenance_rows(old.get('provider_provenance')) + provenance_rows(safe.get('provider_provenance'))
+                safe['provider_provenance'] = [value for _, value in sorted({encoded(value): value for value in provenance}.items())]
                 value = {**old, **safe, "candidate_id": cid,
                          "source_ecologies": sorted(set(old.get("source_ecologies", []) + [ecology])),
                          "verification": "discovery_only", "independence": "unknown"}

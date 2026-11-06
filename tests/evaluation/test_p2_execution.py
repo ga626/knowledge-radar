@@ -8,6 +8,24 @@ from runtime.mcp_dispatch import nonblocking_mcp_tool
 from runtime.tasks import TaskStore
 
 
+def test_execution_receipt_preserves_github_original_and_redacts_transport_metadata(tmp_path):
+    from runtime.execution_owner import RequestReceipts
+    ledger = RequestReceipts(tmp_path, 'generation')
+    content = '[badge](https://example.org/badge?token=public-value)'
+    value = {'durable_result': {'result': {'platform': 'GitHub', 'content_fidelity': 'public_source_original',
+        'provenance': {'github': {'public_only': True}}, 'content_modified': False, 'content': content,
+        'comments':[{'body':content,'diff_hunk':content,'url':'https://example.org/?token=private-value'}],
+        'url': 'https://example.org/repo?access_token=private-value'}}}
+    ledger.reserve('original', 'get_task_status', {})
+    result = ledger.finish('original', value)
+    detail = result['durable_result']['result']
+    assert detail['content'] == content
+    assert detail['comments'][0]['body'] == content and detail['comments'][0]['diff_hunk'] == content
+    assert 'private-value' not in detail['comments'][0]['url']
+    assert 'private-value' not in detail['url']
+    assert ledger.read('original')['result'] == result
+
+
 def test_sdk_handler_keeps_event_loop_and_health_responsive():
     mcp = FastMCP("isolated-dispatch")
     @nonblocking_mcp_tool(mcp)

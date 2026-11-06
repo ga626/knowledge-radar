@@ -2,7 +2,15 @@
 
 All notable user-facing changes are recorded here. This project follows an Alpha release channel; a version is delivered only when its immutable candidate artifact has passed its release checks.
 
-## 0.1.0a20 (Unreleased)
+## 0.1.0a21 (Unreleased)
+
+- Preserve public GitHub source text and structured candidate provenance through durable execution.
+- Align research inspection, source counts, question status, reused evidence and resumed task closeout.
+- Enforce V2EX comment budgets and report scanned PDF text/OCR gaps explicitly.
+- Restore Xiaohongshu owned-page navigation and move BOSS to the existing OpenCLI bridge.
+- Show browser connection/distribution states accurately; fail before execution when Browser Link lacks a published extension identity.
+
+## 0.1.0a20
 
 - 整合单执行内核与 MCP/CLI、连续研究和公共证据回读；学术发现与全文分离，GitHub 支持固定提交正文，微信由微信读书与公共搜索发现。
 - 统一 PDF 缺页 OCR、评论字段、公共媒体与可回查筛选；保留平台覆盖缺口与错误，不把未获取内容标为完成。

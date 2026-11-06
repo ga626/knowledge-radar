@@ -10,6 +10,28 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List
 
 
+def current_browser_diagnostics(registry, *, opencli, native):
+    """诊断只展示现行通道；历史账号池不再获得主链准入声明。"""
+    borrowed = {'xiaohongshu': 'opencli', 'xhs': 'opencli', 'boss': 'opencli',
+                'zhihu': 'browser_link', 'liepin': 'browser_link', 'maimai': 'browser_link'}
+    active = [dict(row) for row in registry.get('profiles', []) if row.get('platform') not in borrowed]
+    result = {**registry, 'profiles': active, 'retired_profile_count': len(registry.get('profiles', [])) - len(active),
+              'policy': {'routing': 'platform_adapter_owned', 'borrowed_account_switching': 'disabled'}}
+    result['counts'] = {'total': len(active), 'available': sum(row.get('profile_exists') is True for row in active),
+                        'missing': sum(row.get('profile_exists') is not True for row in active)}
+    channels = []
+    for platform in ('xiaohongshu', 'boss', 'zhihu', 'liepin', 'maimai'):
+        driver = borrowed[platform]
+        connected = opencli.get('connected') is True if driver == 'opencli' else native.get('ok') is True
+        channels.append({'platform': platform, 'driver': driver, 'ownership': 'borrowed', 'connected': connected,
+                         'auth_state': 'not_probed', 'main_chain_allowed': False,
+                         'admission_gate': 'requires_platform_request' if connected else 'channel_not_ready',
+                         'reason': opencli.get('connection_reason') if driver == 'opencli' else native.get('code', ''),
+                         'automatic_account_switching': False})
+    return result, {'schema': 'knowledgeradar-channel-admission-summary/v2', 'status': 'ok',
+                    'production_routing': 'platform_adapter_owned', 'auto_admission': 'disabled', 'channels': channels}
+
+
 def build_channel_admission_summary(profiles: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
     channels: List[Dict[str, Any]] = []
     for profile in profiles or []:

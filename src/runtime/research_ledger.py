@@ -478,6 +478,17 @@ def link_tool_result(*, task_id, tool, result, receipt):
     if not result.get('evidence_assets') and not result.get('error'):
         return {'association': 'no_detail_evidence'}
     url = str(result.get('url') or result.get('source_url') or '')
+    repository_url = ''
+    github = (result.get('provenance') or {}).get('github') or {}
+    if (result.get('platform') == 'GitHub' and github.get('public_only') is True
+            and github.get('object_kind') in {'readme', 'file', 'tree', 'overview'}):
+        # README/源码有固定提交URL；仓库候选按采集器明确记录的仓库身份关联。
+        repository = str(github.get('repository') or '')
+        if re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
+            from urllib.parse import urlsplit
+            parsed = urlsplit(url)
+            if parsed.hostname == 'github.com' and parsed.path.startswith('/' + repository + '/'):
+                repository_url = 'https://github.com/' + repository
     if not url:
         return {'association': 'ambiguous_no_source_identity'}
     source_key = hashlib.sha256(canonical_url(url).encode()).hexdigest()
@@ -489,6 +500,9 @@ def link_tool_result(*, task_id, tool, result, receipt):
                    and tasks.intersection(row.get('background_task_ids', [])) for row in payload.get('tool_receipts', [])):
                 return {'association': 'superseded_background_result'}
         matches = [row for row in payload.get('candidate_pool', []) if row.get('source_key') == source_key]
+        if not matches and repository_url:
+            repository_key = hashlib.sha256(canonical_url(repository_url).encode()).hexdigest()
+            matches = [row for row in payload.get('candidate_pool', []) if row.get('source_key') == repository_key]
         if len(matches) != 1:
             return {'association':'ambiguous' if matches else 'unmatched', 'matches':len(matches)}
         if (matches[0].get('stage') in {'identity_checked', 'cross_checked', 'counterevidence'}
