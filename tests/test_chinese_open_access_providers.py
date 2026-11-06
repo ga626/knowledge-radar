@@ -12,70 +12,25 @@ from academic_providers.sciengine import SciEngineProvider
 from academic_providers.sciengine import extract_pdf_text as extract_sciengine_pdf_text
 from academic_providers.sciengine import normalize_sciengine_article_url
 from academic_providers.service import _provider_order, academic_provider_status
-from academic_providers.socolar import SocolarProvider
+from academic_providers.socolar import parse_article_record
 from academic_providers.vip_oa import VipOpenAccessProvider
 from academic_providers.vip_oa import extract_pdf_text as extract_vip_pdf_text
 from academic_providers.vip_oa import vip_ascii_url, vip_file_url_from_viewer_url, vip_reading_url_from_detail_url
 from runtime.status_schema import classify_runtime_payload
 
 
-def test_chinese_open_fulltext_providers_are_registered() -> None:
+def test_retained_sources_keep_direct_read_and_authorization_boundaries() -> None:
     status = academic_provider_status()
-
-    for name in ["nssd", "chinaxiv", "hanspub", "oajrc", "sciopen", "ivy_publisher"]:
+    for name in ('nssd', 'chinaxiv', 'pubscholar', 'sciengine'):
         assert name in status
-        assert status[name]["status"] == "available"
-        assert status[name]["full_text_access"] == "direct_pdf_confirmed"
-
-    assert status["hkjo"]["status"] == "available"
-    assert status["hkjo"]["auto_enabled"] is False
-    assert status["hkjo"]["full_text_access"] == "direct_pdf_confirmed"
-
-    assert status["oalib"]["status"] == "degraded"
-    assert status["oalib"]["auto_enabled"] is False
-    assert status["oalib"]["failure_category"] == "pdf_landing_not_direct_pdf"
-
-    assert status["pubscholar"]["status"] == "available"
-    assert status["pubscholar"]["auto_enabled"] is True
-    assert status["pubscholar"]["full_text_access"] == "anonymous_open_access_pdf_text_confirmed"
-    assert status["pubscholar"]["text_extraction"]["method"] == "pypdf_from_anonymous_pdf_file"
-    assert status["pubscholar"]["resource_types"]["article"]["open_access_filter"] == {"open_access": "openAccess"}
-
-    assert status["sciengine"]["status"] == "available"
-    assert status["sciengine"]["auto_enabled"] is True
-    assert status["sciengine"]["full_text_access"] == "anonymous_open_or_free_pdf_text_confirmed"
-    assert status["sciengine"]["text_extraction"]["method"] == "playwright_public_article_page_to_pdf_endpoint_then_pypdf"
-
-    assert status["socolar"]["status"] == "available"
-    assert status["socolar"]["auto_enabled"] is False
-    assert status["socolar"]["access_mode"] == "logged_abstract_discovery"
-    assert status["socolar"]["full_text_access"] == "structured_abstract_with_external_fulltext_link"
-    assert status["socolar"]["text_extraction"]["method"] == "socolar_detail_api_abstract"
-    assert status["socolar"]["fulltext_limitation"]["status"] == "EXPECTED_DEGRADED"
-
-    assert status["vip_oa"]["status"] == "available"
-    assert status["vip_oa"]["auto_enabled"] is True
-    assert status["vip_oa"]["access_mode"] == "logged_online_reading_pdf_viewer"
-    assert status["vip_oa"]["full_text_access"] == "logged_online_reading_pdf_text_confirmed"
-    assert status["vip_oa"]["text_extraction"]["method"] == "cqvip_detail_resourceid_to_online_reading_pdfjs_file_then_pypdf"
-    assert status["vip_oa"]["text_extraction"]["download_button_used"] is False
-    assert status["vip_oa"]["quota_boundary"]["download_button_used"] is False
-
-    for name in ["coaj", "ucdrs", "calis_thesis", "nstrs", "toaj", "oalib"]:
-        assert name in status
-        assert status[name]["status"] in {"degraded", "unavailable"}
-        assert status[name]["degraded_reason"]
-
-    for name in ["ucdrs", "calis_thesis", "nstrs"]:
-        assert status[name]["failure_category"]
-        assert status[name]["requires_login"] is True
-        assert status[name]["login_url"].startswith(("http://", "https://"))
-        assert status[name]["manual_action"]
-    assert status["vip_oa"]["requires_login"] is True
-    assert status["vip_oa"]["login_url"].startswith(("http://", "https://"))
-    assert status["vip_oa"]["manual_action"]
-
-    assert status["coaj"]["failure_category"] == "metadata_available_fulltext_endpoint_unconfirmed"
+    assert status['pubscholar']['text_extraction']['method'] == 'pypdf_from_anonymous_pdf_file'
+    assert status['pubscholar']['resource_types']['article']['open_access_filter'] == {'open_access': 'openAccess'}
+    assert status['sciengine']['text_extraction']['method'] == 'playwright_public_article_page_to_pdf_endpoint_then_pypdf'
+    assert status['vip_oa']['requires_login'] is True
+    assert status['vip_oa']['auto_enabled'] is False
+    assert status['vip_oa']['quota_boundary']['download_button_used'] is False
+    assert status['nstrs']['full_text_access'] == 'registered_online_view_no_download'
+    assert status['hkjo']['full_text_access'] == 'catalog_metadata_and_item_landing'
 
 
 def test_candidate_manual_guidance_is_expected_degraded_not_interaction() -> None:
@@ -97,54 +52,19 @@ def test_candidate_manual_guidance_is_expected_degraded_not_interaction() -> Non
     assert classified["blocks_overall_pass"] is False
 
 
-def test_chinese_candidate_provider_reprobe_boundaries_are_declared() -> None:
+def test_retired_sources_have_no_runtime_registration() -> None:
     status = academic_provider_status()
-
-    expected_degraded = {
-        "coaj": "metadata_available_fulltext_endpoint_unconfirmed",
-        "nssd_cn": "paused_legacy_domain_confirmed_canonical_elsewhere",
-        "paper_edu": "site_maintenance_fulltext_path_unavailable",
-        "gooa": "metadata_oai_endpoint_unavailable_fulltext_unconfirmed",
-        "oalib": "pdf_landing_not_direct_pdf",
-        "toaj": "current_environment_tcp443_route_timeout",
-        "ntur": "current_environment_tcp443_route_timeout",
-    }
-    for name, failure_category in expected_degraded.items():
-        assert status[name]["validation_status"] == "EXPECTED_DEGRADED"
-        assert status[name]["blocks_overall_pass"] is False
-        assert status[name]["failure_category"] == failure_category
-        assert status[name]["degraded_reason"]
-
-    assert status["pubscholar"]["validation_status"] == "PASS"
-    assert status["pubscholar"]["blocks_overall_pass"] is False
-    assert status["pubscholar"]["failure_category"] == ""
-    assert status["pubscholar"]["degraded_reason"] == ""
-
-    assert status["sciengine"]["validation_status"] == "PASS"
-    assert status["sciengine"]["blocks_overall_pass"] is False
-    assert status["sciengine"]["failure_category"] == ""
-    assert status["sciengine"]["degraded_reason"] == ""
-
-    assert status["vip_oa"]["validation_status"] == "PASS"
-    assert status["vip_oa"]["blocks_overall_pass"] is False
-    assert status["vip_oa"]["failure_category"] == ""
-    assert status["vip_oa"]["degraded_reason"] == ""
-
-    assert status["socolar"]["validation_status"] == "PASS"
-    assert status["socolar"]["blocks_overall_pass"] is False
-    assert status["socolar"]["failure_category"] == ""
-    assert status["socolar"]["fulltext_limitation"]["status"] == "EXPECTED_DEGRADED"
+    retired = {'nssd_cn', 'paper_edu', 'gooa', 'oalib', 'socolar', 'coaj', 'hanspub', 'oajrc', 'sciopen', 'ivy_publisher', 'paperscope', 'baidu_scholar', 'ucdrs'}
+    assert not retired.intersection(status)
+    assert status['wanfang']['requires_api_key'] is True
+    assert status['wanfang']['full_text_access'] == 'metadata_only'
 
 
-def test_auto_order_prefers_confirmed_chinese_open_fulltext(monkeypatch) -> None:
-    monkeypatch.delenv("BAIDU_QIANFAN_BEARER_TOKEN", raising=False)
-    monkeypatch.delenv("SERPAPI_API_KEY", raising=False)
-
-    order = _provider_order(AcademicSearchRequest(query="人工智能 教育", provider="auto"), "auto")
-
-    assert order[:8] == ["nssd", "chinaxiv", "hanspub", "oajrc", "sciopen", "pubscholar", "sciengine", "vip_oa"]
-    assert "openalex" in order
-    assert "semanticscholar" in order
+def test_auto_order_covers_primary_and_matching_domain_sources(monkeypatch) -> None:
+    for key in ('SEMANTIC_SCHOLAR_API_KEY', 'SERPAPI_API_KEY', 'WFDATA_APP_KEY'):
+        monkeypatch.delenv(key, raising=False)
+    order = _provider_order(AcademicSearchRequest(query='人工智能 教育', provider='auto'), 'auto')
+    assert order == ['pubscholar', 'openalex', 'nssd', 'chinaxiv', 'sciengine', 'napstic_oa', 'arxiv']
 
 
 def test_nssd_search_url_uses_encoded_query() -> None:
@@ -155,18 +75,17 @@ def test_nssd_search_url_uses_encoded_query() -> None:
     assert urls[-1] == "https://www.ncpssd.org/"
 
 
-def test_pubscholar_article_payload_defaults_to_open_access_filter() -> None:
-    payload = build_pubscholar_article_payload("ai", limit=50)
+def test_pubscholar_article_payload_has_explicit_open_access_filter() -> None:
+    payload = build_pubscholar_article_payload("ai", limit=50, open_access=True)
 
     assert payload["query"] == "ai"
     assert payload["size"] == 20
     assert payload["open_access"] == "openAccess"
-    assert payload["user_id"]
+    assert "user_id" not in payload
 
 
 def test_socolar_maps_detail_api_result_to_abstract_discovery_work() -> None:
-    provider = SocolarProvider()
-    work = provider._work_from_detail(
+    work = parse_article_record(
         {
             "id": "2014193426341217315",
             "title": "Multidisciplinary ML Techniques on Gesture Recognition",
@@ -189,7 +108,7 @@ def test_socolar_maps_detail_api_result_to_abstract_discovery_work() -> None:
     assert work.source == "MDPI AG"
     assert work.oa_status == "open"
     assert work.source_database == "socolar"
-    assert work.access_mode == "logged_abstract_discovery"
+    assert work.access_mode == "public_abstract_discovery"
     assert work.full_text_status == "abstract_with_external_landing_url"
     assert work.verification_status == "socolar_detail_abstract_confirmed"
     assert work.raw["external_url"] == "https://www.mdpi.com/2673-2688/6/1/17"
@@ -292,10 +211,10 @@ def test_pubscholar_maps_article_api_result_to_open_detail_work() -> None:
     assert work.url == "https://pubscholar.cn/articles/03fae06090de117876cbdde622d3b438"
     assert work.authors == ["Alice", "Bob"]
     assert work.year == 2026
-    assert work.oa_status == "open"
+    assert work.oa_status == "unknown"
     assert work.access_mode == "anonymous_open_access_pdf_viewer"
-    assert work.full_text_status == "open_access_article_detail"
-    assert work.raw["open_access_filter"] is True
+    assert work.full_text_status == "article_detail_candidate"
+    assert work.raw["open_access_filter"] is False
 
 
 def test_pubscholar_maps_direct_file_result_to_text_extractable_status() -> None:
@@ -310,7 +229,7 @@ def test_pubscholar_maps_direct_file_result_to_text_extractable_status() -> None
     )
 
     assert work.url == "https://pubscholar.cn/files?fastdfspath=group1/M00/sample.pdf"
-    assert work.full_text_status == "pdf_text_extractable"
+    assert work.full_text_status == "pdf_link_found"
 
 
 @pytest.mark.parametrize(
@@ -342,11 +261,11 @@ def test_pubscholar_maps_pdf_links_to_direct_file_url(article: dict, query: str,
 
     assert work.url == expected_url
     assert work.raw["pdf_url"] == work.url
-    assert work.full_text_status == "pdf_text_extractable"
+    assert work.full_text_status == "pdf_link_found"
 
 
 def test_pubscholar_extract_pdf_text_reads_selectable_text(monkeypatch) -> None:
-    class FakePage:
+    class FakePage(dict):
         def extract_text(self) -> str:
             return "Artificial intelligence ocean forecasting text"
 
@@ -380,12 +299,12 @@ def test_sciengine_normalizes_article_urls() -> None:
 def test_sciengine_search_url_uses_real_search_endpoint() -> None:
     urls = SciEngineProvider().search_urls(AcademicSearchRequest(query="人工智能", provider="sciengine"))
 
-    assert urls[0].startswith("https://www.sciengine.com/search/search?")
+    assert urls[0].startswith("https://www.sciengine.com/plat/search?")
     assert "queryField_a=" in urls[0]
 
 
 def test_sciengine_extract_pdf_text_reads_selectable_text(monkeypatch) -> None:
-    class FakePage:
+    class FakePage(dict):
         def extract_text(self) -> str:
             return "技术领导力视角下美国人工智能竞争战略研究"
 

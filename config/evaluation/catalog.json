@@ -326,8 +326,8 @@
       "promise": "业务组合应有行为；fixture和真实账号状态独立。"
     },
     {
-      "capability_id": "account.rotation",
-      "version": 1,
+      "capability_id": "account.recovery",
+      "version": 2,
       "lifecycle": "active",
       "entries": [],
       "dependencies": [
@@ -338,7 +338,7 @@
       "depends_on": [
         "mcp.search_xiaohongshu"
       ],
-      "promise": "业务组合应有行为；fixture和真实账号状态独立。"
+      "promise": "单日常浏览器登录恢复、风控停止、付费预算及账号事实；不轮换账号。"
     },
     {
       "capability_id": "task.lifecycle",
@@ -386,6 +386,146 @@
       "depends_on": [],
       "promise": "MCP注册与入参合同；真实业务以独立用例验证。",
       "description": "明确授权的本地文件经已批准隔离组件处理，持久任务与固定证据版本回读"
+    },
+    {
+      "capability_id": "mcp.read_knowledge",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "read_knowledge"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "同源类型化Agent合同；本地代码验证与真实安装验收分开"
+    },
+    {
+      "capability_id": "mcp.manage_research_artifacts",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "manage_research_artifacts"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "同源类型化Agent合同；本地代码验证与真实安装验收分开"
+    },
+    {
+      "capability_id": "mcp.control_task",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "control_task"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/server.py"
+      ],
+      "depends_on": [],
+      "promise": "同源类型化Agent合同；本地代码验证与真实安装验收分开"
+    },
+    {
+      "capability_id": "runtime.product_form",
+      "version": 2,
+      "lifecycle": "active",
+      "entries": [],
+      "aliases": [],
+      "dependencies": [
+        "src/runtime/application.py",
+        "src/runtime/execution_owner.py",
+        "src/runtime/cli.py",
+        "src/runtime/agent_contracts.py",
+        "src/runtime/mcp_dispatch.py",
+        "src/runtime/process_identity.py",
+        "src/runtime/env_loader.py",
+        "src/server.py",
+        "scripts/product_cli_launcher.py",
+        "scripts/product_install.py",
+        "tests/test_product_runtime.py",
+        "tests/runtime_owner_fixture.py",
+        "src/runtime/continuity_fallback.py",
+        "scripts/kr_mcp_continuity.py",
+        "tests/test_continuity_fallback.py",
+        "config/codex-product/tool-contracts.json"
+      ],
+      "depends_on": [
+        "mcp.read_knowledge",
+        "mcp.control_task"
+      ],
+      "promise": "同源合同、唯一执行所有者、断连对账与隔离安装交接；不代表原生安装或用户验收。 版本化备用调用按被选制品声明核对，结构化失败不泄密、不自动重放。",
+      "description": "非MCP独占入口；真实入口由runtime.product_form用例验证。"
+    },
+    {
+      "capability_id": "mcp.update_research",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [
+        "update_research"
+      ],
+      "aliases": [],
+      "dependencies": [
+        "src/runtime/research_index.py",
+        "src/runtime/composition.py"
+      ],
+      "depends_on": [],
+      "promise": "Agent声明的可逆研究关系，保持固定证据可回读；不判定充分性。"
+    },
+    {
+      "capability_id": "research.incremental_evidence",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "aliases": [],
+      "dependencies": [
+        "src/runtime/research_index.py",
+        "src/runtime/knowledge.py",
+        "src/runtime/evidence_views.py"
+      ],
+      "depends_on": [
+        "mcp.read_knowledge",
+        "mcp.update_research"
+      ],
+      "promise": "保留发现、稳定增量读取、可逆减负与逐查询执行。"
+    },
+    {
+      "capability_id": "flow.wechat_readonly",
+      "version": 1,
+      "lifecycle": "active",
+      "entries": [],
+      "aliases": [],
+      "dependencies": [
+        "src/collectors/platform/wechat.py",
+        "src/use_cases/wechat_search.py",
+        "src/detail_strategies/wechat.py",
+        "src/platform_adapters/wechat_adapter.py",
+        "src/platform_adapters/factory.py",
+        "src/use_cases/content_detail.py",
+        "src/runtime/composition.py",
+        "src/runtime/detail_composition.py",
+        "src/runtime/opencli_bridge.py",
+        "src/generic_web/collector.py",
+        "src/generic_web/acquisition.py",
+        "src/generic_web/url_policy.py",
+        "src/runtime/media_execution.py",
+        "src/runtime/media_acquisition.py",
+        "src/runtime/operation_checkpoint.py",
+        "src/runtime/pdf_text.py",
+        "src/kr_core/evidence_store.py",
+        "src/runtime/research_archive.py",
+        "src/capabilities.py",
+        "src/kr_core/affordance.py",
+        "src/runtime/task_service.py"
+      ],
+      "depends_on": [
+        "mcp.search_wechat_articles",
+        "mcp.get_content_detail"
+      ],
+      "promise": "微信独立来源、只读HTTP/显式OpenCLI与公共搜索/微信读书候选，公共任务、媒体、证据、恢复及中文来源展示。"
     }
   ]
 }

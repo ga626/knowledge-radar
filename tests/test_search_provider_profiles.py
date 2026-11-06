@@ -4,7 +4,7 @@ from search_providers.profile import provider_profiles
 def test_general_search_profiles_cover_configurable_backends():
     profiles = provider_profiles()
 
-    for name in ["searxng", "anysearch", "brave", "exa", "tavily"]:
+    for name in ["ddgs", "anysearch", "brave", "exa", "tavily"]:
         assert name in profiles
         assert profiles[name]["kind"] == "general_web"
         assert profiles[name]["runtime"]["speed"] in {"fast", "medium", "slow"}

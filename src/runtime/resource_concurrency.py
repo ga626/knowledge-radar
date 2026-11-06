@@ -7,6 +7,7 @@ without introducing Celery, Prefect, or another worker runtime.
 
 from __future__ import annotations
 
+from runtime.execution_context import execution_value
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
@@ -26,6 +27,33 @@ RESOURCE_PROVIDER_BAILIAN = "provider_bailian"
 RESOURCE_FRAME_VISION = "frame_vision"
 RESOURCE_LOCAL_HEAVY = "local_heavy"
 RESOURCE_UNBOUNDED = "unbounded"
+
+
+class ResourceDeferred(RuntimeError):
+    """持久任务让出执行槽；由现有TaskService在资源就绪后续跑。"""
+    def __init__(self, resource):
+        self.resource_kind = resource
+        super().__init__("resource_wait:" + resource)
+
+
+def resource_available(resource):
+    policy = ResourceConcurrencyPolicy.from_env()
+    kind = normalize_resource(resource)
+    if kind in {RESOURCE_ASR_CPU, RESOURCE_ASR_GPU}:
+        kind = RESOURCE_LOCAL_HEAVY
+    limit = policy.limit_for(kind)
+    if limit is None:
+        return True
+    coordinator = get_runtime_lease_coordinator()
+    from runtime.process_identity import process_identity
+    count = 0
+    for row in coordinator.resource_leases("runtime_resource", kind):
+        meta = row.get("metadata") or {}
+        if meta.get("owner_process_identity") and process_identity(meta.get("owner_pid")) != meta["owner_process_identity"]:
+            coordinator.release(row["lease_id"])
+        else:
+            count += 1
+    return count < limit
 
 
 def _env_int(name: str, default: int) -> int:
@@ -60,6 +88,8 @@ class ResourceConcurrencyPolicy:
 
     def limit_for(self, resource: str) -> int | None:
         normalized = normalize_resource(resource)
+        if normalized == 'anonymous_browser':
+            return 2
         if normalized == RESOURCE_LOCAL_HEAVY:
             return 1
         if normalized == RESOURCE_SUBTITLE_PROBE:
@@ -72,6 +102,8 @@ class ResourceConcurrencyPolicy:
             return self.asr_gpu
         if normalized == RESOURCE_PROVIDER_BAILIAN:
             return self.provider_bailian
+        if normalized == 'provider_siliconflow':
+            return 1
         if normalized == RESOURCE_FRAME_VISION:
             return self.frame_vision
         return None
@@ -80,6 +112,8 @@ class ResourceConcurrencyPolicy:
         return {
             "schema": "knowledgeradar-resource-concurrency/v1",
             "resources": {
+                "anonymous_browser": {"limit": 2, "role": "匿名动态网页与学术浏览器共用；不包含日常登录浏览器"},
+                "provider_siliconflow": {"limit": 1, "role": "云端扫描件 OCR；失败不自动调用本地模型"},
                 RESOURCE_LOCAL_HEAVY: {"limit": 1, "role": "ASR 与 OCR/文档模型跨进程共享；完成后退出 worker"},
                 RESOURCE_SUBTITLE_PROBE: {
                     "limit": self.subtitle_probe,
@@ -190,7 +224,7 @@ def _semaphore_for(resource: str, policy: ResourceConcurrencyPolicy) -> threadin
 
 
 @contextmanager
-def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = None) -> Iterator[dict[str, object]]:
+def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = None, *, wait_timeout_s: float | None = None) -> Iterator[dict[str, object]]:
     selected_policy = policy or ResourceConcurrencyPolicy.from_env()
     normalized = normalize_resource(resource)
     if normalized in {RESOURCE_ASR_CPU, RESOURCE_ASR_GPU}:
@@ -209,14 +243,19 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
     coordinator = get_runtime_lease_coordinator()
     from runtime.process_identity import process_identity
     ttl = max(30, int(os.environ.get("KR_RESOURCE_LEASE_TTL_S", "60")))
-    wait_deadline = time.monotonic() + (
+    wait_budget = (
         max(0, float(os.environ.get("KR_LOCAL_HEAVY_QUEUE_TIMEOUT_S", "600")))
         if normalized == RESOURCE_LOCAL_HEAVY
         else 0
     )
+    if wait_timeout_s is not None:
+        wait_budget = max(0, min(600, float(wait_timeout_s)))
+    if execution_value("KR_DURABLE_WORKER") == "1":
+        wait_budget = 0
+    wait_deadline = time.monotonic() + wait_budget
     while True:
         # 取消/崩溃后仅核对有确切进程身份的本地资源，不影响共享浏览器租约。
-        for active in coordinator.summary(limit=100).get("active", []):
+        for active in coordinator.resource_leases("runtime_resource"):
             metadata = active.get("metadata") or {}
             if active.get("resource_kind") != "runtime_resource" or not metadata.get("owner_process_identity"):
                 continue
@@ -237,6 +276,8 @@ def acquire_resource(resource: str, policy: ResourceConcurrencyPolicy | None = N
         time.sleep(0.2)
     lease_wait_s = round(time.time() - lease_started, 3)
     if not lease.acquired:
+        if execution_value("KR_DURABLE_WORKER") == "1":
+            raise ResourceDeferred(normalized)
         raise RuntimeError(f"runtime resource busy: {normalized}; retry_after_s={lease.retry_after_s}")
     started = time.time()
     sem.acquire()

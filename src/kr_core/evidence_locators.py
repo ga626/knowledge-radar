@@ -16,7 +16,7 @@ def document_text(blocks):
         if parts:
             parts.append('\n')
             cursor += 1
-        locator = {key: block[key] for key in ('page', 'bbox', 'coordinate_system', 'kind', 'table_id', 'row', 'column', 'image_index', 'comment_id', 'parent_comment_id') if key in block}
+        locator = {key: block[key] for key in ('page', 'section', 'bbox', 'coordinate_system', 'kind', 'table_id', 'row', 'column', 'image_index', 'comment_id', 'parent_comment_id', 'discussion_kind', 'commit', 'path', 'line_start', 'line_end') if key in block}
         locator.update(start=cursor, end=cursor + len(text), unit='unicode_code_point')
         locators.append(locator)
         parts.append(text)
@@ -36,10 +36,10 @@ def validate_locators(text, locators):
         if isinstance(start, bool) or isinstance(end, bool) or not isinstance(start, int) or not isinstance(end, int) or not 0 <= start < end <= len(text):
             raise ValueError('invalid_evidence_locator_range')
         clean = {'start': start, 'end': end, 'unit': 'unicode_code_point'}
-        for key in ('page', 'row', 'column', 'image_index'):
+        for key in ('page', 'row', 'column', 'image_index', 'line_start', 'line_end'):
             if key in item:
                 value = item[key]
-                if isinstance(value, bool) or not isinstance(value, int) or value < (1 if key == 'page' else 0):
+                if isinstance(value, bool) or not isinstance(value, int) or value < (1 if key in {'page', 'line_start', 'line_end'} else 0):
                     raise ValueError('invalid_evidence_locator_number')
                 clean[key] = value
         if 'bbox' in item:
@@ -55,9 +55,11 @@ def validate_locators(text, locators):
                 clean[key] = value
         if clean.get('end_s', float('inf')) < clean.get('start_s', 0):
             raise ValueError('invalid_evidence_time')
-        for key in ('coordinate_system', 'kind', 'table_id', 'comment_id', 'parent_comment_id'):
+        if clean.get('line_end', clean.get('line_start', 1)) < clean.get('line_start', 1):
+            raise ValueError('invalid_source_line_range')
+        for key in ('section', 'coordinate_system', 'kind', 'table_id', 'comment_id', 'parent_comment_id', 'discussion_kind', 'commit', 'path'):
             if key in item:
-                clean[key] = str(item[key])[:200]
+                clean[key] = str(item[key])[:1000 if key == 'path' else 200]
         result.append(clean)
     return result
 
@@ -84,7 +86,8 @@ def transcript_locators(text, segments):
         result.append({'start':cursor,'end':cursor+len(value),'unit':'unicode_code_point','start_s':start,'end_s':end})
         previous=start
         cursor+=len(value)
-        if cursor<len(text) and text[cursor]=='\n':cursor+=1
+        if cursor<len(text) and text[cursor]=='\n':
+            cursor+=1
     if cursor!=len(text) or not result:
         return {'status':'unaligned','segments':[],'reason':'timed_segments_do_not_cover_text'}
     return {'status':'aligned','segments':result,'coverage':'segment_mapping_only','media_completeness':'unknown'}

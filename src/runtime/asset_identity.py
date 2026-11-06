@@ -32,13 +32,15 @@ def model_identity(policy):
 
     receipt = receipt_root() / (ASR_COMPONENT + ".json")
     if not receipt.is_file():
-        return {"model": ASR_COMPONENT, "engine": "transformers_native", "status": "not_provisioned"}
+        return {"model": ASR_COMPONENT, "engine": "sherpa_onnx_int8", "status": "not_provisioned", "language": policy.language, "language_contract": 3}
     identity = validate_receipt(ASR_COMPONENT)
     return {
         "model": ASR_COMPONENT,
-        "engine": "transformers_native",
+        "engine": "sherpa_onnx_int8",
         "status": "recorded",
         "install_receipt_sha256": file_sha(receipt),
         "weight_revision": identity["weight_revision"],
         "model_files": identity["model_files"],
+        "language": policy.language,
+        "language_contract": 3,
     }

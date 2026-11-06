@@ -1,106 +1,29 @@
-from detail_strategies import BilibiliDetailDeps, BilibiliDetailStrategy, YouTubeDetailDeps, YouTubeDetailStrategy
-from kr_core import DetailRequest, EvidenceItem
+"""视频用例的媒体边界：不再依赖入口内的旧策略注入。"""
+from runtime.detail_composition import build_detail_strategy
 
+import pytest
+from kr_core import DetailRequest
+from detail_strategies.video import enhance_video_detail
 
-def _evidence(url: str, platform: str, data: dict) -> EvidenceItem:
-    return EvidenceItem(source_url=url, source_platform=platform, summary=data.get("title", ""))
+@pytest.mark.parametrize('platform,module', [('B站','bilibili'),('YouTube','youtube')])
+def test_video_collection_hands_off_without_downloading(monkeypatch,tmp_path,platform,module):
+    from importlib import import_module
+    monkeypatch.setenv('KR_DATA_ROOT',str(tmp_path))
+    collector=import_module('collectors.platform.'+module)
+    monkeypatch.setattr(collector,'collect_video_detail',lambda request:{'title':'test','desc':'intro','media_manifest':[{'type':'audio','url':request.url}]})
+    monkeypatch.setattr('runtime.media_execution.execute_media_plan',lambda *a,**kw:pytest.fail('enhancement in collection'))
+    request=DetailRequest(platform=platform,url='https://www.youtube.com/watch?v=abc12345678' if platform=='YouTube' else 'https://www.bilibili.com/video/BV1ELGY6sExb',options={'include_transcript':True,'_detail_stage':'collection'})
+    result=build_detail_strategy(platform).extract(request).data
+    assert result['_enhancement_pending'] and result['content']=='intro'
+    assert result['media_manifest'] and result['enhancement_status']=='queued'
 
-
-def test_bilibili_detail_skips_direct_media_by_default(monkeypatch, tmp_path) -> None:
-    monkeypatch.delenv("KR_DIRECT_MEDIA_PROBE_ON_DETAIL", raising=False)
-    calls = {"direct": 0}
-
-    strategy = BilibiliDetailStrategy(
-        BilibiliDetailDeps(
-            extract_bvid=lambda url: "BVtest",
-            get_info=lambda bvid: {"title": "test", "desc": "", "duration": 60},
-            transcribe=lambda bvid, session_id="": "transcript",
-            get_comments=lambda bvid: [],
-            filter_comments=lambda comments, data_dir: [],
-            attach_routing=lambda url, result: result,
-            routing_recommends_l2=lambda result: False,
-            deep_analyze=lambda bvid, result, session_id="": {},
-            direct_media_probe=lambda bvid, enabled: calls.__setitem__("direct", calls["direct"] + 1) or {},
-            evidence_builder=_evidence,
-            data_dir=str(tmp_path),
-        )
-    )
-
-    response = strategy.extract(DetailRequest(url="https://www.bilibili.com/video/BVtest"))
-
-    assert calls["direct"] == 0
-    assert response.data["direct_media"]["status"] == "skipped"
-
-
-def test_bilibili_detail_auto_multimodal_attaches_direct_media(tmp_path) -> None:
-    strategy = BilibiliDetailStrategy(
-        BilibiliDetailDeps(
-            extract_bvid=lambda url: "BVtest",
-            get_info=lambda bvid: {"title": "test", "desc": "", "duration": 60},
-            transcribe=lambda bvid, session_id="": "transcript",
-            get_comments=lambda bvid: [],
-            filter_comments=lambda comments, data_dir: [],
-            attach_routing=lambda url, result: result,
-            routing_recommends_l2=lambda result: False,
-            deep_analyze=lambda bvid, result, session_id="": {},
-            direct_media_probe=lambda bvid, enabled: {
-                "schema": "knowledgeradar-direct-media/v1",
-                "status": "ok",
-                "candidates": [{"redacted_url": {"host": "cdn.example.test"}}],
-                "reachability": {"status": "reachable"},
-            },
-            evidence_builder=_evidence,
-            data_dir=str(tmp_path),
-        )
-    )
-
-    response = strategy.extract(DetailRequest(url="https://www.bilibili.com/video/BVtest", auto_multimodal=True))
-
-    assert response.data["direct_media"]["status"] == "ok"
-    assert response.data["direct_media"]["reachability"]["status"] == "reachable"
-
-
-def test_bilibili_detail_surfaces_missing_local_transcription_component(tmp_path) -> None:
-    strategy = BilibiliDetailStrategy(
-        BilibiliDetailDeps(
-            extract_bvid=lambda url: "BVtest",
-            get_info=lambda bvid: {"title": "test", "desc": "", "duration": 60},
-            transcribe=lambda bvid, session_id="": "[transcribe] INSTALL_COMPONENT_MISSING: 本地转写运行时（faster-whisper）、FFmpeg；请在本地组件中完成安装后重试。",
-            get_comments=lambda bvid: [],
-            filter_comments=lambda comments, data_dir: [],
-            attach_routing=lambda url, result: result,
-            routing_recommends_l2=lambda result: False,
-            deep_analyze=lambda bvid, result, session_id="": {},
-            direct_media_probe=lambda bvid, enabled: {},
-            evidence_builder=_evidence,
-            data_dir=str(tmp_path),
-        )
-    )
-
-    response = strategy.extract(DetailRequest(url="https://www.bilibili.com/video/BVtest"))
-
-    assert response.data["component_status"]["status"] == "INSTALL_COMPONENT_MISSING"
-    assert response.data["component_status"]["missing"] == ["本地转写运行时（faster-whisper）", "FFmpeg"]
-
-
-def test_youtube_detail_exposes_watch_url_only_direct_media_status() -> None:
-    strategy = YouTubeDetailStrategy(
-        YouTubeDetailDeps(
-            extract_video_id=lambda url: "abc12345678",
-            get_detail=lambda video_id: {"title": "yt", "desc": "", "url": f"https://www.youtube.com/watch?v={video_id}"},
-            attach_routing=lambda url, result: result,
-            routing_recommends_l2=lambda result: False,
-            deep_analyze=lambda video_id, result, session_id="": {},
-            direct_media_probe=lambda video_id, enabled: {
-                "schema": "knowledgeradar-direct-media/v1",
-                "status": "watch_url_only" if enabled else "skipped",
-                "reason": "watch URL is not direct",
-            },
-            evidence_builder=_evidence,
-        )
-    )
-
-    response = strategy.extract(DetailRequest(url="https://www.youtube.com/watch?v=abc12345678", auto_multimodal=True))
-
-    assert response.data["direct_media"]["status"] == "watch_url_only"
-    assert "not direct" in response.data["direct_media"]["reason"]
+def test_missing_asr_is_explicit_and_keeps_collected_text(monkeypatch,tmp_path):
+    monkeypatch.setenv('KR_DATA_ROOT',str(tmp_path))
+    from runtime import media_acquisition, optional_media
+    source=tmp_path/'audio.wav';source.write_bytes(b'audio')
+    monkeypatch.setattr(media_acquisition,'acquire_media_ref',lambda ref:{'path':str(source),'sha256':optional_media.file_sha(source),'download_s':0})
+    def missing(*a,**kw):raise ValueError('optional_component_not_installed_and_approved')
+    monkeypatch.setattr(optional_media,'run_optional',missing)
+    result=enhance_video_detail(DetailRequest(url='https://example.com/video',platform='B站',options={'include_transcript':True}),{'title':'intro','content':'keep original','media_manifest':[{'type':'audio','url':'https://example.com/video'}]}).data
+    assert result['content']=='keep original' and result['enhancement_status']=='partial'
+    assert result['media_execution']['steps'][0]['error_code']=='optional_component_not_installed_and_approved'

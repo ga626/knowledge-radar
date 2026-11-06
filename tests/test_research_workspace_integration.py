@@ -60,7 +60,7 @@ def test_dialogue_route_tool_full_evidence_and_original_finalizer(tmp_path,monke
     receipt=result['research_receipt']['receipt_id']
     assert ref['version_id'] in next(r for r in read_task(task_id=task_id)['tool_receipts'] if r['receipt_id']==receipt)['evidence_versions']
     final=server.finalize_research_task(research_task_id=task_id,ecology_outcomes=[{'source_ecology':'web','outcome':'used','receipt_ids':[receipt]}],stop_rationale='确定性合同测试',key_claims=[{'id':'tail','importance':'high','supporting_evidence_ids':[ref['version_id']],'supporting_receipt_ids':[receipt]}],quality_status='pass')
-    assert final['status']=='accepted_for_decision'
+    assert final['status']=='recorded'
     assert not list(tmp_path.rglob('tasks.sqlite3'))
 
 
@@ -89,3 +89,52 @@ def test_console_reads_same_ledger_rejects_writes_and_preserves_token(tmp_path,m
         assert not (tmp_path/'assets').exists()
     finally:
         server.shutdown();server.server_close();worker.join(3)
+
+
+def test_public_task_query_tracks_receipt_repair_without_driving_it(tmp_path, monkeypatch):
+    import server
+    from runtime import research_ledger as ledger
+    from kr_core.evidence_assets import EvidenceAssets
+    from onboarding.research_api import workspace_api
+    from runtime.research_workspace import ResearchRecords
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path / 'state'))
+    monkeypatch.setenv('KR_EVIDENCE_ROOT', str(tmp_path / 'assets'))
+    monkeypatch.setenv('KR_TOOL_TRACE_PATH', str(tmp_path / 'trace.jsonl'))
+    task = open_task(objective='真实工具查询不驱动补偿', budget='fast', considered=[])
+    task_id = task['research_task_id']
+    original_link = ledger.link_tool_result
+    monkeypatch.setattr(ledger, 'link_tool_result', lambda **_: {'association': 'discovery_candidates', 'status': 'declared_only'})
+    result = ledger.submit_tool_result(
+        task_id=task_id, trace_id='pending-search', tool='kr_web_search', status='ok',
+        result={'items': [{'url': 'https://example.org/source'}]}, _record_pending=True,
+    )
+    assert result['status'] == 'recording_failed'
+    monkeypatch.setattr(ledger, 'link_tool_result', original_link)
+    path = ledger._path(task_id)
+    before = path.read_bytes()
+
+    def forbidden(*args, **kwargs):
+        pytest.fail('ordinary task query must not invoke receipt repair')
+    with monkeypatch.context() as query_guard:
+        query_guard.setattr(ledger, 'repair_pending_submissions', forbidden)
+        native_entry = server.get_task_status(task_id=task_id, research_action='inspect')
+        console_entry = workspace_api(
+            ResearchRecords(tmp_path / 'state', assets=EvidenceAssets(tmp_path / 'assets', read_only=True)),
+            {'action': 'inspect', 'task_id': task_id}, developer=False,
+        )
+        assert native_entry['gap_assessment'] == console_entry['gap_assessment']
+        assert native_entry['gap_assessment']['counts']['pending_submission_count'] == 1
+        assert path.read_bytes() == before
+        assert not list(tmp_path.rglob('tasks.sqlite3'))
+
+    # 由运行时已有显式维护入口补偿；查询只观察其前后变化。
+    repaired = ledger.repair_pending_submissions()
+    assert repaired['repaired'] == ['pending-search']
+    after_repair = path.read_bytes()
+    refreshed = server.get_task_status(task_id=task_id, research_action='inspect')
+    assert refreshed['gap_assessment']['counts']['pending_submission_count'] == 0
+    assert refreshed['gap_assessment']['counts']['candidate_count'] == 1
+    assert 'pending_receipt_submissions' not in {row['code'] for row in refreshed['gap_assessment']['gaps']}
+    assert refreshed['gap_assessment']['stop_assessment'] == 'not_ready'
+    assert len(ledger.read_task(task_id=task_id)['tool_receipts']) == 1
+    assert path.read_bytes() == after_repair

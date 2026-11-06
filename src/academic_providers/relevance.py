@@ -7,17 +7,43 @@ from typing import Iterable, List
 
 from .models import AcademicWork
 from .profile import AcademicProviderProfile
-from .models import normalize_title
+from .models import normalize_title, normalize_doi
 
-STOP_WORDS = {"is", "the", "all", "you", "and", "for", "of", "to", "in", "an", "on"}
+STOP_WORDS = {"is", "the", "all", "you", "and", "for", "of", "to", "in", "an", "on",
+              "a", "with", "by", "from", "study", "research", "review", "analysis",
+              "关于", "研究", "分析", "综述", "探讨", "如何", "哪些", "我们", "以及", "中的"}
 
 
 def has_query_evidence(query: str, work: AcademicWork) -> bool:
+    doi = exact_doi_query(query)
+    if doi:
+        return normalize_doi(work.doi) == doi
+    pmcid = re.fullmatch(r'(?i)(PMC[0-9]+)', query.strip())
+    if pmcid:
+        return str(work.raw.get('pmcid') or '').upper() == pmcid.group(1).upper()
+    from .identity import arxiv_identifier
+    identifier = arxiv_identifier(query)
+    if identifier:
+        actual = arxiv_identifier(work.url)
+        return actual == identifier if re.search(r'v\d+$', identifier) else re.sub(r'v\d+$', '', actual) == identifier
+    if work.raw.get("identity_match") is True:
+        return True
     terms = [term for term in _query_terms(query) if term not in STOP_WORDS]
     if not terms:
         return True
     metadata = _normalize_text(work.title + " " + work.abstract)
-    return any(term in metadata for term in terms)
+    # 只做保守的词面筛选，不能冒充 Codex 的语义相关性判断。
+    hits = sum(term in metadata for term in terms)
+    threshold = min(2, len(terms)) if len(terms) > 3 else 1
+    return hits >= threshold
+
+
+def exact_doi_query(query: str) -> str:
+    value = normalize_doi(query)
+    if re.fullmatch(r"10\.\d{4,9}/\S+", value):
+        return value
+    matches = re.findall(r'10\.\d{4,9}/[-._;()/:A-Z0-9]+', str(query or ''), flags=re.I)
+    return normalize_doi(matches[0].rstrip('.,;')) if len(matches) == 1 else ''
 
 
 def score_metadata_relevance(query: str, work: AcademicWork) -> float:
@@ -29,6 +55,8 @@ def score_metadata_relevance_with_profiles(
     work: AcademicWork,
     profiles: dict[str, AcademicProviderProfile] | None = None,
 ) -> float:
+    if (exact_doi_query(query) or re.fullmatch(r'(?i)PMC[0-9]+', query.strip())) and has_query_evidence(query, work):
+        return 1.0
     terms = _query_terms(query)
     if not terms:
         return 0.0
@@ -75,13 +103,13 @@ def select_fulltext_candidates(query: str, works: Iterable[AcademicWork], *, top
 
 def _query_terms(query: str) -> List[str]:
     text = _normalize_text(query)
-    terms = [term for term in re.split(r"\s+", text) if len(term) >= 2]
-    if terms:
-        return terms[:12]
-    compact = "".join(ch for ch in text if not ch.isspace())
-    if not compact:
-        return []
-    return [compact[i : i + 2] for i in range(0, max(0, len(compact) - 1))][:12]
+    terms = []
+    for token in re.findall(r"[a-z0-9][a-z0-9_-]+|[\u4e00-\u9fff]+", text):
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) > 3:
+            terms.extend(token[i:i + 2] for i in range(len(token) - 1))
+        else:
+            terms.append(token)
+    return list(dict.fromkeys(term for term in terms if term not in STOP_WORDS))[:48]
 
 
 def _normalize_text(value: str) -> str:

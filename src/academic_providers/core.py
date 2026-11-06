@@ -111,10 +111,10 @@ class CoreProvider:
             license="",
             source_database=self.name,
             access_mode="registered_public_api",
-            full_text_status="parsed_fulltext_available" if full_text else ("pdf_text_extractable" if download_url else ("oa_available" if has_fulltext_link else "metadata_only")),
+            full_text_status="parsed_fulltext_available" if full_text else ("pdf_link_found" if download_url else ("oa_available" if has_fulltext_link else "metadata_only")),
             provider_confidence=0.82 if has_fulltext_link else 0.72,
-            verification_status="doi_matched" if doi else ("core_id_matched" if item.get("id") else "unverified"),
-            license_scope="open" if has_fulltext_link else "unknown",
+            verification_status="doi_present" if doi else ("core_id_matched" if item.get("id") else "unverified"),
+            license_scope="unknown",
             raw={
                 "core_id": item.get("id"),
                 "download_url": download_url,
@@ -122,6 +122,7 @@ class CoreProvider:
                 "display_url": display_url,
                 "source_fulltext_urls": source_urls[:5],
                 "has_full_text": bool(full_text),
+                "fulltext_text": full_text,
                 "rate_limit": dict(self.last_rate_limit_headers),
             },
         )

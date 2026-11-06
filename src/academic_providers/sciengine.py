@@ -2,21 +2,23 @@
 
 from __future__ import annotations
 
+from generic_web.browser_runtime import owned_sync_browser
+
 import html
-from io import BytesIO
 import re
 from typing import Any, Dict, List
 from urllib.parse import quote, urljoin
 
-import httpx
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-from playwright.sync_api import sync_playwright
-
 from runtime.asyncio_isolation import run_sync_in_worker_if_asyncio
-from runtime.executables import resolve_managed_chrome
 
-from .chinese_open_access import ChineseOpenAccessProvider, DEFAULT_HEADERS, OpenAccessPlatformConfig
+from .chinese_open_access import ChineseOpenAccessProvider, DEFAULT_HEADERS, OpenAccessPlatformConfig, public_json_search, json_response, clean_api_text
 from .models import AcademicSearchRequest, AcademicWork, normalize_doi
+
+
+def sync_playwright():
+    from playwright.sync_api import sync_playwright as start
+    return start()
+
 
 
 SCIENGINE_HEADERS = {
@@ -50,9 +52,9 @@ class SciEngineProvider(ChineseOpenAccessProvider):
         status = super().status()
         status.update(
             {
-                "network": "public_dynamic_page_and_pdf_endpoint",
+                "network": "public_search_api_and_dynamic_article_page",
                 "notes": (
-                    "SciEngine article pages expose anonymous open/free PDF controls. "
+                    "Public search records do not prove full-text access. Eligible article pages expose PDF controls. "
                     "The browser click opens /doi/pdf/<articleBaseId>?ipInfo=..., which redirects to "
                     "download.sciengine.com/parse/pdf and yields text-extractable PDF bytes."
                 ),
@@ -65,278 +67,177 @@ class SciEngineProvider(ChineseOpenAccessProvider):
         return status
 
     def search(self, request: AcademicSearchRequest) -> List[AcademicWork]:
-        query = str(request.query or "").strip()
-        if not query:
-            return []
-        limit = max(1, min(int(request.limit or 5), 10))
-        candidates = search_sciengine_article_candidates(query, limit=limit, timeout_s=self.timeout_s)
-        works: List[AcademicWork] = []
-        seen = set()
-        for candidate in candidates:
-            article_url = candidate.get("article_url") or candidate.get("url") or ""
-            doi = normalize_doi(str(candidate.get("doi") or _doi_from_url(article_url)))
-            if not article_url or article_url in seen:
-                continue
-            seen.add(article_url)
-            works.append(
-                AcademicWork(
-                    title=_clean_text(candidate.get("title") or "SciEngine article"),
-                    url=article_url,
-                    authors=_authors_from_text(candidate.get("authors") or ""),
-                    year=_year_from_text(candidate.get("meta") or candidate.get("text") or ""),
-                    doi=doi,
-                    source=_clean_text(candidate.get("source") or "SciEngine"),
-                    oa_status="open",
-                    source_database="sciengine",
-                    access_mode="anonymous_public_pdf_viewer",
-                    full_text_status="open_access_article_detail",
-                    provider_confidence=0.82,
-                    verification_status="search_result_pdf_control_candidate",
-                    license_scope="open_or_platform_terms",
-                    raw={
-                        "query": request.query,
-                        "article_url": article_url,
-                        "access_badges": candidate.get("access_badges") or [],
-                        "has_download_pdf": bool(candidate.get("has_download_pdf")),
-                    },
-                )
-            )
-            if len(works) >= limit:
-                break
-        return works
+        # The current site uses /plat/search and a public multipart search API.
+        # /search/search now mounts an empty journal shell and is not a search route.
+        def fetch(client):
+            fields = dict.fromkeys(("title", "journalId", "fullnameStr", "pubYearOrder", "pubYearFilter",
+                "journalTitleFilter", "articleTypeFilter", "bookTitleStr", "fullnameFilter", "searchFromYear",
+                "searchToYear", "themeSearch", "searchType", "resourseCode", "startDate", "endDate",
+                "searchScope", "queryType", "bookName", "journalTitleShow", "themeShow", "bookTitleShow"), "")
+            fields.update(page="1", size=str(max(1, min(request.limit, 20))), queryField_a=request.query.strip())
+            payload = json_response(client.post(
+                "https://www.sciengine.com/sci-open/api/v1/open/SciSearch/searchNew",
+                files={key: (None, value) for key, value in fields.items()},
+                headers={"Referer": self.search_urls(request)[0]}))
+            if payload.get("success") is not True:
+                return None
+            return (payload.get("data") or {}).get("records")
+
+        def work(row):
+            entries = row.get("entries") or []
+            entry = next((e for e in entries if isinstance(e, dict) and str(e.get("language", "")).startswith("zh")),
+                         next((e for e in entries if isinstance(e, dict)), {}))
+            title = clean_api_text(entry.get("title") or row.get("titleZh") or row.get("titleEn"))
+            doi = normalize_doi(str(row.get("doi") or ""))
+            is_book = str(row.get("documentType") or "").upper() == "BOOK"
+            if doi:
+                url = "https://www.sciengine.com/doi/" + quote(doi, safe="/.:-_()")
+            elif is_book and row.get("bookId") and row.get("bookPublisherAbb"):
+                url = "https://www.sciengine.com/publisher/" + quote(str(row["bookPublisherAbb"]), safe="") + "/book/" + quote(str(row["bookId"]), safe="")
+            else:
+                return None
+            resource = clean_api_text((entry.get("resource") or {}).get("resource") or row.get("resourceZh"))
+            year = str(row.get("pubYear") or "")
+            return AcademicWork(title=title, url=url, doi=doi,
+                authors=[clean_api_text(a.get("author")) for a in entry.get("authors", []) if isinstance(a, dict) and a.get("author")],
+                year=int(year) if year.isdigit() else None,
+                abstract=clean_api_text(entry.get("abstractInfo") or row.get("abstractZh")),
+                source=clean_api_text(entry.get("journalTitle") or row.get("journalTitleZh") or row.get("publisher") or "SciEngine"),
+                source_database=self.name, oa_status="open" if resource in {"开放获取", "Open Access"} else "",
+                document_type='book' if is_book else str(row.get('documentType') or 'unknown'),
+                access_mode="public_search_api", full_text_status="article_landing_unverified",
+                verification_status="public_search_record", raw={"query": request.query,
+                    "document_type": row.get("documentType"), "access_label": resource,
+                    "fulltext_verified": False})
+        return public_json_search(self, request, fetch, work)
 
     def search_urls(self, request: AcademicSearchRequest):
         query = quote(str(request.query or "").strip())
         if query:
-            return (f"https://www.sciengine.com/search/search?queryField_a={query}", self.config.homepage)
+            return (f"https://www.sciengine.com/plat/search?queryField_a={query}", self.config.homepage)
         return (self.config.homepage,)
 
-    def verify_article_fulltext(self, article_url: str) -> Dict[str, Any]:
-        return verify_sciengine_article_fulltext(article_url, timeout_s=self.timeout_s)
+    def verify_article_fulltext(self, article_url: str, *, include_ocr=None, document_options=None) -> Dict[str, Any]:
+        return verify_sciengine_article_fulltext(article_url, timeout_s=self.timeout_s, include_ocr=include_ocr, document_options=document_options)
 
-    def verify_pdf_text_url(self, pdf_url: str, *, referer: str = "https://www.sciengine.com/") -> Dict[str, Any]:
-        return verify_sciengine_pdf_text_url(pdf_url, referer=referer, timeout_s=self.timeout_s)
-
-
-def search_sciengine_article_candidates(query: str, *, limit: int = 5, timeout_s: float = 20.0) -> List[Dict[str, Any]]:
-    """Search SciEngine public pages and return article-page candidates."""
-    return run_sync_in_worker_if_asyncio(
-        lambda: _search_sciengine_article_candidates_sync(query, limit=limit, timeout_s=timeout_s),
-        timeout_s=max(30.0, timeout_s * 4),
-        thread_name_prefix="kr-sciengine",
-    )
+    def verify_pdf_text_url(self, pdf_url: str, *, referer: str = "https://www.sciengine.com/", include_ocr=None, document_options=None) -> Dict[str, Any]:
+        return verify_sciengine_pdf_text_url(pdf_url, referer=referer, timeout_s=self.timeout_s, include_ocr=include_ocr, document_options=document_options)
 
 
-def _search_sciengine_article_candidates_sync(query: str, *, limit: int = 5, timeout_s: float = 20.0) -> List[Dict[str, Any]]:
-    search_url = f"https://www.sciengine.com/search/search?queryField_a={quote(str(query or '').strip())}"
-    candidates: List[Dict[str, Any]] = []
-    with sync_playwright() as playwright:
-        browser = _launch_sciengine_browser(playwright)
-        try:
-            page = browser.new_page(
-                viewport={"width": 1600, "height": 1000},
-                locale="zh-CN",
-                user_agent=SCIENGINE_USER_AGENT,
-            )
-            page.goto(search_url, wait_until="domcontentloaded", timeout=int(timeout_s * 1000) * 3)
-            try:
-                page.wait_for_load_state("networkidle", timeout=int(timeout_s * 1000))
-            except PlaywrightTimeoutError:
-                pass
-            page.wait_for_timeout(2500)
-            candidates = page.evaluate(
-                """(maxItems) => {
-                    const body = document.body;
-                    if (!body) return [];
-                    const nodes = Array.from(body.querySelectorAll('a[href*="/doi/"], a[href*="doi="]'));
-                    const out = [];
-                    const seen = new Set();
-                    for (const node of nodes) {
-                        const href = node.href || '';
-                        if (!href || seen.has(href)) continue;
-                        const text = (node.innerText || node.textContent || '').trim();
-                        const container = node.closest('.resultItem, .listItem, .articleList, li, .item, .media, .row, div') || node.parentElement || node;
-                        const blockText = (container.innerText || container.textContent || '').trim();
-                        if (!/\\/doi\\//.test(href) && !/doi=/.test(href)) continue;
-                        seen.add(href);
-                        const doiMatch = href.match(/(?:articleIndex\\/|doi=)(10\\.[^&#?\\s]+)/i) || blockText.match(/10\\.\\d{4,9}\\/[\\w.()/:;-]+/i);
-                        out.push({
-                          url: href,
-                          article_url: href,
-                          title: text || blockText.split('\\n').find(Boolean) || 'SciEngine article',
-                          text: blockText.slice(0, 1200),
-                          meta: blockText,
-                          doi: doiMatch ? decodeURIComponent(doiMatch[1]).replace(/[。，,;；\\s]+$/, '') : '',
-                          has_download_pdf: /下载\\s*PDF|Download\\s*PDF/i.test(blockText),
-                          access_badges: Array.from(new Set((blockText.match(/开放获取|免费获取/g) || [])))
-                        });
-                        if (out.length >= maxItems) break;
-                    }
-                    return out;
-                }""",
-                limit,
-            )
-        finally:
-            browser.close()
-    return candidates[:limit]
-
-
-def verify_sciengine_article_fulltext(article_url: str, *, timeout_s: float = 20.0) -> Dict[str, Any]:
+def verify_sciengine_article_fulltext(article_url: str, *, timeout_s: float = 20.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
     url = normalize_sciengine_article_url(article_url)
     if not url:
         return _verification_error("unsupported_url", str(article_url or ""), "not_a_sciengine_article_url")
 
     return run_sync_in_worker_if_asyncio(
-        lambda: _verify_sciengine_article_fulltext_sync(url, timeout_s=timeout_s),
+        lambda: _verify_sciengine_article_fulltext_sync(url, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options),
         timeout_s=max(30.0, timeout_s * 5),
         thread_name_prefix="kr-sciengine",
     )
 
 
-def _verify_sciengine_article_fulltext_sync(url: str, *, timeout_s: float = 20.0) -> Dict[str, Any]:
-    with sync_playwright() as playwright:
-        browser = _launch_sciengine_browser(playwright)
+def _verify_sciengine_article_fulltext_sync(url: str, *, timeout_s: float = 20.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    with sync_playwright() as playwright, owned_sync_browser(playwright) as browser:
+        page = browser.new_page(
+            viewport={"width": 1600, "height": 1000},
+            locale="zh-CN",
+            accept_downloads=True,
+            user_agent=SCIENGINE_USER_AGENT,
+        )
+        page.add_init_script(
+            """
+            (() => {
+              window.__kr_opened = [];
+              window.open = function(url, target, features) {
+                window.__kr_opened.push({url: String(url || ''), target: String(target || ''), features: String(features || '')});
+                return null;
+              };
+            })();
+            """
+        )
+        init_articles: List[Dict[str, Any]] = []
+        ip_info = ""
+
+        def on_response(response):
+            nonlocal ip_info
+            response_url = response.url
+            if "/sciMetrics/initArticle" in response_url:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict):
+                    init_articles.append(payload)
+            elif "/doi/getIpInfo" in response_url:
+                try:
+                    payload = response.json()
+                except Exception:
+                    payload = {}
+                if isinstance(payload, dict):
+                    ip_info = str(payload.get("ip") or payload.get("data") or payload.get("ipInfo") or "")
+
+        page.on("response", on_response)
+        navigation = page.goto(url, wait_until="domcontentloaded", timeout=int(min(timeout_s, 45) * 1000))
+        if navigation and navigation.status in {401,403,429,451}:
+            return _verification_error('access_denied', url, f'http_{navigation.status}')
+        visible = _safe_body_text(page)
+        if any(marker in visible for marker in ('Security Verification', '访问验证', '验证码', '403 Forbidden')):
+            return _verification_error('access_verification_required', url, 'site_verification_required')
         try:
-            page = browser.new_page(
-                viewport={"width": 1600, "height": 1000},
-                locale="zh-CN",
-                accept_downloads=True,
-                user_agent=SCIENGINE_USER_AGENT,
-            )
-            page.add_init_script(
-                """
-                (() => {
-                  window.__kr_opened = [];
-                  window.open = function(url, target, features) {
-                    window.__kr_opened.push({url: String(url || ''), target: String(target || ''), features: String(features || '')});
-                    return null;
-                  };
-                })();
-                """
-            )
-            init_articles: List[Dict[str, Any]] = []
-            ip_info = ""
-
-            def on_response(response):
-                nonlocal ip_info
-                response_url = response.url
-                if "/sciMetrics/initArticle" in response_url:
-                    try:
-                        payload = response.json()
-                    except Exception:
-                        payload = {}
-                    if isinstance(payload, dict):
-                        init_articles.append(payload)
-                elif "/doi/getIpInfo" in response_url:
-                    try:
-                        payload = response.json()
-                    except Exception:
-                        payload = {}
-                    if isinstance(payload, dict):
-                        ip_info = str(payload.get("ip") or payload.get("data") or payload.get("ipInfo") or "")
-
-            page.on("response", on_response)
-            page.goto(url, wait_until="domcontentloaded", timeout=int(timeout_s * 1000) * 3)
-            try:
-                page.wait_for_load_state("networkidle", timeout=int(timeout_s * 1000))
-            except PlaywrightTimeoutError:
-                pass
-            page.wait_for_timeout(2500)
-            body = _safe_body_text(page)
-            page_url = page.url
-            title = page.title()
-            pdf_url = _opened_pdf_url_from_click(page, page_url, timeout_s=timeout_s)
-            if not pdf_url:
-                article_base_id = _first_nested_value(init_articles, "articleBaseId")
-                if article_base_id:
-                    pdf_url = urljoin(page_url, f"/doi/pdf/{article_base_id}")
-                    if ip_info:
-                        pdf_url = f"{pdf_url}?ipInfo={quote(ip_info, safe='.:')}"
-            pdf_probe = verify_sciengine_pdf_text_url(pdf_url, referer=page_url, timeout_s=timeout_s) if pdf_url else {}
-            pdf_confirmed = bool(pdf_probe.get("pdf_bytes_confirmed"))
-            text_confirmed = bool(pdf_probe.get("text_extractable"))
-            return {
-                "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
-                "article_url": url,
-                "page_url": page_url,
-                "title": title,
-                "has_open_access": "开放获取" in body or "Open Access" in body,
-                "has_free_access": "免费获取" in body,
-                "has_download_pdf": bool(re.search(r"下载\s*PDF|Download\s*PDF", body, re.I)),
-                "pdf_url": pdf_url,
-                "pdf_bytes_confirmed": pdf_confirmed,
-                "text_extractable": text_confirmed,
-                "text_probe": pdf_probe.get("text_probe") or _empty_text_probe(),
-                "pdf_probe": pdf_probe.get("pdf_probe") or {},
-                "init_article_fields": _summarize_init_articles(init_articles),
-            }
-        finally:
-            browser.close()
-
-
-def verify_sciengine_pdf_text_url(pdf_url: str, *, referer: str = "https://www.sciengine.com/", timeout_s: float = 20.0) -> Dict[str, Any]:
-    url = str(pdf_url or "").strip()
-    if not url.startswith(("http://", "https://")):
+            page.wait_for_load_state("networkidle", timeout=int(timeout_s * 1000))
+        except PlaywrightTimeoutError:
+            pass
+        page.wait_for_timeout(2500)
+        body = _safe_body_text(page)
+        page_url = page.url
+        title = page.title()
+        pdf_url = _opened_pdf_url_from_click(page, page_url, timeout_s=timeout_s)
+        if not pdf_url:
+            article_base_id = _first_nested_value(init_articles, "articleBaseId")
+            if article_base_id:
+                pdf_url = urljoin(page_url, f"/doi/pdf/{article_base_id}")
+                if ip_info:
+                    pdf_url = f"{pdf_url}?ipInfo={quote(ip_info, safe='.:')}"
+        pdf_probe = verify_sciengine_pdf_text_url(pdf_url, referer=page_url, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options) if pdf_url else {}
+        pdf_confirmed = bool(pdf_probe.get("pdf_bytes_confirmed"))
+        text_confirmed = bool(pdf_probe.get("text_extractable"))
         return {
-            "status": "unsupported_url",
-            "pdf_url": url,
-            "pdf_bytes_confirmed": False,
-            "text_extractable": False,
-            "text_probe": _empty_text_probe(error="not_http_url"),
-            "pdf_probe": {},
+            "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
+            "article_url": url,
+            "page_url": page_url,
+            "title": title,
+            "has_open_access": "开放获取" in body or "Open Access" in body,
+            "has_free_access": "免费获取" in body,
+            "has_download_pdf": bool(re.search(r"下载\s*PDF|Download\s*PDF", body, re.I)),
+            "pdf_url": pdf_url,
+            "pdf_bytes_confirmed": pdf_confirmed,
+            "text_extractable": text_confirmed,
+            "text_probe": pdf_probe.get("text_probe") or _empty_text_probe(),
+            "pdf_probe": pdf_probe.get("pdf_probe") or {},
+            "input_sha256":pdf_probe.get("input_sha256", ""),
+            "pdf_processing":pdf_probe.get("pdf_processing", {}),
+            "init_article_fields": _summarize_init_articles(init_articles),
         }
-    with httpx.Client(timeout=timeout_s, follow_redirects=True, headers={**SCIENGINE_HEADERS, "Referer": referer}) as client:
-        response = client.get(url)
-    prefix = response.content[:8]
-    pdf_confirmed = response.status_code == 200 and prefix.startswith(b"%PDF-")
-    text_probe = _empty_text_probe()
-    if pdf_confirmed:
-        try:
-            text_result = extract_pdf_text(response.content)
-            extracted_text = text_result["text"]
-            text_probe = {
-                "extractable": len(extracted_text) >= SCIENGINE_MIN_EXTRACTED_TEXT_CHARS,
-                "text_length": len(extracted_text),
-                "page_count": text_result["page_count"],
-                "sample": extracted_text[:240],
-                "error": "",
-            }
-        except Exception as exc:
-            text_probe = _empty_text_probe(error=f"{type(exc).__name__}: {exc}")
-    text_confirmed = bool(text_probe.get("extractable"))
-    return {
-        "status": "PASS" if pdf_confirmed and text_confirmed else "EXPECTED_DEGRADED",
-        "pdf_url": url,
-        "final_url": str(response.url),
-        "pdf_bytes_confirmed": pdf_confirmed,
-        "text_extractable": text_confirmed,
-        "text_probe": text_probe,
-        "pdf_probe": {
-            "status_code": response.status_code,
-            "first_bytes_hex": prefix.hex(),
-            "content_type": response.headers.get("content-type", ""),
-            "content_disposition": response.headers.get("content-disposition", ""),
-            "content_length": response.headers.get("content-length", ""),
-        },
-    }
 
 
-def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = 5) -> Dict[str, Any]:
-    from pypdf import PdfReader
+def verify_sciengine_pdf_text_url(pdf_url: str, *, referer: str = "https://www.sciengine.com/", timeout_s: float = 600.0, include_ocr=None, document_options=None) -> Dict[str, Any]:
+    from runtime.pdf_text import fetch_pdf_document
+    return fetch_pdf_document(pdf_url, referer=referer, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options)
 
-    reader = PdfReader(BytesIO(pdf_bytes))
-    text_chunks = []
-    for page in list(reader.pages)[: max(1, int(max_pages or 1))]:
-        text_chunks.append(page.extract_text() or "")
-    text = re.sub(r"\s+", " ", "\n".join(text_chunks)).strip()
-    return {"text": text, "page_count": len(reader.pages)}
+
+def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int | None = None) -> Dict[str, Any]:
+    from runtime.pdf_text import extract_pdf_text as extract
+    return extract(pdf_bytes, max_pages=max_pages)
 
 
 def normalize_sciengine_article_url(article_url: str) -> str:
     url = str(article_url or "").strip()
     if not url:
         return ""
-    if "sciengine.com" not in url:
+    from urllib.parse import urlsplit
+    host = (urlsplit(url).hostname or '').lower()
+    if host != 'sciengine.com' and not host.endswith('.sciengine.com'):
         return ""
     doi = _doi_from_url(url)
     if doi:
@@ -344,19 +245,6 @@ def normalize_sciengine_article_url(article_url: str) -> str:
     if "/doi/" in url or "articleIndex" in url:
         return url
     return ""
-
-
-def _launch_sciengine_browser(playwright):
-    options: Dict[str, Any] = {"headless": True}
-    chrome = _find_chrome_exe()
-    if chrome:
-        options["executable_path"] = chrome
-    return playwright.chromium.launch(**options)
-
-
-def _find_chrome_exe() -> str:
-    selection = resolve_managed_chrome()
-    return selection.path if selection else ""
 
 
 def _opened_pdf_url_from_click(page, base_url: str, *, timeout_s: float) -> str:

@@ -75,11 +75,10 @@ def test_ar5iv_wraps_arxiv_errors() -> None:
         raise AssertionError("expected Ar5ivError")
 
 
-def test_ar5iv_is_intent_only_after_arxiv_for_stem_queries() -> None:
+def test_ar5iv_is_reading_fallback_not_a_duplicate_discovery_wave() -> None:
     profiles = load_academic_provider_profiles()
 
     plan = plan_academic_search(AcademicSearchRequest(query="LLM RAG preprint", provider="auto"), "auto", profiles)
 
     assert "arxiv" in plan.provider_order
-    assert "ar5iv" in plan.provider_order
-    assert plan.provider_order.index("arxiv") < plan.provider_order.index("ar5iv")
+    assert "ar5iv" not in plan.provider_order

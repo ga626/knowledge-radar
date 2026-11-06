@@ -44,17 +44,21 @@ def normalize_tikhub_xhs_search_response(payload: Dict[str, Any], *, keyword: st
 def normalize_tikhub_xhs_detail_response(payload: Dict[str, Any], *, note_id: str = "") -> Dict[str, Any]:
     """Normalize TikHub XHS detail JSON into Xiaohongshu noteData."""
     note = _extract_detail_note(payload)
-    if not note:
+    if not note or not any(note.get(k) for k in ("desc", "description", "content", "text", "images", "image_list", "imageList", "video", "video_info")):
         return {}
     user = _first_dict(note, "user", "author", "user_info", "owner", "note_user")
     content = _first_text(note, "desc", "description", "content", "text")
     title = _first_text(note, "display_title", "title", "note_card_title") or content[:80]
+    images = _extract_detail_images(note)
+    videos = _extract_video_urls(note)
     return {
         "title": title,
         "desc": content,
         "content": content,
         "author": _first_text(user, "nickname", "name", "user_name", "userName") if user else _first_text(note, "nickname", "author"),
-        "images": _extract_detail_images(note),
+        "images": images,
+        "video": videos,
+        "media_manifest": [{"type":"image", "url":url} for url in images] + [{"type":"video", "url":url} for url in videos],
         "note_id": _first_text(note, "id", "note_id", "noteId", "noteIdStr") or note_id,
         "source": "tikhub_api_detail",
         "raw_keys": sorted(str(key) for key in note.keys())[:80],
@@ -102,12 +106,12 @@ def _extract_detail_images(note: Dict[str, Any]) -> List[str]:
             if isinstance(row, str):
                 images.append(row)
             elif isinstance(row, dict):
-                value = _first_text(row, "url", "src", "original", "trace_id")
+                value = _first_text(row, "url", "src", "original", "url_default")
                 if value:
                     images.append(value)
     elif isinstance(raw_images, str):
         images.append(raw_images)
-    return [image for image in images if image][:20]
+    return [image for image in images if image.startswith(("https://", "http://"))][:20]
 
 
 def _normalize_note(note: Dict[str, Any], *, raw_item: Dict[str, Any], keyword: str) -> SearchResultItem | None:
@@ -189,3 +193,40 @@ def _first_value(source: Dict[str, Any], *keys: str) -> Any:
         if value not in (None, ""):
             return value
     return ""
+
+def _extract_video_urls(note):
+    urls=[]
+    def walk(value):
+        if isinstance(value,dict):
+            for key,item in value.items():
+                if key in {"master_url","url","play_url","backup_url"} and isinstance(item,str) and item.startswith(("https://","http://")):
+                    urls.append(item)
+                elif isinstance(item,(dict,list)):
+                    walk(item)
+        elif isinstance(value,list):
+            for item in value:
+                walk(item)
+    walk(note.get("video") or note.get("video_info") or {})
+    return list(dict.fromkeys(urls))[:5]
+
+
+def normalize_tikhub_xhs_comments(payload, *, is_reply=False):
+    data = payload.get("data") or {}
+    if isinstance(data,dict) and isinstance(data.get("data"),dict):
+        data=data["data"]
+    if not isinstance(data, dict):
+        raise ValueError("tikhub_comments_schema_unrecognized")
+    rows = data.get("comments", data.get("items"))
+    if not isinstance(rows, list):
+        raise ValueError("tikhub_comments_schema_unrecognized")
+    result=[]
+    for row in rows:
+        if not isinstance(row,dict):
+            continue
+        user=row.get("user_info") or row.get("user") or {}
+        result.append({"comment_id":row.get("id") or row.get("comment_id"),
+            "text":row.get("content") or row.get("text") or "",
+            "author":user.get("nickname",""),"likes":row.get("like_count"),
+            "is_reply":is_reply,"replies":normalize_tikhub_xhs_comments(
+                {"data":{"comments":row.get("sub_comments") or []}},is_reply=True)})
+    return result

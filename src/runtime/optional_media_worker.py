@@ -1,122 +1,180 @@
-"""仅在获批的隔离Python内运行；stdout仅结果，模型日志转stderr。"""
+"""可选组件的库内处理实现；不启动模型子进程。"""
 
-import contextlib
 import importlib.metadata
-import json
 from pathlib import Path
-import sys
+import time
+
+
+class UnsupportedASRLanguage(ValueError):
+    error_code = 'unsupported_language'
+
+    def __init__(self, language):
+        self.language = language
+        super().__init__('不支持的语言：' + language + '；仅支持中文、英文及中英混合')
+
+
+class ASRLanguageDetectionFailed(ValueError):
+    error_code = 'asr_language_detection_failed'
+
+    def __init__(self):
+        super().__init__('asr_language_detection_failed:无法确认音频语言，未返回转写')
+
+
+def _language_tokenizer(root):
+    """v2.0.1专用解码视图，保留上游自动剥掉的语言前缀；不改权重或原分词器。
+
+    只改ID 11528的显示拼写，固定auto提示不含该词、禁止语言预填和hotwords。
+    模型生成ID不变；返回tokens按ID显示视图逐个还原，再解析模型语言标签。
+    上游接口/资产变动须重新验证，绝不把缺失标签当中文。
+    """
+    import json
+    import os
+    import tempfile
+    from runtime.media_cache import media_cache_subdir
+    from runtime.optional_media import file_sha
+    from runtime.file_write_lock import file_write_lock
+    from runtime.model_roles import ASR_MODEL_FILES
+    source = Path(root) / 'tokenizer'
+    for name in ('vocab.json', 'merges.txt', 'tokenizer_config.json'):
+        if file_sha(source / name) != ASR_MODEL_FILES['tokenizer/' + name]:
+            raise ValueError('asr_tokenizer_identity_mismatch')
+    folder = media_cache_subdir('asr_tokenizers') / ('qwen-language-view-v1-' + ASR_MODEL_FILES['tokenizer/vocab.json'][:16])
+    folder.mkdir(parents=True, exist_ok=True)
+    vocab = json.loads((source / 'vocab.json').read_text(encoding='utf-8'))
+    if vocab.get('language') != 11528 or 'KRlanguage' in vocab:
+        raise ValueError('asr_language_token_contract_mismatch')
+    vocab['KRlanguage'] = vocab.pop('language')
+    assets = {'vocab.json': json.dumps(vocab, ensure_ascii=False, separators=(',', ':')).encode('utf-8'),
+              'merges.txt': (source / 'merges.txt').read_bytes(),
+              'tokenizer_config.json': (source / 'tokenizer_config.json').read_bytes()}
+    with file_write_lock(folder / 'identity'):
+        for name, raw in assets.items():
+            target = folder / name
+            if target.is_file() and target.read_bytes() == raw:
+                continue
+            with tempfile.NamedTemporaryFile(dir=folder, suffix='.pending', delete=False) as handle:
+                temporary = Path(handle.name)
+                handle.write(raw)
+            try:
+                os.replace(temporary, target)
+            finally:
+                temporary.unlink(missing_ok=True)
+    return str(folder)
+
+
+def _detected_transcript(result):
+    """读取音频模型生成的语言，而非按正文字符或请求提示猜语言。"""
+    import re
+    if not result.text.strip():
+        return '', ''
+    # 原词恰为language时也逐token还原，避免改写其他token拼出的KRlanguage。
+    raw = ''.join('language' if token == 'KRlanguage' else token for token in result.tokens)
+    match = re.fullmatch(r'language ([^<>]+)<asr_text>(.*)', raw, re.DOTALL)
+    if not match:
+        raise ASRLanguageDetectionFailed()
+    label, text = match.groups()
+    # Qwen的无语音输出也是带语言头的非空字符串；None不代表一种外语。
+    if label.strip() == 'None':
+        if not text.strip():
+            return '', ''
+        raise ASRLanguageDetectionFailed()
+    language = {'Chinese': 'zh', 'Cantonese': 'zh', 'English': 'en'}.get(label.strip())
+    if language is None:
+        raise UnsupportedASRLanguage(label.strip() or 'unknown')
+    return text.strip(), language
 
 
 def native_asr(request):
-    """原生 Transformers 单模型、逐块有界转写；不启用旧 qwen-asr/vLLM 路径。"""
-    import tempfile
-    import soundfile as sf
-    import torch
-    from transformers import AutoProcessor, AutoModelForMultimodalLM
+    """单实例CPU INT8、逐30秒块检测与转写；外语整次失败，不归档部分正文。"""
+    from runtime.execution_context import check_execution, current_execution
+    from runtime.media_decode import audio_chunks
+    from runtime.operation_checkpoint import OperationCheckpoint
+    from runtime.media_cache import media_cache_subdir
+    from runtime.optional_media import file_sha
+    from runtime.model_roles import ASR_ENGINE
+    started = time.monotonic()
+    check_execution()
+    if request.get('device', 'cpu') != 'cpu':
+        raise ValueError('unsupported_asr_device:CPU_INT8_required')
+    model_started = time.monotonic()
+    model, hit = _load_asr_model(request['model_root'], request['model_identity'], request.get('threads', 4))
+    load_s = time.monotonic() - model_started
+    identity = {key: request[key] for key in ('input_sha256', 'model_identity', 'language', 'device', 'threads')}
+    identity.update(engine=ASR_ENGINE, chunk_seconds=30, max_tokens=1024, language_contract=3,
+                    implementation=file_sha(__file__))
+    checkpoint = OperationCheckpoint(media_cache_subdir('asr_checkpoints'), identity, identity)
+    rows = checkpoint.read().get('chunks', [])
+    reused = len(rows)
+    inference_s, decode_s, count = 0., 0., 0
+    decode_started = time.monotonic()
+    for index, (start, samples, rate) in enumerate(audio_chunks(request['input_path'])):
+        decode_s += time.monotonic() - decode_started
+        end = start + len(samples) / rate
+        check_execution()
+        if index < reused:
+            if rows[index]['start_s'] != start or rows[index]['end_s'] != end:
+                raise ValueError('asr_checkpoint_chunk_identity_mismatch')
+        else:
+            stream = model.create_stream()
+            # 始终auto；语言偏好仅用于字幕/缓存，不能预填覆盖真实音频语言。
+            stream.accept_waveform(rate, samples)
+            inference_started = time.monotonic()
+            model.decode_stream(stream)
+            inference_s += time.monotonic() - inference_started
+            check_execution()  # native返回前保留租约；取消后不读回、不保存迟到块。
+            result = stream.result
+            if len(result.tokens) >= 1024:
+                raise ValueError('asr_token_budget_exhausted_no_complete_transcript')
+            text, detected = _detected_transcript(result)
+            rows.append({'text': text, 'language': detected, 'start_s': start, 'end_s': end, 'kind': 'audio_chunk'})
+            context = current_execution() or {}
+            checkpoint.write({'chunks': rows, 'writer_attempt': context.get('attempt_id', ''),
+                              'writer_execution': context.get('execution_id', '')})
+        count += 1
+        decode_started = time.monotonic()
+    if count != len(rows):
+        raise ValueError('asr_checkpoint_duration_mismatch')
+    locators, cursor, parts = [], 0, []
+    for row in rows:
+        if not row['text']:
+            continue
+        parts.append(row['text'])
+        locators.append({'start': cursor, 'end': cursor + len(row['text']), 'unit': 'unicode_code_point',
+                         'start_s': row['start_s'], 'end_s': row['end_s'], 'kind': 'audio_chunk'})
+        cursor += len(row['text']) + 1
+    duration = rows[-1]['end_s'] if rows else 0
+    languages = sorted({row['language'] for row in rows if row.get('language')})
+    return {'status': 'acquired', 'text': '\n'.join(parts), 'source_kind': 'asr', 'component': request['component'],
+        'speech_status': 'speech_detected' if parts else 'no_speech_detected' if count else 'no_decoded_audio',
+        'content_locators': locators, 'timestamp_precision': 'input_chunk_only', 'word_timestamps': 'not_acquired',
+        'device': 'cpu', 'dtype': 'int8', 'engine': ASR_ENGINE,
+        'language_hint': request.get('language') or 'auto', 'decoding_language': 'auto',
+        'detected_languages': languages, 'detected_language': languages[0] if len(languages) == 1 else 'zh-en' if languages else '',
+        'language_detection': 'qwen_generated_prefix/v1',
+        'asr_metrics': {'audio_duration_s': duration, 'chunks': count, 'resumed_chunks': reused,
+            'model_load_s': round(load_s, 3), 'model_cache_hit': hit,
+            'audio_decode_s': round(decode_s, 3), 'transcription_s': round(inference_s, 3),
+            'worker_total_s': round(time.monotonic() - started, 3),
+            'real_time_factor': round(inference_s / duration, 4) if duration else None}}
 
-    torch.set_num_threads(request.get("threads", 4))
-    device = request.get("device") or "cpu"
-    if device in {"cuda", "cuda:0"} and not torch.cuda.is_available():
-        raise ValueError("requested_cuda_unavailable")
-    dtype = (torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16) if device != "cpu" else torch.float32
-    processor = AutoProcessor.from_pretrained(request["model_root"], local_files_only=True)
-    model = (
-        AutoModelForMultimodalLM.from_pretrained(
-            request["model_root"], local_files_only=True, dtype=dtype, attn_implementation="eager"
-        )
-        .to(device)
-        .eval()
-    )
-    # FFmpeg 统一容器/采样率，避免 m4a 在 libsndfile 中不受支持。
-    import subprocess
-    import os
 
-    with tempfile.TemporaryDirectory(prefix="kr-asr-source-") as source_directory:
-        converted = str(Path(source_directory) / "source.wav")
-        flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        ffmpeg = Path(request["ffmpeg_exe"])
-        if not ffmpeg.is_absolute() or not ffmpeg.is_file():
-            raise ValueError("absolute_ffmpeg_required")
-        conversion = subprocess.run(
-            [
-                str(ffmpeg),
-                "-nostdin",
-                "-v",
-                "error",
-                "-y",
-                "-i",
-                request["input_path"],
-                "-t",
-                "14401",
-                "-ar",
-                "16000",
-                "-ac",
-                "1",
-                converted,
-            ],
-            capture_output=True,
-            timeout=180,
-            creationflags=flags,
-        )
-        if conversion.returncode:
-            raise ValueError("audio_decode_failed")
-        return transcribe_chunks(request, model, processor, sf, torch, converted)
+_ASR_MODEL = None
 
 
-def transcribe_chunks(request, model, processor, sf, torch, source):
-    import tempfile
-
-    parts, blocks = [], []
-    with sf.SoundFile(source) as audio, tempfile.TemporaryDirectory(prefix="kr-asr-") as temporary:
-        if audio.frames / audio.samplerate > 4 * 3600:
-            raise ValueError("audio_duration_exceeds_budget")
-        cursor = 0
-        while True:
-            samples = audio.read(30 * audio.samplerate, dtype="float32", always_2d=True)
-            if not len(samples):
-                break
-            start, end = cursor / audio.samplerate, (cursor + len(samples)) / audio.samplerate
-            chunk = str(Path(temporary) / "chunk.wav")
-            sf.write(chunk, samples.mean(axis=1), audio.samplerate)
-            inputs = processor.apply_transcription_request(audio=chunk, language=request.get("language") or None).to(
-                model.device, model.dtype
-            )
-            with torch.inference_mode():
-                output = model.generate(**inputs, max_new_tokens=1024, do_sample=False)
-            generated = output[:, inputs["input_ids"].shape[1] :]
-            if generated.shape[1] >= 1024:
-                raise ValueError("asr_token_budget_exhausted_no_complete_transcript")
-            text = processor.decode(generated, return_format="transcription_only")[0].strip()
-            if text:
-                parts.append(text)
-                blocks.append({"text": text, "start_s": start, "end_s": end, "kind": "audio_chunk"})
-            cursor += len(samples)
-    text = "\n".join(parts)
-    # 时间范围是实际输入切片边界，不能冒充词级强制对齐。
-    locations, cursor = [], 0
-    for block in blocks:
-        locations.append(
-            {
-                "start": cursor,
-                "end": cursor + len(block["text"]),
-                "unit": "unicode_code_point",
-                "start_s": block["start_s"],
-                "end_s": block["end_s"],
-                "kind": "audio_chunk",
-            }
-        )
-        cursor += len(block["text"]) + 1
-    return {
-        "status": "acquired",
-        "text": text,
-        "source_kind": "asr",
-        "component": request["component"],
-        "content_locators": locations,
-        "timestamp_precision": "input_chunk_only",
-        "word_timestamps": "not_acquired",
-        "device": str(model.device),
-        "dtype": str(model.dtype),
-    }
+def _load_asr_model(root, identity, threads):
+    global _ASR_MODEL
+    key = (root, identity, threads)
+    if _ASR_MODEL is not None and _ASR_MODEL[0] == key:
+        return _ASR_MODEL[1], True
+    _ASR_MODEL = None
+    from sherpa_onnx import OfflineRecognizer
+    root = Path(root)
+    model = OfflineRecognizer.from_qwen3_asr(
+        conv_frontend=str(root / 'conv_frontend.onnx'), encoder=str(root / 'encoder.int8.onnx'),
+        decoder=str(root / 'decoder.int8.onnx'), tokenizer=_language_tokenizer(root),
+        num_threads=threads, max_new_tokens=1024, max_total_len=4096, provider='cpu')
+    _ASR_MODEL = (key, model)
+    return model, False
 
 
 def docling_blocks(document):
@@ -148,14 +206,13 @@ def execute(request):
             raise ValueError("package_version_mismatch")
     component = request["component"]
     source = request["input_path"]
-    model = request["model_root"]
     if component == "qwen3-asr-0.6b":
         return native_asr(request)
     if component == "docling":
         from docling.document_converter import DocumentConverter
         from docling.datamodel.base_models import InputFormat
 
-        # Office/HTML 使用无模型解析；PDF 唯一分流由 pypdf/Paddle 承担。
+        # Office/HTML 使用无模型解析；PDF 唯一分流由 pypdf/云端 OCR 承担。
         allowed = [InputFormat.DOCX, InputFormat.XLSX, InputFormat.PPTX, InputFormat.HTML, InputFormat.MD]
         result = DocumentConverter(allowed_formats=allowed).convert(source)
         return {
@@ -165,56 +222,4 @@ def execute(request):
             "source_kind": "document_parse",
             "component": component,
         }
-    if component == "paddleocr-vl-1.6":
-        from paddleocr import PaddleOCRVL
-
-        if not request.get("layout_model_root"):
-            raise ValueError("paddle_layout_model_required")
-        pipeline = PaddleOCRVL(
-            pipeline_version="v1.6",
-            vl_rec_model_name="PaddleOCR-VL-1.6-0.9B",
-            vl_rec_model_dir=model,
-            layout_detection_model_name="PP-DocLayoutV3",
-            layout_detection_model_dir=request["layout_model_root"],
-            use_doc_orientation_classify=False,
-            use_doc_unwarping=False,
-            device=request.get("device") or "cpu",
-            cpu_threads=request.get("threads", 4),
-        )
-        rows = list(pipeline.predict(input=source))
-        markdown = []
-        blocks = []
-        for row in rows:
-            value = row.markdown
-            if isinstance(value, dict):
-                markdown.append(str(value.get("markdown_texts") or ""))
-            data = row.json
-            if isinstance(data, str):
-                data = json.loads(data)
-            data = data.get("res", data)
-            for block in data.get("parsing_res_list", []):
-                item = {
-                    "text": str(block.get("block_content") or ""),
-                    "kind": str(block.get("block_label") or "ocr"),
-                    "page": int(data.get("page_index") or 0) + 1,
-                }
-                if block.get("block_bbox") is not None:
-                    item.update(bbox=block["block_bbox"], coordinate_system="image_pixels")
-                blocks.append(item)
-        return {
-            "status": "acquired",
-            "text": "\n".join(markdown),
-            "document_blocks": blocks,
-            "source_kind": "ocr",
-            "component": component,
-        }
     raise ValueError("unsupported_component")
-
-
-if __name__ == "__main__":
-    raw = sys.stdin.read(1024 * 1024 + 1)
-    if len(raw) > 1024 * 1024:
-        raise ValueError("request_too_large")
-    with contextlib.redirect_stdout(sys.stderr):
-        result = execute(json.loads(raw))
-    print(json.dumps(result, ensure_ascii=False))

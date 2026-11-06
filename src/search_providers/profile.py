@@ -22,15 +22,6 @@ class SearchProviderProfile:
 
 
 DEFAULT_PROVIDER_PROFILES: Dict[str, SearchProviderProfile] = {
-    "searxng": SearchProviderProfile(
-        id="searxng",
-        cost_tier="free_or_self_hosted",
-        default_wave="free_parallel",
-        strengths=["broad_metasearch", "low_cost", "self_hosted"],
-        weaknesses=["backend_dependent", "can_be_noisy"],
-        capabilities={"freshness": "weak", "domain_filter": False, "raw_content": False, "citations": False},
-        runtime={"speed": "medium", "stability": "medium", "timeout_s": 12},
-    ),
     "anysearch": SearchProviderProfile(
         id="anysearch",
         cost_tier="free_or_custom",
@@ -71,9 +62,18 @@ DEFAULT_PROVIDER_PROFILES: Dict[str, SearchProviderProfile] = {
 
 
 def provider_profiles() -> Dict[str, Dict[str, Any]]:
-    return {name: profile.to_dict() for name, profile in DEFAULT_PROVIDER_PROFILES.items()}
+    from .catalog import SEARCH_CATALOG
+    out = {}
+    for name, descriptor in SEARCH_CATALOG.items():
+        row = (DEFAULT_PROVIDER_PROFILES.get(name) or SearchProviderProfile(
+            id=name, runtime={'speed':'medium','timeout_s':12,'stability':'unverified'})).to_dict()
+        row.update(capabilities=descriptor['capabilities'], role=descriptor['role'],
+                   default_enabled=descriptor['default_enabled'],
+                   default_wave={'preferred':'preferred','paid_fallback':'paid_supplement','optional':'explicit_optional'}[descriptor['role']])
+        out[name] = row
+    return out
 
 
 def profile_for(provider_id: str) -> Dict[str, Any]:
-    profile = DEFAULT_PROVIDER_PROFILES.get(provider_id)
-    return profile.to_dict() if profile else {}
+    profile = provider_profiles().get(provider_id.split(':')[0], {})
+    return {**profile,'id':provider_id} if profile else {}

@@ -79,6 +79,8 @@ def build_structure_body(manifest: dict) -> str:
         [
             "Source of truth: `config/project-structure.manifest.json`.",
             "Development source is the only editable truth. Package output is regenerated from source and manifests.",
+            "## Source roles",
+            table(["Role", "Boundary"], manifest.get("source_roles", {}).items()),
             "## Areas",
             areas,
             "## Directory Matrix",

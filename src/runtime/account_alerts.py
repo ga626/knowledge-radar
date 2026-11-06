@@ -43,12 +43,11 @@ def account_alert_snapshot() -> dict:
     rows = []
     for profile in profiles:
         platform = str(profile.get("platform") or "")
+        if platform in {"xiaohongshu", "xhs"}:
+            continue  # Retired dedicated profiles are historical, not active accounts.
         if platform not in LABELS or not profile.get("profile_id"):
             continue
-        if platform in {"xiaohongshu", "xhs"} and profile.get("account_pool_member") is False:
-            continue
-        identity = identity_for_profile(profile["profile_id"]) if platform in {"xiaohongshu", "xhs"} else {}
-        fields = account_identity_fields(profile, identity)
+        fields = account_identity_fields(profile)
         session = by_profile.get(profile["profile_id"], {})
         state = str(session.get("state") or "UNOBSERVED")
         from .account_observations import AccountObservationStore
@@ -72,19 +71,44 @@ def account_alert_snapshot() -> dict:
         row["login_status"] = "verified" if row["verified"] else "needs_recovery" if row["needs_action"] else "unobserved"
         row["login_verified"] = row["verified"]
         row["group_id"], row["group_label"] = ("content", "内容与社区") if platform in {"xhs", "xiaohongshu", "zhihu"} else ("recruitment", "招聘与职业") if platform in {"boss", "liepin", "zhilian", "maimai"} else ("academic", "学术与资料")
+    from .xhs_opencli import account_binding_id, connection_status
+    binding = account_binding_id()
+    if binding:
+        from .account_observations import AccountObservationStore
+        observation = AccountObservationStore().get(binding)
+        connection = connection_status()
+        needs_action = bool(connection["risk_stopped"] or connection["login"] or observation["needs_action"])
+        business_verified = bool(observation["verified"] and connection["connected"] and not needs_action)
+        rows.append({"profile_id": binding, "platform": "xhs", "platform_label": "小红书",
+            "display_label": "日常Chrome主账号", "masked_hint": "", "account_number": "", "slot_label": "",
+            "state": observation["state"], "needs_action": needs_action, "reason": observation.get("reason", ""),
+            "observation": observation, "verified": business_verified,
+            "login_verified": observation["state"] in {"auth_verified", "business_verified"} and connection["connected"] and not needs_action,
+            "login_status": "needs_recovery" if needs_action else "verified" if business_verified else "unobserved",
+            "status_category": "recovery" if needs_action else "verified" if business_verified else "unverified",
+            "group_id": "content", "group_label": "内容与社区", "deep_link": "#accounts?profile="+binding})
     return {"schema": "knowledgeradar-account-alerts/v1", "accounts": rows,
             "pending_count": sum(row["needs_action"] for row in rows)}
 
 
 def recover_account(profile_id: str, action: str) -> dict:
+    from .xhs_opencli import account_binding_id, request_login, complete_login
+    if profile_id and profile_id == account_binding_id():
+        if action == "open":
+            return request_login()
+        if action == "verify":
+            return complete_login()
+        if action == "ack":
+            return {"status": "acknowledged", "profile_id": profile_id}
+        raise ValueError("不支持的账号操作。")
     from .chrome_manager import complete_browser_interaction, request_user_login, probe_browser_auth
 
     profiles = (profile_registry_internal().get("raw") or {}).get("profiles") or []
     profile = next((row for row in profiles if row.get("profile_id") == profile_id and row.get("platform") in LABELS), None)
     if not profile:
         raise ValueError("未找到登记账号，请刷新后重试。")
-    if profile.get("platform") in {"xiaohongshu", "xhs"} and profile.get("account_pool_member") is False:
-        raise ValueError("实验通道不属于当前账号恢复流程。")
+    if profile.get("platform") in {"xiaohongshu", "xhs"}:
+        raise ValueError("旧小红书专用账号已退役，请使用日常Chrome主账号入口。")
     platform = str(profile["platform"])
     resource = f"xhs:{profile_id}" if platform in {"xiaohongshu", "xhs"} else platform
     if action == "ack":

@@ -6,10 +6,9 @@ import html
 import json
 import re
 import time
-from io import BytesIO
 from typing import Any, Dict, List
 from urllib.parse import parse_qs, quote, unquote, urlparse, urlunparse
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 import websocket
 
@@ -31,7 +30,7 @@ class VipOpenAccessProvider(ChineseOpenAccessProvider):
         homepage="https://oa.cqvip.com/paper",
         status="available",
         available=True,
-        auto_enabled=True,
+        auto_enabled=False,
         access_mode="logged_online_reading_pdf_viewer",
         full_text_access="logged_online_reading_pdf_text_confirmed",
         coverage="VIP/CQVIP main-site records with intelligent-reading PDF.js preview text extraction",
@@ -87,7 +86,7 @@ class VipOpenAccessProvider(ChineseOpenAccessProvider):
             return (VIP_MAIN_SITE_SEARCH_URL.format(query=query), f"https://oa.cqvip.com/paper/search?keyword={query}", self.config.homepage)
         return (self.config.homepage,)
 
-    def verify_article_fulltext(self, article_url: str) -> Dict[str, Any]:
+    def verify_article_fulltext(self, article_url: str, *, include_ocr=None, document_options=None) -> Dict[str, Any]:
         reading_url = vip_reading_url_from_detail_url(article_url) or str(article_url or "")
         if not reading_url:
             return {
@@ -110,7 +109,7 @@ class VipOpenAccessProvider(ChineseOpenAccessProvider):
                     "pdf_bytes_confirmed": False,
                     "text_extractable": False,
                 }
-            pdf_result = _fetch_pdf_text_result(file_urls[0], referer=reading_url, max_pages=5)
+            pdf_result = _fetch_pdf_text_result(file_urls[0], referer=reading_url, timeout_s=self.timeout_s, include_ocr=include_ocr, document_options=document_options)
             text_result = pdf_result.get("text_extraction") or {}
             text_len = int(text_result.get("sample_text_len") or 0)
             pdf_ok = bool(pdf_result.get("is_pdf"))
@@ -126,6 +125,9 @@ class VipOpenAccessProvider(ChineseOpenAccessProvider):
                 "pdf_bytes_confirmed": pdf_ok,
                 "text_extractable": text_ok,
                 "text_probe": text_result,
+                "input_sha256":pdf_result.get("input_sha256", ""),
+                "pdf_processing":pdf_result.get("pdf_processing", {}),
+                "file_url":pdf_result.get("file_url", ""),
                 "pdf_probe": {
                     "status_code": pdf_result.get("status_code"),
                     "content_type": pdf_result.get("content_type"),
@@ -134,6 +136,9 @@ class VipOpenAccessProvider(ChineseOpenAccessProvider):
                 },
             }
         except Exception as exc:
+            from runtime.execution_context import ExecutionStopped
+            if isinstance(exc, ExecutionStopped):
+                raise
             return {
                 "status": "EXPECTED_DEGRADED",
                 "article_url": article_url,
@@ -262,13 +267,13 @@ def vip_ascii_url(url: str) -> str:
     )
 
 
-def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int = 3) -> str:
+def extract_pdf_text(pdf_bytes: bytes, *, max_pages: int | None = None) -> str:
     """Extract text from CQVIP preview PDF bytes without relying on browser downloads."""
 
     return _extract_pdf_text_and_count(pdf_bytes, max_pages=max_pages)["text"]
 
 
-def extract_pdf_text_result(pdf_bytes: bytes, *, max_pages: int = 3) -> Dict[str, Any]:
+def extract_pdf_text_result(pdf_bytes: bytes, *, max_pages: int | None = None) -> Dict[str, Any]:
     """Extract text plus page metadata from CQVIP preview PDF bytes."""
 
     result = _extract_pdf_text_and_count(pdf_bytes, max_pages=max_pages)
@@ -277,19 +282,15 @@ def extract_pdf_text_result(pdf_bytes: bytes, *, max_pages: int = 3) -> Dict[str
         "page_count": result["page_count"],
         "sample_text_len": len(text),
         "sample_text": " ".join(text.split())[:500],
-    }
-
-
-def _extract_pdf_text_and_count(pdf_bytes: bytes, *, max_pages: int = 3) -> Dict[str, Any]:
-    from pypdf import PdfReader
-
-    reader = PdfReader(BytesIO(pdf_bytes))
-    pages = reader.pages[: max(1, int(max_pages or 1))]
-    text = "\n".join(page.extract_text() or "" for page in pages)
-    return {
         "text": text,
-        "page_count": len(reader.pages),
+        "locators": result.get('locators') or [],
+        "coverage": result.get("coverage", "partial"),
     }
+
+
+def _extract_pdf_text_and_count(pdf_bytes: bytes, *, max_pages: int | None = None) -> Dict[str, Any]:
+    from runtime.pdf_text import extract_pdf_text as extract
+    return extract(pdf_bytes, max_pages=max_pages)
 
 
 class _CdpPage:
@@ -421,29 +422,13 @@ def _viewer_file_urls(summary: Dict[str, Any]) -> List[str]:
     return urls
 
 
-def _fetch_pdf_text_result(file_url: str, *, referer: str, max_pages: int = 5) -> Dict[str, Any]:
-    request = Request(
-        vip_ascii_url(file_url),
-        headers={
-            "User-Agent": "Mozilla/5.0",
-            "Referer": referer,
-            "Accept": "application/pdf,*/*",
-        },
-    )
-    with urlopen(request, timeout=90) as response:
-        pdf_bytes = response.read()
-        status_code = response.status
-        content_type = response.headers.get("content-type") or ""
-        content_length = response.headers.get("content-length") or str(len(pdf_bytes))
-    text_result = extract_pdf_text_result(pdf_bytes, max_pages=max_pages)
-    return {
-        "status_code": status_code,
-        "content_type": content_type,
-        "content_length": content_length,
-        "first_bytes_hex": pdf_bytes[:5].hex(),
-        "is_pdf": pdf_bytes[:5] == b"%PDF-",
-        "text_extraction": text_result,
-    }
+def _fetch_pdf_text_result(file_url: str, *, referer: str, max_pages=None, timeout_s=600, include_ocr=None, document_options=None) -> Dict[str, Any]:
+    from runtime.pdf_text import fetch_pdf_document
+    result = fetch_pdf_document(vip_ascii_url(file_url), referer=referer, timeout_s=timeout_s, include_ocr=include_ocr, document_options=document_options)
+    probe = result.get('pdf_probe', {})
+    return {**probe, 'is_pdf':result['pdf_bytes_confirmed'],
+            'text_extraction':result['text_probe'], 'input_sha256':result.get('input_sha256',''),
+            'pdf_processing':result.get('pdf_processing', {}), 'file_url':result.get('file_url','')}
 
 
 def _clean_text(value: Any) -> str:

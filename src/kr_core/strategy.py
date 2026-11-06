@@ -93,8 +93,6 @@ def search_strategy_tree(provider_order: Iterable[str], provider_status: Optiona
             notes.append("configured_but_unavailable")
         if name == "anysearch":
             notes.append("runtime backup; public ecosystem evidence is limited")
-        if name == "searxng":
-            notes.append("local/self-hosted fallback and cross-check node")
         nodes.append(
             StrategyNode(
                 id=name,
@@ -170,6 +168,8 @@ def generic_web_strategy_tree(*, use_jina: bool = True, include_dynamic_hint: bo
             ),
         ]
     )
+    # Remote conversion follows local parsing; it is not another origin fetch.
+    collectors.sort(key=lambda node: node.id == 'jina_reader')
     if include_dynamic_hint:
         collectors.append(
             StrategyNode(
@@ -189,7 +189,7 @@ def generic_web_strategy_tree(*, use_jina: bool = True, include_dynamic_hint: bo
         description="Open web extraction tree: light static collectors first, browser rendering by explicit escalation.",
         max_depth=len(collectors),
         nodes=collectors,
-        stop_conditions=["first_valid_content_over_min_chars", "anti_bot_or_blocked_then_next", "all_collectors_failed"],
+        stop_conditions=["first_readable_content", "terminal_http_failure_stops", "all_parsers_failed"],
         evidence_fields=["collector", "fallback_errors", "elapsed_s", "content_chars"],
     ).to_dict()
     tree["error_taxonomy"] = ERROR_TAXONOMY

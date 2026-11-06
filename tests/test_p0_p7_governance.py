@@ -48,28 +48,32 @@ def test_provider_status_cache_uses_short_ttl() -> None:
 
 
 def test_shared_http_client_reuses_pool_with_mock_transport(monkeypatch) -> None:
-    class FakeClient:
-        created = 0
+    real_client = httpx.Client
+    clients, sent_cookies = [], []
 
-        def __init__(self, *args, **kwargs):
-            FakeClient.created += 1
-            self.closed = False
+    def respond(request):
+        sent_cookies.append(request.headers.get("cookie"))
+        return httpx.Response(200, json={"ok": True, "path": request.url.path},
+                              headers={"set-cookie": "private=secret; Path=/"})
 
-        def request(self, method: str, url: str, **kwargs):
-            request = httpx.Request(method, url)
-            return httpx.Response(200, json={"ok": True, "path": request.url.path}, request=request)
+    def create(*args, **kwargs):
+        kwargs["proxy"] = None
+        client = real_client(*args, **kwargs, transport=httpx.MockTransport(respond))
+        clients.append(client)
+        return client
 
-        def close(self):
-            self.closed = True
-
-    monkeypatch.setattr(httpx, "Client", FakeClient)
+    monkeypatch.setattr(httpx, "Client", create)
     close_shared_clients()
-
-    assert request_json("GET", "https://example.test/a", timeout=1.0) == {"ok": True, "path": "/a"}
-    assert request_json("GET", "https://example.test/b", timeout=1.0) == {"ok": True, "path": "/b"}
-    assert shared_client_summary()["client_count"] == 1
-    assert FakeClient.created == 1
-    close_shared_clients()
+    try:
+        assert request_json("GET", "https://example.test/a", timeout=1.0) == {"ok": True, "path": "/a"}
+        assert request_json("GET", "https://example.test/b", timeout=1.0) == {"ok": True, "path": "/b"}
+        assert shared_client_summary()["client_count"] == 1
+        assert len(clients) == 1
+        assert sent_cookies == [None, None]
+        assert list(clients[0].cookies.jar) == []
+    finally:
+        close_shared_clients()
+    assert clients[0].is_closed
 
 
 def test_admission_state_classification() -> None:

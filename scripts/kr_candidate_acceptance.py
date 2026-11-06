@@ -23,6 +23,17 @@ def unwrap(result):
     return {}
 
 
+def catalog_identity(tools, contract):
+    names = [t.name for t in tools]
+    declared = [t['name'] for t in contract['tools']]
+    required = {'health_check', 'get_capabilities', 'get_content_detail', 'read_knowledge', 'control_task'}
+    retired = {'expand_keywords', 'plan_research'}
+    valid = (len(names) == len(set(names)) and len(declared) == len(set(declared))
+             and contract['tool_count'] == len(declared) and set(names) == set(declared)
+             and required <= set(names) and not retired.intersection(names))
+    return valid
+
+
 async def probe(program, python, state, *, live):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
@@ -39,7 +50,7 @@ async def probe(program, python, state, *, live):
         async with ClientSession(read, write) as session:
             await session.initialize()
             catalog = await session.list_tools()
-            rows.append({"case": "sdk_catalog", "success": len(catalog.tools) == 23, "tools": [t.name for t in catalog.tools], "startup_s": round(time.monotonic()-started, 3)})
+            rows.append({"case": "sdk_catalog", "success": catalog_identity(catalog.tools, json.loads((program / 'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))), "tools": [t.name for t in catalog.tools], "startup_s": round(time.monotonic()-started, 3)})
             for name, args in [("health_check", {"mode": "summary"}), ("get_capabilities", {"summary": True})]:
                 start = time.monotonic()
                 result = await session.call_tool(name, args)

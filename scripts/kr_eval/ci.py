@@ -21,6 +21,16 @@ def docs_only_change(root, base):
     return bool(paths) and all(p.startswith('docs/') or (p.endswith('.md') and '/' not in p) for p in paths)
 
 
+def run_documentation_checks(root):
+    """纯文档不跑业务，但不能免掉生成物与当前引用检查。"""
+    import sys
+    result = subprocess.run([sys.executable, str(root / 'scripts/check_current_docs.py')],
+                            cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=90)
+    return {'status': 'PASS' if result.returncode == 0 else 'FAIL',
+            'reason': 'documentation_only_change', 'business_tests': 'not_run',
+            'stdout': result.stdout, 'stderr': result.stderr, 'exit_code': result.returncode}
+
+
 def _matches(test, node):
     parts = node.split("::")
     module = parts[0].removesuffix(".py").replace("/", ".")

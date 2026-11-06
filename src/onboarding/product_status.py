@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from onboarding.configuration import public_provider_guides, public_snapshot
+from search_providers.catalog import SEARCH_CATALOG
 from runtime.media_cache import cleanup_expired_media_cache, media_cache_root
 from runtime.executables import resolve_managed_chrome
 from runtime.paths import project_root
@@ -24,13 +25,13 @@ CAPABILITY_PACKS = (
         "id": "core_web",
         "label": "网页发现",
         "description": "先接通一个网页发现来源，即可开始开放网页、公众号发现与公开网页研究。",
-        "fields": ("TAVILY_API_KEY", "ANYSEARCH_API_KEY", "BRAVE_SEARCH_API_KEY", "EXA_API_KEY", "SEARXNG_BASE_URL"),
-        "needs": "至少一个网页发现来源或自建 SearXNG",
+        "fields": ("TAVILY_API_KEY", "ANYSEARCH_API_KEY", "BRAVE_SEARCH_API_KEY", "EXA_API_KEY"),
+        "needs": "至少一条已配置并启用的网页发现路线；无需全部配置或部署 Docker",
         "boundary": "第三方额度、网络与来源可访问性仍会影响结果。",
         "status_kind": "setup",
         "tool_count": 4,
         "tools": ("kr_research", "kr_web_search", "search_wechat_articles", "extract_web_page"),
-        "provider_ids": ("tavily", "anysearch", "brave", "exa", "searxng"),
+        "provider_ids": tuple(SEARCH_CATALOG),
     },
     {
         "id": "research_sources",
@@ -40,7 +41,7 @@ CAPABILITY_PACKS = (
             "YOUTUBE_API_KEY",
             "OPENALEX_API_KEY",
             "SEMANTIC_SCHOLAR_API_KEY",
-            "BAIDU_QIANFAN_BEARER_TOKEN",
+            "WFDATA_APP_KEY",
             "SERPAPI_API_KEY",
             "KR_CORE_API_KEY",
         ),
@@ -49,7 +50,7 @@ CAPABILITY_PACKS = (
         "status_kind": "optional",
         "tool_count": 4,
         "tools": ("search_academic", "search_github_repositories", "search_youtube", "get_content_detail"),
-        "provider_ids": ("youtube", "openalex", "semantic_scholar", "baidu_scholar", "serpapi_scholar", "core"),
+        "provider_ids": ("youtube", "openalex", "semantic_scholar", "wanfang", "serpapi_scholar", "core"),
     },
     {
         "id": "accounts_browser",
@@ -72,14 +73,14 @@ CAPABILITY_PACKS = (
     {
         "id": "content_intelligence",
         "label": "模型服务",
-        "description": "按需配置百炼图片与音视频理解。浏览器、转写模型等本地依赖在“本地组件”中单独管理。",
-        "fields": ("DASHSCOPE_API_KEY",),
-        "needs": "基础文本交给 Codex；需要图片或音视频理解时使用百炼 Omni",
+        "description": "百炼处理图文与音视频理解；硅基流动处理图片和扫描件 OCR。本地转写组件单独管理。",
+        "fields": ("DASHSCOPE_API_KEY", "SILICONFLOW_API_KEY"),
+        "needs": "基础文本交给 Codex；图片和扫描件 OCR 需要硅基流动连接；语音转写留在本地",
         "boundary": "可能产生媒体缓存、后台任务或费用；每次任务会说明实际采用的路径。",
         "status_kind": "optional",
         "tool_count": 2,
         "tools": ("get_content_detail", "get_task_status"),
-        "provider_ids": ("dashscope",),
+        "provider_ids": ("dashscope", "siliconflow"),
     },
 )
 
@@ -91,6 +92,15 @@ def installation_summary() -> dict[str, Any]:
     installation root is opt-in.  A Release launcher supplies it and receives
     only version/channel/path hashes, never a configuration value or a path.
     """
+    if os.environ.get("KR_CONSOLE_ROLE") == "dev":
+        from runtime.task_service import source_identity
+        from runtime.paths import runtime_state_dir
+        return {
+            "available": True, "role": "dev", "version": "源码 " + source_identity()[:12],
+            "channel": "开发预览，尚未安装", "rollback_available": False,
+            "data_root_present": runtime_state_dir().is_dir(),
+            "message": "当前页面运行分支源码；正式安装和原生 MCP 身份需分别核对。",
+        }
     install_root_raw = os.environ.get("KR_INSTALL_ROOT", "").strip()
     if not install_root_raw:
         return {
@@ -133,6 +143,8 @@ def capability_packs(snapshot: dict[str, Any] | None = None) -> list[dict[str, A
         configured_count = len(configured.intersection(fields))
         status_kind = str(pack["status_kind"])
         ready = bool(configured_count) if fields else status_kind == "ready"
+        if pack['id'] == 'core_web' and 'search_ready_sources' in snapshot:
+            ready = bool(snapshot['search_ready_sources'])
         if status_kind == "manual":
             from runtime.browser_sessions import browser_sessions_summary
 
@@ -172,17 +184,14 @@ def optional_capabilities() -> list[dict[str, Any]]:
         if root_raw
         else Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "KnowledgeRadar" / "data"
     )
-    state_path = data_root / "state" / "capabilities.json"
-    try:
-        state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.is_file() else {}
-    except (OSError, json.JSONDecodeError):
-        state = {}
-    rows = state.get("capabilities", {}) if isinstance(state, dict) else {}
-    xhs_ready = (
-        isinstance(rows.get("xhs_bridge"), dict)
-        and rows["xhs_bridge"].get("status") == "APPLIED"
-        and (data_root / "capabilities" / "xhs-bridge" / "xhs_mcp_bridge.cjs").is_file()
-    )
+    from runtime.xhs_opencli import connection_status
+    xhs_connection = connection_status()
+    xhs_ready = xhs_connection["connected"]
+    from runtime.browser_link import BrowserLink
+    browser_link_health = BrowserLink().health()
+    browser_link_config = Path(__file__).resolve().parents[2] / 'config/browser-link.json'
+    connector = json.loads(browser_link_config.read_text(encoding='utf-8')) if browser_link_config.is_file() else {}
+
     browser_root = data_root / "playwright"
     browser_ready = browser_root.is_dir() and any(
         path.is_file()
@@ -212,14 +221,31 @@ def optional_capabilities() -> list[dict[str, Any]]:
         },
         {
             "id": "xhs_bridge",
-            "label": "小红书诊断 bridge",
-            "description": "为小红书本地诊断增加受限 bridge；不是普通搜索或账号登录的前置条件。",
-            "status": "ready" if xhs_ready else "not_installed",
+            "label": "小红书日常浏览器连接",
+            "description": "OpenCLI复用日常浏览器登录；需要本人启用扩展并绑定对应浏览器。",
+            "status": "ready" if xhs_ready else "needs_connection",
+            "status_label": "已连接" if xhs_ready else "等待连接Chrome",
             "requirement": "按需",
-            "install_mode": "managed",
+            "install_mode": "guided",
             "depends_on": ("node",),
-            "boundary": "在本控制台确认后下载 bridge 依赖；不会登录、绕过验证或自动启用生产兜底。",
-            "restart_required": True,
+            "boundary": "浏览器扩展由本人确认权限后启用；KR只回收自有标签，不关闭日常浏览器。",
+            "restart_required": False,
+            "guide": {"official_url": "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk",
+                "official_label": "Chrome官方扩展页面",
+                "steps": ("在日常Chrome中确认OpenCLI Browser Bridge的权限后启用扩展。",
+                    "由KR核对固定OpenCLI版本及daemon连接，绑定这个日常Chrome的context；不选Testing浏览器。",
+                    "在该Chrome登录小红书；Cookie留在浏览器，KR不复制。",
+                    "返回刷新连接检测；扩展在线与账号登录分别检查。")},
+        },
+        {
+            "id": "browser_link", "label": "KR 浏览器连接器",
+            "description": "BOSS、猎聘动态页和脉脉共用一个原生通道；账号留在日常Chrome。",
+            "status": "ready" if browser_link_health.get('ok') else "needs_connection" if connector.get('extension_ids') else "distribution_pending",
+            "requirement": "浏览器站点必需，HTTP功能无需", "install_mode": "guided",
+            "restart_required": False,
+            "boundary": "Host随KR更新；首次扩展安装和权限由本人确认，不需要开发者模式。",
+            "guide": {"official_url": connector.get('store_url'), "official_label": "KR 浏览器连接器官方商店页（发布后提供）",
+                "steps": ("确认商店扩展权限。", "在扩展中点击连接此浏览器，绑定本人日常Chrome。", "在站点工作标签登录；连接状态不等于账号登录状态。")},
         },
         {
             "id": "media_downloader",
@@ -233,28 +259,26 @@ def optional_capabilities() -> list[dict[str, Any]]:
         },
         {
             "id": "transcription_model",
-            "label": "本地语音转写（0.6B）",
-            "description": "无字幕时按需启动；运行时与权重统一安装，不再选择引擎。",
+            "label": "本地语音转写（sherpa INT8 · 0.6B）",
+            "description": "无字幕时同进程处理中文、英文和中英混合；运行时与固定权重统一安装。",
             "status": "ready" if transcription_model_ready else "not_installed",
             "requirement": "按需",
             "install_mode": "managed",
             "restart_required": False,
-            "boundary": "只在本地隔离环境处理；完成后退出 worker，不上传音频。",
+            "boundary": "本机 CPU INT8 单实例复用，不上传音频；检测到其他语言停止并返回不支持。",
         },
         *[
             {
                 "id": component,
                 "label": component_plan(component)["label"],
-                "description": "Office 文档解析，不下载模型。"
-                if component == "docling"
-                else "扫描件、图片与复杂文档保留页码和位置。",
+                "description": "Office 文档解析，不下载模型。",
                 "status": "ready" if component_plan(component).get("ready") else "not_installed",
                 "requirement": "按需",
                 "install_mode": "managed",
                 "restart_required": False,
                 "boundary": "隔离安装，显式下载；与转写共享一个本地重计算名额。",
             }
-            for component in ("docling", "paddleocr-vl-1.6")
+            for component in ("docling",)
         ],
     ]
 
@@ -284,7 +308,7 @@ def local_component_catalog() -> dict[str, Any]:
                     {
                         "id": "chrome",
                         "label": "Google Chrome",
-                        "description": "平台账号登录、扫码和安全验证所需的受管浏览器。",
+                        "description": "小红书复用你的日常Chrome；其他已接入平台继续使用各自受管会话。",
                         "status": "ready" if chrome else "not_installed",
                         "requirement": "启用平台账号后必需",
                         "install_mode": "guided",
@@ -302,9 +326,9 @@ def local_component_catalog() -> dict[str, Any]:
                     {
                         "id": "node",
                         "label": "Node.js 与 npm",
-                        "description": "仅在启用小红书诊断 bridge 时需要的运行环境。",
+                        "description": "启用OpenCLI浏览器连接所需的运行环境。",
                         "status": "ready" if node_available else "not_installed",
-                        "requirement": "启用小红书诊断 bridge 后必需",
+                        "requirement": "启用OpenCLI后必需",
                         "install_mode": "guided",
                         "boundary": "在此查看官方安装引导并在安装后重新检测；它本身不会自动启用任何平台访问。",
                         "guide": {
@@ -313,7 +337,7 @@ def local_component_catalog() -> dict[str, Any]:
                             "steps": (
                                 "下载并安装 Node.js 的长期支持版（LTS）。",
                                 "安装时保留 npm；完成后重新打开本地控制台。",
-                                "回到本页刷新检测，再为小红书诊断 bridge 生成安装计划。",
+                                "回到本页刷新检测，再按小红书连接引导启用扩展并绑定Chrome。",
                             ),
                         },
                     },
@@ -328,7 +352,6 @@ def local_component_catalog() -> dict[str, Any]:
                     selectable["media_downloader"],
                     selectable["transcription_model"],
                     selectable["docling"],
-                    selectable["paddleocr-vl-1.6"],
                     {
                         "id": "ffmpeg",
                         "label": "FFmpeg",
@@ -460,11 +483,15 @@ def _read_dashboard_rows(database: Path, query: str, parameters: tuple[Any, ...]
 
 
 _TASK_LABELS = {
+    "durable_content_detail": "资料采集与识别",
+    "durable_optional_media": "本地材料处理",
     "bilibili_transcribe": "视频转写",
     "bilibili_qwen_video_analysis": "视频理解",
     "bilibili_comment_filter": "评论去重",
 }
 _TASK_STATUS_LABELS = {
+    "waiting_for_user": "等待你完成登录或验证",
+    "interrupted": "已中断，可继续",
     "queued": "排队中",
     "running": "处理中",
     "completed": "已完成",
@@ -499,11 +526,21 @@ def _public_task_row(row: sqlite3.Row, *, now: float) -> dict[str, Any]:
         if status in {"completed", "failed", "cancelled", "skipped"}
         else max(0, int(now - started_at))
     )
+    metadata = {}
+    try:
+        metadata = json.loads(row["metadata_json"] or "{}")
+    except (KeyError, IndexError, TypeError, ValueError):
+        pass
+    status_label = _TASK_STATUS_LABELS.get(status, "状态未知")
+    if isinstance(metadata, dict) and status in {"queued", "running"} and metadata.get("collection_available"):
+        status_label = "正文已保存，正在补充识别" if status == "running" else "正文已保存，等待补充识别"
+    elif str(row["error_code"] or "").startswith("paid_"):
+        status_label = "费用额度未授权或已用完"
     return {
         "label": _TASK_LABELS.get(task_type, "后台研究处理"),
         "platform": "B 站" if task_type.startswith("bilibili_") else (platform[:32] or "本机任务"),
         "status": status if status in _TASK_STATUS_LABELS else "unknown",
-        "status_label": _TASK_STATUS_LABELS.get(status, "状态未知"),
+        "status_label": status_label,
         "updated_label": _task_age_label(now - updated_at),
         "duration_seconds": min(duration_s, 7 * 86400),
     }
@@ -524,7 +561,7 @@ def _dashboard_task_activity(since: float) -> dict[str, Any]:
     )
     rows = _read_dashboard_rows(
         database,
-        """SELECT task_type, platform, status, created_at, started_at, updated_at, finished_at
+        """SELECT task_type, platform, status, created_at, started_at, updated_at, finished_at, metadata_json, error_code
            FROM runtime_tasks ORDER BY updated_at DESC LIMIT 8""",
     )
     now = time.time()

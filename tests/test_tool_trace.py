@@ -75,3 +75,25 @@ def test_explicit_task_scope_returns_a_receipt_without_persisting_task_id_in_tra
     assert result["research_receipt"]["receipt_id"].startswith("receipt-")
     assert "receipt-task" not in (tmp_path / "trace.jsonl").read_text(encoding="utf-8")
     assert len(read_task(task_id="receipt-task")["tool_receipts"]) == 1
+
+
+def test_trace_persists_sync_receipt_failure_for_runtime_repair(monkeypatch, tmp_path) -> None:
+    from runtime import research_ledger as ledger
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "state"))
+    recorder = tool_trace.ToolTraceRecorder(str(tmp_path / "trace.jsonl"))
+    monkeypatch.setattr(tool_trace, "get_tool_trace_recorder", lambda: recorder)
+    task = open_task(objective="trace pending", budget="fast", considered=[])
+    original = ledger.link_tool_result
+    monkeypatch.setattr(ledger, "link_tool_result", lambda **_: {"association": "unique_source_identity", "status": "declared_only"})
+
+    @tool_trace.traced_tool("detail_demo", strategy="demo")
+    def detail_demo(*, research_task_id: str) -> dict:
+        return {"url": "https://example.org/detail", "content": "正文"}
+
+    result = detail_demo(research_task_id=task["research_task_id"])
+    assert result["research_receipt"]["status"] == "recording_failed"
+    assert result["research_receipt"]["recovery"]["status"] == "pending_persisted"
+    assert len(read_task(task_id=task["research_task_id"])["pending_submissions"]) == 1
+    monkeypatch.setattr(ledger, "link_tool_result", original)
+    assert ledger.repair_pending_submissions()["repaired"]
+    assert read_task(task_id=task["research_task_id"])["pending_submissions"] == []

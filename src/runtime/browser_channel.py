@@ -1,14 +1,173 @@
-"""Browser channel descriptors for browser-backed platform probes.
-
-The first version is a descriptor layer only: it does not launch browsers,
-switch accounts, or route production traffic. It gives health/admission code a
-shared vocabulary instead of repeating browser/profile/channel strings.
-"""
+"""浏览器通道描述与借用资源租约；不拥有或终止用户浏览器进程。"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
+import uuid
+from contextvars import ContextVar
+import threading
+import subprocess
 from typing import Any, Dict, Iterable, List
+
+_HELD_SITES=ContextVar("kr_browser_held_sites",default=frozenset())
+
+def browser_site_key(session):
+    value=str(session).removeprefix("kr:").split(":",1)[0].lower()
+    aliases={"xhs":"xiaohongshu","b站":"bilibili","知乎":"zhihu","boss直聘":"boss","wechat-weread":"wechat"}
+    return "daily-chrome:"+aliases.get(value,value)
+
+def _daily_chrome_running():
+    """只判断正常日常Chrome；不读取账号，不把无头／受管实例当成日常浏览器。"""
+    import os
+    from runtime.process import silent_subprocess_run
+    if os.name != 'nt':
+        return None
+    script = (
+        "$ErrorActionPreference='Stop'; "
+        "$p=@(Get-CimInstance Win32_Process -Filter \"Name='chrome.exe'\" | "
+        "Where-Object {$_.CommandLine -and $_.CommandLine -notmatch "
+        "'--(?:type|headless|remote-debugging|user-data-dir)'}); "
+        "if($p.Count){'true'}else{'false'}"
+    )
+    try:
+        result = silent_subprocess_run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command', script],
+            capture_output=True, text=True, encoding='utf-8', timeout=5)
+        value = result.stdout.strip()
+        return value == 'true' if result.returncode == 0 and value in {'true', 'false'} else None
+    except (OSError, TimeoutError, subprocess.TimeoutExpired):
+        return None
+
+
+def _launch_daily_chrome():
+    from runtime.executables import resolve_managed_chrome
+    from runtime.browser_bootstrap import start
+    selection = resolve_managed_chrome()
+    if selection is None:
+        raise OSError('google_chrome_not_found')
+    # 不传调试端口、临时Profile或扩展参数；不持有关闭用户进程的权限。
+    return start(selection.path)
+
+
+def ensure_borrowed_browser(connected, *, timeout_s=8):
+    """仅执行入口按需唤起；全通道共用启动锁，不重放业务命令。"""
+    import json
+    import os
+    import time
+    from runtime.execution_context import check_execution, execution_value
+    from runtime.file_write_lock import file_write_lock
+    from runtime.paths import runtime_state_dir
+    from runtime.state_file import write_state
+    check_execution()
+    if connected():
+        return {'ok': True, 'launched': False}
+    # 旧隔离子进程不得成为日常Chrome的父进程；新内核的工作线程运行在owner内。
+    if execution_value('KR_DURABLE_WORKER') == '1' and os.environ.get('KR_RUNTIME_ROLE') != 'owner':
+        return {'ok': False, 'code': 'browser_channel_not_connected', 'request_executed': False}
+    path = runtime_state_dir() / 'borrowed-browser-start.json'
+    with file_write_lock(path):
+        check_execution()
+        if connected():
+            return {'ok': True, 'launched': False}
+        try:
+            previous = json.loads(path.read_text(encoding='utf-8'))
+        except FileNotFoundError:
+            previous = {}
+        except (OSError, ValueError):
+            return {'ok': False, 'code': 'browser_start_state_unreadable', 'request_executed': False}
+        if not isinstance(previous, dict) or not isinstance(previous.get('attempted_at', 0), (int, float)):
+            return {'ok': False, 'code': 'browser_start_state_unreadable', 'request_executed': False}
+        running = _daily_chrome_running()
+        launched = False
+        launcher = None
+        # 成功任务回收最后一个工作窗口后，下一次明确调用可以立即冷启动。
+        # 30秒冷却只阻止失败启动风暴，不能让连续的正常任务互相阻断。
+        if running is False and (previous.get('connection_established') is True
+                                 or time.time() - previous.get('attempted_at', 0) >= 30):
+            write_state(path, {'attempted_at': time.time()})
+            check_execution()
+            try:
+                launcher = _launch_daily_chrome()
+                launched = True
+            except OSError:
+                return {'ok': False, 'code': 'browser_start_failed', 'request_executed': False}
+        deadline = time.monotonic() + min(30, max(0, timeout_s))
+        while True:
+            check_execution()
+            if connected():
+                if launched:
+                    write_state(path, {'attempted_at': time.time(), 'connection_established': True})
+                return {'ok': True, 'launched': launched}
+            if time.monotonic() >= deadline:
+                now_running=_daily_chrome_running()
+                return {'ok': False, 'code': 'browser_channel_not_connected', 'request_executed': False,
+                    'diagnostics':{'initial_daily_chrome_running':running,'daily_chrome_running':now_running,
+                        'quiet_launch_attempted':launched,
+                        'launcher_exit_code':launcher.poll() if launcher else None,
+                        'reason':'quiet_start_did_not_keep_browser_alive' if launched and now_running is False
+                            else 'bound_extension_not_connected' if now_running is True else 'browser_process_state_unconfirmed',
+                        'foreground_fallback':False}}
+            time.sleep(.1)
+
+
+def browser_resource_contract(*, ownership, resource_id, generation, driver):
+    """描述权限，不接管驱动或替站点判断登录。代际未确认时不能关闭进程。"""
+    if ownership not in {"owned", "borrowed"} or not resource_id:
+        raise ValueError("invalid_browser_resource_contract")
+    return {"schema": "knowledgeradar-browser-resource/v1", "ownership": ownership,
+            "resource_id": resource_id, "generation": generation, "driver": driver,
+            "may_close_process": ownership == "owned" and bool(generation),
+            "may_close_owned_tabs": True}
+
+
+def may_close_process(contract, observed_generation):
+    return bool(contract.get("ownership") == "owned" and contract.get("may_close_process")
+                and contract.get("generation") and contract["generation"] == observed_generation)
+
+
+@dataclass(frozen=True)
+class BorrowedBrowser:
+    """资源身份；不持有用户浏览器进程或关闭它的权限。"""
+    context_id: str
+    session: str
+    generation: str
+    driver: str = ""
+    ownership: str = "borrowed"
+
+    def __post_init__(self):
+        if self.ownership != "borrowed":
+            raise ValueError("borrowed_browser_cannot_acquire_process_ownership")
+
+    def resource_contract(self):
+        return browser_resource_contract(ownership=self.ownership,
+            resource_id=self.context_id + ":" + self.session, generation=self.generation, driver=self.driver)
+
+    @contextmanager
+    def lease(self, operation: str):
+        from .leases import get_runtime_lease_coordinator, default_owner
+        key=browser_site_key(self.session)
+        held=_HELD_SITES.get()
+        coordinator = get_runtime_lease_coordinator()
+        grant = coordinator.acquire_exclusive("browser_site", key,
+            owner=default_owner(operation, request_id=uuid.uuid4().hex), ttl_s=180,
+            metadata=self.resource_contract())
+        if not grant.acquired:
+            raise RuntimeError("browser_session_busy")
+        stop = threading.Event()
+        def renew():
+            while not stop.wait(45):
+                if not coordinator.heartbeat(grant.lease_id, ttl_s=180):
+                    return
+        heart = threading.Thread(target=renew, daemon=True, name="kr-browser-lease")
+        heart.start()
+        token=_HELD_SITES.set(held | {key})
+        try:
+            yield grant
+        finally:
+            _HELD_SITES.reset(token)
+            stop.set()
+            heart.join(timeout=2)
+            coordinator.release(grant.lease_id)
 
 
 @dataclass(frozen=True)

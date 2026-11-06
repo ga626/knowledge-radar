@@ -148,6 +148,8 @@ class DecisionLogger:
         recent_events = [
             {
                 "timestamp": event.get("timestamp", ""),
+                "code_generation": event.get("code_generation", ""),
+                "runtime_generation": event.get("runtime_generation", ""),
                 "platform": event.get("platform", ""),
                 "strategy": event.get("strategy", ""),
                 "success": bool(event.get("success")),

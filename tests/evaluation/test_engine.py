@@ -1,6 +1,4 @@
 """评测机制自己的故障测试；不以产品全绿作为底座正确性的断言。"""
-import copy
-from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 import sys
@@ -9,10 +7,10 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from scripts.kr_eval.core import (SCHEMA, Ledger, applicability, compare, dependencies, environment,
-                                  inventory, load_suite, snapshot, status, write_new)
-from scripts.kr_eval.demo import demonstrate
-from scripts.kr_eval.runner import run_suite
+from scripts.kr_eval.core import (SCHEMA, Ledger, applicability, dependencies, environment,  # noqa: E402
+                                  load_suite, snapshot, status, write_new)
+from scripts.kr_eval.demo import demonstrate  # noqa: E402
+from scripts.kr_eval.runner import run_suite  # noqa: E402
 
 
 def fixture_repo(tmp_path):
@@ -67,6 +65,17 @@ def test_unknown_change_invalidates_and_deleted_dependency_is_unknown(tmp_path):
     assert status(root, suite, ledger)["cases"][0]["applicability"] == "unknown"
 
 
+def test_browser_adapter_changes_are_part_of_snapshot_identity(tmp_path):
+    root, _, _ = fixture_repo(tmp_path)
+    adapter = root / 'browser_link/extension/sites/zhihu.js'
+    adapter.parent.mkdir(parents=True)
+    adapter.write_text('const version=1;', encoding='utf-8')
+    first = snapshot(root)
+    assert adapter.relative_to(root).as_posix() in first['files']
+    adapter.write_text('const version=2;', encoding='utf-8')
+    assert snapshot(root)['content_hash'] != first['content_hash']
+
+
 def test_runtime_dependency_version_change_stales(tmp_path, monkeypatch):
     root, suite, ledger = fixture_repo(tmp_path)
     run = run_suite(root, suite, ledger)
@@ -75,6 +84,34 @@ def test_runtime_dependency_version_change_stales(tmp_path, monkeypatch):
     app, reasons = applicability(root, suite, suite["cases"][0], run["results"][0], run, snapshot(root), env)
     assert app == "stale"
     assert "environment_changed" in reasons
+
+
+def test_declared_document_dependency_is_hashed_and_invalidates_result(tmp_path):
+    root, suite, ledger = fixture_repo(tmp_path)
+    guide = root / 'docs/CAPABILITIES.md'
+    guide.parent.mkdir()
+    guide.write_text('current source guide', encoding='utf-8')
+    suite['cases'][0]['dependencies'].append('docs/CAPABILITIES.md')
+    first = snapshot(root)
+    deps = dependencies(root, suite, suite['cases'][0], first)
+    assert not deps['missing']
+    assert 'docs/CAPABILITIES.md' in deps['files']
+    run_suite(root, suite, ledger)
+    guide.write_text('changed source guide', encoding='utf-8')
+    result = status(root, suite, ledger)
+    assert result['cases'][0]['applicability'] == 'stale'
+
+
+def test_executed_test_node_binds_oracle_even_without_duplicate_dependency(tmp_path):
+    root, suite, ledger = fixture_repo(tmp_path)
+    test = root / 'tests/test_contract.py'
+    test.write_text('def test_contract(): assert True\n', encoding='utf-8')
+    suite['cases'][0]['nodes'] = ['tests/test_contract.py::test_contract']
+    deps = dependencies(root, suite, suite['cases'][0], snapshot(root))
+    assert 'tests/test_contract.py' in deps['files']
+    run_suite(root, suite, ledger)
+    test.write_text('def test_contract(): assert False\n', encoding='utf-8')
+    assert status(root, suite, ledger)['cases'][0]['applicability'] == 'stale'
 
 
 def test_incomplete_run_and_untrusted_history_fail_closed(tmp_path):

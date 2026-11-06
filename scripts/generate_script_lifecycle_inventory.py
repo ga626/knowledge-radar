@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
+import hashlib
 import os
 from pathlib import Path
 import re
@@ -132,10 +132,7 @@ def build_inventory() -> dict[str, Any]:
         )
     return {
         "schema": SCHEMA,
-        "generated_at": datetime.fromtimestamp(
-            max([path.stat().st_mtime for path in files] + [MANIFEST.stat().st_mtime]),
-            timezone.utc,
-        ).isoformat(),
+        "content_hash": hashlib.sha256(json.dumps(entries, sort_keys=True, ensure_ascii=False).encode()).hexdigest(),
         "generator": "scripts/generate_script_lifecycle_inventory.py",
         "entries": entries,
         "counts": {level: sum(1 for entry in entries if entry["level"] == level) for level in ["S0", "S1", "S2", "S3", "S4"]},
@@ -148,7 +145,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         "",
         GENERATED,
         "",
-        f"生成时间：{payload['generated_at']}",
+        f"内容指纹：{payload['content_hash']}",
         "",
         "## 等级说明",
         "",

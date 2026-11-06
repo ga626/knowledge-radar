@@ -1,4 +1,4 @@
-﻿"""KnowledgeRadar runtime health checks.
+"""KnowledgeRadar runtime health checks.
 
 The MCP tool entrypoint lives in server.py; this module owns the diagnostic
 workflow and receives business/platform callables as dependencies.
@@ -18,9 +18,7 @@ from capabilities import build_tool_surface
 
 from .dependency_preflight import dependency_preflight_summary
 from .health_layers import PlatformLayerSpec, build_platform_health_layers, layer
-from .login_state import LoginProbe
 from .proxy_config import proxy_health_summary
-from .browser_health import camoufox_v2_health
 from .project_state import project_governance_manifest
 from .status_schema import (
     aggregate_validation_status,
@@ -33,7 +31,6 @@ from .status_schema import (
 @dataclass(frozen=True)
 class HealthCheckDeps:
     bili_headers: Dict
-    xhs_bridge_path: str
     project_root: str
     runtime_log_dir: str
     mcp_server_log_path: str
@@ -48,13 +45,6 @@ class HealthCheckDeps:
     finish_chrome_automation: Callable[[str, str], None]
     find_chrome_exe: Callable[[], str | None]
     cleanup_chrome_platform: Callable[[str], None]
-    read_zhihu_cookies_from_cdp: Callable[[], str | None]
-    read_zhihu_cookies_from_profile: Callable[[], str | None]
-    zhihu_sign: Callable[[str, str], Dict]
-    zhihu_search_api: Callable[[str, str, int], list]
-    inspect_zhihu_cookie_health: Callable[[int], Dict]
-    inspect_xhs_login_health: Callable[[str, int], Dict]
-    probe_xhs_page_state: Callable[[str], Dict]
     bring_chrome_to_front: Callable[[str], Dict]
     background_chrome: Callable[[str], Dict]
     legacy_search_bilibili: Callable[..., Dict]
@@ -75,10 +65,9 @@ class HealthCheckDeps:
 
 
 class HealthCheckService:
-    def __init__(self, deps: HealthCheckDeps, *, force_zhihu_login_probe: bool = False):
+    def __init__(self, deps: HealthCheckDeps):
         self.deps = deps
         self.checks: Dict[str, Dict] = {}
-        self.force_zhihu_login_probe = force_zhihu_login_probe
 
     def run(self) -> Dict:
         d = self.deps
@@ -102,24 +91,11 @@ class HealthCheckService:
         checks["sidecar_contract"] = self._check_sidecar_contract()
         checks["gh_cli_sidecar"] = self._check_gh_cli_sidecar()
         checks["project_governance"] = self._check_project_governance()
-        checks["camoufox_v2"] = self._check_camoufox_v2()
         checks["web_search_provider"] = self._check_web_search_provider()
         checks["academic_provider"] = self._check_academic_provider()
         checks["generic_web_collector"] = self._check_generic_web_collector()
         checks["chrome_runtime"] = self._check_chrome_runtime()
-        checks["chrome_cdp_xhs"] = self._check_chrome_cdp("xhs")
-        checks["chrome_cdp_zhihu"] = self._check_chrome_cdp("zhihu")
-        if self.force_zhihu_login_probe:
-            checks["chrome_cdp_zhihu"] = self._ensure_and_check_chrome_cdp("zhihu")
-            try:
-                checks["zhihu"] = self._check_zhihu()
-            finally:
-                try:
-                    d.finish_chrome_automation("zhihu", "health_check_zhihu_login_probe")
-                except Exception:
-                    pass
-        else:
-            checks["zhihu"] = self._check_zhihu()
+        checks["zhihu"] = self._check_zhihu()
         checks["xiaohongshu"] = self._check_xiaohongshu()
         checks["youtube"] = self._check_youtube()
         checks["search_probe_bilibili"] = self._probe_search_skipped("B站")
@@ -194,16 +170,15 @@ class HealthCheckService:
                         c.get("zhihu", {}).get("status", "unknown"),
                         c.get("zhihu", {}).get("detail", ""),
                         login_state=c.get("zhihu", {}).get("login_state"),
-                        cookie_source=c.get("zhihu", {}).get("cookie_source"),
-                        cdp_status=c.get("zhihu", {}).get("cdp_status"),
+                        runtime_identity=c.get("zhihu", {}).get("runtime_identity"),
                     ),
                     search=lambda c: layer(
                         c.get("search_probe_zhihu", {}).get("status", c.get("zhihu", {}).get("status", "unknown")),
-                        c.get("search_probe_zhihu", {}).get("detail", "知乎搜索可用性依赖登录态和签名 API"),
+                        c.get("search_probe_zhihu", {}).get("detail", "知乎搜索使用日常浏览器Browser Link"),
                         probe=c.get("search_probe_zhihu", {}),
                     ),
-                    detail=lambda c: layer(c.get("zhihu", {}).get("status", "unknown"), "知乎详情依赖 Cookie/CDP 和正文解析"),
-                    multimodal=lambda c: layer("not_applicable", "知乎当前以文本详情为主"),
+                    detail=lambda c: layer(c.get("zhihu", {}).get("status", "unknown"), "知乎详情使用指定实体DOM和公共证据层"),
+                    multimodal=lambda c: layer("not_applicable", "知乎图片可按请求经公共OCR处理"),
                 ),
                 PlatformLayerSpec(
                     platform="小红书",
@@ -433,6 +408,11 @@ class HealthCheckService:
         except Exception as e:
             return {"status": "degraded", "detail": f"搜索缓存不可用: {e}", "retryable": True}
 
+    def _check_zhihu(self) -> Dict:
+        from collectors.platform.zhihu import probe_auth, runtime_identity
+        return {**probe_auth(), 'runtime_identity': runtime_identity(),
+                'detail': '日常浏览器知乎会话只读观察；不导出Cookie、不启动浏览器或搜索。'}
+
     def _check_xiaohongshu_detail_health(self) -> Dict:
         try:
             summary = self.deps.xhs_detail_health_summary()
@@ -480,26 +460,23 @@ class HealthCheckService:
         except Exception as e:
             return {"status": "degraded", "detail": f"gh CLI sidecar health 不可用: {e}", "retryable": True}
 
-    def _check_camoufox_v2(self) -> Dict:
-        try:
-            return camoufox_v2_health()
-        except Exception as e:
-            return {"status": "degraded", "detail": f"Camoufox v2 health 不可用: {e}", "retryable": True}
 
     def _check_web_search_provider(self) -> Dict:
         status = self.deps.provider_status()
         provider_rows = {name: item for name, item in status.items() if isinstance(item, dict) and not name.startswith("_")}
         quota = status.get("_quota") if isinstance(status.get("_quota"), dict) else {}
+        quota = quota.get("providers", quota)
         tavily_quota = quota.get("tavily") if isinstance(quota.get("tavily"), dict) else {}
         configured = [name for name, item in provider_rows.items() if item.get("configured")]
-        available = [name for name, item in provider_rows.items() if item.get("available")]
+        available = [name for name, item in provider_rows.items() if item.get("available") and
+                     (name not in {"tavily", "brave", "exa"} or quota.get(name, {}).get("status") not in {"quota_exhausted", "quota_state_invalid", "disabled"})]
         unconfigured = [name for name, item in provider_rows.items() if not item.get("configured")]
         optional_degraded = [
             name
             for name, item in provider_rows.items()
             if item.get("degraded_ok") and not item.get("available")
         ]
-        if tavily_quota.get("status") in {"daily_exhausted", "monthly_exhausted"} and "tavily" in provider_rows:
+        if tavily_quota.get("status") in {"daily_exhausted", "monthly_exhausted", "quota_exhausted"} and "tavily" in provider_rows:
             optional_degraded.append("tavily")
         optional_degraded = sorted(set(optional_degraded))
         try:
@@ -517,14 +494,14 @@ class HealthCheckService:
                 "unconfigured_providers": unconfigured,
                 "optional_degraded_providers": optional_degraded,
                 "default_waves": default_waves,
-                "provider_strategy": "profile_parallel_waves_with_paid_tavily_supplement",
+                "provider_strategy": "bounded_incremental_sources_with_authorized_tavily_fallback",
                 "provider_status": status,
                 "quota": quota,
                 "validation_status": "PASS",
                 "status_class": "PASS",
-                "validation_semantics": "optional_degraded_providers, host absent cards, and Tavily daily/monthly quota exhaustion do not fail health when at least one generic web provider is available",
+                "validation_semantics": "optional_degraded_providers, host absent cards, and free quota exhaustion do not fail health when at least one generic web provider is available",
             }
-        exhausted = tavily_quota.get("status") in {"daily_exhausted", "monthly_exhausted"}
+        exhausted = tavily_quota.get("status") in {"daily_exhausted", "monthly_exhausted", "quota_exhausted"}
         if configured:
             return {
                 "status": "degraded",
@@ -538,7 +515,7 @@ class HealthCheckService:
                 "unconfigured_providers": unconfigured,
                 "optional_degraded_providers": optional_degraded,
                 "default_waves": default_waves,
-                "provider_strategy": "profile_parallel_waves_with_paid_tavily_supplement",
+                "provider_strategy": "bounded_incremental_sources_with_authorized_tavily_fallback",
                 "provider_status": status,
                 "quota": quota,
                 "degraded_reason": "quota_exhausted" if exhausted else "configured_provider_unavailable",
@@ -548,13 +525,13 @@ class HealthCheckService:
             }
         return {
             "status": "degraded",
-            "detail": "通用联网搜索 provider 未配置：缺少 TAVILY_API_KEY 和 SEARXNG_BASE_URL",
+            "detail": "没有已配置、已启用且获准的网页发现路线；可选择任一支持的来源，无必配供应商。",
             "providers": [],
             "configured_providers": [],
             "unconfigured_providers": unconfigured,
             "optional_degraded_providers": optional_degraded,
             "default_waves": default_waves,
-            "provider_strategy": "profile_parallel_waves_with_paid_tavily_supplement",
+            "provider_strategy": "bounded_incremental_sources_with_authorized_tavily_fallback",
             "provider_status": status,
             "quota": quota,
             "degraded_reason": "no_generic_web_provider_configured",
@@ -601,7 +578,7 @@ class HealthCheckService:
                 "status": "ok",
                 "detail": "通用网页抽取依赖可用：Jina Reader + trafilatura + readability + static_html fallback",
                 "collectors": ["jina_reader", "trafilatura", "readability", "static_html"],
-                "strategy_order": ["jina_reader", "trafilatura", "readability", "static_html", "dynamic_playwright_explicit"],
+                "strategy_order": ["http_acquisition_once", "trafilatura", "readability", "static_html", "jina_reader_optional", "dynamic_playwright_explicit"],
             }
         except Exception as e:
             return {
@@ -650,46 +627,10 @@ class HealthCheckService:
             }
         return self._check_chrome_cdp(platform)
 
-    def _check_zhihu(self) -> Dict:
-        d = self.deps
-        cdp_check = self.checks.get("chrome_cdp_zhihu", {})
-        cdp_status = "not_connected" if cdp_check.get("skipped") else cdp_check.get("status", "unknown")
-        if self.force_zhihu_login_probe and cdp_status != "ok":
-            return {
-                "status": "degraded",
-                "detail": "知乎真实登录态探针未通过：受管 CDP 未连接或启动失败",
-                "platform": "zhihu",
-                "probe": "cdp_cookie_and_live_search_api",
-                "login_state": "not_checked",
-                "platform_state": "cdp_unavailable",
-                "login_required": False,
-                "cdp_status": cdp_status,
-                "chrome_cdp": cdp_check,
-                "retryable": True,
-            }
-        return LoginProbe(
-            platform="zhihu",
-            chrome_debug_url=d.chrome_debug_url,
-            inspect_cookie_health=d.inspect_zhihu_cookie_health,
-            read_cookie_from_cdp=d.read_zhihu_cookies_from_cdp,
-            read_cookie_from_profile=d.read_zhihu_cookies_from_profile,
-            sign_cookie=d.zhihu_sign,
-            zhihu_search_api=d.zhihu_search_api,
-        ).inspect(cdp_status=cdp_status)
 
     def _check_xiaohongshu(self) -> Dict:
-        d = self.deps
-        cdp_check = self.checks.get("chrome_cdp_xhs", {})
-        cdp_status = "not_connected" if cdp_check.get("skipped") else cdp_check.get("status")
-        return LoginProbe(
-            platform="xiaohongshu",
-            chrome_debug_url=d.chrome_debug_url,
-            inspect_login_health=d.inspect_xhs_login_health,
-            probe_page_state=d.probe_xhs_page_state,
-            bring_to_front=d.bring_chrome_to_front,
-            send_to_background=d.background_chrome,
-            bridge_path=d.xhs_bridge_path,
-        ).inspect(cdp_status=cdp_status)
+        from runtime.xhs_opencli import connection_status
+        return connection_status()
 
     def _probe_search(self, platform: str, keyword: str) -> Dict:
         started = time.time()
@@ -698,7 +639,7 @@ class HealthCheckService:
                 result = self.deps.legacy_search_bilibili(keyword, page_size=1)
             elif platform == "知乎":
                 if self.checks.get("zhihu", {}).get("status") != "ok":
-                    return {"status": "degraded", "detail": "跳过真实搜索探活：知乎登录态/签名未就绪", "skipped": True}
+                    return {"status": "degraded", "detail": "跳过真实搜索探活：知乎借用浏览器会话尚未就绪", "skipped": True}
                 result = self.deps.legacy_search_zhihu(keyword, limit=1)
             elif platform == "小红书":
                 if self.checks.get("xiaohongshu", {}).get("status") != "ok":

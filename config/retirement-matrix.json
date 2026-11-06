@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-retirement/v1",
-  "date": "2026-10-20",
+  "date": "2026-11-01",
   "entries": [
     {
       "mechanism": "profile-state.json default writer",
@@ -12,7 +12,7 @@
       "mechanism": "xhs old global max-switch cap for readonly",
       "status": "retired",
       "replacement": "task-local eligible profile set bounds all read-only attempts; global risk/cooldown still stop",
-      "owner": "runtime/xhs_task_failover.py"
+      "owner": "runtime/xhs_opencli.py"
     },
     {
       "mechanism": "direct expired media unlink",
@@ -34,8 +34,8 @@
     },
     {
       "mechanism": "maimai direct search",
-      "status": "disabled",
-      "replacement": "explicit experimental flag only; open-web discovery remains candidate evidence",
+      "status": "retired",
+      "replacement": "managed community browser search, post details and opt-in visible comments; no experimental job-search endpoint",
       "owner": "collectors/platform/maimai.py"
     },
     {
@@ -73,6 +73,30 @@
       "status": "not_adopted",
       "replacement": "no copy into this branch; browser launch disables on-device model feature; no profile cloning path exists",
       "owner": "runtime/chrome_manager.py"
+    },
+    {
+      "mechanism": "manual MCP name/group lists and global rule injection",
+      "status": "retired",
+      "replacement": "actual registered tool types generate catalog/manual; short Skill only",
+      "owner": "runtime/agent_contracts.py"
+    },
+    {
+      "mechanism": "cancel:/retry: mutations through get_task_status",
+      "status": "retired",
+      "replacement": "explicit control_task; reads do not advance work",
+      "owner": "server.py"
+    },
+    {
+      "mechanism": "frontend export and unversioned ZIP materialize writer",
+      "status": "retired",
+      "replacement": "Agent command; fixed report versions; one create-only delivery store",
+      "owner": "runtime/knowledge_delivery.py"
+    },
+    {
+      "mechanism": "architecture completion and synthetic knowledge evidence samples",
+      "status": "retired",
+      "replacement": "runtime observation is separate from design declarations; fixed evidence is authority",
+      "owner": "capabilities.py"
     }
   ]
 }

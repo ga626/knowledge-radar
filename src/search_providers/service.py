@@ -1,10 +1,14 @@
 """Provider orchestration for generic web search."""
 
 from __future__ import annotations
+import sqlite3
 
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+from contextvars import copy_context
+from dataclasses import replace
+from concurrent.futures import ThreadPoolExecutor, wait, FIRST_COMPLETED
 from typing import Dict, List
 
 from runtime.degradation import get_degradation_policy
@@ -18,22 +22,24 @@ from .planner import auto_search_plan, explicit_provider_plan, tavily_supplement
 from .profile import profile_for, provider_profiles
 from .providers import (
     AnySearchProvider,
+    DdgsSearchProvider,
     BaseSearchProvider,
     BraveSearchProvider,
     ExaSearchProvider,
     SearchProviderError,
-    SearxngSearchProvider,
     TavilySearchProvider,
 )
 from .quota import SearchQuotaLedger, quota_summary
 from .status_cache import provider_status_cache
+_STATUS_LOCK = threading.RLock()
 
 
 def _default_provider_order() -> List[str]:
     configured = os.environ.get("KR_WEB_SEARCH_PROVIDERS", "").strip()
     if configured:
-        return [item.strip().lower() for item in configured.split(",") if item.strip()]
-    return ["tavily", "brave", "exa", "anysearch", "searxng"]
+        return [item.strip().lower() for item in configured.split(",")
+                if item.strip() and not item.strip().lower().startswith('searxng')]
+    return ["tavily", "brave", "exa", "anysearch"]
 
 
 def _providers() -> Dict[str, BaseSearchProvider]:
@@ -42,7 +48,7 @@ def _providers() -> Dict[str, BaseSearchProvider]:
         "anysearch": AnySearchProvider(),
         "brave": BraveSearchProvider(),
         "exa": ExaSearchProvider(),
-        "searxng": SearxngSearchProvider(),
+        "ddgs": DdgsSearchProvider(),
     }
     providers.update(host_search_providers())
     return providers
@@ -52,7 +58,11 @@ def _load_provider_status() -> Dict[str, Dict[str, object]]:
     status = {}
     profiles = provider_profiles()
     for name, provider in _providers().items():
-        row = provider.status()
+        from runtime.search_configuration import current_configuration
+        config = current_configuration()
+        row = provider.status() if config.allowed(name) else {'available':False, 'status':'disabled', 'configured':provider.available()}
+        row.update(enabled=config.allowed(name), configuration_generation=config.generation,
+                   health='not_probed', usable_for_routing=bool(row.get('available')))
         row["capability_profile"] = profiles.get(name) or profile_for(name)
         status[name] = row
     status["_quota"] = quota_summary()
@@ -61,8 +71,14 @@ def _load_provider_status() -> Dict[str, Dict[str, object]]:
 
 
 def provider_status(*, force_refresh: bool = False) -> Dict[str, Dict[str, object]]:
-    status = provider_status_cache.get(_load_provider_status, force_refresh=force_refresh)
-    status["_status_cache"] = provider_status_cache.summary()
+    from runtime.search_configuration import current_configuration
+    generation = current_configuration().generation
+    with _STATUS_LOCK:
+        if getattr(provider_status_cache, '_generation', None) != generation:
+            force_refresh = True
+        status = provider_status_cache.get(_load_provider_status, force_refresh=force_refresh)
+        provider_status_cache._generation = generation
+        status["_status_cache"] = provider_status_cache.summary()
     return status
 
 
@@ -114,9 +130,22 @@ def _request_payload(request: WebSearchRequest) -> Dict[str, object]:
 
 
 def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) -> tuple[str, List[SearchProviderResult], dict | None]:
+    from runtime.search_configuration import current_configuration
+    from runtime.execution_context import check_execution
+    check_execution()
     started = time.perf_counter()
     policy = get_degradation_policy()
     provider_name = provider.name
+    if not current_configuration(fresh=True).allowed(provider_name):
+        return provider_name, [], {'provider':provider_name,'type':'disabled_or_unauthorized',
+            'message':'Enable this connection and authorize its data/cost boundary first.',
+            'retryable':False,'expected_degraded':True}
+    from .constraints import constraint_report
+    constraints = constraint_report(request, provider_name)
+    if request.options.get('require_constraints') and any(not x['hard_constraint_satisfied'] for x in constraints.values()):
+        return provider_name, [], {'provider':provider_name,'type':'unsupported_constraint',
+            'constraints':constraints,'message':'Choose another authorized provider or explicitly relax the constraint.',
+            'retryable':False,'expected_degraded':True}
     try:
         provider_state = provider.status()
     except Exception:
@@ -134,12 +163,12 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
         return provider_name, [], {
             "provider": "tavily",
             "type": "quota_exhausted",
-            "message": "Tavily daily quota is exhausted; provider skipped until the next local day.",
+            "message": "Tavily free monthly credits are exhausted or quota state is unavailable.",
             "retryable": False,
             "expected_degraded": True,
             "elapsed_ms": round((time.perf_counter() - started) * 1000, 3),
         }
-    breaker_key = f"provider:{provider_name}"
+    breaker_key = f"provider:{provider_name}:{current_configuration().generation}"
     breaker = policy.is_open(breaker_key)
     stale_config_probe = _stale_config_breaker_can_probe(provider, breaker)
     if breaker.get("open") and not stale_config_probe:
@@ -165,18 +194,16 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
             },
         )
     try:
-        items = policy.retry_with_jitter(
-            breaker_key,
-            "search_provider",
-            lambda: provider.search(request),
-            retryable_exceptions=(SearchProviderError,),
-            metadata={
-                "provider": provider_name,
-                "query": request.query,
-                "limit": request.limit,
-                "options": dict(request.options or {}),
-            },
-        )
+        from runtime.search_configuration import sending_provider
+        deadline = float(request.options.get('_deadline') or time.monotonic()+30)
+        provider.timeout = min(float(getattr(provider, 'timeout', 15)), max(.01,deadline-time.monotonic()))
+        if time.monotonic() >= deadline:
+            return provider_name, [], {'provider':provider_name, 'type':'deadline_exceeded', 'retryable':False}
+        with sending_provider(provider_name, deadline):
+            items = provider.search(request)
+        check_execution()
+        from .constraints import filter_results
+        items = filter_results(request, items)
     except SearchProviderError as exc:
         policy.record_degradation(
             "search_provider",
@@ -185,9 +212,13 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
             {"provider": provider_name, "query": request.query, "limit": request.limit},
         )
         error = exc.to_dict()
+        error['expected_degraded'] = bool(provider_state.get('degraded_ok'))
         error["elapsed_ms"] = round((time.perf_counter() - started) * 1000, 3)
         return provider_name, [], error
     except Exception as exc:
+        from runtime.execution_context import ExecutionStopped
+        if isinstance(exc, ExecutionStopped):
+            raise
         policy.record_degradation(
             "search_provider",
             breaker_key,
@@ -196,8 +227,6 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
         )
         return provider_name, [], {"provider": provider_name, "type": "unknown", "message": str(exc), "elapsed_ms": round((time.perf_counter() - started) * 1000, 3)}
     if items:
-        if provider_name == "tavily":
-            SearchQuotaLedger().record_success("tavily")
         return provider_name, items, None
     expected_empty = bool(provider_state.get("degraded_ok"))
     if not expected_empty:
@@ -234,23 +263,63 @@ def _run_wave(
         profiles=profiles,
         include_raw_content=bool(request.include_raw_content),
     )
-    with ThreadPoolExecutor(max_workers=int(concurrency.get("selected_workers") or 1)) as executor:
+    executor = ThreadPoolExecutor(max_workers=int(concurrency.get("selected_workers") or 1))
+    futures = {}
+    try:
         futures = {}
         for name in wave:
+            from runtime.execution_context import check_execution
+            check_execution()
+            if time.monotonic() >= float(request.options.get('_deadline') or float('inf')):
+                errors.append({'provider':name,'type':'deadline_exceeded','retryable':False})
+                break
             provider = providers.get(name)
             attempted.append(name)
             if provider is None:
-                errors.append({"provider": name, "type": "unknown_provider", "message": "provider not registered"})
+                errors.append({"provider": name, "type": "unknown_provider", "message": "Unknown provider. Read the available capability catalog and select a registered connection."})
                 continue
-            futures[executor.submit(_search_provider, request, provider)] = name
-        for future in as_completed(futures):
-            name, items, error = future.result()
-            if items:
-                results[name] = items
-            if error:
-                errors.append(error)
+            futures[executor.submit(copy_context().run, _search_provider, request, provider)] = name
+        pending = set(futures)
+        while pending:
+            check_execution()
+            if time.monotonic() >= float(request.options.get('_deadline') or float('inf')):
+                for future in pending:
+                    cancelled = future.cancel()
+                    errors.append({'provider':futures[future], 'type':'deadline_exceeded',
+                                   'execution_state':'not_sent' if cancelled else 'draining',
+                                   'retryable':False, 'message':'No new send; running request may still finish within its network timeout.'})
+                break
+            done, pending = wait(pending, timeout=.1, return_when=FIRST_COMPLETED)
+            if not done:
+                continue
+            for future in done:
+                _consume_future(future, request, results, errors)
+    finally:
+        for future in futures:
+            future.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
     return results, errors, attempted, concurrency
 
+
+def _consume_future(future, request, results, errors):
+    from runtime.execution_context import check_execution
+    name, items, error = future.result()
+    check_execution()
+    if items:
+        results[name] = items
+        # provider完成立即进入发现目录；最终回执仍由调用收口关联。
+        from runtime.tool_trace import current_tool_trace
+        trace = current_tool_trace()
+        if trace.get("research_task_id"):
+            try:
+                from runtime.research_index import ResearchIndex
+                ResearchIndex().candidates(trace["research_task_id"], [x.to_dict() for x in items],
+                    "generic_web_ecology", str(trace.get("trace_id", ""))+":"+name, query=request.query)
+            except (OSError, ValueError, sqlite3.Error):
+                # 整波响应保留acquired_items，最终账本路径仍会补交；不丢已取回候选。
+                pass
+    if error:
+        errors.append(error)
 
 def _empty_response(request: WebSearchRequest, attempted: List[str], errors: List[dict], metadata: Dict[str, object]) -> WebSearchResponse:
     expected_degraded = bool(errors) and all(bool(error.get("expected_degraded")) for error in errors)
@@ -321,7 +390,7 @@ def _search_explicit(request: WebSearchRequest, providers: Dict[str, BaseSearchP
     provider = providers.get(provider_name)
     if provider is None:
         attempted.append(provider_name)
-        errors.append({"provider": provider_name, "type": "unknown_provider", "message": "provider not registered"})
+        errors.append({"provider": provider_name, "type": "unknown_provider", "message": "Unknown provider. Read the available capability catalog and select a registered connection."})
         return _empty_response(request, attempted, errors, {"plan": plan.to_dict(), "errors": errors})
     name, items, error = _search_provider(request, provider)
     attempted.append(name)
@@ -346,20 +415,46 @@ def _search_explicit(request: WebSearchRequest, providers: Dict[str, BaseSearchP
 
 
 def search_web(request: WebSearchRequest) -> WebSearchResponse:
+    from runtime.search_configuration import configuration_scope
+    from .constraints import prepare_request
+    with configuration_scope() as config:
+        request = prepare_request(request)
+        request = replace(request, options={**request.options,
+            '_deadline': time.monotonic()+min(120,max(1,float(request.options.get('timeout_s') or 30)))})
+        response = _search_web(request)
+        response.metadata['configuration_generation'] = config.generation
+        response.metadata['constraint_application'] = {name: __import__('search_providers.constraints', fromlist=['constraint_report']).constraint_report(request,name) for name in response.attempted_providers}
+        return response
+
+
+def _search_web(request: WebSearchRequest) -> WebSearchResponse:
     started = time.perf_counter()
     providers = _providers()
-    if request.provider and request.provider != "auto":
-        return _search_explicit(request, providers, request.provider.lower())
+    if request.provider and request.provider != 'auto':
+        name = request.provider.lower()
+        return _search_explicit(request, providers, name)
 
     statuses = provider_status()
-    host_names = [name for name in providers if name not in {"tavily", "anysearch", "brave", "exa", "searxng"}]
+    from .catalog import SEARCH_CATALOG
+    host_names = [name for name in providers if name.split(':')[0] not in SEARCH_CATALOG]
     plan = auto_search_plan(statuses, host_provider_names=host_names)
+    complementary = request.options.get('complementary_providers') or []
+    if complementary:
+        if not isinstance(complementary, list) or len(complementary) > 6 or any(name not in providers for name in complementary):
+            raise ValueError('complementary_providers must name up to six registered connections')
+        plan = replace(plan, waves=[list(dict.fromkeys(complementary))],
+                       rationale=['executor_selected_complementary_sources', 'bounded_parallel_execution'])
     attempted: List[str] = []
     errors: List[dict] = []
     provider_items: Dict[str, List[SearchProviderResult]] = {}
     wave_concurrency: List[dict] = []
 
     for wave_index, wave in enumerate(plan.waves):
+        from runtime.execution_context import check_execution
+        check_execution()
+        if time.monotonic() >= request.options['_deadline']:
+            errors.append({'type':'deadline_exceeded','message':'No new provider started after deadline'})
+            break
         wave_items, wave_errors, wave_attempted, concurrency = _run_wave(
             request,
             providers,
@@ -377,12 +472,15 @@ def search_web(request: WebSearchRequest) -> WebSearchResponse:
             results=wave_items,
             errors=wave_errors,
         )
+        if coverage_decision(request, aggregate_results(provider_items, request.limit), list(provider_items)).sufficient:
+            break
 
     items = aggregate_results(provider_items, request.limit) if provider_items else []
     successful = [name for name, rows in provider_items.items() if rows]
     coverage = coverage_decision(request, items, successful)
     supplement_used = False
-    if not coverage.sufficient and tavily_supplement_available(statuses) and "tavily" not in attempted:
+    if (not coverage.sufficient and tavily_supplement_available(statuses) and "tavily" not in attempted
+            and time.monotonic() < request.options['_deadline']):
         wave_items, wave_errors, wave_attempted, concurrency = _run_wave(
             request,
             providers,
@@ -407,12 +505,15 @@ def search_web(request: WebSearchRequest) -> WebSearchResponse:
 
     metadata = {
         "plan": plan.to_dict(),
-        "coverage": coverage.to_dict(),
+        "coverage": {**coverage.to_dict(), "scope": "provider_wave_not_research_saturation"},
+        "acquired_unique_count": len(aggregate_results(provider_items, None)),
+        "display_limit": request.limit,
+        "ranking": "rrf_v1_constant_60_not_truth_score",
         "provider_result_counts": {name: len(rows) for name, rows in provider_items.items()},
         "successful_providers": successful,
         "errors": errors,
         "selected_node": "multi" if successful else "",
-        "selected_strategy": "parallel_wave_pool",
+        "selected_strategy": "bounded_incremental_sources",
         "tavily_supplement_used": supplement_used,
         "wave_concurrency": wave_concurrency,
         "provider_status_cache": statuses.get("_status_cache", {}),
@@ -423,6 +524,7 @@ def search_web(request: WebSearchRequest) -> WebSearchResponse:
             query=request.query,
             provider="multi",
             items=items,
+            acquired_items=aggregate_results(provider_items, None),
             fallback_used=supplement_used or len(set(successful)) > 1,
             attempted_providers=attempted,
             metadata=metadata,

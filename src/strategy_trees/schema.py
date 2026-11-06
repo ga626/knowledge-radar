@@ -8,6 +8,7 @@ logic into one executor.
 from __future__ import annotations
 
 from importlib import import_module
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -32,6 +33,14 @@ def _module_target_error(target: str) -> str:
         return "module target must be a dotted module attribute"
     module_name, _, attr_name = target.rpartition(".")
     try:
+        # 节点既可以指向模块，也可以指向模块属性；不依赖其他导入的副作用。
+        try:
+            spec = find_spec(target)
+        except (ModuleNotFoundError, AttributeError):
+            spec = None
+        if spec is not None:
+            import_module(target)
+            return ""
         module = import_module(module_name)
     except Exception as exc:
         return f"{type(exc).__name__}: {exc}"
@@ -79,8 +88,8 @@ def validation_report(
         if missing:
             errors.append({"tree_id": tree_id, "type": "missing_tree_fields", "fields": missing})
         tool_name = str(tree.get("tool_name") or "")
-        if known_tools and tool_name and tool_name not in known_tools and not tool_name.startswith("virtual."):
-            warnings.append({"tree_id": tree_id, "type": "tool_not_in_actual_surface", "tool_name": tool_name})
+        if actual_tools is not None and tool_name and tool_name not in known_tools and not tool_name.startswith("virtual."):
+            errors.append({"tree_id": tree_id, "type": "tool_not_in_actual_surface", "tool_name": tool_name})
         if str(tree.get("mode") or "") == "enforce" and not tree.get("enforcement_ack"):
             errors.append({"tree_id": tree_id, "type": "enforcement_without_ack"})
         nodes = tree.get("nodes")

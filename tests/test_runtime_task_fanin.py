@@ -1,4 +1,5 @@
 import time
+import json
 from pathlib import Path
 
 from runtime.task_adapter import LocalTaskAdapter, LocalTaskSpec
@@ -133,3 +134,26 @@ def test_wait_for_scope_exposes_terminal_failures_without_timeout(tmp_path: Path
     assert waited["status"] == "completed"
     assert waited["outcome"] == "completed_with_failures"
     assert waited["terminal_failure_count"] == 1
+
+
+def test_fanin_cannot_hide_an_old_login_wait_behind_history(tmp_path):
+    from runtime.task_scope import attach_detail_task_scope
+    store = TaskStore(str(tmp_path / 'tasks.sqlite3'))
+    meta = {'task_scope_id':'scope', 'research_session_id':'session', 'blocks_final_report':True,
+            'source_url':'https://example.org/note'}
+    store.upsert_task('old-login-wait', 'durable_content_detail', 'test', status='waiting_for_user', metadata=meta)
+    with store._connect() as conn:
+        conn.executemany("INSERT INTO runtime_tasks(task_id,task_type,platform,status,source_url,task_scope_id,created_at,updated_at,metadata_json) VALUES (?,'fixture','test','completed',?,'scope',?,?,?)",
+            [(f'completed-{i}', meta['source_url'], time.time()+i, time.time()+i, json.dumps(meta)) for i in range(505)])
+    for waited in (
+        store.wait_for_scope(task_scope_id='scope', max_wait_s=0),
+        store.wait_for_scope(source_url=meta['source_url'], max_wait_s=0),
+        store.wait_for_session('session', max_wait_s=0),
+    ):
+        assert waited['status']=='timeout' and [t['task_id'] for t in waited['pending']]==['old-login-wait']
+    attached = attach_detail_task_scope({'content':'body'}, 'session', {'task_scope_id':'scope'}, store_factory=lambda:store)
+    assert [t['task_id'] for t in attached['blocking_tasks']]==['old-login-wait']
+    # 恢复判为中断以后仍必须明确显示失败，不能升级为成功。
+    store.mark_interrupted('old-login-wait', 'fixture interruption')
+    waited = store.wait_for_scope(task_scope_id='scope', max_wait_s=0)
+    assert waited['outcome']=='completed_with_failures' and waited['terminal_failure_count']==1

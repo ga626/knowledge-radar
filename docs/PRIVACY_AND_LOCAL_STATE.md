@@ -28,3 +28,7 @@ python scripts\verify_package_integrity.py --path dist\product-lite\KnowledgeRad
 python scripts\build_public_source_projection.py
 python scripts\verify_package_integrity.py --path dist\public-source\KnowledgeRadar
 ```
+
+## 云端 OCR
+
+`process_local_evidence` 的 auto 模式会把授权图片或扫描 PDF 页面发送到硅基流动 PaddleOCR-VL 1.5；文字 PDF 本地直接解析。输入必须在显式授权目录内，且 SHA-256 匹配。不上传整个目录。图片/扫描件没有本地 OCR 路径；云端错误明确返回，不自动切到 CPU。识别结果及其固定证据版本保存在本地。

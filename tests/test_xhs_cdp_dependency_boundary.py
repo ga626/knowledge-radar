@@ -1,47 +1,25 @@
-import builtins
-import importlib.util
+"""日常浏览器链不能回到退役的专用浏览器执行器。"""
 from pathlib import Path
-
-import pytest
-
-spec = importlib.util.spec_from_file_location(
-    "xhs_adapter_dependency_test",
-    Path(__file__).resolve().parents[1] / "src/media_platform/xhs/scrapling_adapter.py",
-)
-adapter = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(adapter)
+import builtins
 
 
-@pytest.fixture
-def without_scrapling(monkeypatch):
+def test_xhs_adapter_does_not_import_retired_drivers(monkeypatch):
+    from runtime.platform_execution import ensure_bindings
     original = builtins.__import__
-
-    def import_without_scrapling(name, *args, **kwargs):
-        if name == "scrapling" or name.startswith("scrapling."):
-            raise ModuleNotFoundError("scrapling intentionally unavailable")
-        return original(name, *args, **kwargs)
-
-    monkeypatch.setattr(builtins, "__import__", import_without_scrapling)
-
-
-def test_native_page_cdp_search_runs_without_optional_fetcher(monkeypatch, without_scrapling):
-    monkeypatch.setattr(adapter, "_ensure_xhs_page_ws_url", lambda url: "ws://localhost/devtools/page/test")
-    calls = []
-
-    def page_search(endpoint, keyword, **kwargs):
-        calls.append((endpoint, keyword, kwargs))
-        return [{"id": "test-note", "title": "test"}]
-
-    monkeypatch.setattr(adapter, "_search_current_page_via_cdp", page_search)
-    result = adapter.search("test", limit=1, cdp_url="http://localhost:9222")
-    assert result[0]["id"] == "test-note"
-    assert calls[0][1] == "test"
-    assert calls[0][2]["limit"] == 1
+    def guarded(name, *args, **kwargs):
+        assert name not in {"runtime.xhs_task_failover", "runtime.xhs_account_pool",
+            "media_platform.xhs.mcp_client", "media_platform.xhs.scrapling_adapter"}
+        assert not name.startswith("scrapling")
+        return original(name,*args,**kwargs)
+    monkeypatch.setattr(builtins,"__import__",guarded)
+    ensure_bindings()
 
 
-def test_dynamic_fetcher_path_reports_missing_dependency(monkeypatch, without_scrapling):
-    monkeypatch.setattr(adapter, "_ensure_xhs_page_ws_url", lambda url: "ws://localhost/devtools/browser/test")
-    with pytest.raises(adapter.XhsScraplingError) as error:
-        adapter.search("test", cdp_url="http://localhost:9222")
-    assert error.value.error_type == "dependency_missing"
-    assert error.value.login_required is False
+def test_private_managed_chrome_entry_cannot_launch_daily_browser(monkeypatch):
+    from runtime import chrome_manager as manager
+    monkeypatch.setattr(manager,"_find_chrome_with_debug_port",lambda *a,**k: (_ for _ in ()).throw(AssertionError("must stop before discovery")))
+    assert manager._ensure_chrome_debugging_locked("xhs",target_profile_id="old-A") is False
+    assert manager._managed_chrome_profile_dir("xhs",target_profile_id="old-A") == ""
+    root=Path(__file__).resolve().parents[1]
+    assert not (root/"bridge/xhs_mcp_bridge.cjs").exists()
+    assert not (root/"src/media_platform/xhs/scrapling_adapter.py").exists()

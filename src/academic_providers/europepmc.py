@@ -45,6 +45,9 @@ class EuropePmcProvider:
                 response.raise_for_status()
                 data = response.json()
         except Exception as exc:
+            from runtime.execution_context import ExecutionStopped
+            if isinstance(exc, ExecutionStopped):
+                raise
             raise EuropePmcError(str(exc)) from exc
         items = ((data.get("resultList") or {}).get("result") or [])
         return [self._work_from_europepmc(item) for item in items if isinstance(item, dict)]
@@ -57,6 +60,11 @@ class EuropePmcProvider:
         pmcid = str(item.get("pmcid") or "").strip()
         pmid = str(item.get("pmid") or "").strip()
         is_oa = str(item.get("isOpenAccess") or "").upper() == "Y"
+        # 官方 REST 提供 OA PMC 的 JATS 正文；网页落地页可能受 challenge 限制。
+        # PMCID 本身不代表开放获取，也不能作为未校验的 URL 路径片段。
+        if is_oa and re.fullmatch(r"PMC[0-9]+", pmcid):
+            full_text_urls = [{"availabilityCode": "OA", "documentStyle": "xml", "site": "Europe_PMC",
+                "url": f"https://www.ebi.ac.uk/europepmc/webservices/rest/{pmcid}/fullTextXML"}, *full_text_urls]
         return AcademicWork(
             title=str(item.get("title") or ""),
             url=pdf_url or html_url or (f"https://europepmc.org/article/MED/{pmid}" if pmid else (f"https://doi.org/{doi}" if doi else "")),
@@ -68,11 +76,12 @@ class EuropePmcProvider:
             oa_status="open" if is_oa else "unknown",
             license="",
             source_database=self.name,
+            document_type=str(next(iter((item.get('pubTypeList') or {}).get('pubType') or []), 'unknown')),
             access_mode="public_api",
-            full_text_status="pdf_text_extractable" if pdf_url else ("html_fulltext" if html_url else ("oa_available" if is_oa else "metadata_only")),
+            full_text_status="pdf_link_found" if pdf_url else ("html_link_found" if html_url else ("oa_available" if is_oa else "metadata_only")),
             provider_confidence=0.87,
-            verification_status="doi_matched" if doi else ("pmcid_matched" if pmcid else "unverified"),
-            license_scope="open" if is_oa else "unknown",
+            verification_status="doi_present" if doi else ("pmcid_matched" if pmcid else "unverified"),
+            license_scope="unknown",
             raw={
                 "pmid": pmid,
                 "pmcid": pmcid,

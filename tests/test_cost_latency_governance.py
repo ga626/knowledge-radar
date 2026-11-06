@@ -66,44 +66,27 @@ def test_health_summary_uses_cache_for_sidecar_health(monkeypatch) -> None:
 
 
 def test_github_search_cache_and_rest_metadata(monkeypatch) -> None:
-    monkeypatch.setattr(
-        gh_cli_sidecar,
-        "_run_gh",
-        lambda *_args, **_kwargs: SimpleNamespace(returncode=0, stdout=json.dumps([]), stderr=""),
-    )
-    calls = {"rest": 0}
-
-    class _Response:
-        status_code = 200
-
-        def json(self):
-            return {
-                "items": [
-                    {
-                        "full_name": "assafelovic/gpt-researcher",
-                        "html_url": "https://github.com/assafelovic/gpt-researcher",
-                        "description": "Autonomous deep research agent",
-                        "language": "Python",
-                        "stargazers_count": 100,
-                        "updated_at": "2026-06-01T00:00:00Z",
-                        "owner": {"login": "assafelovic"},
-                    }
-                ]
-            }
-
-    def fake_get(*_args, **_kwargs):
-        calls["rest"] += 1
-        return _Response()
-
-    monkeypatch.setattr(gh_cli_sidecar.httpx, "get", fake_get)
-
-    first = gh_cli_sidecar.search_repositories("deep research agent", limit=1)
-    second = gh_cli_sidecar.search_repositories("deep research agent", limit=1)
-
-    assert first["fallback_used"] is True
-    assert first["metadata"]["attempted_queries_count"] >= 1
-    assert second["runtime"]["cache"]["hit"] is True
-    assert calls["rest"] >= 1
+    from collectors.platform.github_api import GitHubClient
+    from runtime.cost_latency import TTLCache
+    calls = []
+    class PublicClient:
+        transport = 'rest'
+        identity = 'cache-regression-public'
+        attempts = []
+        def json(self, endpoint, *, params):
+            calls.append((endpoint, params))
+            return {'items':[{'id':1, 'full_name':'owner/project', 'private':False,
+                'description':'Public implementation', 'stargazers_count':100}],
+                'total_count':1, 'incomplete_results':False}, {}
+    monkeypatch.setattr(GitHubClient, 'configured', lambda **kwargs: PublicClient())
+    monkeypatch.setattr(gh_cli_sidecar, '_SEARCH_CACHE', TTLCache('github-cache-regression', ttl_s=300))
+    first = gh_cli_sidecar.search_repositories('repo:owner/project', limit=1)
+    second = gh_cli_sidecar.search_repositories('repo:owner/project', limit=1)
+    assert first['fallback_used'] is False
+    assert first['metadata']['attempted_queries_count'] == 1
+    assert second['runtime']['cache']['hit'] is True
+    assert second['metadata']['network_reverified'] is False
+    assert len(calls) == 1
 
 
 def test_xhs_ocr_artifact_cache(monkeypatch, tmp_path) -> None:
@@ -121,7 +104,7 @@ def test_xhs_ocr_artifact_cache(monkeypatch, tmp_path) -> None:
         calls["model"] += 1
         return ('{"text":"图中文字","items":[],"visual_summary":"摘要"}', "test-model")
 
-    monkeypatch.setattr(image_mod.httpx, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(image_mod, "guarded_fetch", lambda *args, **kwargs: _Response())
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(image_mod, "call_multimodal_models", fake_model)
 
@@ -148,7 +131,7 @@ def test_xhs_ocr_reuses_existing_content_task_for_url_variants(monkeypatch, tmp_
         calls["model"] += 1
         return ('{"text":"图中文字","items":[],"visual_summary":"摘要"}', "test-model")
 
-    monkeypatch.setattr(image_mod.httpx, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(image_mod, "guarded_fetch", lambda *args, **kwargs: _Response())
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(image_mod, "call_multimodal_models", fake_model)
 
@@ -158,14 +141,14 @@ def test_xhs_ocr_reuses_existing_content_task_for_url_variants(monkeypatch, tmp_
     )
     second = image_mod.ocr_first_xhs_image(
         ["https://sns-webpic-qc.xhscdn.com/content-two.jpg?xsec_token=two"],
-        task_metadata={"content_id": "note-ocr-reuse"},
+        task_metadata={"content_id": "note-ocr-reuse", "task_scope_id": "different-parent"},
     )
 
     assert first["status"] == "ok"
-    assert second["reason"] == "existing_ocr_task_reused"
-    assert second["metadata"]["existing_task_status"] == "completed"
-    assert second["ocr_signal_strength"] == "result_external"
-    assert second["ocr_empty_reason"] == "completed_task_reused_without_inline_text"
+    assert second['runtime']['cache']['hit'] is True
+    assert second['text'] == first['text'] == '图中文字'
+    assert store.get_task(second['task_id']) is not None
+    assert second['ocr_signal_strength'] != 'result_external'
     assert calls["model"] == 1
 
 
@@ -179,7 +162,7 @@ def test_xhs_ocr_empty_model_result_has_signal_strength(monkeypatch, tmp_path) -
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(image_mod.httpx, "get", lambda *args, **kwargs: _Response())
+    monkeypatch.setattr(image_mod, "guarded_fetch", lambda *args, **kwargs: _Response())
     monkeypatch.setattr(image_mod, "image_bytes_to_base64", lambda data: "base64")
     monkeypatch.setattr(image_mod, "call_multimodal_models", lambda **kwargs: ('{"text":"","items":[],"visual_summary":""}', "test-model"))
 

@@ -11,7 +11,7 @@ from .profile import profile_for, provider_profiles
 from .quota import SearchQuotaLedger
 
 
-GENERAL_WEB_PROVIDERS = ["searxng", "anysearch", "brave", "exa", "tavily"]
+GENERAL_WEB_PROVIDERS = ["anysearch", "brave", "exa", "tavily"]
 
 
 @dataclass(frozen=True)
@@ -40,35 +40,23 @@ def explicit_provider_plan(provider: str) -> SearchPlan:
 
 
 def auto_search_plan(provider_status: Dict[str, dict], host_provider_names: List[str] | None = None) -> SearchPlan:
-    configured, allowlist = _provider_allowlist(host_provider_names)
-    if configured:
-        allowlist.update(host_provider_names or [])
-
+    from runtime.search_configuration import current_configuration
+    config = current_configuration()
     host_names = list(host_provider_names or [])
-    wave_a = [name for name in ["searxng", "anysearch", *host_names] if name in allowlist and _can_attempt(name, provider_status)]
-    wave_b = [name for name in ["brave", "exa"] if name in allowlist and _can_attempt(name, provider_status)]
-    tavily_status = SearchQuotaLedger().status("tavily")
-    wave_c = ["tavily"] if "tavily" in allowlist and _can_attempt("tavily", provider_status) and tavily_status.status == "available" else []
-    waves = [wave for wave in [wave_a, wave_b] if wave]
-    if not waves and wave_c:
-        waves.append(wave_c)
-        wave_c = []
-    return SearchPlan(
-        waves=waves,
-        profiles=provider_profiles(),
-        quota={"tavily": tavily_status.to_dict()},
-        host_cards=host_search_card_summary(),
-        rationale=[
-            "env_provider_list_is_allowlist" if configured else "default_provider_profile_pool",
-            "free_and_quality_parallel_first",
-            "tavily_paid_supplement",
-        ],
-    )
+    order = ['anysearch', 'ddgs', *host_names]
+    eligible = [name for name in dict.fromkeys(order) if config.allowed(name) and _can_attempt(name, provider_status)]
+    quota = SearchQuotaLedger().status('tavily')
+    if not eligible and config.allowed('tavily') and _can_attempt('tavily', provider_status) and quota.status in {'available','record_only'}:
+        eligible = ['tavily']
+    return SearchPlan(waves=[[name] for name in eligible], profiles=provider_profiles(),
+        quota={'tavily': quota.to_dict()}, host_cards=host_search_card_summary(),
+        rationale=['preferred_then_bounded_fallback', 'stop_when_request_coverage_met', 'tavily_only_automatic_paid_fallback'])
 
 
 def tavily_supplement_available(provider_status: Dict[str, dict]) -> bool:
     _, allowlist = _provider_allowlist()
-    return "tavily" in allowlist and _can_attempt("tavily", provider_status) and SearchQuotaLedger().status("tavily").status == "available"
+    from runtime.search_configuration import current_configuration
+    return current_configuration().allowed('tavily') and _can_attempt('tavily', provider_status) and SearchQuotaLedger().status('tavily').status in {'available','record_only'}
 
 
 def _can_attempt(name: str, provider_status: Dict[str, dict]) -> bool:
@@ -80,6 +68,5 @@ def _provider_allowlist(host_provider_names: List[str] | None = None) -> tuple[s
     configured = os.environ.get("KR_WEB_SEARCH_PROVIDERS", "").strip()
     configured_names = [item.strip().lower() for item in configured.split(",") if item.strip()] if configured else []
     allowlist = set(configured_names) if configured_names else set(GENERAL_WEB_PROVIDERS)
-    if configured:
-        allowlist.update(host_provider_names or [])
+    allowlist.update(host_provider_names or [])
     return configured, allowlist

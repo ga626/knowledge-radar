@@ -3,77 +3,72 @@
 from __future__ import annotations
 
 ASR_COMPONENT = "qwen3-asr-0.6b"
-ASR_MODEL_REF = "local:qwen3-asr/0.6b-hf"
-OCR_COMPONENT = "paddleocr-vl-1.6"
+ASR_MODEL_REF = "local:qwen3-asr/0.6b-onnx-int8"
+ASR_ENGINE = "sherpa_onnx_int8"
+ASR_MODEL_FILES = {
+    "conv_frontend.onnx": "d22dc4423e0940e49884e903d2ea2f7e5567c14fc1aed97e4e26d6b8f208ef9e",
+    "encoder.int8.onnx": "60748d3e6744a57c9c91e1b17424a6c2990567e8adceb0783940c03ed98fa9d9",
+    "decoder.int8.onnx": "4f6885be5959ae26af3089d38ee7972c5fafbeeb1cf8d5e76eab6d8b61ca5771",
+    "tokenizer/vocab.json": "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+    "tokenizer/merges.txt": "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+    "tokenizer/tokenizer_config.json": "4942d005604266809309cabc9f4e9cb89ce855d59b14681fdc0e1cc62ea26c4c",
+}
+CLOUD_OCR_COMPONENT = "siliconflow-ocr"
+CLOUD_OCR_MODEL = "PaddlePaddle/PaddleOCR-VL-1.5"
+OCR_MODEL_REF = "siliconflow:" + CLOUD_OCR_MODEL
 CLOUD_MODEL = "qwen3.8-omni-flash"
 CLOUD_MODEL_REF = "bailian:" + CLOUD_MODEL
 
 MODEL_ENVIRONMENT = {
     "KR_ASR_MODELS": ASR_MODEL_REF,
-    "KR_OCR_MODELS": OCR_COMPONENT,
+    "KR_OCR_MODELS": OCR_MODEL_REF,
     "KR_FRAME_VISION_MODELS": CLOUD_MODEL_REF,
     "KR_NATIVE_VIDEO_MODELS": CLOUD_MODEL_REF,
     "KR_NATIVE_AUDIO_VIDEO_MODELS": CLOUD_MODEL_REF,
     "KR_PROVIDER_CONCURRENCY_BAILIAN": "1",
 }
-RETIRED_MODEL_CONTROLS = {
-    "KR_COMMENT_FILTER_MODELS", "KR_ENABLE_SILICONFLOW_FALLBACK", "KR_ENABLE_MIMO_FALLBACK",
-    "KR_WHISPER_MODEL_DIR", "KR_ASR_BATCH_SIZE", "KR_ASR_BEAM_SIZE", "KR_ASR_VAD",
-    "KR_ASR_COMPUTE_TYPE", "KR_ASR_LIFECYCLE", "KR_ASR_PREWARM_TRIGGER",
-    "KR_ASR_GPU_HOT_TTL_SECONDS", "KR_ASR_WORKER_KEEPALIVE_SECONDS",
-    "KR_ASR_GPU_UNLOAD_POLICY", "KR_ASR_ENABLE_CTRANSLATE2_UNLOAD", "KR_ASR_GPU_MIN_FREE_MB",
-}
+
 
 COMPONENTS = {
     ASR_COMPONENT: {
-        "label": "本地语音转写（Qwen3-ASR 0.6B）",
-        "package": "transformers",
-        "model": "Qwen/Qwen3-ASR-0.6B-hf",
+        "label": "本地语音转写（Qwen3-ASR 0.6B · sherpa INT8）",
+        "package": "sherpa-onnx",
+        "model": "sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25",
         "kind": "asr",
+        "engine": ASR_ENGINE,
+        "languages": ["zh", "en", "zh-en"],
+        "language_detection": "qwen_generated_prefix/v1",
+        "device": "cpu",
+        "compute_type": "int8",
         "default": True,
         "source": "https://github.com/QwenLM/Qwen3-ASR",
-        "weight_source": "https://huggingface.co/Qwen/Qwen3-ASR-0.6B-hf",
-        "weight_revision": "7f1569a48a89f3e3f4dc3a5c9d28bddd903bc76c",
-        "requirements": ["transformers==5.20.2", "torch==2.9.1", "soundfile==0.13.1", "librosa==0.11.0"],
+        "weight_source": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-qwen3-asr-0.6B-int8-2026-03-25.tar.bz2",
+        "weight_revision": "sha256:393f8a14e2f5fb96746aaab342997a40641001fbd5bf9592a080a8329178ee96",
+        "model_files": ASR_MODEL_FILES,
+        "requirements": ["sherpa-onnx==2.0.1", "sherpa-onnx-core==2.0.1"],
         "requirements_lock": "config/optional-asr-win-py312.lock",
-        "requirements_sha256": "696fbe9beb60197acd6fc6823faad60a29dc30d468839f5f61ca2e726680c9e5",
+        "requirements_sha256": "173066d91d149020830ea45fd8194f9a3c01a0387da18acec88d83e501f65b60",
         "code_license": "Apache-2.0",
         "weight_license": "Apache-2.0",
         "model_required": True,
     },
     "docling": {
         "label": "Office 文档解析",
-        "package": "docling",
+        "package": "docling-slim",
         "model": "none",
         "kind": "document",
         "default": True,
         "source": "https://github.com/docling-project/docling",
-        "requirements": ["docling==2.142.1"],
+        "requirements": ["docling-slim==2.142.1"],
+        "extras": ["format-office", "format-web", "convert-core"],
         "requirements_lock": "config/optional-docling-win-py312.lock",
-        "requirements_sha256": "b60c5a0e837bf2a5aedae27a12139099d933a97cec5135b544ebe7f9a2af14f0",
+        "requirements_sha256": "d843370ce2b835043026d48ac7f6e01ec2177baae24a7b5c85efd08387ead384",
         "code_license": "MIT",
         "weight_license": "not_applicable",
         "model_required": False,
         "weight_revision": "not_applicable_no_models",
     },
-    OCR_COMPONENT: {
-        "label": "扫描件与复杂文档识别（PaddleOCR-VL 1.6）",
-        "package": "paddleocr",
-        "model": "PaddlePaddle/PaddleOCR-VL-1.6",
-        "kind": "document",
-        "default": True,
-        "source": "https://github.com/PaddlePaddle/PaddleOCR",
-        "weight_source": "https://huggingface.co/PaddlePaddle/PaddleOCR-VL-1.6",
-        "weight_revision": "c5630abae1d940eafe0697512a0325494b02ab42",
-        "layout_model": "PaddlePaddle/PP-DocLayoutV3",
-        "layout_revision": "241f8bdfc77a7c7bee915a5057aaee58c235a8d3",
-        "requirements": ["paddleocr[doc-parser]==3.7.0", "paddlepaddle==3.3.1"],
-        "requirements_lock": "config/optional-ocr-win-py312.lock",
-        "requirements_sha256": "2bf2720a39decf321fd411aea7a87ccb91e189bea64d2cd193b38d1368f6b9f4",
-        "code_license": "Apache-2.0",
-        "weight_license": "Apache-2.0",
-        "model_required": True,
-    },
+
 }
 
 
@@ -82,7 +77,8 @@ def role_summary():
         "asr": {"component": ASR_COMPONENT, "model_ref": ASR_MODEL_REF},
         "office": {"component": "docling", "downloads_models": False},
         "pdf_text": {"component": "pypdf", "downloads_models": False},
-        "ocr": {"component": OCR_COMPONENT, "model_ref": COMPONENTS[OCR_COMPONENT]["model"]},
+        "ocr": {"component": CLOUD_OCR_COMPONENT, "provider": "siliconflow", "model_ref": OCR_MODEL_REF,
+                "automatic_cpu_fallback": False},
         "cloud_media": {"provider": "bailian", "model_ref": CLOUD_MODEL_REF},
         "local_heavy_concurrency": 1,
     }

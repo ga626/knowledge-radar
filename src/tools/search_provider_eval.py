@@ -20,7 +20,7 @@ def main() -> int:
     load_runtime_env()
     parser = argparse.ArgumentParser(description="Evaluate configured KnowledgeRadar search providers.")
     parser.add_argument("queries", nargs="*", default=["Model Context Protocol documentation"])
-    parser.add_argument("--providers", default=os.environ.get("KR_WEB_SEARCH_PROVIDERS", "tavily,brave,exa,anysearch,searxng"))
+    parser.add_argument("--providers", default=os.environ.get("KR_WEB_SEARCH_PROVIDERS", "anysearch,ddgs,tavily,brave,exa"))
     parser.add_argument("--limit", type=int, default=3)
     args = parser.parse_args()
 

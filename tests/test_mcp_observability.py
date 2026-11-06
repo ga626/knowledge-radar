@@ -87,11 +87,13 @@ def test_imported_product_sdk_lifespan_registers_real_list_session(tmp_path, mon
     monkeypatch.setenv("KR_DESKTOP_NOTIFICATIONS_DISABLED", "1")
     monkeypatch.setattr(observability, "runtime_state_dir", lambda: tmp_path)
     import server
+    from runtime.execution_owner import OwnerClient
+    monkeypatch.setattr(OwnerClient, 'start', lambda self: {'status': 'ready'})
     async def scenario():
         async with create_connected_server_and_client_session(server.mcp) as client:
             tools = await client.list_tools()
             current = observability.snapshot(transport=server.MCP_TRANSPORT, tool_names=server.ACTUAL_MCP_TOOLS)
-            assert len(tools.tools) == 23
+            assert {tool.name for tool in tools.tools} == set(server.ACTUAL_MCP_TOOLS)
             local_tool=next(tool for tool in tools.tools if tool.name=='process_local_evidence')
             assert {'input_path','approved_input_root','input_sha256','task_id'}.issubset(local_tool.inputSchema['properties'])
             assert not local_tool.inputSchema.get('required')

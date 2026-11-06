@@ -8,7 +8,6 @@ import fnmatch
 import hashlib
 import importlib.metadata
 import json
-import os
 from pathlib import Path
 import platform
 import subprocess
@@ -18,7 +17,7 @@ import uuid
 SCHEMA = "knowledgeradar-evaluation/v1"
 VERDICTS = {"PASS", "FAIL", "ERROR", "BLOCKED", "SKIPPED", "NOT_RUN"}
 READINESS = {"ready", "degraded", "needs_interaction", "unavailable", "unknown"}
-SCOPES = ("src/", "scripts/", "tests/", "config/", "bridge/", ".github/workflows/")
+SCOPES = ("src/", "scripts/", "tests/", "config/", "bridge/", "browser_link/", "docs/", ".github/workflows/")
 
 
 def now():
@@ -54,7 +53,10 @@ def safe_path(root, relative):
 
 def discover(root):
     """只读AST发现，不导入 server，不启动浏览器、后台任务或读取认证。"""
-    tree = ast.parse((root / "src/server.py").read_text(encoding="utf-8-sig"))
+    entry = root / 'src/runtime/composition.py'
+    if not entry.is_file():
+        entry = root / 'src/server.py'  # 兼容历史夹具，当前产品从应用合同发现。
+    tree = ast.parse(entry.read_text(encoding="utf-8-sig"))
     found = {}
     for node in ast.walk(tree):
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -63,7 +65,7 @@ def discover(root):
             call = decorator if isinstance(decorator, ast.Call) else None
             func = call.func if call else decorator
             native = isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name) and func.value.id == "mcp" and func.attr == "tool"
-            dispatched = isinstance(func, ast.Name) and func.id == "nonblocking_mcp_tool"
+            dispatched = isinstance(func, ast.Name) and func.id in {"nonblocking_mcp_tool", "application_tool"}
             if native or dispatched:
                 name = node.name
                 if call:
@@ -198,7 +200,11 @@ def dependencies(root, suite, case, snap):
     cache_key = (snap["content_hash"], digest(case))
     if cache_key in cache:
         return cache[cache_key]
-    patterns = list(case["dependencies"])
+    node_inputs = []
+    for node in case.get('nodes', []):
+        path = node.split('::', 1)[0]
+        node_inputs.append(path.rstrip('/') + '/**' if safe_path(root, path).is_dir() else path)
+    patterns = [*case["dependencies"], *node_inputs]
     seen = set()
     def add(cap_id):
         if cap_id in seen:
@@ -212,7 +218,7 @@ def dependencies(root, suite, case, snap):
         add(cap)
     patterns += ["pyproject.toml", "*lock*", "requirements*.txt", "scripts/kr_eval/*.py", "scripts/kr_evaluate.py"]
     selected = {p for p in snap["files"] if any(fnmatch.fnmatchcase(p, pattern) for pattern in patterns)}
-    missing = [p for p in case["dependencies"] if not any(fnmatch.fnmatchcase(x, p) for x in snap["files"])]
+    missing = [p for p in [*case["dependencies"], *node_inputs] if not any(fnmatch.fnmatchcase(x, p) for x in snap["files"])]
     modules = _module_map(root, snap)
     pending = list(selected)
     errors = []

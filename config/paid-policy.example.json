@@ -1,0 +1,65 @@
+{
+  "schema": "knowledgeradar-paid-policy/v3",
+  "enabled": true,
+  "usd_to_cny": "8",
+  "providers": {
+    "bailian": {
+      "enabled": true,
+      "mode": "money",
+      "period": "day",
+      "unit": "CNY",
+      "limit": "10"
+    },
+    "tavily": {
+      "enabled": true,
+      "mode": "free_quota",
+      "period": "month",
+      "unit": "credits",
+      "limit": "1000"
+    },
+    "brave": {
+      "enabled": true,
+      "mode": "free_quota",
+      "period": "month",
+      "unit": "USD",
+      "limit": "5"
+    },
+    "exa": {
+      "enabled": true,
+      "mode": "free_quota",
+      "period": "month",
+      "unit": "USD",
+      "limit": "10"
+    },
+    "anysearch": {
+      "enabled": true,
+      "mode": "free_quota",
+      "period": "day",
+      "unit": "calls",
+      "limit": "1000",
+      "per_second_limit": 10
+    },
+    "openalex": {
+      "enabled": true,
+      "mode": "free_quota",
+      "period": "utc_day",
+      "unit": "USD",
+      "limit": "1"
+    },
+    "tikhub": {
+      "enabled": true,
+      "mode": "calls",
+      "period": "day",
+      "unit": "calls",
+      "limit": "2"
+    },
+    "siliconflow_ocr": {
+      "enabled": true,
+      "mode": "remote_free"
+    },
+    "wanfang": {
+      "enabled": false,
+      "mode": "disabled"
+    }
+  }
+}

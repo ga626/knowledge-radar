@@ -82,7 +82,7 @@ def test_public_provider_guides_expose_classified_tutorial_metadata_without_valu
 
 def test_wizard_rejects_unauthenticated_posts_and_never_echoes_values(monkeypatch):
     saved_payloads = []
-    monkeypatch.setattr("onboarding.setup_wizard.apply_updates", lambda values: saved_payloads.append(values) or list(values))
+    monkeypatch.setattr("onboarding.setup_wizard.apply_updates", lambda values, **kw: saved_payloads.append(values) or list(values))
     server = WizardServer(("127.0.0.1", 0))
     worker = threading.Thread(target=server.serve_forever, daemon=True)
     worker.start()
@@ -348,6 +348,47 @@ def test_development_preview_rejects_mutating_console_requests(monkeypatch: pyte
         response = connection.getresponse()
         assert response.status == 409
         assert "只读" in json.loads(response.read().decode("utf-8"))["error"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        worker.join(timeout=5)
+
+
+def test_preview_configuration_requires_an_independent_runtime_root(monkeypatch, tmp_path):
+    from onboarding.setup_wizard import _preview_config_is_isolated
+    monkeypatch.setenv("KR_CONSOLE_ROLE", "dev")
+    monkeypatch.setenv("KR_DATA_ROOT", str(tmp_path / "preview"))
+    monkeypatch.setenv("KR_RUNTIME_ENV_PATH", str(tmp_path / "preview/config/runtime.env"))
+    monkeypatch.setenv("KR_RESEARCH_READ_ROOT", str(tmp_path / "stable/state"))
+    assert _preview_config_is_isolated()
+    monkeypatch.setenv("KR_RUNTIME_ENV_PATH", str(tmp_path / "stable/config/runtime.env"))
+    assert not _preview_config_is_isolated()
+    monkeypatch.setenv("KR_DATA_ROOT", str(tmp_path / "stable"))
+    assert not _preview_config_is_isolated()
+
+
+def test_preview_http_saves_only_to_its_new_config_directory(monkeypatch, tmp_path):
+    target = tmp_path / 'dev' / 'config' / 'runtime.env'
+    stable = tmp_path / 'stable' / 'state'
+    monkeypatch.setenv('KR_DATA_ROOT', str(tmp_path / 'dev'))
+    monkeypatch.setenv('KR_RESEARCH_READ_ROOT', str(stable))
+    monkeypatch.setenv('KR_RUNTIME_ENV_PATH', str(target))
+    monkeypatch.setenv('KR_CONSOLE_ROLE', 'dev')
+    monkeypatch.setenv('KR_CONSOLE_READ_ONLY', '1')
+    server = WizardServer(('127.0.0.1', 0))
+    worker = threading.Thread(target=server.serve_forever, daemon=True)
+    worker.start()
+    try:
+        port = server.server_port
+        connection = HTTPConnection('127.0.0.1', port, timeout=5)
+        connection.request('POST', '/api/config', body=json.dumps({'values': {'WFDATA_APP_KEY': 'test-secret'}}),
+            headers={'Content-Type': 'application/json', 'Origin': f'http://127.0.0.1:{port}',
+                     'X-KR-Setup-Token': server.setup_token})
+        response = connection.getresponse()
+        assert response.status == 200
+        assert 'test-secret' not in response.read().decode('utf-8')
+        assert configuration._read_values(target)['WFDATA_APP_KEY'] == 'test-secret'
+        assert not stable.parent.exists()
     finally:
         server.shutdown()
         server.server_close()

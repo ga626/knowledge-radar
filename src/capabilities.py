@@ -7,9 +7,8 @@ from typing import Any, Callable, Dict
 from kr_core import PlatformRegistry, registry
 from kr_core.strategy import ERROR_TAXONOMY, generic_web_strategy_tree
 from capability_manifest import manifest_summary
+from capability_manifest.ecologies import source_ecology_manifest, ecology_for_platform, joined_catalog
 from mcp_tools import facade_manifest
-from runtime.architecture_standard import architecture_standard_summary
-from runtime.knowledge_assets import knowledge_asset_schema_summary
 from runtime.media_cache import DEFAULT_TTL_SECONDS, media_cache_root
 from runtime.openclaw_native_adapter import openclaw_native_adapter_summary
 from runtime.asr_lifecycle import asr_lifecycle_summary
@@ -37,44 +36,13 @@ PLANNING_MCP_TOOLS = [
     "plan_research",
 ]
 
-BASE_MCP_TOOLS = [
-    "kr_research",
-    "finalize_research_task",
-    "analyze_decision_logs",
-    "get_task_status",
-    "kr_web_search",
-    "search_github_repositories",
-    "search_youtube",
-    "search_wechat_articles",
-    "search_academic",
-    "extract_web_page",
-    "extract_dynamic_page",
-    "process_local_evidence",
-    "search_bilibili",
-    "search_xiaohongshu",
-    "search_zhihu",
-    "search_recruitment",
-    "get_capabilities",
-    "health_check",
-    "get_content_detail",
-    "manage_xiaohongshu_accounts",
-    "record_research_candidates_tool",
-    "advance_research_candidate",
-    "review_research_progress",
-]
+from runtime.agent_contracts import TOOL_NAMES as ACTUAL_MCP_TOOLS
 
 
 def actual_mcp_tools() -> list[str]:
-    """Return only tools actually registered by ``server.mcp``.
-
-    ``expand_keywords`` and ``plan_research`` remain local compatibility
-    helpers.  They are deliberately not advertised here because neither has
-    an ``@mcp.tool()`` registration in ``server.py``.
-    """
-    return list(BASE_MCP_TOOLS)
-
-
-ACTUAL_MCP_TOOLS = actual_mcp_tools()
+    if not ACTUAL_MCP_TOOLS:
+        import server  # register the actual tool surface; does not start the runtime
+    return list(ACTUAL_MCP_TOOLS)
 
 
 def validation_semantics_manifest(web_provider_status: Dict[str, Any], academic_status: Dict[str, Any] | None = None) -> Dict[str, Any]:
@@ -98,7 +66,6 @@ def validation_semantics_manifest(web_provider_status: Dict[str, Any], academic_
         academic_by_tier.setdefault(tier, []).append(name)
         status_class = str(item.get("validation_status") or item.get("status_class") or item.get("status") or "")
         academic_by_status.setdefault(status_class, []).append(name)
-    default_chinese_fulltext = _academic_profile_role_ids(academic_status or {}, "default_chinese_fulltext")
     return {
         "schema": "knowledgeradar-validation-semantics/v1",
         "status_classes": validation_status_classes(),
@@ -133,17 +100,16 @@ def validation_semantics_manifest(web_provider_status: Dict[str, Any], academic_
             "status_counts": canonical_status_counts((academic_status or {}).values()),
             "by_validation_status": {key: sorted(value) for key, value in academic_by_status.items()},
             "by_tier": {key: sorted(value) for key, value in academic_by_tier.items()},
-            "default_chinese_fulltext": default_chinese_fulltext,
-            "p2_4_default_chinese_fulltext": default_chinese_fulltext,
-            "expected_degraded_boundaries": ["baidu_scholar when key/entitlement/quota is missing", "wanfang automatic full-text provider is not registered", "cnki_authorized_browser requires explicit user-authorized workflow"],
+            "primary_discovery": sorted(academic_by_tier.get("primary_discovery", [])),
+            "intent_domain_discovery": sorted(academic_by_tier.get("intent_domain_discovery", [])),
+            "expected_degraded_boundaries": ["wanfang requires WFDATA_APP_KEY and collection entitlement", "semanticscholar auto supplement requires an API key and no cooldown", "cnki_authorized_browser requires explicit user-authorized workflow"],
         },
         "designed_fallbacks": {
             "bilibili_raw_cdn_native_media": "provider-side direct download is blocked by anti-hotlinking; this is not a failure when derived_text/ASR/sample-frame paths are available",
             "native_media_requires_provider_downloadable_url": "native_media is valid only when direct_media_probe.provider_downloadability.allow_native_media=true; provider-blocked URLs must use derived_text or sampled_media_with_text",
             "xiaohongshu_image_ocr_background": "Xiaohongshu OCR may exceed the sync window; scoped TaskStore fan-in plus get_task_status is the expected completion path",
-            "semantic_scholar_without_key": "public unauthenticated API is valid but lower-rate; API key is optional for higher quota",
-            "searxng_local": "self-hosted/local SearXNG is optional; absent daemon is expected degraded if Tavily/other auto providers pass",
-            "baidu_qianfan_scholar": "official API only; unavailable endpoint/key/quota is expected degraded until the user provisions a working entitlement",
+            "semantic_scholar_without_key": "anonymous explicit calls may be rate limited; automatic supplement requires an API key and no cooldown",
+            "ddgs_optional": "DDGS is optional; upstream refusal remains an explicit gap while other authorized discovery sources can continue",
         },
         "bilibili_multimodal_acceptance": {
             "native_video_url_provider_blocked": "EXPECTED_DEGRADED",
@@ -153,27 +119,13 @@ def validation_semantics_manifest(web_provider_status: Dict[str, Any], academic_
     }
 
 
-def _academic_profile_role_ids(academic_status: Dict[str, Any], role: str) -> list[str]:
-    ids: list[str] = []
-    for name, item in academic_status.items():
-        if not isinstance(item, dict):
-            continue
-        profile = item.get("capability_profile") if isinstance(item.get("capability_profile"), dict) else {}
-        if profile and profile.get("role") == role:
-            ids.append(name)
-            continue
-        if not profile and role == "default_chinese_fulltext" and item.get("provider_tier") == "p2_4_default_chinese_fulltext":
-            ids.append(name)
-    return ids
-
-
 def build_tool_surface() -> Dict[str, Any]:
     """Return the versioned MCP tool surface exposed by server.py."""
     tools = actual_mcp_tools()
     planning = planning_tools_manifest()
     return {
         "schema": "knowledgeradar-tool-surface/v2",
-        "source_of_truth": "src/server.py @mcp.tool() registrations",
+        "source_of_truth": "src/runtime/composition.py application contracts; MCP/CLI are projections",
         "actual_mcp_tool_count": len(tools),
         "actual_mcp_tools": tools,
         "planning_tools": planning,
@@ -201,11 +153,11 @@ def build_tool_surface() -> Dict[str, Any]:
             "kr_web_search(provider='github')": "search_github_repositories",
         },
         "notes": [
-            "Actual MCP tools are the functions registered with @mcp.tool() in src/server.py.",
+            "Application contracts in runtime.composition are projected into MCP and CLI.",
             "kr_research is the high-level workflow entry for heavy research/perception tasks; low-level tools remain available for model-directed follow-up.",
             "YouTube search is exposed as the separate search_youtube MCP tool.",
             "GitHub repository search is exposed as the separate search_github_repositories MCP tool.",
-            "WeChat public article search is exposed as the separate search_wechat_articles MCP tool and uses open Web index query templates.",
+            "微信公开文章由 search_wechat_articles 发现（公共索引、微信读书搜一搜），get_content_detail 读取正文；OpenCLI 为明确选择的只读浏览器通道。",
             "Source-ecology guidance is exposed by source_ecologies; MCP tool descriptions remain short execution contracts.",
             "kr_web_search(provider='youtube'/'github') remains only as a deprecated compatibility alias.",
             "The historic 12/13 tool-count wording is superseded by this versioned surface.",
@@ -214,124 +166,6 @@ def build_tool_surface() -> Dict[str, Any]:
     }
 
 
-def source_ecology_manifest() -> Dict[str, Any]:
-    """Describe searchable source ecologies without forcing a single tool route."""
-    return {
-        "schema": "knowledgeradar-source-ecologies/v1",
-        "status": "implemented_p1_lightweight",
-        "principles": [
-            "Describe what each source ecology can reveal; do not reduce a platform to one domain label.",
-            "Treat tool paths as candidates. The Agent should choose and cross-check based on the research question.",
-            "Use open-ended examples to orient planning while leaving room for unexpected high-value sources.",
-            "Distinguish discovery value from evidence strength; search hits are candidates until detail or cross-source validation.",
-        ],
-        "ecologies": {
-            "wechat_public_article_ecology": {
-                "label": "微信公众号公开文章生态",
-                "source_type": "public_article_stream",
-                "candidate_tools": ["search_wechat_articles", "kr_web_search", "extract_web_page", "extract_dynamic_page"],
-                "content_forms": ["公众号文章", "机构推送", "作者专栏", "行业评论", "自媒体长文", "活动纪要"],
-                "reveals": [
-                    "中文公共传播中的早期观点、半正式表达、长文解释和机构对外沟通。",
-                    "不一定进入官网、论文或媒体报道的议题材料、会议综述、政策解读和社群观点。",
-                ],
-                "not_limited_to": ["专业机构文章", "某一个研究领域", "官方账号"],
-                "evidence_role": "discovery_and_context; detail extraction or cross-source confirmation required before strong claims",
-                "known_limits": ["open web index coverage is uneven", "article body extraction can fail", "publication time and account identity may need verification"],
-            },
-            "bilibili_video_ecology": {
-                "label": "B站视频与弹幕评论生态",
-                "source_type": "public_video_community",
-                "candidate_tools": ["search_bilibili", "get_content_detail", "get_task_status"],
-                "content_forms": ["视频", "字幕/转写", "评论", "互动数据", "UP主频道内容"],
-                "reveals": [
-                    "中文视频社区中的讲解、现场记录、青年表达、二创传播和互动反馈。",
-                    "文字来源难以覆盖的口语化叙事、视觉证据和评论区反应。",
-                ],
-                "not_limited_to": ["教程视频", "娱乐内容", "单一年龄群体"],
-                "evidence_role": "media_context; transcript/comment quality and sampling limits must be visible",
-                "known_limits": ["转写和评论可能产生后台任务", "媒体分析成本较高", "互动数据不等于代表性民意"],
-            },
-            "youtube_video_ecology": {
-                "label": "YouTube 公开视频生态",
-                "source_type": "public_video_global",
-                "candidate_tools": ["search_youtube", "get_content_detail", "get_task_status"],
-                "content_forms": ["公开视频", "频道元数据", "字幕/转写", "评论"],
-                "reveals": [
-                    "跨语种、海外社群、机构频道和长视频讨论。",
-                    "国际议题、技术演示、访谈和公开讲座中的一手或准一手材料。",
-                ],
-                "not_limited_to": ["英文内容", "新闻视频", "教程"],
-                "evidence_role": "media_context; transcripts and channel identity require validation",
-                "known_limits": ["API key and network reachability affect availability", "会员/私密/地区受限内容不可访问"],
-            },
-            "zhihu_discussion_ecology": {
-                "label": "知乎问答与专栏讨论生态",
-                "source_type": "community_qa_and_article",
-                "candidate_tools": ["search_zhihu", "get_content_detail"],
-                "content_forms": ["问题", "回答", "文章", "作者信息", "赞同/评论线索"],
-                "reveals": [
-                    "围绕问题展开的观点谱系、专业用户解释、经验叙述和争议焦点。",
-                    "比媒体报道更细的论证过程和用户对概念的理解方式。",
-                ],
-                "not_limited_to": ["专家回答", "高赞答案", "公共政策议题"],
-                "evidence_role": "argument_map; use as viewpoint evidence unless identity and facts are independently verified",
-                "known_limits": ["登录态和反爬健康影响详情", "高赞不等于事实正确"],
-            },
-            "xiaohongshu_experience_ecology": {
-                "label": "小红书生活经验与图文视频生态",
-                "source_type": "experience_note_and_social_media",
-                "candidate_tools": ["search_xiaohongshu", "get_content_detail"],
-                "content_forms": ["图文笔记", "短视频", "评论", "图片 OCR 线索"],
-                "reveals": [
-                    "消费、生活方式、城市体验、教育就业和身份表达中的个人经验材料。",
-                    "图片、标签和评论中呈现的细粒度场景与情绪线索。",
-                ],
-                "not_limited_to": ["种草内容", "女性用户", "消费领域"],
-                "evidence_role": "experience_signal; avoid treating sampled posts as population-level proof",
-                "known_limits": ["登录/冷却/反爬边界明显", "样本偏差和营销内容需要标注"],
-            },
-            "github_repository_ecology": {
-                "label": "GitHub 开源项目生态",
-                "source_type": "code_repository_and_project_metadata",
-                "candidate_tools": ["search_github_repositories", "kr_web_search"],
-                "content_forms": ["仓库", "README", "issue 线索", "语言", "stars", "更新时间"],
-                "reveals": [
-                    "技术实现、项目活跃度、依赖关系、社区问题和替代方案。",
-                    "普通网页摘要无法呈现的代码事实和维护状态。",
-                ],
-                "not_limited_to": ["AI 项目", "热门仓库", "英文项目"],
-                "evidence_role": "implementation_evidence; inspect repository details before technical claims",
-                "known_limits": ["搜索受 GitHub 可访问性和速率限制影响", "stars 不等于质量"],
-            },
-            "academic_literature_ecology": {
-                "label": "开放学术文献与元数据生态",
-                "source_type": "academic_metadata_and_open_fulltext",
-                "candidate_tools": ["search_academic", "extract_web_page"],
-                "content_forms": ["论文元数据", "DOI", "摘要", "开放全文线索", "引用格式"],
-                "reveals": [
-                    "学术研究问题、方法、数据、引用网络和同行评议成果。",
-                    "需要严肃论证时的高权重证据入口。",
-                ],
-                "not_limited_to": ["英文论文", "开放全文", "期刊文章"],
-                "evidence_role": "scholarly_evidence; metadata-only hits are weaker than verified full text",
-                "known_limits": ["不绕过登录、验证码、付费墙或机构授权", "不同 provider 覆盖范围不同"],
-            },
-            "generic_web_ecology": {
-                "label": "开放网页与新闻博客生态",
-                "source_type": "open_web",
-                "candidate_tools": ["kr_web_search", "extract_web_page", "extract_dynamic_page"],
-                "content_forms": ["官网", "新闻", "博客", "文档", "报告页面", "网页文章"],
-                "reveals": [
-                    "广域发现、官方表述、新闻时间线、技术文档和跨站线索。",
-                    "当问题来源不确定时的低成本入口。",
-                ],
-                "not_limited_to": ["通用搜索摘要", "英文网页", "官方站点"],
-                "evidence_role": "broad_discovery; source authority and page extraction quality determine strength",
-                "known_limits": ["搜索引擎索引不完整", "摘要不能替代正文", "动态页面可能需要升级抽取"],
-            },
-        },
-    }
 
 
 def capability_atlas_manifest(
@@ -339,7 +173,7 @@ def capability_atlas_manifest(
     decision_log_summary: Dict[str, Any] | None = None,
     include_runtime_observations: bool = False,
 ) -> Dict[str, Any]:
-    """Describe observed source-ecology boundaries without hard-routing agents."""
+    """分离声明与带定位的运行记录；不据汇总计数自动宣称真实验收。"""
     ecologies = source_ecology_manifest()["ecologies"]
     runtime_observations = _capability_runtime_observations(decision_log_summary or {}) if include_runtime_observations else {}
     cards: Dict[str, Any] = {}
@@ -361,90 +195,65 @@ def capability_atlas_manifest(
             "agent_boundary": "cards advise source selection; they must not force a fixed tool sequence",
         },
         "cards": cards,
+        "global_observation": runtime_observations.get("global", {}),
+        "unmapped_observation": runtime_observations.get("unmapped", {}),
     }
 
 
 def _capability_runtime_observations(summary: Dict[str, Any]) -> Dict[str, Any]:
-    platform_to_ecology = {
-        "微信公众号": "wechat_public_article_ecology",
-        "wechat": "wechat_public_article_ecology",
-        "B站": "bilibili_video_ecology",
-        "bilibili": "bilibili_video_ecology",
-        "YouTube": "youtube_video_ecology",
-        "youtube": "youtube_video_ecology",
-        "知乎": "zhihu_discussion_ecology",
-        "zhihu": "zhihu_discussion_ecology",
-        "小红书": "xiaohongshu_experience_ecology",
-        "xiaohongshu": "xiaohongshu_experience_ecology",
-        "GitHub": "github_repository_ecology",
-        "github": "github_repository_ecology",
-        "academic": "academic_literature_ecology",
-        "学术": "academic_literature_ecology",
-        "web": "generic_web_ecology",
-        "unknown": "generic_web_ecology",
-    }
     observations: Dict[str, Any] = {}
     by_platform = summary.get("by_platform") or {}
     if isinstance(by_platform, dict):
         for platform, value in by_platform.items():
-            ecology_id = platform_to_ecology.get(str(platform), "generic_web_ecology")
+            ecology_id = ecology_for_platform(platform)
             item = observations.setdefault(ecology_id, {"platforms": {}, "failure_tags": {}, "latency": {}})
             item["platforms"][str(platform)] = value
     failure_tags = summary.get("failure_tags") or {}
-    if isinstance(failure_tags, dict):
-        tags = failure_tags.get("by_tag") if isinstance(failure_tags.get("by_tag"), dict) else failure_tags
-        for ecology_id in observations or {"generic_web_ecology": {}}:
-            observations.setdefault(ecology_id, {"platforms": {}, "failure_tags": {}, "latency": {}})["failure_tags"] = tags
+    if failure_tags:
+        observations["global"] = {"scope": "global", "failure_tags": failure_tags}
     latency = summary.get("latency_by_platform") or {}
     if isinstance(latency, dict):
         for platform, value in latency.items():
-            ecology_id = platform_to_ecology.get(str(platform), "generic_web_ecology")
+            ecology_id = ecology_for_platform(platform)
             observations.setdefault(ecology_id, {"platforms": {}, "failure_tags": {}, "latency": {}})["latency"][str(platform)] = value
+    # 复用现有账本摘要的最近事件；保留时间、身份与日志定位，不能把成功次数当验收。
+    for event in summary.get("recent_events") or []:
+        if not isinstance(event, dict):
+            continue
+        platform = str(event.get("platform") or "unknown")
+        trace = event.get("trace") if isinstance(event.get("trace"), dict) else {}
+        item = observations.setdefault(ecology_for_platform(platform), {"platforms": {}, "failure_tags": {}, "latency": {}})
+        item.setdefault("records", []).append({
+            "platform": platform, "observed_at": event.get("timestamp", ""),
+            "source_identity": {"code_generation": event.get("code_generation", ""),
+                                "runtime_generation": event.get("runtime_generation", "")},
+            "receipt_reference": {"log_path": summary.get("path", ""),
+                                  "timestamp": event.get("timestamp", ""),
+                                  "request_id": trace.get("request_id", "")},
+            "scope": {"strategy": event.get("strategy", ""), "tool": trace.get("tool_name", ""),
+                      "url": event.get("url", "")},
+            "success": event.get("success"), "failure_tags": event.get("failure_tags", []),
+            "verified": False, "verification_state": "runtime_record_not_acceptance",
+        })
     return observations
 
 
 def _capability_card(ecology_id: str, ecology: Dict[str, Any], runtime_observation: Dict[str, Any]) -> Dict[str, Any]:
-    stable_boundaries = {
-        "wechat_public_article_ecology": "公开索引可发现候选文章 URL、标题、摘要和来源线索；正文抽取成功后才可升级证据强度。",
-        "bilibili_video_ecology": "公开搜索可返回视频标题、URL、UP 主、简介和互动数据；详情、字幕、评论和多模态需按预算进入。",
-        "youtube_video_ecology": "公开视频搜索可返回标题、URL、频道、摘要和发布时间线索；字幕、评论和媒体分析需详情链路验证。",
-        "zhihu_discussion_ecology": "公开搜索可返回问题、回答、文章、作者和赞同线索；事实采信需要详情和跨源验证。",
-        "xiaohongshu_experience_ecology": "公开/登录态可用时搜索图文或视频笔记候选；稳定事实声明需要标注样本偏差和访问边界。",
-        "github_repository_ecology": "仓库搜索可返回 README 线索、语言、stars、更新时间和 issue 入口；技术结论需进入代码或文档详情。",
-        "academic_literature_ecology": "公开元数据可返回题名、作者、年份、DOI、摘要和开放全文线索；全文证据强于元数据。",
-        "generic_web_ecology": "开放网页搜索可发现官网、文档、新闻、博客和报告页面；摘要不能替代正文抽取。",
-    }
-    maximum_boundaries = {
-        "wechat_public_article_ecology": "在可访问样本上抽取正文、识别转载链和传播语境；开放索引覆盖不稳定。",
-        "bilibili_video_ecology": "在可访问样本上进入详情、字幕/转写、评论和视频理解后台任务。",
-        "youtube_video_ecology": "在可访问样本上进入字幕/转写、频道上下文、评论线索和长视频理解任务。",
-        "zhihu_discussion_ecology": "在登录/反爬状态允许时抽取正文、评论和作者上下文。",
-        "xiaohongshu_experience_ecology": "在登录/冷却状态允许时抽取图文详情、图片 OCR 和视觉线索。",
-        "github_repository_ecology": "可进一步检查 README、issue、release、目录结构和代码事实。",
-        "academic_literature_ecology": "可进入开放全文、引用线索和 provider 专项能力；不绕过付费墙或机构授权。",
-        "generic_web_ecology": "可升级到静态/动态正文抽取、跨站比对和官方来源追溯。",
-    }
-    query_archetypes = {
-        "wechat_public_article_ecology": ["机构解读", "行业长文", "转载传播", "个人专栏"],
-        "bilibili_video_ecology": ["教程演示", "项目复盘", "观点视频", "评论反馈"],
-        "youtube_video_ecology": ["engineering talk", "demo walkthrough", "conference lecture", "creator review"],
-        "zhihu_discussion_ecology": ["概念争议", "经验回答", "专业解释", "高赞反例"],
-        "xiaohongshu_experience_ecology": ["体验笔记", "图文场景", "生活实践", "消费反馈"],
-        "github_repository_ecology": ["implementation", "issue failure", "alternative project", "maintenance status"],
-        "academic_literature_ecology": ["benchmark", "method paper", "survey", "process feedback"],
-        "generic_web_ecology": ["official docs", "news timeline", "blog post", "public report"],
-    }
-    detail_tools = [tool for tool in ecology.get("candidate_tools", []) if tool in {"extract_web_page", "extract_dynamic_page", "get_content_detail", "get_task_status"}]
+    detail_tools = ecology.get("detail_tools", [])
     return {
         "id": ecology_id,
         "label": ecology.get("label"),
         "source_type": ecology.get("source_type"),
         "candidate_tools": ecology.get("candidate_tools", []),
-        "minimum_stable_boundary": stable_boundaries.get(ecology_id, "公开搜索或元数据发现候选来源；详情和强证据需另行验证。"),
-        "maximum_observed_boundary": maximum_boundaries.get(ecology_id, "可在成功样本上进入详情和交叉验证，但需要记录退化边界。"),
+        "declared_boundary": ecology.get("declared_boundary", ""),
+        "availability": {"declared": True, "ready": "not_probed", "verified": False},
+        "feature_policy": ecology.get("feature_policy", {}),
+        "workflows": ecology.get("workflows", []),
+        "minimum_stable_boundary": None,
+        "maximum_observed_boundary": None,
         "unique_evidence_role": ecology.get("evidence_role"),
         "content_forms": ecology.get("content_forms", []),
-        "query_archetypes": query_archetypes.get(ecology_id, ["broad", "domain_specific", "edge_case", "counterexample"]),
+        "query_archetypes": ecology.get("query_archetypes", []),
         "detail_affordances": detail_tools,
         "known_failure_modes": ecology.get("known_limits", []),
         "runtime_observation": runtime_observation,
@@ -474,11 +283,6 @@ def media_policy_manifest() -> Dict[str, Any]:
             "cleanup": "cleanup_expired_media_cache",
         },
         "model_configuration": {
-            "KR_BASIC_TEXT_MODELS": {
-                "models": list(policy.basic_text_models),
-                "required": False,
-                "default_behavior": "basic_text does not call a model unless explicitly configured",
-            },
             "KR_ASR_MODELS": {
                 "models": list(policy.asr_models),
                 "required": True,
@@ -569,7 +373,7 @@ def media_policy_manifest() -> Dict[str, Any]:
             "P0.1-P0.3 define policy and routing contracts; P0.4 adds the managed media cache and TTL cleanup.",
             "P0.5 validated Bilibili video_url reachability with an isolated spike; P1.2 productizes direct URL metadata/probe and P1.3 gates native_media on provider_downloadability.allow_native_media.",
             "Bilibili raw CDN direct URLs fall back to derived_text or sampled_media_with_text; native_media is reserved for provider-downloadable URLs within KR_NATIVE_AUTO_* limits.",
-            "Legacy KR_IMAGE_MODELS and KR_VIDEO_MODELS remain compatibility fallbacks in provider code but do not override approach defaults.",
+            "Model selections come only from runtime.model_roles; retired environment controls cannot override them.",
         ],
     }
 
@@ -578,12 +382,13 @@ def research_quality_contract_manifest() -> Dict[str, Any]:
     """Return the agent-readable contract for research quality checks."""
     return {
         "schema": "knowledgeradar-research-quality-contract/v1",
-        "status": "implemented_p1_questioner_and_p2_to_p5_governance",
+        "status": "diagnostic_research_guidance",
+        "authority": "advisory_only_agent_decides_sufficiency",
         "evidence_sidecar_schema": "knowledgeradar-research-evidence/v1",
         "quality_check_schema": "knowledgeradar-research-quality-check/v1",
         "questioner_checkpoints": {
             "schema_field": "questioner_checkpoints",
-            "required_when": "budget.selected_profile == 'deep' or quality_contract.requires_questioner == true",
+            "suggested_when": "Agent requests a deep review",
             "minimum_stages": ["after_local_archaeology", "after_first_external_round", "before_final_report"],
             "purpose": "过程级提问者检查研究是否足够，而不是固定工具路由或持续监控。",
         },
@@ -756,6 +561,12 @@ def browser_strategy_manifest() -> Dict[str, Any]:
         "default_base": "chrome_cdp_persistent_profile",
         "layers": {
             "base": [
+                {"id": "kr_browser_link", "role": "borrowed_browser_primary",
+                    "platforms": ["boss", "liepin_dynamic", "maimai_community", "zhihu"],
+                    "description": "KR浏览器连接器：本人日常Chrome＋Content Script＋单一Native Messaging；HTTP路径不依赖它。",
+                    "health_gate": "native protocol compatibility + explicit profile pairing; site authentication checked separately",
+                    "configuration_surface": [],
+                    "distribution": "store approval and extension identity pending; source edits do not install it"},
                 {
                     "id": "chrome_cdp_persistent_profile",
                     "role": "primary",
@@ -763,12 +574,6 @@ def browser_strategy_manifest() -> Dict[str, Any]:
                     "health_gate": "chrome_runtime + chrome_cdp_<platform>",
                     "configuration_surface": [
                         "KR_CHROME_EXE",
-                        "KR_XHS_CHROME_DEBUG_PORT",
-                        "KR_ZHIHU_CHROME_DEBUG_PORT",
-                        "KR_XHS_CHROME_USER_DATA_DIR",
-                        "KR_ZHIHU_CHROME_USER_DATA_DIR",
-                        "KR_XHS_CHROME_PROFILE_DIRECTORY",
-                        "KR_ZHIHU_CHROME_PROFILE_DIRECTORY",
                         "CHROME_PATH (compatibility alias)",
                     ],
                     "risk_level": "medium",
@@ -783,17 +588,10 @@ def browser_strategy_manifest() -> Dict[str, Any]:
                     "risk_level": "low",
                     "cost_level": "medium",
                 },
-                {
-                    "id": "camoufox_v2_isolated_profile",
-                    "role": "backup_candidate",
-                    "description": "Xiaohongshu-only isolated Camoufox v2 profile validated for login persistence and one-shot search; never default.",
-                    "profile_dir_default": "browser_data/xhs_camoufox_profile_v2",
-                    "launch_mode": "explicit Playwright DOM probe or manual recovery only",
-                    "health_gate": "camoufox_v2 health ok + isolated_account + low_frequency_probe",
-                    "configuration_surface": ["KR_CAMOUFOX_EXE", "KR_CAMOUFOX_PROFILE_DIR", "KR_CAMOUFOX_ENABLED"],
-                    "risk_level": "high",
-                    "cost_level": "medium",
-                },
+                {"id": "opencli_daily_browser", "role": "xiaohongshu_primary",
+                    "description": "借用日常Chrome扩展，不复制Cookie或管理用户进程。",
+                    "health_gate": "opencli_connection; authentication requires separate UI probe",
+                    "configuration_surface": ["KR_XHS_OPENCLI_ROOT", "KR_XHS_OPENCLI_CONTEXT_ID", "KR_XHS_OPENCLI_ADAPTER_SHA256"]},
             ],
             "automation": [
                 {
@@ -809,20 +607,6 @@ def browser_strategy_manifest() -> Dict[str, Any]:
                     "description": "Read-only current page inspection and platform health diagnosis; not a search fallback.",
                     "risk_level": "medium",
                     "cost_level": "low",
-                },
-                {
-                    "id": "scrapling_cdp",
-                    "role": "platform_specific",
-                    "description": "Keep inside Xiaohongshu adapter; do not promote as global default.",
-                    "risk_level": "high",
-                    "cost_level": "medium",
-                },
-                {
-                    "id": "nodriver_experimental",
-                    "role": "diagnostic_read_only_candidate",
-                    "description": "Python/CDP current-page inspector candidate; not a search fallback or mainline framework.",
-                    "risk_level": "high",
-                    "cost_level": "medium",
                 },
             ],
             "protocol": [
@@ -840,7 +624,7 @@ def browser_strategy_manifest() -> Dict[str, Any]:
             ],
         },
         "selection_rules": [
-            "Prefer chrome_cdp_persistent_profile for logged-in platform adapters.",
+            "小红书与微信借用日常Chrome的官方OpenCLI；知乎与BOSS借用KR Browser Link。其余来源按适配器合同，不能泛称全部CDP。",
             "Use KR_CHROME_EXE as the canonical Google Chrome override; Windows App Paths and stable install paths are checked when process environment variables are absent, and Edge is never an implicit fallback.",
             "Use Playwright for ordinary dynamic open-web extraction.",
             "Use raw CDP when platform adapters need profile/session/tab control.",
@@ -853,7 +637,7 @@ def manual_interaction_manifest() -> Dict[str, Any]:
     """Describe the cross-platform human-in-the-loop recovery contract."""
     return {
         "schema": "knowledgeradar-manual-interaction/v1",
-        "principle": "Only explicit login, QR, captcha, security-verification, or account-risk evidence may trigger NEEDS_INTERACTION.",
+        "principle": "默认后台最小化；明确扫码/验证码等人工交互信号，或已观察到最小化造成内容缺失/可见性阻断时才前置；解除后回后台。账号风险停止并交人工。",
         "request_payload": "runtime.browser_sessions.manual_action_request_from_session",
         "entrypoints": {
             "probe": "health_check(mode='probe_browser_auth:<platform>')",
@@ -869,8 +653,7 @@ def manual_interaction_manifest() -> Dict[str, Any]:
             "maimai",
             "cnki",
             "vip_oa",
-            "coaj",
-            "ucdrs",
+                        "ucdrs",
             "calis_thesis",
             "nstrs",
             "pubscholar",
@@ -886,7 +669,7 @@ def manual_interaction_manifest() -> Dict[str, Any]:
         "agent_guidance": [
             "Surface pending_interactions to the user and do not continue retry loops blindly.",
             "Run probe_browser_auth before opening an academic/login browser; request_browser_interaction is only for proven user action.",
-            "小红书已绑定 profile 的人工窗口会在扫码后以 CDP 事件唤醒、认证探针确认并自动收口；complete mode 保留给诊断或其他平台。",
+            "小红书扫码等待最多300秒，释放任务worker；回读任务时确认登录后按阶段续跑。风控须人工确认解除。",
             "After a non-Xiaohongshu browser action, call the complete mode and rerun the failed probe/tool.",
             "Treat NEEDS_INTERACTION as actionable, EXPECTED_DEGRADED as non-blocking product boundary, and FAIL as an unexpected defect.",
         ],
@@ -907,10 +690,10 @@ def sidecar_governance_manifest() -> Dict[str, Any]:
             },
             "gh_cli": {
                 "priority": "high",
-                "admission_target": "developer_research_backup",
-                "integration_mode": "cli_sidecar",
+                "admission_target": "optional_github_authenticated_transport",
+                "integration_mode": "readonly_api_transport",
                 "risk_level": "low",
-                "strategy": "gh_cli_sidecar_backup_candidate",
+                "strategy": "github_readonly_api",
                 "health_check": "checks.gh_cli_sidecar",
             },
             "twitter_cli": {
@@ -956,10 +739,10 @@ def gh_cli_admission_record(health: Dict[str, Any] | None = None) -> Dict[str, A
     return {
         "schema": "knowledgeradar-candidate-admission/v1",
         "candidate_id": "gh_cli",
-        "candidate_type": "cli_sidecar",
+        "candidate_type": "readonly_api_transport",
         "platform": "GitHub",
         "risk_level": "low",
-        "admission_state": "admitted_as_backup_candidate" if status == "ok" else "blocked_or_degraded",
+        "admission_state": "configured_not_business_verified" if status == "ok" else "blocked_or_degraded",
         "integration_mode": "search_github_repositories",
         "actual_mcp_tool": True,
         "tool_name": "search_github_repositories",
@@ -983,25 +766,24 @@ def gh_cli_admission_record(health: Dict[str, Any] | None = None) -> Dict[str, A
             "raw.updated_at",
         ],
         "failure_codes": [
-            "LOGIN_REQUIRED",
-            "TIMEOUT",
-            "SCHEMA_CHANGED",
-            "PROVIDER_UNAVAILABLE",
-            "DEPENDENCY_CONFLICT",
-            "UNKNOWN",
+            "AUTH_INVALID", "AUTH_REQUIRED", "AUTH_CONTEXT_CHANGED",
+            "PERMISSION_DENIED", "RATE_LIMITED", "NOT_FOUND_OR_INACCESSIBLE",
+            "INVALID_QUERY_OR_OBJECT", "LEGAL_RESTRICTION", "TIMEOUT",
+            "NETWORK_ERROR", "SCHEMA_CHANGED", "PROVIDER_DISABLED",
         ],
         "admission_gates": [
-            "cli_available",
-            "auth_status_redacted",
+            "configured_transport_available",
+            "request_identity_frozen",
             "json_schema_normalized",
-            "degradation_breaker_present",
+            "shared_cooldown_and_leases",
             "no_plaintext_token_or_cookie_logs",
             "actual_mcp_tool_registered",
         ],
-        "kill_switch": "KR_GH_CLI_ENABLED=false",
-        "rollback": "disable search_github_repositories or return EXPECTED_DEGRADED from the tool while preserving generic web search",
+        "kill_switch": "KR_GITHUB_ENABLED=false (source); KR_GH_CLI_ENABLED=false (gh transport only)",
+        "rollback": "KR_GITHUB_ENABLED=false disables GitHub search/detail without changing other sources",
         "notes": [
-            "gh CLI is the low-risk L7 sidecar admission template",
+            "gh is an optional authenticated transport; public REST requires no gh installation",
+            "configuration health is not account or business validation",
             "This record does not admit high-risk browser/API candidates",
         ],
     }
@@ -1022,7 +804,7 @@ def route_policy_matrix() -> Dict[str, Any]:
             },
             "recruitment": {
                 "default_route": "web_search",
-                "preferred": ["official_or_authorized_api", "aggregated_sources", "Tavily/SearXNG discovery"],
+                "preferred": ["official_or_authorized_api", "aggregated_sources", "AnySearch/DDGS discovery"],
                 "avoid_by_default": ["Boss Zhipin specialized crawler"],
                 "crawler_gate": "Requires robots/terms/privacy/frequency review and no personal-data harvesting.",
             },
@@ -1038,7 +820,7 @@ def route_policy_matrix() -> Dict[str, Any]:
             },
             "generic_web": {
                 "default_route": "web_search_then_generic_web_detail",
-                "preferred": ["Tavily", "AnySearch backup", "SearXNG local fallback", "Jina/trafilatura/readability/static fallback"],
+                "preferred": ["Tavily", "AnySearch backup", "Jina/trafilatura/readability/static fallback"],
                 "crawler_gate": "Use dynamic rendering only when static extraction is insufficient.",
             },
         },
@@ -1095,6 +877,7 @@ def platform_capabilities_dict(target_registry: PlatformRegistry = registry) -> 
 
 
 def platform_manifest(platform: str, cap: Any) -> Dict[str, Any]:
+    from runtime.comments_contract import platform_comment_scope
     defaults = _manifest_defaults(platform)
     return {
         "schema": "knowledgeradar-platform-manifest/v1",
@@ -1114,11 +897,32 @@ def platform_manifest(platform: str, cap: Any) -> Dict[str, Any]:
         "configuration_surface": defaults["configuration_surface"],
         "governance": defaults.get("governance", {}),
         "notes": cap.notes,
+        "comment_contract": ({"schema":"knowledgeradar-comments/v2",
+            **platform_comment_scope(platform),
+            "request_schema":"get_content_detail.comments", "collection_is_not_live_acceptance":True,
+            "coverage":"requested_window_and_source_exhaustion_are_separate",
+            "media":"observed_attachments_with_public_download_and_explicit_ocr_asr",
+            "view":"reversible_lexical_diversity; original_fixed_version_retained"} if cap.comments else None),
+        "browser_resource_contract": ({"ownership":"borrowed_daily_profile",
+            "presentation":"dedicated_work_window; never_append_to_user_window",
+            "normal_work_focus":False,"manual_interaction":"explicit_handoff",
+            "cleanup":"owned_tabs_only; user_takeover_relinquishes; no_browser_process_close",
+            "live_acceptance":"not_inferred_from_capability_flag"}
+            if platform in {'知乎','小红书','微信','BOSS直聘'} else None),
     }
 
 
 def _manifest_defaults(platform: str) -> Dict[str, Any]:
     data = {
+        "GitHub":{
+            "default_route":"official_readonly_api", "risk_level":"medium",
+            "transport":["gh_api","rest_api"],"health_layers":["auth","rate_limit","search","detail","comments"],
+            "configuration_surface":["KR_GITHUB_TRANSPORT","GH_TOKEN","GITHUB_TOKEN"]},
+        "微信":{
+            "default_route":"public_http_with_explicit_opencli", "risk_level":"high",
+            "transport":["public_http","opencli","shared_media"],
+            "health_layers":["public_search","weread_session","article_body","reader_comments","media"],
+            "configuration_surface":["opencli_daily_profile_binding","wechat_read_options"]},
         "B站": {
             "default_route": "platform_adapter",
             "risk_level": "medium",
@@ -1127,42 +931,24 @@ def _manifest_defaults(platform: str) -> Dict[str, Any]:
             "configuration_surface": ["BILI_HEADERS", "task_queue", "transcript_pipeline"],
         },
         "知乎": {
-            "default_route": "platform_adapter_when_login_healthy",
+            "default_route": "browser_link_native",
             "risk_level": "high",
-            "transport": ["signed_api", "chrome_cdp"],
+            "transport": ["content_script_native_messaging", "staged_shared_media"],
             "health_layers": ["login", "search", "detail"],
-            "configuration_surface": ["ZHIHU_CHROME_DEBUG_PORT", "persistent_profile", "cookie_health"],
+            "configuration_surface": ["browser_link_connection", "borrowed_profile_session"],
         },
         "小红书": {
-            "default_route": "platform_adapter_when_login_healthy",
+            "default_route": "opencli_daily_browser",
             "risk_level": "high",
-            "transport": [
-                "chrome_cdp",
-                "scrapling_cdp_primary",
-                "camoufox_v2_backup_candidate",
-                "bridge_fallback_diagnostic_only",
-                "force_probe_diagnostic",
-                "raw_cdp_diagnostic",
-                "nodriver_diagnostic_candidate",
-                "tikhub_paid_break_glass_limited",
-            ],
-            "health_layers": ["login", "search", "detail", "multimodal"],
-            "configuration_surface": [
-                "XHS_CHROME_DEBUG_PORT",
-                "XHS_BRIDGE_PATH",
-                "persistent_profile",
-                "KR_CAMOUFOX_EXE",
-                "KR_CAMOUFOX_PROFILE_DIR",
-                "KR_XHS_TIKHUB_DAILY_SEARCH_LIMIT",
-                "KR_XHS_TIKHUB_DAILY_DETAIL_LIMIT",
-            ],
-            "governance": {
-                "scheduled_patrol": False,
-                "xhs_max_concurrent_operations_p0": 1,
-                "selector_alert_threshold": "3 zero-hit selector samples in the latest 5 detail calls",
-                "search_detail_daily_hard_limit": "none; existing rate/cooldown gates apply",
-                "tikhub_paid_daily_hard_limit": "search=1, detail=1; failed paid calls count",
-            },
+            "transport": ["opencli", "tikhub_paid_missing_stages_only"],
+            "health_layers": ["extension_connection", "login", "search", "detail", "multimodal"],
+            "configuration_surface": ["KR_XHS_OPENCLI_ROOT", "KR_XHS_OPENCLI_CONTEXT_ID",
+                "KR_XHS_OPENCLI_ADAPTER_SHA256", "KR_PAID_POLICY_PATH"],
+            "governance": {"single_account": True, "browser_site_concurrency": 1,
+                "stop_on_risk": True, "automatic_browser_retry": False,
+                "paid_default": "independent_provider_quota; no_shared_global_budget",
+                "media_coverage": "full_observed_manifest; all_requested_images_or_explicit_gaps; validated_video",
+                "comments_coverage": "bounded_top_level_with_embedded_replies"},
         },
         "YouTube": {
             "default_route": "official_api",
@@ -1229,10 +1015,10 @@ def build_capabilities(
     strategy_tree_registry = build_strategy_tree_bundle(include_nodes=True)
     strategy_tree_consistency = validate_strategy_tree_bundle(strategy_tree_registry, actual_tools=ACTUAL_MCP_TOOLS)
     tool_surface = build_tool_surface()
-    source_ecologies = source_ecology_manifest()
+    source_ecologies = joined_catalog(target_registry)
     research_quality = research_quality_contract_manifest()
     validation_semantics = validation_semantics_manifest(status, academic_status)
-    return {
+    result = {
         "schema_version": "knowledgeradar-capabilities/v1",
         "server_run_id": SERVER_RUN_ID,
         "platforms": platform_capabilities_dict(target_registry),
@@ -1254,8 +1040,8 @@ def build_capabilities(
         "research_quality_contract": research_quality,
         "runtime_environment": runtime_environment_manifest(),
         "project_governance": project_governance_manifest(),
-        "architecture_standard": architecture_standard_summary(tool_surface=tool_surface),
-        "knowledge_asset_interface": knowledge_asset_schema_summary(),
+        "architecture_standard": {"authority":"historical_design_only","verification":"not_runtime_proof"},
+        "knowledge_asset_interface": {"authority":"fixed_assets_and_read_knowledge","legacy_schema":"historical_only"},
         "openclaw_native_adapter": openclaw_native_adapter_summary(),
         "candidate_admission_templates": {
             "gh_cli": gh_cli_admission_record(),
@@ -1318,7 +1104,6 @@ def build_capabilities(
                     "TAVILY_API_KEY",
                     "BRAVE_SEARCH_API_KEY",
                     "EXA_API_KEY",
-                    "SEARXNG_BASE_URL",
                     "ANYSEARCH_SEARCH_ENDPOINT",
                     "KR_HOST_SEARCH_CARD_DIR",
                     "KR_HOST_SEARCH_ENDPOINT",
@@ -1328,8 +1113,7 @@ def build_capabilities(
             "search_github_repositories": {
                 "category": "collector.external_sidecar",
                 "platform": "GitHub",
-                "description": "搜索 GitHub 仓库，返回仓库标题、URL、简介、语言、stars、更新时间和可用的 README/issue 线索；受 GitHub 可访问性、认证状态和速率限制影响。",
-                "source_ecologies": ["github_repository_ecology"],
+                "description": "搜索公开 GitHub 仓库，保留原查询与上游顺序，支持 page/refresh；通过 get_content_detail(github=...) 读取固定提交源码、README、目录和有界 Issue/PR 评论。",
                 "sidecar": "gh_cli",
                 "actual_mcp_tool": True,
                 "external_signature_stable": True,
@@ -1340,50 +1124,31 @@ def build_capabilities(
                 "category": "collector.platform",
                 "platform": "YouTube",
                 "description": "搜索 YouTube 公开视频，返回标题、URL、频道、摘要、发布时间和平台元数据；需要 API 配置，不访问未公开、会员或地区受限内容。",
-                "source_ecologies": ["youtube_video_ecology"],
                 "actual_mcp_tool": True,
                 "external_signature_stable": True,
                 "health_check": "checks.youtube",
                 "deprecated_alias": "kr_web_search(provider='youtube')",
             },
             "search_wechat_articles": {
-                "category": "collector.web_search",
-                "platform": "微信公众号",
-                "description": "搜索公开微信公众号文章候选，返回 URL、标题、摘要、发布时间线索和来源线索；L1 查询模板发现，不使用登录态、Cookie、后台接口、Sogou 解析器或第三方数据代理。",
-                "source_ecologies": ["wechat_public_article_ecology"],
-                "actual_mcp_tool": True,
-                "integration_level": "L1_query_templates",
-                "strategy_tree": "web_search",
-                "implementation_route": "generic web search provider auto mode with mp.weixin.qq.com query templates",
-                "detail_followup": {
-                    "primary_tool": "extract_web_page",
-                    "fallback_tool": "extract_dynamic_page",
-                    "get_content_detail_platform_strategy": False,
-                },
-                "configuration_surface": [
-                    "KR_WEB_SEARCH_PROVIDERS",
-                    "TAVILY_API_KEY",
-                    "BRAVE_SEARCH_API_KEY",
-                    "EXA_API_KEY",
-                    "SEARXNG_BASE_URL",
-                    "ANYSEARCH_SEARCH_ENDPOINT",
-                    "KR_HOST_SEARCH_CARD_DIR",
-                    "KR_HOST_SEARCH_ENDPOINT",
-                ],
-                "cache_policy": "inherits search cache under platform key wechat_articles",
-                "cost_profile": "low to medium; one call may issue multiple configured web search requests and does not fetch article bodies",
-                "health_check": "generic web search provider status via health_check/get_capabilities",
-                "external_signature_stable": True,
+                "category":"collector.platform", "platform":"微信",
+                "description":"公开公众号文章发现：公共索引与微信读书搜一搜并列；候选交接get_content_detail，账号仅提示，验证不自动绕行。",
+                "actual_mcp_tool":True,
+                "integration_level":"wechat_readonly_v1", "strategy_tree":"web_search",
+                "detail_followup":{"primary_tool":"get_content_detail","get_content_detail_platform_strategy":True},
+                "cache_policy":"public configuration_generation and authority_scope; borrowed-account results are not cached across calls",
+                "cost_profile":"bounded discovery only; article/OCR/ASR requested separately",
+                "health_check":"public search status; OpenCLI optional and explicit",
+                "external_signature_stable":False,
             },
             "search_academic": {
                 "category": "collector.academic",
                 "providers": [*academic_profiles.keys(), "auto"],
                 "provider_capability_profiles": academic_profiles,
                 "provider_status": academic_status,
-                "default_order": "auto uses Citation Import first for local citation files/text. For Chinese queries it then tries confirmed broad open full-text providers nssd -> chinaxiv -> hanspub -> oajrc -> sciopen -> pubscholar -> sciengine -> vip_oa before OpenAlex -> Crossref -> Semantic Scholar -> Baidu Qianfan Scholar -> SerpAPI Scholar. Explicit providers ivy_publisher and hkjo are available for narrower corpus coverage; socolar is a logged abstract/discovery supplement with external landing URLs; vip_oa uses the logged CQVIP main-site intelligent-reading route and extracts PDF text from the PDF.js preview file without invoking download controls; oalib is discovery-only because returned download landing pages are not verified PDF bytes.",
+                "default_order": "auto: PubScholar + OpenAlex for Chinese, OpenAlex for other queries; always complete matching domain/regional sources before stopping by count. DOI: Crossref then Unpaywall unless a readable fulltext link exists. Citation files: local import only. Optional Semantic Scholar/CORE/SerpAPI supplements respect auth, rate and budget. Wanfang requires explicit authorization. ar5iv is a read fallback, not a keyword-search wave.",
                 "profile_schema": "knowledgeradar-academic-provider-profiles/v1",
                 "result_schema_extensions": {
-                    "source_database": "normalized database/provider id such as nssd, chinaxiv, hanspub, oajrc, sciopen, openalex, baidu_scholar, cnki, wanfang",
+                    "source_database": "normalized database/provider id such as nssd, chinaxiv, pubscholar, sciengine, openalex, cnki, wanfang",
                     "access_mode": "open_full_text | public_api | official_api | serp_metadata | authorized_browser | document_delivery | registered_online_view | anonymous_open_access_pdf_viewer | logged_abstract_discovery | logged_online_reading_pdf_viewer | user_import",
                     "full_text_status": "metadata_only | direct_pdf | pdf_text_extractable | open_landing_page | open_access_article_detail | open_pdf_viewer_candidate | logged_online_reading_pdf_text_confirmed | abstract_with_external_landing_url | oa_available | licensed_visible | user_supplied | unavailable",
                     "provider_confidence": "0.0-1.0 provider-level confidence before cross-source verification",
@@ -1396,8 +1161,8 @@ def build_capabilities(
                 "configuration_surface": [
                     "OPENALEX_API_KEY",
                     "SEMANTIC_SCHOLAR_API_KEY",
-                    "BAIDU_QIANFAN_BEARER_TOKEN",
-                    "KR_ACADEMIC_BAIDU_DAILY_LIMIT",
+                    "WFDATA_APP_KEY",
+                    "WFDATA_BASE_URL",
                     "SERPAPI_API_KEY",
                     "KR_ACADEMIC_ENABLE_SERPAPI",
                     "KR_ACADEMIC_SERPAPI_DAILY_LIMIT",
@@ -1405,8 +1170,8 @@ def build_capabilities(
                     "KR_ACADEMIC_IMPORT_MAX_BYTES",
                 ],
                 "open_full_text_policy": "Only public OA/full-text pages that expose accessible PDF/full-text bytes are auto-fetched. Browser-rendered public platforms such as PubScholar and SciEngine may be accessed through an anonymous Playwright path when the page itself exposes open/free-access filtering or PDF controls and text-extractable PDF file URLs. Professional licensed sources, token-gated APIs, anti-automation landing pages, unresolved WAF-sensitive routes, and document-delivery workflows are declared as degraded/unavailable unless the user supplies an authorized export or a later explicit browser probe proves stable direct full-text extraction.",
-                "quota_policy": "Citation Import is local and quota-free; OpenAlex uses a free API key path; Semantic Scholar without academic/company email may run unauthenticated and degrade on 429; Baidu Qianfan Scholar free trial is treated as 50/day unless authorized; SerpAPI Free Plan is scarce (default 8/day, 250/month).",
-                "legal_boundary": "Citation Import only parses user-supplied citation exports/text. Baidu Scholar is accessed only via the official Qianfan API. SerpAPI returns Google Scholar SERP metadata. KR may fetch public OA full-text links exposed by open platforms such as NSSD/ChinaXiv/Hans/OAJRC/SciOpen and explicit providers such as PubScholar/SciEngine/HKJO/IVY. It does not bypass login, captcha, payment, document delivery, token gates, WAF, or institutional authorization for CNKI/Wanfang/VIP/CALIS/NSTRS-style professional databases.",
+                "quota_policy": "Citation Import is local and quota-free; Semantic Scholar auto supplement requires key, cross-process pacing and server cooldown; CORE/SerpAPI retain their quota gates. Wanfang requires its own authorized app and quota.",
+                "legal_boundary": "Citation imports are user-supplied. Wanfang uses its current official API with application authorization. Public OA pages may be read where permitted; login, captcha, payment, WAF and institutional gates are never bypassed. NSTRS full reports require approved professional registration and online viewing only.",
                 "coverage_reporting": "Responses expose source_database/access_mode/full_text_status so reports can say which databases were searched, which were unavailable, and which results are only open metadata.",
                 "external_signature_stable": True,
             },
@@ -1492,11 +1257,11 @@ def build_capabilities(
         "asr_benchmark": {
             "schema": "knowledgeradar-asr-benchmark/v2",
             "status": "implemented_p2_2_real_run_local_audio_manifest",
-            "tool": "tools/asr_benchmark.py",
-            "lifecycle_probe_tool": "tools/asr_lifecycle_probe.py --summary",
-            "engine_install_probe_tool": "tools/asr_engine_install_probe.py",
+            "tool": "scripts/kr_optional_media.py",
+            "lifecycle_probe_tool": "get_capabilities:runtime_environment.asr_lifecycle",
+            "engine_install_probe_tool": "scripts/kr_optional_media.py plan --component qwen3-asr-0.6b",
             "real_run_command":"scripts/kr_optional_media.py submit --component qwen3-asr-0.6b --payload-file <approved-input.json>",
-            "selected_default":"local:qwen3-asr/0.6b-hf",
+            "selected_default":"local:qwen3-asr/0.6b-onnx-int8",
             "quality_boundary":"真实样本、人工金标和历史模型评测分别记录；旧结果不代表新模型质量",
         },
         "detail_response": {
@@ -1521,3 +1286,7 @@ def build_capabilities(
             "analysis_tool": "analyze_decision_logs",
         },
     }
+    for tool_name, tool in result['tools'].items():
+        tool['source_ecologies'] = [key for key, item in source_ecologies['ecologies'].items()
+                                   if tool_name in item['candidate_tools']]
+    return result

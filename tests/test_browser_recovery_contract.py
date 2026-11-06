@@ -2,16 +2,12 @@
 from runtime import chrome_manager as chrome, profile_registry as registry
 
 
-def test_explicit_boss_recovery_uses_registered_profile_even_when_blocked(monkeypatch, tmp_path):
-    expected = str(tmp_path / "registered")
-    monkeypatch.setattr(chrome, "raw_registry_for_platform", lambda *_: {"profiles": [
-        {"profile_id": "boss-personal", "profile_dir": expected, "main_chain_allowed": True}]})
-    monkeypatch.setattr(chrome, "select_main_chain_profile", lambda *_: {"status": "blocked", "profile_id": "boss-personal"})
-    monkeypatch.setattr(chrome, "BOSS_CHROME_USER_DATA_DIR", "")
-    monkeypatch.delenv("KR_BOSS_CHROME_USER_DATA_DIR", raising=False)
-    assert chrome._managed_chrome_profile_dir("boss", target_profile_id="boss-personal") == expected
-    assert chrome._managed_chrome_profile_dir("boss") == expected
-    assert chrome._managed_chrome_profile_dir("boss", target_profile_id="missing") == ""
+def test_explicit_liepin_recovery_uses_registered_profile_even_when_blocked(monkeypatch,tmp_path):
+    # 迁移后旧registry不可重新启用自有CDP；认证在日常Chrome完成。
+    monkeypatch.setattr(chrome,'raw_registry_for_platform',lambda *_:{'profiles':[{'profile_id':'old','profile_dir':str(tmp_path),'main_chain_allowed':True}]})
+    assert chrome._managed_chrome_profile_dir('liepin',target_profile_id='old')==''
+    assert not chrome._ensure_chrome_debugging('liepin')
+    assert 'liepin' not in chrome.managed_browser_platforms()
 
 
 def test_explicit_auth_failure_is_actionable_in_single_account_projection(monkeypatch, tmp_path):

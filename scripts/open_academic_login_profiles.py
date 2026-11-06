@@ -26,10 +26,6 @@ LOGIN_TARGETS: dict[str, dict[str, str]] = {
         "url": "https://www.cqvip.com/search?k=ai",
         "note": "VIP/CQVIP metadata is public; intelligent-reading preview needs an authorized official-site session probe.",
     },
-    "coaj": {
-        "url": "https://www.coaj.cn/login",
-        "note": "COAJ public metadata works; authenticated detail/PDF route is unconfirmed.",
-    },
     "ucdrs": {
         "url": "http://www.ucdrs.superlib.net/",
         "note": "UCDRS is document delivery, not confirmed unattended direct full text.",
@@ -44,11 +40,7 @@ LOGIN_TARGETS: dict[str, dict[str, str]] = {
     },
     "pubscholar": {
         "url": "https://pubscholar.cn/",
-        "note": "PubScholar is a discovery/full-text aggregator candidate; stable PDF extraction is unconfirmed.",
-    },
-    "socolar": {
-        "url": "https://www.socolar.com/",
-        "note": "Socolar openAccess API returned a not-logged-in response; validate with an authorized profile before promotion.",
+        "note": "PubScholar uses an anonymous browser-backed search; manual login is not required for public discovery.",
     },
 }
 
@@ -100,7 +92,6 @@ def main() -> int:
 
     for platform in platforms:
         profile_dir = _profile_dir(platform)
-        profile_dir.mkdir(parents=True, exist_ok=True)
         plan = planned_interaction(platform)
         print(f"[{platform}] {LOGIN_TARGETS[platform]['url']}")
         print(f"  profile_dir={profile_dir}")

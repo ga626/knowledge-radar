@@ -75,6 +75,14 @@ def result_affordance(platform: str, item: Dict[str, Any]) -> Dict[str, Any]:
             capabilities.extend(["transcript", "video_analysis"])
             expensive.extend(["auto_multimodal", "enable_deep_analysis"])
         expensive.append("enable_comment_filtering")
+    elif _is_wechat_article(platform_name, host):
+        modalities = ['text','image','audio','video']
+        capabilities = ['metadata','full_text','image_ocr','attachment_links']
+        expensive = ['auto_multimodal','enable_deep_analysis']
+    elif host in {"maimai.cn", "www.v2ex.com", "v2ex.com", "hk.v2ex.com"}:
+        modalities = ["text", "comments"]
+        capabilities = ["metadata", "full_text", "comments"]
+        expensive = ["enable_comment_filtering"]
     elif has_http_url:
         capabilities = ["metadata", "full_text"]
 
@@ -199,14 +207,18 @@ def _is_wechat_article(platform: str, host: str) -> bool:
 
 def _is_recruitment_detail_platform(platform: str, host: str) -> bool:
     text = f"{platform} {host}".lower()
-    return "猎聘" in text or "liepin" in text or "boss直聘" in text or "zhipin" in text
+    return "猎聘" in text or "liepin" in text or "boss直聘" in text or "zhipin" in text or "智联" in text or "zhaopin.com" in text
 
 
 def _is_supported_detail_platform(platform: str, host: str, url: str, content_type: str) -> bool:
+    from collectors.platform.wechat import matches_url
     return (
         _is_video_platform(platform, host, content_type)
         or _is_xiaohongshu(platform, host)
         or _is_zhihu(platform, host)
+        or (host == 'mp.weixin.qq.com' and matches_url(url))
+        or (host in {'www.v2ex.com', 'v2ex.com', 'hk.v2ex.com'} and bool(re.search(r'/t/\d+', url)))
+        or ((host == "maimai.cn" or host.endswith(".maimai.cn")) and any(p in url for p in ("/article/detail", "/web/gossip_detail", "/content/", "/community/feed-detail/", "/community/gossip-detail/")))
         or _is_recruitment_detail_platform(platform, host)
         or _looks_like_bilibili_id(url)
     )

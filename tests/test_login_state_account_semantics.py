@@ -1,10 +1,12 @@
 from __future__ import annotations
+from conftest import patch_native
 
 import json
+import pytest
 import time
 from pathlib import Path
 
-from collectors.platform import boss, liepin, maimai, zhilian
+from collectors.platform import liepin
 from collectors.platform import xiaohongshu as xhs
 from kr_core.collection import CollectionTrace, format_search_error
 from runtime.browser_sessions import BrowserSessionStore
@@ -115,11 +117,11 @@ def test_manual_browser_constants_enter_runtime_without_registry(monkeypatch, tm
 
     from runtime import chrome_manager
 
-    assert "socolar" in chrome_manager.managed_browser_platforms()
-    assert chrome_manager._chrome_debug_port("socolar") == "12747"
-    assert chrome_manager._startup_url_for_platform("socolar") == "https://www.socolar.com/"
-    profile_dir = Path(chrome_manager._managed_chrome_profile_dir("socolar"))
-    assert profile_dir.parts[-4:] == ("browser_data", "profiles", "socolar", "account_a")
+    assert "socolar" not in chrome_manager.managed_browser_platforms()
+    calls=[]
+    monkeypatch.setattr(chrome_manager,"_ensure_chrome_debugging",lambda *a,**k:calls.append(a))
+    result=chrome_manager.probe_browser_auth("socolar")
+    assert result["status"]=="error" and result["auth_state"]=="unsupported_platform" and not calls
 
 
 def test_manual_browser_interaction_launches_visible_managed_chrome(monkeypatch, tmp_path: Path) -> None:
@@ -218,47 +220,8 @@ def test_complete_manual_browser_interaction_records_auto_recovered_probe(monkey
     assert any(call[1].get("event") == "manual_state_auto_recovered" for call in transitions)
 
 
-def test_complete_xhs_interaction_recovers_only_the_verified_profile_account_state(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    transitions = []
-    account_events = []
-    monkeypatch.setattr(chrome_manager, "complete_user_login", lambda *args, **kwargs: {"status": "ok"})
-    monkeypatch.setattr(chrome_manager, "transition_browser_session", lambda *args, **kwargs: transitions.append((args, kwargs)) or {})
-    monkeypatch.setattr(
-        chrome_manager,
-        "record_xhs_account_event",
-        lambda profile_id, reason, **kwargs: account_events.append((profile_id, reason, kwargs)) or {"status": "ok", "profile_id": profile_id, "state": "healthy"},
-    )
-
-    result = chrome_manager.complete_browser_interaction(
-        "xhs",
-        {"status": "ok", "manual_action_required": False, "platform_state": "authenticated"},
-        profile_id="xhs-b",
-        profile_dir="D:/profiles/xhs/b",
-    )
-
-    assert result["account_pool_recovery"] == {"status": "ok", "profile_id": "xhs-b", "state": "healthy"}
-    assert account_events == [("xhs-b", "OK", {"last_tool": "complete_browser_interaction", "notes": ["authenticated_probe=true", "profile_bound=true"]})]
-    assert transitions
 
 
-def test_complete_xhs_interaction_does_not_clear_account_state_without_successful_probe(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    account_events = []
-    monkeypatch.setattr(chrome_manager, "complete_user_login", lambda *args, **kwargs: {"status": "ok"})
-    monkeypatch.setattr(chrome_manager, "transition_browser_session", lambda *args, **kwargs: {})
-    monkeypatch.setattr(chrome_manager, "record_xhs_account_event", lambda *args, **kwargs: account_events.append((args, kwargs)) or {})
-
-    result = chrome_manager.complete_browser_interaction(
-        "xhs",
-        {"status": "needs_interaction", "manual_action_required": True},
-        profile_id="xhs-b",
-    )
-
-    assert "account_pool_recovery" not in result
-    assert account_events == []
 
 
 def test_browser_auth_probe_does_not_request_foreground_when_authenticated(monkeypatch, tmp_path: Path) -> None:
@@ -294,242 +257,26 @@ def test_browser_auth_probe_reports_needs_interaction_without_opening_browser(mo
     assert result["recommended_action"] == "health_check(mode='request_browser_interaction:vip_oa:manual_login')"
 
 
-def test_browser_auth_probe_supports_local_storage_login_state(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    monkeypatch.setattr(chrome_manager, "managed_browser_platforms", lambda: ("socolar",))
-    monkeypatch.setattr(chrome_manager, "_ensure_chrome_debugging", lambda platform, visible=False, detach=False: True)
-    monkeypatch.setattr(
-        chrome_manager,
-        "_read_browser_storage_names",
-        lambda platform: {"local_storage": ["token", "refreshToken"], "session_storage": []},
-    )
-    monkeypatch.setattr(chrome_manager, "finish_chrome_automation", lambda platform, reason="": None)
-
-    result = chrome_manager.probe_browser_auth("socolar")
-
-    assert result["status"] == "ok"
-    assert result["auth_state"] == "authenticated_with_socolar_token"
-    assert result["manual_action_required"] is False
-    assert result["observed_local_storage_keys"] == ["refreshToken", "token"]
 
 
-def test_browser_auth_probe_reports_missing_local_storage_without_foreground(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    monkeypatch.setattr(chrome_manager, "managed_browser_platforms", lambda: ("socolar",))
-    monkeypatch.setattr(chrome_manager, "_ensure_chrome_debugging", lambda platform, visible=False, detach=False: True)
-    monkeypatch.setattr(
-        chrome_manager,
-        "_read_browser_storage_names",
-        lambda platform: {"local_storage": ["token"], "session_storage": []},
-    )
-    monkeypatch.setattr(chrome_manager, "finish_chrome_automation", lambda platform, reason="": None)
-
-    result = chrome_manager.probe_browser_auth("socolar")
-
-    assert result["status"] == "needs_interaction"
-    assert result["manual_action_required"] is True
-    assert result["missing_local_storage_keys"] == ["refreshToken"]
 
 
-def test_xhs_auth_probe_uses_platform_state_and_keeps_unconfirmed_state_non_manual(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    monkeypatch.setattr(chrome_manager, "_ensure_chrome_debugging", lambda *args, **kwargs: True)
-    monkeypatch.setattr(chrome_manager, "finish_chrome_automation", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        xhs,
-        "xiaohongshu_account_state",
-        lambda chrome_debug_url: {"code": -1, "guest": False, "has_login_prompt": False, "has_verify_prompt": False},
-    )
-
-    result = chrome_manager.probe_browser_auth("xhs", target_profile_id="xhs-new-a-9341")
-
-    assert result["status"] == "unknown"
-    assert result["auth_state"] == "platform_state_unconfirmed"
-    assert result["manual_action_required"] is False
 
 
-def test_xhs_auth_probe_accepts_conservative_signed_in_ui_proof_when_api_identity_is_406(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    monkeypatch.setattr(chrome_manager, "_ensure_chrome_debugging", lambda *args, **kwargs: True)
-    monkeypatch.setattr(chrome_manager, "finish_chrome_automation", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        xhs,
-        "xiaohongshu_account_state",
-        lambda chrome_debug_url: {
-            "code": -1,
-            "status": 406,
-            "guest": False,
-            "has_login_prompt": False,
-            "has_verify_prompt": False,
-            "ui_authenticated": True,
-        },
-    )
-
-    result = chrome_manager.probe_browser_auth("xhs", target_profile_id="xhs-new-b-9342")
-
-    assert result["status"] == "ok"
-    assert result["auth_state"] == "authenticated_with_platform_confirmation"
-    assert result["manual_action_required"] is False
 
 
-def test_xhs_auth_probe_maps_explicit_security_verification_to_manual_action(monkeypatch) -> None:
-    from runtime import chrome_manager
-
-    monkeypatch.setattr(chrome_manager, "_ensure_chrome_debugging", lambda *args, **kwargs: True)
-    monkeypatch.setattr(chrome_manager, "finish_chrome_automation", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        xhs,
-        "xiaohongshu_account_state",
-        lambda chrome_debug_url: {"code": -1, "guest": False, "has_login_prompt": False, "has_verify_prompt": True},
-    )
-
-    result = chrome_manager.probe_browser_auth("xhs", target_profile_id="xhs-new-a-9341")
-
-    assert result["status"] == "needs_interaction"
-    assert result["reason_code"] == "SECURITY_VERIFICATION"
-    assert result["manual_action_required"] is True
 
 
-def test_xhs_login_preflight_requests_managed_interaction(monkeypatch) -> None:
-    calls = []
-
-    def fake_request(platform: str, reason: str = "", **kwargs) -> dict:
-        calls.append((platform, reason, kwargs))
-        return {"status": "waiting_for_user", "platform": platform, "reason": reason, "session_id": "browser-test"}
-
-    monkeypatch.setattr(xhs, "request_user_login", fake_request)
-    monkeypatch.setattr(xhs, "_record_xhs_login_preflight", lambda *args, **kwargs: None)
-    monkeypatch.setattr(xhs, "_selected_xhs_profile_id", lambda: "xhs-a")
-
-    result = xhs._xhs_login_preflight_result(
-        CollectionTrace("小红书", ["login_preflight"]),
-        {"code": -1, "msg": "login required", "has_login_prompt": True},
-    )
-
-    assert calls == [("xhs", "login_required", {
-        "target_profile_id": "xhs-a",
-        "trigger_evidence": ["xhs_page_has_login_prompt=true"],
-        "source": "search_xiaohongshu.login_preflight",
-    })]
-    assert result["metadata"]["manual_interaction"]["session_id"] == "browser-test"
-    assert result["error"]["manual_interaction"]["status"] == "waiting_for_user"
 
 
-def test_xhs_login_preflight_keeps_unconfirmed_state_in_background(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(xhs, "request_user_login", lambda *args, **kwargs: calls.append((args, kwargs)))
-    monkeypatch.setattr(xhs, "_record_xhs_login_preflight", lambda *args, **kwargs: None)
-    monkeypatch.setattr(xhs, "_selected_xhs_profile_id", lambda: "xhs-a")
-
-    result = xhs._xhs_login_preflight_result(
-        CollectionTrace("小红书", ["login_preflight"]),
-        {"code": -1, "msg": "temporary state unknown", "guest": False},
-    )
-
-    assert calls == []
-    assert result["error"]["platform_state"] == "auth_state_unconfirmed"
-    assert result["error"]["manual_action_required"] is False
 
 
-def test_boss_empty_search_is_not_manual_action(monkeypatch) -> None:
-    monkeypatch.setattr(boss, "probe_boss_auth_state", lambda keepalive=True: {"status": "ok", "auth_state": "authenticated"})
-    monkeypatch.setattr(boss, "check_search_gate", lambda platform, **kwargs: {"allowed": True})
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(boss, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(boss, "record_search_outcome", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        boss,
-        "boss_search_via_cdp_state",
-        lambda keyword, city="", limit=10: {
-            "status": "failed",
-            "items": [],
-            "failure_type": "tool_failure_needs_repair",
-            "platform_state": "search_route_unreadable",
-        },
-    )
-
-    result = boss.legacy_search_boss("zzzz unlikely", city="北京", limit=3)
-
-    assert result["error"]["failure_type"] == "tool_failure_needs_repair"
-    assert result["error"]["platform_state"] == "search_route_unreadable"
-    assert result["error"]["manual_action_required"] is False
 
 
-def test_boss_login_search_is_manual_action(monkeypatch) -> None:
-    monkeypatch.setattr(boss, "probe_boss_auth_state", lambda keepalive=True: {"status": "ok", "auth_state": "authenticated"})
-    monkeypatch.setattr(boss, "check_search_gate", lambda platform, **kwargs: {"allowed": True})
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(boss, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(boss, "record_search_outcome", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        boss,
-        "boss_search_via_cdp_state",
-        lambda keyword, city="", limit=10: {"status": "needs_interaction", "items": [], "failure_type": "login_required", "platform_state": "login_required"},
-    )
-
-    result = boss.legacy_search_boss("Python", city="北京", limit=3)
-
-    assert result["error"]["manual_action_required"] is True
-    assert result["error"]["platform_state"] == "login_required"
 
 
-def test_boss_auth_probe_login_required_reports_recovery_without_blocking_profile(monkeypatch) -> None:
-    states = []
-
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform, visible=False, detach=False: True)
-    monkeypatch.setattr(
-        boss,
-        "_parse_boss_cards_from_page",
-        lambda port, keyword, city, limit: {
-            "loginRequired": True,
-            "url": "https://www.zhipin.com/web/user/",
-            "title": "登录",
-            "textSample": "扫码登录 密码登录",
-        },
-    )
-    monkeypatch.setattr(boss, "_boss_cookie_quality", lambda port: {"status": "ok", "quality": "missing"})
-    monkeypatch.setattr(boss, "_managed_chrome_profile_dir", lambda platform: "D:/tmp/boss")
-    monkeypatch.setattr(boss, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(boss, "select_main_chain_profile", lambda platform: {"profile_id": "boss-main"})
-    monkeypatch.setattr(boss, "record_profile_state", lambda *args, **kwargs: states.append((args, kwargs)))
-
-    result = boss.probe_boss_auth_state()
-
-    assert result["status"] == "needs_interaction"
-    assert result["auth_state"] == "login_required"
-    assert result["manual_action_required"] is True
-    assert result["recommended_action"] == "health_check(mode='request_browser_interaction:boss:login_or_security_verification')"
-    assert states[0][1]["state"] == "blocked"
-    assert states[0][1]["manual_action_required"] is False
-    assert states[0][1]["cooldown_seconds"] == 0
 
 
-def test_boss_search_stops_before_search_when_auth_preflight_fails(monkeypatch) -> None:
-    records = []
-
-    monkeypatch.setattr(
-        boss,
-        "probe_boss_auth_state",
-        lambda keepalive=True: {
-            "status": "needs_interaction",
-            "auth_state": "login_required",
-            "failure_type": "login_required",
-            "manual_action_required": True,
-            "recommended_action": "health_check(mode='request_browser_interaction:boss:login_or_security_verification')",
-        },
-    )
-    monkeypatch.setattr(boss, "record_search_outcome", lambda *args, **kwargs: records.append((args, kwargs)))
-    monkeypatch.setattr(boss, "boss_search_via_cdp_state", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("search should not run")))
-
-    result = boss.legacy_search_boss("Python", city="北京", limit=1)
-
-    assert result["error"]["manual_action_required"] is True
-    assert result["error"]["platform_state"] == "login_required"
-    assert records == [(("boss", "failed", "login_required"), {"keyword": "Python", "city": "北京"})]
 
 
 def test_search_recruitment_promotes_manual_interaction(monkeypatch) -> None:
@@ -544,12 +291,12 @@ def test_search_recruitment_promotes_manual_interaction(monkeypatch) -> None:
             return {"acquired": True, "lease_id": self.lease_id}
 
     monkeypatch.setattr(
-        server,
+        recruitment_governance,
         "check_platform_admission",
         lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
     )
-    monkeypatch.setattr(server, "acquire_platform_lease", lambda platform, **kwargs: Lease())
-    monkeypatch.setattr(server, "release_platform_lease", lambda lease_id: None)
+    monkeypatch.setattr(recruitment_governance, "acquire_platform_lease", lambda platform, **kwargs: Lease())
+    monkeypatch.setattr(recruitment_governance, "release_platform_lease", lambda lease_id: None)
     monkeypatch.setattr(
         server,
         "_RECRUITMENT_ADAPTERS",
@@ -599,12 +346,12 @@ def test_search_recruitment_does_not_open_browser_for_liepin_ambiguous(monkeypat
             return {"acquired": True, "lease_id": self.lease_id}
 
     monkeypatch.setattr(
-        server,
+        recruitment_governance,
         "check_platform_admission",
         lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
     )
-    monkeypatch.setattr(server, "acquire_platform_lease", lambda platform, **kwargs: Lease())
-    monkeypatch.setattr(server, "release_platform_lease", lambda lease_id: None)
+    monkeypatch.setattr(recruitment_governance, "acquire_platform_lease", lambda platform, **kwargs: Lease())
+    monkeypatch.setattr(recruitment_governance, "release_platform_lease", lambda lease_id: None)
     monkeypatch.setattr(
         server,
         "_RECRUITMENT_ADAPTERS",
@@ -665,12 +412,12 @@ def test_search_recruitment_uses_weak_web_fallback_for_native_route_failure(monk
 
     interactions = []
     monkeypatch.setattr(
-        server,
+        recruitment_governance,
         "check_platform_admission",
         lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
     )
-    monkeypatch.setattr(server, "acquire_platform_lease", lambda platform, **kwargs: Lease())
-    monkeypatch.setattr(server, "release_platform_lease", lambda lease_id: None)
+    monkeypatch.setattr(recruitment_governance, "acquire_platform_lease", lambda platform, **kwargs: Lease())
+    monkeypatch.setattr(recruitment_governance, "release_platform_lease", lambda lease_id: None)
     monkeypatch.setattr(
         server,
         "_RECRUITMENT_ADAPTERS",
@@ -703,97 +450,15 @@ def test_search_recruitment_uses_weak_web_fallback_for_native_route_failure(monk
     assert interactions == []
 
 
-def test_zhilian_selector_miss_uses_weak_web_fallback(monkeypatch) -> None:
-    import server
-
-    class WebResult:
-        def to_mcp_dict(self) -> dict:
-            return {
-                "provider": "test",
-                "items": [
-                    {
-                        "title": "AI产品经理 - 智联杭州",
-                        "url": "https://www.zhaopin.com/jobs/1.htm",
-                        "snippet": "杭州 AI产品经理 招聘",
-                    }
-                ],
-            }
-
-    monkeypatch.setattr(
-        server,
-        "check_platform_admission",
-        lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
-    )
-    monkeypatch.setattr(server, "managed_browser_platforms", lambda: ())
-    monkeypatch.setattr(
-        server,
-        "_legacy_zhilian_from_request",
-        lambda request: {
-            "items": [],
-            "total": 0,
-            "platform": "智联招聘",
-            "error": {
-                "error": "智联选择器未命中",
-                "type": "selector_miss",
-                "failure_type": "selector_miss",
-                "platform_state": "selector_miss",
-                "manual_action_required": False,
-            },
-        },
-    )
-    monkeypatch.setattr(server, "search_web", lambda request: WebResult())
-
-    result = server.search_recruitment("zhilian", "AI产品经理", city="杭州", limit=3)
-
-    assert result["items"]
-    assert result["items"][0]["source"] == "web_search_fallback_after_native_route_failure"
-    assert result["items"][0]["evidence_strength"] == "weak_open_index"
-    assert result["items"][0]["market_claim_allowed"] is False
-    assert result["metadata"]["native_route_failure"]["failure_type"] == "selector_miss"
-    assert result["metadata"]["market_claim_allowed"] is False
 
 
-def test_zhilian_manual_state_does_not_use_web_fallback(monkeypatch) -> None:
-    import server
-
-    web_calls = []
-    monkeypatch.setattr(
-        server,
-        "check_platform_admission",
-        lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
-    )
-    monkeypatch.setattr(server, "managed_browser_platforms", lambda: ())
-    monkeypatch.setattr(
-        server,
-        "_legacy_zhilian_from_request",
-        lambda request: {
-            "items": [],
-            "total": 0,
-            "platform": "智联招聘",
-            "error": {
-                "error": "需要登录",
-                "type": "login_required",
-                "failure_type": "login_required",
-                "platform_state": "login_required",
-                "manual_action_required": True,
-            },
-        },
-    )
-    monkeypatch.setattr(server, "search_web", lambda request: web_calls.append(request) or (_ for _ in ()).throw(AssertionError("no web fallback for manual state")))
-
-    result = server.search_recruitment("zhilian", "AI产品经理", city="杭州", limit=3)
-
-    assert result["items"] == []
-    assert result["error"]["manual_action_required"] is True
-    assert result["error"]["failure_type"] == "login_required"
-    assert web_calls == []
 
 
 def test_search_recruitment_rejects_busy_platform_lease(monkeypatch) -> None:
     import server
 
     monkeypatch.setattr(
-        server,
+        recruitment_governance,
         "check_platform_admission",
         lambda platform, **kwargs: {"allowed": True, "admission": "open", "reason_code": "ok"},
     )
@@ -805,8 +470,8 @@ def test_search_recruitment_rejects_busy_platform_lease(monkeypatch) -> None:
         def to_dict(self) -> dict:
             return {"acquired": False, "reason": "lease_unavailable", "retry_after_s": 17}
 
-    monkeypatch.setattr(server, "acquire_platform_lease", lambda platform, **kwargs: BusyLease())
-    monkeypatch.setattr(server, "release_platform_lease", lambda lease_id: (_ for _ in ()).throw(AssertionError("no lease acquired")))
+    monkeypatch.setattr(recruitment_governance, "acquire_platform_lease", lambda platform, **kwargs: BusyLease())
+    monkeypatch.setattr(recruitment_governance, "release_platform_lease", lambda lease_id: (_ for _ in ()).throw(AssertionError("no lease acquired")))
     monkeypatch.setattr(
         server,
         "_RECRUITMENT_ADAPTERS",
@@ -821,61 +486,22 @@ def test_search_recruitment_rejects_busy_platform_lease(monkeypatch) -> None:
     assert result["market_claim_allowed"] is False
 
 
-def test_recruitment_admission_blocks_existing_manual_session(monkeypatch) -> None:
-    monkeypatch.setattr(
-        recruitment_governance,
-        "check_search_gate",
-        lambda platform, **kwargs: {"allowed": True, "reason": "ok"},
-    )
-    monkeypatch.setattr(
-        recruitment_governance,
-        "browser_sessions_summary",
-        lambda limit=10: {
-            "pending_interactions": [
-                {"platform": "liepin", "status": "waiting_for_user", "reason_code": "platform_verification_required"}
-            ]
-        },
-    )
-    monkeypatch.setattr(
-        recruitment_governance,
-        "_recover_pending_manual_session",
-        lambda platform, pending: {"recovered": False, "probe": {"status": "needs_interaction"}},
-    )
-
-    result = recruitment_governance.check_platform_admission("liepin", keyword="Python", city="杭州")
-
-    assert result["allowed"] is False
-    assert result["reason_code"] == "pending_manual_interaction"
-    assert result["manual_action_required"] is True
-    assert result["market_claim_allowed"] is False
+def test_recruitment_admission_blocks_existing_manual_session(monkeypatch):
+    monkeypatch.setattr(liepin,'admission',lambda:{'allowed':False,'reason':'pending_manual_interaction'})
+    result=recruitment_governance.check_platform_admission('liepin',keyword='Python',city='杭州')
+    assert not result['allowed'] and result['manual_action_required']
+    assert result['reason_code']=='pending_manual_interaction'
 
 
-def test_recruitment_admission_auto_recovers_authenticated_manual_session(monkeypatch) -> None:
-    monkeypatch.setattr(
-        recruitment_governance,
-        "check_search_gate",
-        lambda platform, **kwargs: {"allowed": True, "reason": "ok"},
-    )
-    monkeypatch.setattr(
-        recruitment_governance,
-        "browser_sessions_summary",
-        lambda limit=10: {
-            "pending_interactions": [
-                {"platform": "liepin", "status": "waiting_for_user", "reason_code": "login_or_security_verification"}
-            ]
-        },
-    )
-    monkeypatch.setattr(
-        recruitment_governance,
-        "_recover_pending_manual_session",
-        lambda platform, pending: {"recovered": True, "probe": {"status": "ok", "manual_action_required": False}},
-    )
-
-    result = recruitment_governance.check_platform_admission("liepin", keyword="Python", city="杭州")
-
-    assert result["allowed"] is True
-    assert result["reason_code"] == "pending_manual_interaction_auto_recovered"
-    assert result["manual_action_required"] is False
+def test_recruitment_admission_auto_recovers_authenticated_manual_session(monkeypatch):
+    # 准入不发探针；人工确认完成才换认证代际并允许显式重试。
+    from runtime.state_file import write_state
+    write_state(liepin._site().state_path(),{'expires_at':time.time()+300})
+    patch_native(monkeypatch,lambda **kw: (_ for _ in ()).throw(AssertionError('admission must be pure')))
+    assert not recruitment_governance.check_platform_admission('liepin')['allowed']
+    patch_native(monkeypatch,lambda **kw:{'ok':True,'data':{'authenticated_ui':True}})
+    assert liepin.complete_login()['status']=='ok'
+    assert recruitment_governance.check_platform_admission('liepin')['allowed']
 
 
 def test_liepin_city_filter_drops_explicit_mismatch() -> None:
@@ -893,33 +519,11 @@ def test_liepin_city_filter_drops_explicit_mismatch() -> None:
     assert summary["dropped_count"] == 2
 
 
-def test_liepin_detail_runtime_evaluate_error_is_collector_script_error(monkeypatch) -> None:
-    monkeypatch.setattr(liepin, "_static_liepin_detail", lambda url: None)
-    monkeypatch.setattr(liepin, "_ensure_chrome_debugging", lambda platform: True)
-
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = json.dumps(
-            {
-                "platform": "猎聘",
-                "url": "https://www.liepin.com/job/1977755243.shtml",
-                "status": "failed",
-                "error": "SyntaxError: Invalid regular expression flags",
-                "failure_type": "collector_script_error",
-                "platform_state": "collector_script_error",
-                "manual_action_required": False,
-            },
-            ensure_ascii=False,
-        )
-
-    monkeypatch.setattr(liepin, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = liepin.liepin_detail_via_cdp("https://www.liepin.com/job/1977755243.shtml")
-
-    assert result["failure_type"] == "collector_script_error"
-    assert result["manual_action_required"] is False
-    assert result["recommended_fallback"] == "static_detail_retry"
+def test_liepin_detail_runtime_evaluate_error_is_collector_script_error(monkeypatch):
+    monkeypatch.setattr(liepin,'_static_liepin_detail',lambda url:None)
+    patch_native(monkeypatch,lambda **kw:{'ok':False,'code':'content_failed','request_executed':True})
+    result=liepin.detail('https://www.liepin.com/job/1977755243.shtml')
+    assert result['failure_type']=='content_failed' and not result['manual_action_required']
 
 
 def test_liepin_soft_security_prompt_with_results_is_readable() -> None:
@@ -948,171 +552,20 @@ def test_liepin_soft_security_prompt_with_results_is_readable() -> None:
     assert result["items"][0]["title"] == "Python 工程师"
 
 
-def test_boss_soft_security_prompt_with_results_is_readable(monkeypatch) -> None:
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(
-        boss,
-        "_parse_boss_cards_from_page",
-        lambda *args, **kwargs: {
-            "items": [{"title": "Python 工程师", "company": "ACME", "area": "杭州", "url": "https://www.zhipin.com/job_detail/1"}],
-            "blocked": True,
-            "loginRequired": False,
-            "cardCount": 1,
-            "title": "安全验证 - BOSS直聘",
-            "url": "https://www.zhipin.com/web/geek/jobs",
-            "textSample": "安全验证 Python 工程师",
-        },
-    )
-
-    result = boss.boss_search_via_cdp_state("Python", "杭州", 3)
-
-    assert result["status"] == "ok"
-    assert result["manual_action_required"] is False
-    assert result["warning_type"] == "soft_security_prompt_with_results"
-    assert result["items"][0]["title"] == "Python 工程师"
-    assert result["items"][0]["salary_claim_allowed"] is False
-    assert result["items"][0]["field_confidence"]["salary"] == "low_search_card"
 
 
-def test_maimai_soft_security_prompt_with_results_is_readable(monkeypatch) -> None:
-    monkeypatch.setenv("KR_MAIMAI_EXPERIMENTAL_SEARCH", "1")
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = """
-        {
-          "items": [{"title": "AI 产品经理", "company": "ACME", "area": "杭州"}],
-          "blocked": true,
-          "needLogin": false,
-          "url": "https://maimai.cn/web/gear/test/job/search",
-          "title": "脉脉",
-          "textSample": "访问被拦截 AI 产品经理"
-        }
-        """
-
-    monkeypatch.setattr(maimai, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = maimai.maimai_search_via_cdp_state("AI", 3)
-
-    assert result["status"] == "ok"
-    assert result["manual_action_required"] is False
-    assert result["warning_type"] == "soft_security_prompt_with_results"
-    assert result["items"][0]["title"] == "AI 产品经理"
 
 
-def test_zhilian_soft_login_prompt_with_results_is_readable(monkeypatch) -> None:
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = """
-        {
-          "items": [{"title": "数据分析师", "company": "ACME", "area": "杭州", "url": "https://jobs.zhaopin.com/CC000000000J00000000000.htm"}],
-          "blocked": false,
-          "needLogin": true,
-          "rateLimited": false,
-          "url": "https://sou.zhaopin.com/",
-          "title": "智联招聘",
-          "textSample": "登录 数据分析师 招聘"
-        }
-        """
-
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(zhilian, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(zhilian, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = zhilian.zhilian_search_via_cdp_state("数据分析", "杭州", 3)
-
-    assert result["status"] == "ok"
-    assert result["manual_action_required"] is False
-    assert result["warning_type"] == "soft_login_prompt_with_results"
-    assert result["items"][0]["title"] == "数据分析师"
 
 
-def test_zhilian_cdp_unavailable_is_not_empty_result(monkeypatch) -> None:
-    class Proc:
-        returncode = 1
-        stderr = "TypeError: fetch failed ECONNREFUSED 127.0.0.1:12749"
-        stdout = ""
-
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(zhilian, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(zhilian, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = zhilian.zhilian_search_via_cdp_state("数据分析", "杭州", 3)
-
-    assert result["failure_type"] == "cdp_unavailable"
-    assert result["platform_state"] == "cdp_unavailable"
 
 
-def test_zhilian_cdp_no_output_is_connection_layer_failure(monkeypatch) -> None:
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = ""
-
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(zhilian, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(zhilian, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = zhilian.zhilian_search_via_cdp_state("数据分析", "杭州", 3)
-
-    assert result["failure_type"] == "cdp_no_output"
-    assert result["manual_action_required"] is False
-    assert result["diagnostics"]["layers"]["connection"]["status"] == "failed"
 
 
-def test_zhilian_runtime_evaluate_error_is_not_empty_result(monkeypatch) -> None:
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = '{"items":[],"error":"runtime_evaluate_exception","exceptionDescription":"ReferenceError"}'
-
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(zhilian, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(zhilian, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = zhilian.zhilian_search_via_cdp_state("数据分析", "杭州", 3)
-
-    assert result["status"] == "failed"
-    assert result["failure_type"] == "runtime_evaluate_exception"
-    assert result["manual_action_required"] is False
 
 
-def test_zhilian_selector_miss_is_classified(monkeypatch) -> None:
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = """
-        {
-          "items": [],
-          "blocked": false,
-          "needLogin": false,
-          "rateLimited": false,
-          "url": "https://sou.zhaopin.com/",
-          "title": "智联招聘",
-          "textSample": "职位 公司 薪资 招聘"
-        }
-        """
-
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(zhilian, "finish_chrome_automation", lambda platform, reason="": None)
-    monkeypatch.setattr(zhilian, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = zhilian.legacy_search_zhilian("数据分析", "杭州", 3)
-
-    assert result["error"]["failure_type"] == "selector_miss"
-    assert result["error"]["failure_class"] == "tool_error"
-    assert result["market_claim_allowed"] is False
 
 
-def test_zhilian_unknown_city_stops_before_browser(monkeypatch) -> None:
-    monkeypatch.setattr(zhilian, "_ensure_chrome_debugging", lambda platform: (_ for _ in ()).throw(AssertionError("browser should not start")))
-
-    result = zhilian.legacy_search_zhilian("数据分析", "火星", 3)
-
-    assert result["error"]["failure_type"] == "city_mapping_missing"
-    assert result["error"]["manual_action_required"] is False
-    assert result["market_claim_allowed"] is False
 
 
 def test_liepin_weak_security_prompt_without_results_is_not_manual() -> None:
@@ -1187,40 +640,14 @@ def test_liepin_login_prompt_without_results_requires_interaction() -> None:
     assert result["manual_confidence"] == "confirmed"
 
 
-def test_liepin_detail_readability_beats_security_marker(monkeypatch) -> None:
-    jd = (
-        "职位介绍 岗位职责：负责 KnowledgeRadar 平台后端研发、数据采集链路治理、状态机建模和质量门禁建设。"
-        "任职要求：熟悉 Python、浏览器自动化、异步任务和工程化测试，能够独立推进复杂系统问题定位。"
-        "工作内容：维护招聘搜索、详情抽取、登录态预检和人工交互恢复流程，持续补充回归测试和质量报告。"
-        "岗位要求：理解 MCP、Agent 工具调用、页面状态分类和证据链管理，能把软提示和硬阻断区分清楚。"
-    )
-
-    class Proc:
-        returncode = 0
-        stderr = ""
-        stdout = json.dumps(
-            {
-                "platform": "猎聘",
-                "url": "https://www.liepin.com/job/1",
-                "title": "高级 Python 工程师",
-                "salary": "30-50k",
-                "jd": jd,
-                "blocked": True,
-                "loginLike": False,
-                "text_length": 900,
-                "page_title": "安全验证",
-            }
-        )
-
-    monkeypatch.setattr(liepin, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(liepin, "silent_subprocess_run", lambda *args, **kwargs: Proc())
-
-    result = liepin.liepin_detail_via_cdp("https://www.liepin.com/job/1")
-
-    assert result["status"] == "ok"
-    assert result["manual_action_required"] is False
-    assert result["warning_type"] == "soft_security_prompt_with_results"
-    assert "岗位职责" in result["jd"]
+def test_liepin_detail_readability_beats_security_marker(monkeypatch):
+    jd=('岗位职责：负责Python开发设计。任职要求：熟悉数据和异步，具备项目经验。'*12)
+    url='https://www.liepin.com/job/1'
+    monkeypatch.setattr(liepin,'_static_liepin_detail',lambda url:None)
+    patch_native(monkeypatch,lambda **kw:{'ok':True,'data':{'url':url,'title':'工程师','content':jd,'extraction_source':'job_intro_primary','risk':False}})
+    result=liepin.detail(url)
+    assert result['status']=='ok' and '岗位职责' in result['content']
+    assert result['detail_quality']['ok']
 
 
 def test_search_error_normalizes_failure_type_when_type_missing() -> None:
@@ -1385,46 +812,13 @@ def test_recruitment_cooldown_doubles_previous_failure(monkeypatch, tmp_path: Pa
     assert second["next_retry_at"] > 0
 
 
-def test_liepin_and_maimai_empty_search_are_not_manual_action(monkeypatch) -> None:
-    for module in (liepin, maimai):
-        monkeypatch.setattr(module, "check_search_gate", lambda platform, **kwargs: {"allowed": True})
-        monkeypatch.setattr(module, "_ensure_chrome_debugging", lambda platform: True)
-        monkeypatch.setattr(module, "finish_chrome_automation", lambda platform, reason="": None)
-        monkeypatch.setattr(module, "record_search_outcome", lambda *a, **k: None)
-    monkeypatch.setattr(liepin, "liepin_search_via_cdp_state", lambda keyword, city="", limit=10: {"status": "empty", "items": []})
-    monkeypatch.setattr(maimai, "maimai_search_via_cdp_state", lambda keyword, limit=10: {"status": "empty", "items": []})
-
-    liepin_result = liepin.legacy_search_liepin("zzzz unlikely", "", 3)
-    maimai_result = maimai.legacy_search_maimai("zzzz unlikely", 3)
-
-    assert liepin_result["error"]["manual_action_required"] is False
-    assert maimai_result["error"]["manual_action_required"] is False
+def test_liepin_empty_search_is_not_manual_action(monkeypatch):
+    url=liepin.search_url('zzzz unlikely')
+    patch_native(monkeypatch,lambda **kw:{'ok':True,'data':{'items':[],'empty':True,'url':url}})
+    result=liepin.legacy_search_liepin('zzzz unlikely','',3)
+    assert result['status']=='empty' and not result.get('manual_action_required')
 
 
-def test_boss_search_state_marks_unreadable_route_as_tool_failure(monkeypatch) -> None:
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(
-        boss,
-        "_parse_boss_cards_from_page",
-        lambda port, keyword, city, limit: {
-            "items": [],
-            "blocked": False,
-            "loginRequired": False,
-            "cardCount": 0,
-            "title": "BOSS直聘",
-            "url": "https://www.zhipin.com/web/geek/jobs?query=Python&city=101210100",
-            "textSample": "Python 杭州 推荐职位",
-            "waitState": {"empty": False},
-        },
-    )
-
-    result = boss.boss_search_via_cdp_state("Python", "杭州", 3)
-
-    assert result["status"] == "failed"
-    assert result["failure_type"] == "tool_failure_needs_repair"
-    assert result["platform_state"] == "search_route_unreadable"
-    assert result["manual_action_required"] is False
-    assert result["page_state"]["route_probe"]["route_decision"] == "needs_route_repair"
 
 
 def test_liepin_search_state_marks_unreadable_route_as_tool_failure() -> None:
@@ -1452,51 +846,13 @@ def test_liepin_search_state_marks_unreadable_route_as_tool_failure() -> None:
     assert result["page_state"]["route_probe"]["route_decision"] == "needs_route_repair"
 
 
-def test_liepin_unknown_city_stops_before_browser(monkeypatch) -> None:
-    monkeypatch.setattr(liepin, "_ensure_chrome_debugging", lambda platform: (_ for _ in ()).throw(AssertionError("browser should not start")))
-
-    result = liepin.legacy_search_liepin("AI产品经理", city="火星", limit=3)
-
-    assert result["error"]["failure_type"] == "city_mapping_missing"
-    assert result["error"]["manual_action_required"] is False
-    assert result["failure_class"] == "city_mapping_missing"
-    assert result["market_claim_allowed"] is False
-    assert result["metadata"]["collection"]["attempts"][0]["error_type"] == "city_mapping_missing"
+def test_liepin_unknown_city_stops_before_browser(monkeypatch):
+    patch_native(monkeypatch,lambda **kw: (_ for _ in ()).throw(AssertionError('must not borrow')))
+    result=liepin.legacy_search_liepin('AI产品经理',city='火星',limit=3)
+    assert result['failure_type']=='city_mapping_missing' and not result['manual_action_required']
+    assert result['request_executed'] is False
 
 
-def test_boss_search_state_accepts_network_route_items(monkeypatch) -> None:
-    monkeypatch.setattr(boss, "_ensure_chrome_debugging", lambda platform: True)
-    monkeypatch.setattr(
-        boss,
-        "_parse_boss_cards_from_page",
-        lambda port, keyword, city, limit: {
-            "items": [
-                {
-                    "title": "AI产品经理",
-                    "company": "测试科技",
-                    "area": "杭州",
-                    "url": "https://www.zhipin.com/job_detail/abc.html",
-                    "source": "boss_network_search",
-                    "evidence_strength": "strong_platform_network",
-                }
-            ],
-            "blocked": False,
-            "loginRequired": False,
-            "cardCount": 0,
-            "title": "BOSS直聘",
-            "url": "https://www.zhipin.com/web/geek/jobs?query=AI产品经理&city=101210100",
-            "textSample": "AI产品经理 杭州 推荐职位",
-            "waitState": {"empty": False},
-        },
-    )
-
-    result = boss.boss_search_via_cdp_state("AI产品经理", "杭州", 3)
-
-    assert result["status"] == "ok"
-    assert result["items"][0]["source"] == "boss_network_search"
-    assert result["failure_type"] == ""
-    assert result["manual_action_required"] is False
-    assert result["page_state"]["route_probe"]["route_decision"] == "network_items"
 
 
 def test_liepin_search_state_accepts_network_route_items() -> None:
@@ -1531,3 +887,9 @@ def test_liepin_search_state_accepts_network_route_items() -> None:
     assert result["failure_type"] == ""
     assert result["manual_action_required"] is False
     assert result["page_state"]["route_probe"]["route_decision"] == "network_items"
+
+
+@pytest.fixture(autouse=True)
+def recruitment_isolation(monkeypatch,tmp_path):
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path/'state'))
+    monkeypatch.setenv('KR_TASK_DB_PATH',str(tmp_path/'tasks.sqlite3'))

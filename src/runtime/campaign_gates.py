@@ -657,8 +657,8 @@ def _deep_check_provider_status_matrix(root: Path) -> dict[str, Any]:
     from academic_providers.service import academic_provider_status
 
     status = academic_provider_status()
-    expected_pass = ["nssd", "chinaxiv", "hanspub", "oajrc", "sciopen"]
-    expected_degraded = ["baidu_scholar", "wanfang", "cnki_authorized_browser"]
+    expected_pass = ["nssd", "chinaxiv"]
+    expected_degraded = ["cnki_authorized_browser"]
     violations: list[dict[str, str]] = []
     for name in expected_pass:
         item = status.get(name) or {}

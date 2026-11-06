@@ -30,6 +30,19 @@ def normalize_title(value: str) -> str:
     return title
 
 
+def normalize_document_type(value: str) -> str:
+    """仅归一实际返回的材料类型；缺失时不依据题名猜测。"""
+    kind = str(value or '').strip().lower().replace('_', '-').replace(' ', '-')
+    aliases = {'journalarticle': 'journal-article', 'journal': 'journal-article',
+               '期刊': 'journal-article', '期刊论文': 'journal-article', 'j': 'journal-article',
+               'thesis': 'dissertation', '学位论文': 'dissertation', 'd': 'dissertation',
+               'conference': 'proceedings-article', 'conferencepaper': 'proceedings-article',
+               '会议论文': 'proceedings-article', 'preprint': 'preprint', '预印本': 'preprint',
+               'bookchapter': 'book-chapter', '书章': 'book-chapter', '图书': 'book',
+               '科技报告': 'report', 'technical-report': 'report'}
+    return aliases.get(kind, kind or 'unknown')
+
+
 @dataclass(frozen=True)
 class AcademicSearchRequest:
     query: str
@@ -60,6 +73,8 @@ class AcademicWork:
     degraded_reason: str = ""
     retrieved_at: str = field(default_factory=utc_now_iso)
     raw: Dict[str, Any] = field(default_factory=dict)
+    document_type: str = "unknown"
+    version: str = "unknown"
 
     def to_dict(self) -> Dict[str, Any]:
         doi = normalize_doi(self.doi)
@@ -84,6 +99,8 @@ class AcademicWork:
             "degraded_reason": self.degraded_reason,
             "retrieved_at": self.retrieved_at,
             "raw": dict(self.raw),
+            "document_type": normalize_document_type(self.document_type),
+            "version": self.version,
         }
 
 

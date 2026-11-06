@@ -17,6 +17,11 @@ class GenericWebRequest:
     preferred_format: str = "markdown"
     timeout: float = 20.0
     use_jina: bool = True
+    max_bytes: int = 32 * 1024 * 1024
+    deadline_at: float = 0.0
+    # Internal adapter declarations only; never exposed as a global POST toggle.
+    readonly_posts: tuple = ()
+    document_options: dict = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

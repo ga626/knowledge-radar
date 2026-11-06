@@ -36,12 +36,26 @@ def text_pdf(path, *, blank_last=False):
         writer.write(handle)
 
 
-def test_mixed_pdf_cannot_silently_drop_an_image_page(tmp_path):
+def test_mixed_pdf_cannot_silently_drop_an_image_page(tmp_path, monkeypatch):
+    from runtime import cloud_ocr, pdf_text
+    for key, part in {'KR_STATE_DIR': 'state', 'KR_EVIDENCE_ROOT': 'assets',
+                      'KR_MEDIA_CACHE_DIR': 'media', 'KR_RUNTIME_LEASE_DB_PATH': 'leases.sqlite3'}.items():
+        monkeypatch.setenv(key, str(tmp_path / part))
     path = tmp_path / "source.pdf"
     text_pdf(path)
     assert optional_media.select_component(request(path)) == "pypdf"
     text_pdf(path, blank_last=True)
-    assert optional_media.select_component(request(path)) == "paddleocr-vl-1.6"
+    assert optional_media.select_component(request(path)) == "pypdf"
+    calls = []
+    def recognize(source, **kwargs):
+        calls.append(kwargs['page_numbers'])
+        return {'document_blocks': [{'page': 2, 'text': 'Scanned page 2 END-27'}], 'page_errors': []}
+    monkeypatch.setattr(cloud_ocr, 'run_cloud_ocr', recognize)
+    parsed = pdf_text.process_pdf(str(path), storage_allowed=False)
+    assert calls == [[2]] and parsed['request_satisfied']
+    assert 'Page 1 END-27' in parsed['text'] and 'Scanned page 2 END-27' in parsed['text']
+    assert {row['page'] for row in parsed['locators']} == {1, 2}
+    assert parsed['page_ledger'][1]['state'] == 'ocr_complete'
     forged = request(path)
     forged["input_sha256"] = "0" * 64
     with pytest.raises(ValueError, match="input_identity_mismatch"):
@@ -50,37 +64,35 @@ def test_mixed_pdf_cannot_silently_drop_an_image_page(tmp_path):
 
 def test_office_and_audio_have_one_route_without_loading_models(tmp_path):
     for suffix, selected in [("docx", "docling"), ("wav", "qwen3-asr-0.6b"),
-                             ("png", "paddleocr-vl-1.6")]:
+                             ("png", "siliconflow-ocr")]:
         source = tmp_path / ("source." + suffix)
         source.write_bytes(b"routing-only")
         assert optional_media.select_component(request(source)) == selected
 
 
-def test_ffmpeg_absolute_path_reaches_worker_with_empty_path(tmp_path, monkeypatch):
+def test_inprocess_asr_has_no_ffmpeg_or_worker_spawn(tmp_path, monkeypatch):
+    from runtime import component_environment, optional_media_worker
     source = tmp_path / "source.wav"
     source.write_bytes(b"input")
     monkeypatch.setenv("PATH", "")
-    monkeypatch.setenv("KR_OPTIONAL_COMPONENT_RECEIPTS_DIR", str(tmp_path / "components"))
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path / "state"))
-    from runtime import dependency_preflight
-    ffmpeg = tmp_path / "ffmpeg.exe"
-    ffmpeg.write_bytes(b"managed executable identity")
-    monkeypatch.setattr(dependency_preflight, "_ffmpeg_path", lambda: str(ffmpeg))
+    receipts = tmp_path/'components'
+    receipts.mkdir()
+    (receipts/'qwen3-asr-0.6b.json').write_text('{}')
+    monkeypatch.setenv("KR_OPTIONAL_COMPONENT_RECEIPTS_DIR", str(receipts))
     monkeypatch.setattr(optional_media, "validate_receipt", lambda component: {
-        "python": "isolated-python", "model_root": str(tmp_path), "package_versions": {"transformers": "5.20.2"}})
+        "python": "isolated-python", "model_root": str(tmp_path), "package_versions": {}})
+    monkeypatch.setattr(component_environment, "component_environment", lambda *a, **k: {})
     captured = {}
-
-    def worker(command, **kwargs):
-        captured.update(command=command, request=json.loads(kwargs["input"]), env=kwargs["env"])
+    def execute(payload):
+        captured.update(payload)
         raise RuntimeError("stop_before_inference")
-
-    monkeypatch.setattr(optional_media, "isolated_worker_run", worker)
+    monkeypatch.setattr(optional_media_worker, "execute", execute)
     with pytest.raises(RuntimeError, match="stop_before_inference"):
         optional_media.run_optional(request(source))
-    assert captured["request"]["ffmpeg_exe"] == str(ffmpeg)
-    assert captured["env"]["HF_HUB_OFFLINE"] == "1"
-    assert captured["env"]["OMP_NUM_THREADS"] == "4"
-    assert "-I" in captured["command"] and "utf8" in captured["command"]
+    assert captured['threads'] == 4
+    assert 'ffmpeg_exe' not in captured
+    assert captured['input_sha256'] == optional_media.file_sha(source)
 
 
 def test_asr_and_document_share_a_slot_and_release_after_error(tmp_path, monkeypatch):
@@ -111,14 +123,16 @@ def test_model_upgrade_keeps_credentials_and_is_idempotent(tmp_path):
     spec.loader.exec_module(installer)
     path = tmp_path / "config/runtime.env"
     path.parent.mkdir()
-    before = b'DASHSCOPE_API_KEY="private-key"\nTAVILY_API_KEY=search-key\nKR_ASR_MODELS=old\nKR_FRAME_VISION_MODELS=old\nKR_COMMENT_FILTER_MODELS=old\n'
+    before = b'DASHSCOPE_API_KEY="private-key"\nTAVILY_API_KEY=search-key\nKR_ASR_MODELS=old\nKR_FRAME_VISION_MODELS=old\nKR_COMMENT_FILTER_MODELS=old\nKR_IMAGE_MODELS=old\nKR_VIDEO_MODELS=old\nKR_L2_VIDEO_MODEL_VERSION=old\n'
     path.write_bytes(before)
     receipt = installer.migrate_model_configuration(tmp_path, root)
     after = path.read_text(encoding="utf-8")
     assert 'DASHSCOPE_API_KEY="private-key"' in after
     assert "TAVILY_API_KEY=search-key" in after
     assert "KR_COMMENT_FILTER_MODELS" not in after
-    assert "KR_ASR_MODELS=local:qwen3-asr/0.6b-hf" in after
+    assert "KR_IMAGE_MODELS" not in after and "KR_VIDEO_MODELS" not in after
+    assert "KR_L2_VIDEO_MODEL_VERSION" not in after
+    assert "KR_ASR_MODELS=local:qwen3-asr/0.6b-onnx-int8" in after
     assert "KR_FRAME_VISION_MODELS=bailian:qwen3.8-omni-flash" in after
     assert "private-key" not in json.dumps(receipt)
     assert (tmp_path / "receipts" / receipt["backup_name"]).read_bytes() == before

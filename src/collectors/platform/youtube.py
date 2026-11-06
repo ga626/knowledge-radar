@@ -6,7 +6,6 @@ import concurrent.futures
 import logging
 import os
 import re
-import threading
 import time
 from typing import Dict, List, Optional
 
@@ -165,7 +164,7 @@ def get_youtube_detail(video_id_or_url: str, *, include_transcript: bool = True,
         detail["captions"] = captions
         from runtime.asr_policy import AsrPolicy
         requested_language = AsrPolicy.for_request(language).language
-        languages = [requested_language] if language not in {None, "auto", ""} else ["zh-Hans", "zh", "en"]
+        languages = [requested_language] if requested_language else None
         transcript = fetch_youtube_transcript(video_id, preferred_languages=languages) if include_transcript else {"text": "", "status": "skipped", "reason": "explicitly_disabled"}
         detail["transcript"] = transcript.get("text", "")
         detail["transcript_metadata"] = transcript
@@ -175,30 +174,13 @@ def get_youtube_detail(video_id_or_url: str, *, include_transcript: bool = True,
 
 
 def list_youtube_captions(video_id: str) -> Dict:
-    api_key = youtube_api_key()
-    if not api_key:
-        return {"status": "skipped", "reason": "YOUTUBE_API_KEY is not configured", "tracks": []}
-    try:
-        data = _youtube_get("captions", {"part": "snippet", "videoId": video_id, "key": api_key})
-        tracks = []
-        for item in data.get("items") or []:
-            snippet = item.get("snippet") or {}
-            tracks.append(
-                {
-                    "id": item.get("id", ""),
-                    "language": snippet.get("language", ""),
-                    "name": snippet.get("name", ""),
-                    "track_kind": snippet.get("trackKind", ""),
-                    "is_auto_synced": snippet.get("isAutoSynced"),
-                    "status": snippet.get("status", ""),
-                }
-            )
-        return {"status": "ok", "tracks": tracks, "source": "captions.list"}
-    except Exception as exc:
-        return {"status": "failed", "error": str(exc), "source": "captions.list", "tracks": []}
+    # captions.list需要OAuth且面向有权管理的视频；API Key不能代替授权。
+    return {'status': 'authorization_required', 'reason': 'captions.list_requires_owner_oauth',
+            'source': 'captions.list', 'tracks': []}
 
 
 def fetch_youtube_transcript(video_id: str, preferred_languages: Optional[List[str]] = None) -> Dict:
+    automatic = not preferred_languages
     languages = preferred_languages or ["zh-Hans", "zh", "en"]
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
@@ -210,47 +192,84 @@ def fetch_youtube_transcript(video_id: str, preferred_languages: Optional[List[s
             "error": f"youtube-transcript-api not installed: {exc}",
             "text": "",
         }
-    result: Dict = {}
+    # The library's default requests.Session has no HTTP timeout. A timed
+    # thread.join merely abandoned that request, losing its failure stage.
+    # Bound each real request and keep it inside the durable task process.
+    from requests import Session, Timeout
+    from urllib.parse import urlsplit
 
-    def _run() -> None:
+    started = time.monotonic()
+    timeout_s = max(1.0, float(os.environ.get("KR_YOUTUBE_TRANSCRIPT_TIMEOUT_S", "20")))
+    deadline = started + timeout_s
+    requests_log = []
+
+    class TranscriptSession(Session):
+        def request(self, method, url, **kwargs):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise Timeout("transcript overall request budget exhausted")
+            kwargs["timeout"] = (min(3.0, remaining / 2), min(10.0, remaining / 2))
+            stage = urlsplit(url).path
+            event = {"stage": stage, "method": method}
+            requests_log.append(event)
+            request_started = time.monotonic()
+            try:
+                response = super().request(method, url, **kwargs)
+                event["http_status"] = response.status_code
+                return response
+            except Exception as exc:
+                event["error_code"] = type(exc).__name__
+                raise
+            finally:
+                event["elapsed_s"] = round(time.monotonic() - request_started, 3)
+
+    with TranscriptSession() as session:
+        session.trust_env = False
+        proxy = get_httpx_proxy()
+        if proxy:
+            session.proxies.update({"http": proxy, "https": proxy})
         try:
-            api = YouTubeTranscriptApi()
-            transcript = api.fetch(video_id, languages=languages)
-            snippets = list(transcript)
-            text = "\n".join(str(getattr(row, "text", "") or "").strip() for row in snippets if getattr(row, "text", ""))
-            result.update({
-                "status": "ok",
-                "source": "youtube_transcript_api",
-                "languages": languages,
-                "segments": len(snippets),
-                "text_chars": len(text),
-                "text": text,
-            })
+            api = YouTubeTranscriptApi(http_client=session)
+            tracks = api.list(video_id)
+            try:
+                selected = tracks.find_transcript(languages)
+            except Exception as exc:
+                if type(exc).__name__ != 'NoTranscriptFound':
+                    raise
+                # 自动模式：首选中英未命中时读取现有原文字幕，不翻译、不重发探针。
+                available = sorted(list(tracks), key=lambda track: bool(track.is_generated))
+                families = {code.lower().replace('_', '-').split('-')[0] for code in languages}
+                matching = [track for track in available
+                            if track.language_code.lower().replace('_', '-').split('-')[0] in families]
+                if matching:
+                    selected = matching[0]
+                elif automatic and available:
+                    selected = available[0]
+                else:
+                    raise
+            fetched = selected.fetch()
+            transcript_language = getattr(fetched, 'language_code', '')
+            snippets = list(fetched)
+            text = "\n".join(str(row.text).strip() for row in snippets if getattr(row, "text", ""))
+            from kr_core.evidence_locators import transcript_locators
+            segments = [{'text': row.text.strip(), 'start_s': float(row.start),
+                         'end_s': float(row.start + row.duration)} for row in snippets if getattr(row, 'text', '').strip()]
+            mapping = transcript_locators(text, segments)
+            result = {'status': 'ok', 'segments': len(snippets), 'text_chars': len(text), 'text': text,
+                      'timestamped_segments': segments, 'locators': mapping,
+                      'language': transcript_language}
         except Exception as exc:
-            result.update({
-                "status": "failed",
-                "source": "youtube_transcript_api",
-                "languages": languages,
-                "error_code": type(exc).__name__,
-                "error": str(exc),
-                "text": "",
-            })
-
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    timeout_s = float(os.environ.get("KR_YOUTUBE_TRANSCRIPT_TIMEOUT_S", "20"))
-    thread.join(timeout_s)
-    if thread.is_alive():
-        log.warning(f"YouTube transcript fallback timed out after {timeout_s}s: {video_id}")
-        return {
-            "status": "timeout",
-            "source": "youtube_transcript_api",
-            "languages": languages,
-            "error_code": "transcript_timeout",
-            "error": f"youtube-transcript-api timed out after {timeout_s}s",
-            "text": "",
-        }
-    return result
+            name = type(exc).__name__
+            status = "timeout" if isinstance(exc, Timeout) else "failed"
+            category = "network_timeout" if status == "timeout" else (
+                "rate_limited_or_ip_blocked" if name in {"RequestBlocked", "IpBlocked", "TooManyRequests"}
+                else "transcript_unavailable" if name in {"NoTranscriptFound", "TranscriptsDisabled", "VideoUnavailable"}
+                else "transcript_request_failed")
+            result = {"status": status, "error_code": name, "failure_type": category,
+                      "error": f"{name}: {category}", "text": ""}
+    return {**result, "source": "youtube_transcript_api", "languages": languages,
+            "elapsed_s": round(time.monotonic() - started, 3), "timeout_s": timeout_s,
+            "requests": requests_log, "proxy_configured": bool(proxy)}
 
 
 def _youtube_get(resource: str, params: Dict) -> Dict:
@@ -302,13 +321,9 @@ class _YouTubeRateLimitError(RuntimeError):
 def _youtube_get_once(url: str, params: Dict, *, api_key: str, timeout_s: float, proxy: str | None) -> Dict:
     timeout = httpx.Timeout(timeout_s, connect=min(timeout_s, 3.0), read=timeout_s, write=min(timeout_s, 3.0), pool=min(timeout_s, 3.0))
     headers = {"X-Goog-Api-Key": api_key} if api_key else {}
-    try:
-        with httpx.Client(timeout=timeout, proxy=proxy, trust_env=True, headers=headers) as client:
-            resp = client.get(url, params=params)
-    except (httpx.TimeoutException, httpx.ConnectError, httpx.ProxyError) as exc:
-        log.warning(f"代理不可用，已降级为直连: {exc}")
-        with httpx.Client(timeout=timeout, trust_env=False, headers=headers) as client:
-            resp = client.get(url, params=params)
+    # 已选择的出口失败就报告该出口的错误；不得偷偷换直连重放请求。
+    with httpx.Client(timeout=timeout, proxy=proxy, trust_env=True, headers=headers) as client:
+        resp = client.get(url, params=params)
     if resp.status_code >= 400:
         try:
             payload = resp.json()
@@ -360,3 +375,109 @@ def _youtube_error(message: str, *, error_type: str = "request_failed", url: str
             "hint": "Set YOUTUBE_API_KEY for YouTube Data API v3" if error_type == "not_configured" else "",
         },
     }
+
+
+def collect_video_detail(request):
+    detail = get_youtube_detail(request.url, include_transcript=bool(request.options.get('include_transcript')),
+                                language=request.options.get('language'))
+    if detail.get('error'):
+        return detail
+    video_id = detail['video_id']
+    detail['content_id'] = video_id
+    detail['media_manifest'] = [{'type': kind, 'url': canonical_youtube_url(video_id)} for kind in ('audio', 'video')]
+    if request.options.get('include_comments', request.enable_comment_filtering):
+        detail.update(collect_comments(video_id, options=request.options.get('comments')))
+    return detail
+
+
+def collect_comments(video_id, *, options=None):
+    from runtime.read_options import CommentReadOptions, normalized_options
+    from runtime.execution_context import check_execution, ExecutionStopped
+    scope = normalized_options(CommentReadOptions, options)
+    rows, gaps, replies = [], [], []
+    pages, roots, token, exhausted = 0, 0, '', False
+    seen = set()
+    def get(resource, params):
+        nonlocal pages
+        check_execution()
+        if pages >= scope['max_pages']:
+            raise ValueError('comment_page_budget')
+        pages += 1
+        return _youtube_get(resource, {**params, 'key': youtube_api_key()})
+    def row(item, root=None):
+        snippet = item.get('snippet') or {}
+        identifier = str(item['id'])
+        picture = snippet.get('imageUrl')
+        images = ([picture] if isinstance(picture, str) else list(picture or []) if isinstance(picture, list) else [])
+        return {'comment_id': identifier, 'content': snippet.get('textOriginal', snippet.get('textDisplay', '')),
+                'author': snippet.get('authorDisplayName', ''), 'created_at': snippet.get('publishedAt'),
+                'updated_at': snippet.get('updatedAt'), 'likes': snippet.get('likeCount'),
+                'parent_comment_id': str(snippet.get('parentId') or root) if root else None,
+                'root_comment_id': root or identifier, 'is_reply': bool(root), 'images': images,
+                'relationship_confidence': 'native_parent' if root else 'root',
+                'media_provenance': {'image_url_ttl_s': 21600, 'source': 'CommentSnippet.imageUrl',
+                                     'audio_video': 'not_exposed_by_comment_api'}}
+    try:
+        if not youtube_api_key():
+            raise ValueError('youtube_api_key_missing')
+        while roots < scope['root_limit'] and len(rows) < scope['total_limit']:
+            data = get('commentThreads', {'part': 'snippet', 'videoId': video_id, 'textFormat': 'plainText',
+                'maxResults': min(100, scope['root_limit']-roots, scope['total_limit']-len(rows)),
+                'order': scope['order'], **({'pageToken': token} if token else {})})
+            page_truncated = False
+            for thread in data.get('items') or []:
+                top = thread['snippet']['topLevelComment']
+                if roots >= scope['root_limit'] or len(rows) >= scope['total_limit']:
+                    page_truncated = True
+                    break
+                if str(top['id']) in seen:
+                    continue
+                seen.add(str(top['id']))
+                rows.append(row(top)); roots += 1
+                if thread['snippet'].get('totalReplyCount', 0):
+                    replies.append((str(top['id']), int(thread['snippet']['totalReplyCount'])))
+            token = data.get('nextPageToken', '')
+            exhausted = not token and not page_truncated
+            if exhausted:
+                break
+        reply_coverage = []
+        for parent, total in replies:
+            got, next_token = 0, ''
+            while got < min(total, scope['reply_limit']) and len(rows) < scope['total_limit']:
+                data = get('comments', {'part': 'snippet', 'parentId': parent, 'textFormat': 'plainText',
+                    'maxResults': min(100, scope['reply_limit']-got, scope['total_limit']-len(rows)),
+                    **({'pageToken': next_token} if next_token else {})})
+                for child in data.get('items') or []:
+                    if got >= min(total, scope['reply_limit']) or len(rows) >= scope['total_limit']:
+                        break
+                    if str(child['id']) in seen:
+                        continue
+                    seen.add(str(child['id']))
+                    rows.append(row(child, parent)); got += 1
+                next_token = data.get('nextPageToken', '')
+                if not next_token:
+                    break
+            reply_coverage.append({'root_comment_id': parent, 'observed_total': total, 'returned': got,
+                'requested_window_complete': got >= min(total, scope['reply_limit']),
+                'exhausted': got >= total and not next_token, 'has_more': got < total or bool(next_token)})
+        satisfied = (roots >= scope['root_limit'] or exhausted) and all(r['requested_window_complete'] for r in reply_coverage)
+        source_done = exhausted and all(r['exhausted'] for r in reply_coverage)
+    except ExecutionStopped:
+        raise
+    except Exception as exc:
+        gaps.append({'reason': str(exc) if isinstance(exc, ValueError) else _youtube_error_type(exc),
+                     'layer': 'youtube_comments', 'automatic_retry': False})
+        satisfied, source_done = False, False
+        reply_coverage = locals().get('reply_coverage', [])
+    return {'comments': rows, 'comments_complete': satisfied, 'comments_exhausted': source_done,
+            'comments_empty_confirmed': source_done and not rows,
+            'comments_coverage': 'observed_zero_comments' if source_done and not rows else 'bounded_api_window',
+            'comments_metadata': {'pages': pages, 'returned_roots': roots, 'reply_coverage': reply_coverage,
+                'gaps': gaps, 'next_root_token': token, 'stop_reason': gaps[0]['reason'] if gaps else 'source_exhausted' if source_done else 'requested_window',
+                'relationship_scope': 'api_parent_is_top_level; UI_mentions_do_not_define_deeper_parent'}}
+
+
+def deep_analyze_youtube(video_id, basic_info, research_session_id='', scope_options=None):
+    from runtime.video_tasks import submit_video_detail
+    return submit_video_detail('YouTube', canonical_youtube_url(video_id),
+        research_session_id=research_session_id, scope=(scope_options or {}).get('task_scope'), deep=True)

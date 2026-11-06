@@ -1,8 +1,6 @@
-from itertools import permutations
 import pytest
 
 from runtime.account_observations import AccountObservationStore
-from runtime.xhs_task_failover import run_browser_accounts
 
 
 def test_ttl_probe_and_business_are_distinct(tmp_path):
@@ -71,13 +69,6 @@ def test_shown_and_activated_receipts_are_monotonic_and_recovery_closes_outbox(t
     assert store.pending_notifications() == []
 
 
-def test_xhs_structured_account_failure_is_not_success(tmp_path, monkeypatch):
-    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
-    pool = {"accounts": [{"profile_id": p, "risk": {"risk_score": 0}} for p in "ABC"]}
-    _, receipt = run_browser_accounts({"policy": {"default_mode": "safe_auto"}}, pool, "A",
-                                     lambda _: {"failure_type": "login_required", "status": "needs_interaction"}, lambda *_: None)
-    assert receipt["failed_profile_ids"] == ["A", "B", "C"]
-    assert receipt["exhausted"]
 
 
 def test_late_failure_and_stale_revision_cannot_replace_fresh_success(tmp_path):
@@ -125,13 +116,3 @@ def test_legacy_profiles_retained_as_unknown_without_new_writes(tmp_path, monkey
     rows={r['profile_id']:r for r in profile_registry.profile_state_summary()['profiles']}
     assert rows['old']['state']=='unknown' and rows['new']['state']=='available'
     assert legacy.read_bytes()==before
-
-
-@pytest.mark.parametrize("order", list(permutations(["A", "B", "C"])))
-def test_all_six_orders_exhaust_distinct_profiles(order):
-    pool = {"accounts": [{"profile_id": p, "risk": {"risk_score": 0}} for p in order]}
-    registry = {"raw": {"policy": {"default_mode": "safe_auto", "max_switches_per_task": 2}}}
-    visited = []
-    _, receipt = run_browser_accounts(registry, pool, order[0], lambda p: visited.append(p) or {"error": {"type": "login_required"}}, lambda *_: None)
-    assert visited == list(order)
-    assert receipt["exhausted"]

@@ -1,75 +1,14 @@
-"""Academic metadata providers for KnowledgeRadar."""
-
+"""学术注册入口；仅在确实使用某个来源时导入其实现。"""
+from importlib import import_module
 from .models import AcademicSearchRequest, AcademicSearchResponse, AcademicWork
-from .ar5iv import Ar5ivProvider
-from .arxiv import ArxivProvider
-from .baidu_scholar import BaiduScholarProvider
-from .calis_thesis import CalisThesisProvider
-from .chinaxiv import ChinaXivProvider
-from .citation_import import CitationImportProvider
-from .coaj import CoajProvider
-from .core import CoreProvider
-from .crossref import CrossrefProvider
-from .gooa import GoOaProvider
-from .europepmc import EuropePmcProvider
-from .hanspub import HansPubProvider
-from .hkjo import HkjoProvider
-from .ivy_publisher import IvyPublisherProvider
-from .nssd import NssdProvider
-from .nssd_cn import NssdCnProvider
-from .nstrs import NstrsProvider
-from .ntur import NturProvider
-from .oajrc import OajrcProvider
-from .oalib import OalibProvider
-from .openalex import OpenAlexProvider
-from .paper_edu import PaperEduProvider
-from .paperscope import PaperScopeProvider
-from .pubscholar import PubScholarProvider
-from .sciopen import SciOpenProvider
-from .sciengine import SciEngineProvider
-from .semanticscholar import SemanticScholarProvider
-from .serpapi_scholar import SerpApiScholarProvider
-from .socolar import SocolarProvider
-from .toaj import ToajProvider
-from .ucdrs import UcdrsProvider
-from .unpaywall import UnpaywallProvider
-from .vip_oa import VipOpenAccessProvider
 
-__all__ = [
-    "AcademicSearchRequest",
-    "AcademicSearchResponse",
-    "AcademicWork",
-    "Ar5ivProvider",
-    "ArxivProvider",
-    "BaiduScholarProvider",
-    "CalisThesisProvider",
-    "ChinaXivProvider",
-    "CitationImportProvider",
-    "CoajProvider",
-    "CoreProvider",
-    "CrossrefProvider",
-    "EuropePmcProvider",
-    "GoOaProvider",
-    "HansPubProvider",
-    "HkjoProvider",
-    "IvyPublisherProvider",
-    "NssdProvider",
-    "NssdCnProvider",
-    "NstrsProvider",
-    "NturProvider",
-    "OajrcProvider",
-    "OalibProvider",
-    "OpenAlexProvider",
-    "PaperEduProvider",
-    "PaperScopeProvider",
-    "PubScholarProvider",
-    "SciEngineProvider",
-    "SciOpenProvider",
-    "SemanticScholarProvider",
-    "SerpApiScholarProvider",
-    "SocolarProvider",
-    "ToajProvider",
-    "UcdrsProvider",
-    "UnpaywallProvider",
-    "VipOpenAccessProvider",
-]
+_PROVIDERS = {'Ar5ivProvider': 'ar5iv', 'ArxivProvider': 'arxiv', 'CalisThesisProvider': 'calis_thesis', 'ChinaXivProvider': 'chinaxiv', 'CitationImportProvider': 'citation_import', 'CoreProvider': 'core', 'CrossrefProvider': 'crossref', 'EuropePmcProvider': 'europepmc', 'HkjoProvider': 'hkjo', 'NssdProvider': 'nssd', 'NapsticOaProvider': 'napstic_oa', 'NstrsProvider': 'nstrs', 'NturProvider': 'ntur', 'OpenAlexProvider': 'openalex', 'PubScholarProvider': 'pubscholar', 'SciEngineProvider': 'sciengine', 'SemanticScholarProvider': 'semanticscholar', 'SerpApiScholarProvider': 'serpapi_scholar', 'ToajProvider': 'toaj', 'UnpaywallProvider': 'unpaywall', 'VipOpenAccessProvider': 'vip_oa', 'WanfangProvider': 'wanfang'}
+__all__ = ['AcademicSearchRequest', 'AcademicSearchResponse', 'AcademicWork', *_PROVIDERS]
+
+
+def __getattr__(name):
+    if name not in _PROVIDERS:
+        raise AttributeError(name)
+    value = getattr(import_module('.' + _PROVIDERS[name], __name__), name)
+    globals()[name] = value
+    return value

@@ -2,20 +2,92 @@
   "schema": "knowledgeradar-storage-ownership/v1",
   "purpose": "Define product data ownership and the only automatic lifecycle action.",
   "categories": [
-    {"id": "config", "label": "本地配置与受保护备份", "relative_path": "config", "policy": "protected"},
-    {"id": "browser", "label": "浏览器资料与 Chrome 派生组件", "relative_path": "browser_data", "policy": "protected"},
-    {"id": "state", "label": "运行状态", "relative_path": "state", "exclude_relative_paths": ["state/media_cache"], "policy": "protected"},
-    {"id": "logs", "label": "日志", "relative_path": "logs", "policy": "protected"},
-    {"id": "cache", "label": "通用缓存", "relative_path": "cache", "policy": "manual_only"},
-    {"id": "media_cache", "label": "媒体缓存", "relative_path": "state/media_cache", "policy": "quarantine_expired_manifest_known"},
-    {"id": "models", "label": "用户启用的模型", "relative_path": "models", "policy": "manual_only"},
-    {"id": "playwright", "label": "Playwright", "relative_path": "playwright", "policy": "manual_only"},
-    {"id": "optional_capabilities", "label": "按需 bridge 与其 Node.js 依赖", "relative_path": "capabilities", "policy": "manual_only"},
-    {"id": "quarantine", "label": "可恢复隔离区", "relative_path": "quarantine", "policy": "manual_restore_or_purge"},
-    {"id": "archive", "label": "历史归档", "relative_path": "archive", "policy": "protected"}
+    {
+      "id": "config",
+      "label": "本地配置与受保护备份",
+      "relative_path": "config",
+      "policy": "protected"
+    },
+    {
+      "id": "browser",
+      "label": "浏览器资料与 Chrome 派生组件",
+      "relative_path": "browser_data",
+      "policy": "protected"
+    },
+    {
+      "id": "state",
+      "label": "运行状态",
+      "relative_path": "state",
+      "exclude_relative_paths": [
+        "state/media_cache"
+      ],
+      "policy": "protected"
+    },
+    {
+      "id": "logs",
+      "label": "日志",
+      "relative_path": "logs",
+      "policy": "protected"
+    },
+    {
+      "id": "cache",
+      "label": "通用缓存",
+      "relative_path": "cache",
+      "policy": "manual_only"
+    },
+    {
+      "id": "media_cache",
+      "label": "媒体缓存",
+      "relative_path": "state/media_cache",
+      "policy": "quarantine_expired_manifest_known"
+    },
+    {
+      "id": "models",
+      "label": "用户启用的模型",
+      "relative_path": "models",
+      "policy": "manual_only"
+    },
+    {
+      "id": "playwright",
+      "label": "Playwright",
+      "relative_path": "playwright",
+      "policy": "manual_only"
+    },
+    {
+      "id": "optional_capabilities",
+      "label": "按需 bridge 与其 Node.js 依赖",
+      "relative_path": "capabilities",
+      "policy": "manual_only"
+    },
+    {
+      "id": "quarantine",
+      "label": "可恢复隔离区",
+      "relative_path": "quarantine",
+      "policy": "manual_restore_or_purge"
+    },
+    {
+      "id": "archive",
+      "label": "历史归档",
+      "relative_path": "archive",
+      "policy": "protected"
+    }
   ],
   "automatic_actions": {
-    "allowed": ["move manifest-known expired media cache to quarantine"],
-    "forbidden": ["delete credentials", "delete cookies or browser profiles", "delete models", "delete backups", "delete unknown files"]
+    "allowed": [
+      "move manifest-known expired media cache to quarantine"
+    ],
+    "forbidden": [
+      "delete credentials",
+      "delete cookies or browser profiles",
+      "delete models",
+      "delete backups",
+      "delete unknown files"
+    ]
+  },
+  "capacity_contract": {
+    "evidence": "disk_free_and_optional_explicit_capacity_no_default_lifetime_cap",
+    "media": "disk_reservations_and_optional_KR_MEDIA_CAPACITY_BYTES_including_quarantine",
+    "vault": "human_project_task_material_report_names_only_no_media_or_machine_sidecars; identity_hash_and_byte_maps_in_KR; persistent_collision_reservations_no_implicit_rename",
+    "backup": "explicit_new_directory_no_automatic_purge"
   }
 }

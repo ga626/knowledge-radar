@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from importlib import import_module
 from typing import Dict, Mapping
+from collections.abc import Mapping as MappingABC
 
 from .profile import AcademicProviderProfile, load_academic_provider_profiles
 
@@ -39,15 +40,25 @@ def academic_provider_profile_status() -> Dict[str, Dict[str, object]]:
 def instantiate_academic_providers(
     profiles: Mapping[str, AcademicProviderProfile] | None = None,
 ) -> Dict[str, object]:
-    if profiles is None:
-        registrations = academic_provider_registry()
-    else:
-        registrations = {
-            provider_id: _registration_from_profile(profile)
-            for provider_id, profile in profiles.items()
-            if profile.enabled
-        }
-    return {provider_id: registration.provider for provider_id, registration in registrations.items()}
+    return LazyProviders(profiles or academic_provider_profiles())
+
+
+class LazyProviders(MappingABC):
+    """遍历键不导入浏览器或可选依赖；实例只在读取所选来源时构造。"""
+    def __init__(self, profiles):
+        self.profiles = {k:v for k,v in profiles.items() if v.enabled}
+        self.instances = {}
+
+    def __iter__(self):
+        return iter(self.profiles)
+
+    def __len__(self):
+        return len(self.profiles)
+
+    def __getitem__(self, key):
+        if key not in self.instances:
+            self.instances[key] = _registration_from_profile(self.profiles[key]).provider
+        return self.instances[key]
 
 
 def registered_provider_profiles(registry: Mapping[str, ProviderRegistration] | None = None) -> Dict[str, AcademicProviderProfile]:

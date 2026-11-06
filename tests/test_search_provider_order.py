@@ -44,7 +44,7 @@ class _UnavailableProvider(BaseSearchProvider):
 
 
 class _EmptyOptionalProvider(BaseSearchProvider):
-    name = "searxng"
+    name = "ddgs"
 
     def status(self):
         return {"configured": True, "available": True, "degraded_ok": True}
@@ -116,11 +116,11 @@ def test_missing_brave_and_exa_are_expected_degraded(monkeypatch, tmp_path):
 
 
 def test_optional_empty_results_are_expected_degraded_not_failure(monkeypatch, tmp_path):
-    monkeypatch.setenv("KR_WEB_SEARCH_PROVIDERS", "searxng")
+    monkeypatch.setenv("KR_WEB_SEARCH_PROVIDERS", "ddgs")
     policy = DegradationPolicy(db_path=str(tmp_path / "degradation.sqlite3"), event_path=str(tmp_path / "events.jsonl"))
     monkeypatch.setattr("search_providers.service.get_degradation_policy", lambda: policy)
-    monkeypatch.setattr("search_providers.service._providers", lambda: {"searxng": _EmptyOptionalProvider()})
-    monkeypatch.setattr("search_providers.service.provider_status", lambda: {"searxng": {"configured": True, "available": True}})
+    monkeypatch.setattr("search_providers.service._providers", lambda: {"ddgs": _EmptyOptionalProvider()})
+    monkeypatch.setattr("search_providers.service.provider_status", lambda: {"ddgs": {"configured": True, "available": True}})
 
     response = search_web(WebSearchRequest(query="query with no backend hits", limit=1, provider="auto"))
 
@@ -224,9 +224,9 @@ def test_web_search_wave_concurrency_is_adaptive(monkeypatch, tmp_path):
 
     response = search_web(WebSearchRequest(query="provider order test", limit=2, provider="auto"))
 
-    assert response.metadata["wave_concurrency"][0]["wave"] == ["searxng", "anysearch"]
+    assert response.metadata["wave_concurrency"][0]["wave"] == ["anysearch"]
     assert response.metadata["wave_concurrency"][0]["selected_workers"] == 1
-    assert "hard_cap_applied" in response.metadata["wave_concurrency"][0]["reasons"]
+    assert "wave_size_within_cap" in response.metadata["wave_concurrency"][0]["reasons"]
 
 
 def test_stale_not_configured_breaker_allows_reprobe_when_provider_now_available():

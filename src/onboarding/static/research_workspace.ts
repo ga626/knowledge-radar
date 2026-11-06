@@ -12,7 +12,7 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
   const input = (id:string) => element<HTMLInputElement>(id);
   const text = (id:string,value:unknown) => {element(id).textContent=String(value??'');};
   const rows = (value:unknown):Record<string,any>[] => Array.isArray(value)?value.filter(v=>v&&typeof v==='object'):[];
-  const states:Record<string,string>={open:'尚未结束检查',needs_repair:'仍有待核对项',accepted_for_decision:'完成检查通过'};
+  const states:Record<string,string>={open:'记录中',recorded:'已记录',recorded_with_gaps:'已记录（有缺口）',needs_repair:'仍有待核对项',accepted_for_decision:'完成检查通过'};
   const ecologies:Record<string,string>={web:'公开网页',generic_web_ecology:'公开网页',github_repository_ecology:'开源项目',academic_literature_ecology:'学术文献',wechat_public_article_ecology:'微信公众号',bilibili_video_ecology:'哔哩哔哩',youtube_video_ecology:'YouTube 视频',zhihu_discussion_ecology:'知乎',xiaohongshu_experience_ecology:'小红书'};
   const eventLabels:Record<string,string>={route_opened:'开始记录',claim_gap_opened:'记录待核对问题',query_family_created:'准备查询',candidate_page_received:'找到候选资料',candidates_clustered:'整理资料',candidate_selected:'选择核对资料',detail_upgraded:'补充详细资料',claim_supported:'补充结论依据',counterevidence:'检查反面证据',detail_degraded:'资料获取受限',gap_blocked:'核对受阻',gap_closed:'完成问题核对',stop_reviewed:'检查停止条件',closeout:'完成检查'};
   const coverageLabels:Record<string,string>={full:'已保存全文',complete:'已保存全文',partial:'仅保存部分内容',unknown:'完整性未确认',manifest_only:'仅有媒体清单'};
@@ -27,7 +27,7 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
   const formatDuration=(seconds:number)=>Number.isFinite(seconds)&&seconds>0?(seconds<60?Math.round(seconds)+' 秒':Math.round(seconds/60)+' 分钟'):'未记录';
   const truncate=(value:string,max=80)=>value.length>max?value.slice(0,max-1)+'…':value;
   const statusLabel=(value:string)=>states[value]||'状态待确认';
-  const statusClass=(value:string)=>value==='available'||value==='accepted_for_decision'?'available':value==='missing'||value==='needs_repair'?'missing':'pending';
+  const statusClass=(value:string)=>value==='recorded'||value==='available'||value==='accepted_for_decision'?'available':value==='recorded_with_gaps'||value==='missing'||value==='needs_repair'?'missing':'pending';
   const sourceLabel=(value:unknown)=>ecologies[String(value)]||'其他来源';
   const titleOf=(task:ResearchTask)=>task.readable_summary?.title||truncate(task.objective||'未命名研究',33);
   const projectOf=(task:ResearchTask)=>String(task.readable_summary?.project_name||task.project_name||'').trim()||'未分类项目';
@@ -75,7 +75,7 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
     target.replaceChildren();
     const lead=document.createElement('p');
     lead.className='research-result-lead';
-    lead.textContent=task.status==='accepted_for_decision'?'本次研究已通过完成检查。报告与留存资料可在“本次成果”中核对。':task.status==='needs_repair'?'本次研究仍有待核对项，请结合已交付报告查看适用范围。':'已经记录研究目标与过程，尚未收到最终完成检查。';
+    lead.textContent=task.status==='recorded'?'报告和证据已记录，充分性由 Codex 判断。':task.status==='recorded_with_gaps'?'报告已记录，仍有证据或执行缺口，请查看下方事实。':task.status==='accepted_for_decision'?'本次研究已通过完成检查。报告与留存资料可在“本次成果”中核对。':task.status==='needs_repair'?'本次研究仍有待核对项，请结合已交付报告查看适用范围。':'已经记录研究目标与过程，尚未收到最终完成检查。';
     target.append(lead);
     const details=document.createElement('ul');
     for(const [key,label] of [['missing_outcomes','尚未说明如何处理的来源'],['critical_claims_without_support','缺少依据的关键结论'],['critical_claims_without_receipts','缺少调用记录的关键结论'],['pending_background_tasks','尚待核对的后台任务'],['unavailable_evidence_versions','无法读取的引用资料']] as const){
@@ -153,7 +153,7 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
     }
   };
   const renderFiles=(files:ResearchFile[])=>{
-    const picked=new Set(Array.from(document.querySelectorAll<HTMLInputElement>('[data-export-version]:checked')).map(node=>node.value));
+
     const target=element('research-files');target.replaceChildren();text('research-files-count',files.length+' 项');
     if(!files.length){const p=document.createElement('p');p.className='research-help';p.textContent='本次研究尚未登记文件或已保存原文。对话中交付但未绑定的报告不会自动显示在这里。';target.append(p);return;}
     for(const file of files){
@@ -166,7 +166,6 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
       head.append(name,state);item.append(head);
       const meta=document.createElement('p');meta.textContent=file.type==='fixed_evidence'?'采集时保存的正文或字幕':file.type==='report'?'本次研究已留存的报告':file.path?file.name:'本次研究的已记录工具调用';item.append(meta);
       if(file.type==='fixed_evidence'&&file.version_id&&file.readable){
-        const label=document.createElement('label'),check=document.createElement('input');label.className='research-check';check.type='checkbox';check.value=file.version_id;check.checked=picked.has(file.version_id);check.dataset.exportVersion='true';label.append(check,document.createTextNode('导出这份原文'));item.append(label);
         item.append(button('查看原文',()=>{pages.length=0;location.hash='#library';void openVersion(file.version_id!);}));
       }else if(file.type==='tool_receipts'){
         const details=document.createElement('details'),summary=document.createElement('summary'),pre=document.createElement('pre');
@@ -220,7 +219,7 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
       const task:ResearchTask=await call({action:'inspect',task_id:id});
       if(generation!==inspectGeneration)return;
       if(task.status==='unknown_task')throw Error('记录已不可读取，请刷新列表。');
-      if(background&&selected?.research_task_id===id&&selected.updated_at===task.updated_at)return;
+      if(background&&selected?.research_task_id===id&&selected.updated_at===task.updated_at&&JSON.stringify(selected.deliveries)===JSON.stringify(task.deliveries)&&JSON.stringify(selected.files)===JSON.stringify(task.files))return;
       if(selected?.research_task_id!==id){
         for(const details of element('research-detail').querySelectorAll<HTMLDetailsElement>('details'))details.open=false;
       }
@@ -231,6 +230,8 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
       text('research-state',statusLabel(task.status));element('research-state').className='research-status-badge '+statusClass(task.status);
       const budgets:Record<string,string>={fast:'快速核对',balanced:'常规调研',deep:'深入调研',diagnostic:'诊断核查'};
       text('research-state-detail',(budgets[task.budget]||'研究记录')+' · 更新于 '+formatDate(task.updated_at));
+      const deliveries=task.deliveries||[];
+      text('research-deliveries',deliveries.map(d=>(d.status==='local_committed'?'本地已核验':d.status==='conflict'?'目标有修改，已保留':d.status)+' · '+(d.path||'')).join('\n')||'暂无交付回执；本地完成不代表云同步完成。');
       drawTaskList();renderFacts(task);renderCloseout(task);renderProgress(task);renderRounds(task);renderMetrics(task);renderFiles(rows(task.files) as ResearchFile[]);
     }catch(error){if(generation===inspectGeneration)showError(error);}
   };
@@ -305,27 +306,6 @@ type ResearchFile = {file_id:string;name:string;label:string;type:string;task_id
     }catch(error){showError(error,'evidence-message');}finally{node.disabled=false;}
   };
   let previousRoute='';
-  const exportTask=async(obsidian:boolean)=>{
-    if(!selected)return;
-    const node=input(obsidian?'research-export-obsidian':'research-export-download');node.disabled=true;
-    element('research-open-obsidian').hidden=true;
-    try{
-      if(!input('research-export-ack').checked)throw Error('请先确认所选内容允许导出。');
-      const versions=Array.from(document.querySelectorAll<HTMLInputElement>('[data-export-version]:checked')).map(node=>node.value);
-      text('research-export-message','正在整理报告和所选原文…');
-      const result=await call({action:obsidian?'export_obsidian':'export_task',task_id:selected.research_task_id,version_ids:versions,include_report:input('research-export-report').checked,export_acknowledged:true,vault_path:input('research-vault').value.trim()});
-      if(obsidian){
-        text('research-export-message','已保存到 '+result.inbox);
-        const link=element<HTMLAnchorElement>('research-open-obsidian');link.href=result.open_uri;link.hidden=false;
-      }else{
-        const bytes=Uint8Array.from(atob(result.data_base64),c=>c.charCodeAt(0)),url=URL.createObjectURL(new Blob([bytes],{type:'application/zip'}));
-        const link=document.createElement('a');link.href=url;link.download=result.filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
-        text('research-export-message','成果包已生成。');
-      }
-    }catch(error){showError(error,'research-export-message');}finally{node.disabled=false;}
-  };
-  element('research-export-download').addEventListener('click',()=>void exportTask(false));
-  element('research-export-obsidian').addEventListener('click',()=>void exportTask(true));
   const routeChanged=()=>{
     const route=location.hash;if(route===previousRoute)return;previousRoute=route;
     if(route==='#research')void reload();else if(route==='#library')void searchAssets();

@@ -78,7 +78,9 @@ def _with_ar5iv_html(item: AcademicWork, html_url: str, arxiv_id: str) -> Academ
         provider_confidence=min(0.9, max(float(item.provider_confidence or 0.0), 0.78)),
         verification_status=item.verification_status,
         citation_export_formats=list(item.citation_export_formats),
-        license_scope=item.license_scope or "open",
+        license_scope=item.license_scope or "unknown",
+        document_type=item.document_type,
+        version=item.version,
         raw=raw,
     )
 
@@ -95,7 +97,9 @@ def _direct_ar5iv_work(html_url: str, arxiv_id: str) -> AcademicWork:
         full_text_status="html_fulltext",
         provider_confidence=0.78,
         verification_status="arxiv_id_matched",
-        license_scope="open",
+        license_scope="unknown",
+        document_type="preprint",
+        version=arxiv_id.rsplit('v', 1)[1] if re.search(r'v\d+$', arxiv_id) else 'unknown',
         raw={"arxiv_id": arxiv_id, "ar5iv_html_url": html_url, "source_provider": "ar5iv_direct_id"},
     )
 
@@ -109,7 +113,7 @@ def _arxiv_id(item: AcademicWork) -> str:
 
 
 def _arxiv_id_from_text(text: str) -> str:
-    match = re.search(r"(?:arxiv:|arxiv\.org/(?:abs|pdf)/)?(\d{4}\.\d{4,5})(?:v\d+)?", str(text or ""), flags=re.IGNORECASE)
+    match = re.search(r"(?<![\w/])(?:arxiv:|https?://(?:arxiv\.org|ar5iv\.labs\.arxiv\.org)/(?:abs|pdf|html)/)?((?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?)(?![\w])", str(text or ""), flags=re.IGNORECASE)
     if match:
         return match.group(1)
     return ""

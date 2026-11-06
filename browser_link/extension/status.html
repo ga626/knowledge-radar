@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KR 浏览器连接器</title>
+  <link rel="stylesheet" href="status.css">
+</head>
+<body>
+  <header>
+    <img src="icons/radar-48.png" width="40" height="40" alt="">
+    <div><h1>KR 浏览器连接器</h1><p>KnowledgeRadar Browser Link</p></div>
+    <span id="version"></span>
+  </header>
+  <main>
+    <div class="connection" role="status" aria-live="polite" aria-atomic="true">
+      <span id="indicator" data-state="connecting" aria-hidden="true"></span>
+      <h2 id="state">正在连接</h2>
+    </div>
+    <p id="description">安装后自动连接，无需手动开启。</p>
+    <p class="scope">供 BOSS 直聘、猎聘、脉脉采集任务共用。</p>
+    <button id="reconnect" type="button" hidden>重试连接</button>
+    <details id="diagnostics" hidden><summary>查看诊断信息</summary><p id="error"></p></details>
+  </main>
+  <footer>复用当前浏览器登录态 · 仅处理 KR 发起的任务</footer>
+  <script src="status.js"></script>
+</body>
+</html>

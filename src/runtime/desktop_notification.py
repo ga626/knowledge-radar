@@ -84,7 +84,11 @@ def drain_notification_outbox():
     from .profile_registry import profile_registry_internal
     registry = profile_registry_internal()
     profiles = (registry.get("raw") or {}).get("profiles") or registry.get("profiles") or []
-    registered = {row["profile_id"]: row for row in profiles if row.get("profile_id")}
+    registered = {row["profile_id"]: row for row in profiles if row.get("profile_id") and row.get("platform") not in {"xhs","xiaohongshu"}}
+    from .xhs_opencli import account_binding_id
+    binding = account_binding_id()
+    if binding:
+        registered[binding] = {"profile_id":binding,"platform":"xhs","display_label":"日常Chrome主账号"}
     results = []
     for observation in AccountObservationStore().pending_notifications():
         profile = registered.get(observation["profile_id"])

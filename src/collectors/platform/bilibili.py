@@ -2,32 +2,26 @@
 
 from __future__ import annotations
 
-import hashlib
-import glob
-import importlib.util
 import json
 import logging
 import os
-from pathlib import Path
 import re
-import sys
 import time
 from typing import Dict, List, Optional
 
 import httpx
 from kr_core.collection import CollectionTrace, format_search_error, format_search_response
 from runtime.asr_policy import AsrPolicy
-from runtime.dependency_preflight import _ffmpeg_path
 from runtime.media_cache import media_cache_subdir, record_media_cache_entry
-from runtime.task_adapter import LocalTaskAdapter, LocalTaskSpec
 from runtime.task_scope import make_task_scope, merge_scope_metadata
-from runtime.tasks import compact_task_ref, get_task_store
+from runtime.tasks import get_task_store
+from runtime.model_roles import CLOUD_MODEL_REF
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 log = logging.getLogger("mcp-server")
 L2_MULTIMODAL_SCHEMA_VERSION = "knowledgeradar-l2-video-analysis/v1"
 L2_ANALYSIS_STRATEGY = "bilibili_qwen_video_analysis"
-L2_MODEL_VERSION = os.environ.get("KR_L2_VIDEO_MODEL_VERSION", "qwen-vl-default-2026-05")
+L2_MODEL_VERSION = CLOUD_MODEL_REF
 
 BILI_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -35,25 +29,6 @@ BILI_HEADERS = {
 }
 
 
-def _missing_transcription_components() -> list[str]:
-    """Return prerequisites required only for the audio-to-ASR fallback.
-
-    Subtitle and transcript-cache paths remain usable without these optional
-    components.  The check happens immediately before queuing a background
-    download so an absent local runtime is never discovered minutes later by a
-    failed worker.
-    """
-
-    missing: list[str] = []
-    if importlib.util.find_spec("yt_dlp") is None:
-        missing.append("媒体下载器（yt-dlp）")
-    from runtime.optional_media import receipt_root
-    from runtime.model_roles import ASR_COMPONENT
-    if not (receipt_root() / (ASR_COMPONENT + '.json')).is_file():
-        missing.append("本地语音转写（Qwen3-ASR 0.6B）")
-    if not _ffmpeg_path():
-        missing.append("FFmpeg")
-    return missing
 
 
 def extract_bvid(url: str) -> Optional[str]:
@@ -335,9 +310,10 @@ def get_bilibili_transcript_metadata(bvid, language=None):
             continue
     return {'source_kind': 'unknown', 'locators': {'status': 'missing', 'reason': 'matching_verified_cache_not_found'}}
 
-def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, language: str | None = None) -> Dict:
+def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, language: str | None = None, info=None) -> Dict:
+    language = AsrPolicy.for_request(language).language
     started = time.time()
-    info = get_bilibili_info(bvid) or {}
+    info = info if info is not None else (get_bilibili_info(bvid) or {})
     cid = info.get("cid")
     if not cid:
         return {"hit": False, "duration_s": round(time.time() - started, 3), "reason": "missing_cid"}
@@ -348,11 +324,15 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, langua
             headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://www.bilibili.com/video/{bvid}"},
             timeout=10,
         )
+        player_resp.raise_for_status()
         player = player_resp.json()
+        if player.get("code", 0) != 0:
+            return {"hit": False, "reason": "subtitle_api_error:" + str(player.get("code")),
+                    "failure_type": 'verification_required' if player.get('code') in {-352, -412} else 'subtitle_api_error'}
         subtitles = (((player.get("data") or {}).get("subtitle") or {}).get("subtitles") or [])
         if not subtitles:
             return {"hit": False, "duration_s": round(time.time() - started, 3), "reason": "no_subtitles"}
-        matching = [row for row in subtitles if str(row.get("lan") or "").lower().split("-")[0] == language] if language else subtitles
+        matching = [row for row in subtitles if str(row.get("lan") or "").lower().replace('_', '-').removeprefix('ai-').split("-")[0] == language] if language else subtitles
         if not matching:
             return {"hit": False, "duration_s": round(time.time() - started, 3), "reason": "no_subtitle_for_requested_language"}
         subtitle = matching[0] or {}
@@ -366,6 +346,7 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, langua
             headers={"User-Agent": "Mozilla/5.0", "Referer": f"https://www.bilibili.com/video/{bvid}"},
             timeout=15,
         )
+        subtitle_resp.raise_for_status()
         subtitle_data = subtitle_resp.json()
         lines = []
         for item in subtitle_data.get("body") or []:
@@ -391,6 +372,7 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, langua
             pass
         return {
             "hit": True,
+            "language": subtitle.get("lan", ""),
             "text": text,
             "timestamped_segments": [{"text": str(row.get("content") or "").strip(), "start_s": row.get("from"), "end_s": row.get("to")} for row in subtitle_data.get("body") or [] if str(row.get("content") or "").strip()],
             "duration_s": round(time.time() - started, 3),
@@ -398,655 +380,158 @@ def _probe_bilibili_subtitle(bvid: str, *, output_dir: str, task_id: str, langua
             "line_count": len(lines),
         }
     except Exception as exc:
+        from runtime.media_acquisition import classify_media_error
         return {
             "hit": False,
             "duration_s": round(time.time() - started, 3),
             "reason": str(exc)[:160],
+            "failure_type": classify_media_error(exc),
         }
 
 
-def transcribe_bilibili(
-    bvid: str,
-    output_dir: str = "",
-    research_session_id: str = "",
-    scope_metadata: Dict | None = None,
-    language: str | None = None,
-) -> str:
-    """B站视频语音转写，返回文本（下载和转录都后台执行，避免 MCP 超时）"""
-    try:
-        started_total = time.time()
-        task_store = get_task_store()
-        policy = AsrPolicy.for_request(language)
-        policy_key = hashlib.sha256(json.dumps(policy.compact(), sort_keys=True).encode()).hexdigest()[:16]
-        task_id = f"bilibili_transcribe_{bvid}"
-        if language is not None:
-            task_id += '_' + policy_key
-        if not output_dir:
-            output_dir = str(media_cache_subdir("transcripts", content_id=bvid, task_id=task_id))
-        elif language is not None:
-            output_dir = os.path.join(output_dir, policy_key)
-        os.makedirs(output_dir, exist_ok=True)
-        cache_path = os.path.join(output_dir, f"{bvid}_transcript.txt")
-        cache_m4a = os.path.join(output_dir, f"{bvid}.m4a")
-        in_progress_path = os.path.join(output_dir, f"{bvid}_transcript.inprogress")
+def collect_video_detail(request):
+    """仅采集文字/评论/字幕和媒体定位；不下载、不调模型。"""
+    bvid = extract_bvid(request.url)
+    if not bvid:
+        return {'error': 'invalid_bvid', 'failure_type': 'invalid_input'}
+    info = get_bilibili_info(bvid)
+    if not info:
+        return {'error': 'video_metadata_unavailable', 'failure_type': 'metadata_request_failed'}
+    data = {**info, 'content': info.get('desc', ''), 'content_id': bvid, 'content_type': 'video', 'url': request.url, 'platform': 'B站', 'transcript': ''}
+    want_transcript = bool(request.options.get('include_transcript'))
+    if want_transcript:
+        subtitle = _probe_bilibili_subtitle(bvid, output_dir=str(media_cache_subdir('subtitles', content_id=bvid)),
+                                           task_id='', language=request.options.get('language'), info=info)
+        if subtitle.get('hit'):
+            from kr_core.evidence_locators import transcript_locators
+            data['transcript'] = subtitle['text']
+            mapping = transcript_locators(subtitle['text'], subtitle.get('timestamped_segments'))
+            data['transcript_metadata'] = {**mapping, 'source': 'bilibili_subtitle',
+                'language': subtitle.get('language', ''), 'subtitle_url': subtitle.get('subtitle_url', '')}
+        else:
+            data['transcript_metadata'] = {'status': 'unavailable', 'reason': subtitle.get('reason'),
+                'failure_type': subtitle.get('failure_type', ''), 'source': 'bilibili_subtitle'}
+    if request.options.get('include_comments', request.enable_comment_filtering):
+        data.update(collect_comments(bvid, options=request.options.get('comments')))
+    else:
+        data['comments'] = []
+    data['filtered_comments'] = []  # 语义筛选属于增强阶段，采集阶段先保存全部原始评论。
+    headers = {'Referer': 'https://www.bilibili.com/', 'Origin': 'https://www.bilibili.com'}
+    data['media_manifest'] = [{'type': kind, 'url': f'https://www.bilibili.com/video/{bvid}',
+                               'metadata': {'headers': headers}} for kind in ['audio', 'video']]
+    return data
 
-        def _find_existing_audio() -> str:
-            candidates = [cache_m4a]
-            candidates.extend(sorted(glob.glob(os.path.join(output_dir, f"{bvid}_p*.m4a"))))
-            existing = [path for path in candidates if os.path.exists(path) and os.path.getsize(path) > 0]
-            if not existing:
-                return ""
-            p1_audio = os.path.join(output_dir, f"{bvid}_p1.m4a")
-            if p1_audio in existing:
-                return p1_audio
-            return existing[0]
 
-        cached_text = _read_transcript_cache(cache_path, policy=policy)
-        if cached_text:
-            timing = _empty_asr_timing()
-            timing["total_s"] = round(time.time() - started_total, 3)
-            record_media_cache_entry(
-                cache_path,
-                kind="transcript",
-                content_id=bvid,
-                task_id=task_id,
-                source_url=f"https://www.bilibili.com/video/{bvid}",
-                metadata={"cache_hit": True},
-            )
-            # 已完成任务是历史事实；仍记录缓存访问，但不重写完成回执。
-            if (task_store.get_task(task_id) or {}).get("status") == "completed":
-                return cached_text
-            task_store.upsert_task(
-                task_id=task_id,
-                task_type="bilibili_transcribe",
-                platform="B站",
-                target=bvid,
-                content_id=bvid,
-                status="completed",
-                result_path=cache_path,
-                metadata=_asr_task_metadata(
-                    bvid,
-                    policy=policy,
-                    research_session_id=research_session_id,
-                    scope_metadata=scope_metadata,
-                    result_path=cache_path,
-                    timing=timing,
-                    cache_hit=True,
-                    subtitle_hit=False,
-                    phase="cache_hit",
-                ),
-            )
-            task_store.mark_completed(task_id, result_path=cache_path, metadata={"cache_hit": True, **timing})
-            return cached_text
-
-        # 缓存不再有效时创建下一代任务，保留旧完成记录的幂等语义。
-        # 同一前代+输出路径得到同一代ID，并发请求可复用正在执行的一代。
-        while (previous := task_store.get_task(task_id)) and previous.get("status") == "completed":
-            generation = json.dumps({"previous": task_id, "finished_at": previous.get("finished_at"),
-                                     "output": os.path.normcase(os.path.abspath(cache_path))}, sort_keys=True)
-            task_id = f"bilibili_transcribe_{bvid}_" + hashlib.sha256(generation.encode()).hexdigest()[:16]
-
-        subtitle = _probe_bilibili_subtitle(bvid, output_dir=output_dir, task_id=task_id, language=policy.language)
-        if subtitle.get("hit"):
-            txt = str(subtitle.get("text") or "")
-            _write_transcript_cache(cache_path, txt, policy=policy, segments=subtitle.get("timestamped_segments"))
-            timing = _empty_asr_timing()
-            timing["subtitle_probe_s"] = float(subtitle.get("duration_s") or 0)
-            timing["total_s"] = round(time.time() - started_total, 3)
-            record_media_cache_entry(
-                cache_path,
-                kind="transcript",
-                content_id=bvid,
-                task_id=task_id,
-                source_url=f"https://www.bilibili.com/video/{bvid}",
-                metadata={"subtitle_hit": True, "transcript_chars": len(txt), "line_count": subtitle.get("line_count")},
-            )
-            task_store.upsert_task(
-                task_id=task_id,
-                task_type="bilibili_transcribe",
-                platform="B站",
-                target=bvid,
-                content_id=bvid,
-                status="completed",
-                result_path=cache_path,
-                metadata=_asr_task_metadata(
-                    bvid,
-                    policy=policy,
-                    research_session_id=research_session_id,
-                    scope_metadata=scope_metadata,
-                    result_path=cache_path,
-                    timing=timing,
-                    cache_hit=False,
-                    subtitle_hit=True,
-                    phase="subtitle_hit",
-                    transcript_chars=len(txt),
-                    subtitle_url=subtitle.get("subtitle_url"),
-                ),
-            )
-            task_store.mark_completed(task_id, result_path=cache_path, metadata={"subtitle_hit": True, "transcript_chars": len(txt), **timing})
-            return txt
-
-        missing_components = _missing_transcription_components()
-        if missing_components:
-            # Do not enqueue a worker that is predetermined to fail.  The
-            # caller receives a machine-readable prefix and the local console
-            # owns the corresponding managed/guided installation choices.
-            return "[transcribe] INSTALL_COMPONENT_MISSING: " + "、".join(missing_components) + "；请在本地组件 > 本地媒体理解与转写中完成安装后重试。"
-
-        if os.path.exists(in_progress_path):
-            # Stale detection: if .inprogress file is old, the background
-            # thread was likely killed by MCP server restart or one-shot validation.
-            # the background thread was likely killed by MCP server restart.
-            STALE_SECONDS = int(os.environ.get("KR_BILIBILI_TRANSCRIBE_STALE_SECONDS", "600"))
-            try:
-                in_progress_age = time.time() - os.path.getmtime(in_progress_path)
-                if in_progress_age > STALE_SECONDS:
-                    log.warning(f"[transcribe] Stale .inprogress detected ({in_progress_age:.0f}s old), cleaning up: {bvid}")
-                    try:
-                        os.remove(in_progress_path)
-                    except Exception:
-                        pass
-                    # Also clean up partial audio download
-                    for suffix in [".part", ".m4a.part", ".p1.m4a.part"]:
-                        partial = cache_m4a + suffix
-                        if os.path.exists(partial):
-                            try:
-                                os.remove(partial)
-                            except Exception:
-                                pass
-                    # Mark the stale task as failed
-                    task_store.mark_failed(task_id, error="stale: background thread killed by server restart", metadata={"bvid": bvid, "stale_age_s": in_progress_age})
-                    # Fall through to start a new transcription
-                else:
-                    task_store.upsert_task(
-                        task_id=task_id,
-                        task_type="bilibili_transcribe",
-                        platform="B站",
-                        target=bvid,
-                        content_id=bvid,
-                        status="running",
-                        result_path=cache_path,
-                        metadata=_asr_task_metadata(
-                            bvid,
-                            policy=policy,
-                            research_session_id=research_session_id,
-                            scope_metadata=scope_metadata,
-                            result_path=cache_path,
-                            subtitle_probe_s=float(subtitle.get("duration_s") or 0),
-                            in_progress_path=in_progress_path,
-                            phase="running",
-                        ),
-                    )
-                    return ("[transcribe] 语音转写已在后台处理中，"
-                            "完成后可重新调用 get_content_detail 获取转写文本")
-            except Exception:
-                # If we can't check the file age, treat as stale
-                try:
-                    os.remove(in_progress_path)
-                except Exception:
-                    pass
-
-        task_store.upsert_task(
-            task_id=task_id,
-            task_type="bilibili_transcribe",
-            platform="B站",
-            target=bvid,
-            content_id=bvid,
-            status="queued",
-            result_path=cache_path,
-            metadata=_asr_task_metadata(
-                bvid,
-                policy=policy,
-                research_session_id=research_session_id,
-                scope_metadata=scope_metadata,
-                result_path=cache_path,
-                subtitle_probe_s=float(subtitle.get("duration_s") or 0),
-                audio_path=cache_m4a,
-                in_progress_path=in_progress_path,
-                phase="queued",
-            ),
-        )
-
-        def _do_transcribe():
-            timing = _empty_asr_timing()
-            timing["subtitle_probe_s"] = float(subtitle.get("duration_s") or 0)
-            task_started = time.time()
-            try:
-                task_store.mark_running(task_id, metadata={**policy.compact(), **timing, "phase": "running"})
-                task_store.heartbeat(task_id, metadata={"phase": "download"})
-                with open(in_progress_path, "w", encoding="utf-8") as f:
-                    f.write(str(time.time()))
-                from yt_dlp import YoutubeDL
-                existing_audio = _find_existing_audio()
-                if not existing_audio:
-                    log.info(f"[bg] 音频下载开始: {bvid}")
-                    download_started = time.time()
-                    ydl_opts = {
-                        "format": "bestaudio/best",
-                        "outtmpl": os.path.join(output_dir, "%(id)s.%(ext)s"),
-                        "noplaylist": True,
-                        "playlist_items": "1",
-                        "http_headers": {
-                            "Origin": "https://www.bilibili.com",
-                            "Referer": "https://www.bilibili.com/",
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125 Safari/537.36",
-                        },
-                        "quiet": True,
-                        "no_warnings": True,
-                    }
-                    with YoutubeDL(ydl_opts) as ydl:
-                        ydl.extract_info(f"https://www.bilibili.com/video/{bvid}", download=True)
-                    timing["download_s"] = round(time.time() - download_started, 3)
-                existing_audio = _find_existing_audio()
-                if existing_audio:
-                    log.info(f"[bg] 音频文件就绪: {existing_audio}")
-                    record_media_cache_entry(
-                        existing_audio,
-                        kind="audio",
-                        content_id=bvid,
-                        task_id=task_id,
-                        source_url=f"https://www.bilibili.com/video/{bvid}",
-                    )
-                task_store.heartbeat(task_id, metadata={"phase": "transcribe"})
-                log.info(f"[bg] 转录开始: {bvid}")
-                os.environ.setdefault("PYTHONIOENCODING", "utf-8")
-                if hasattr(sys.stdout, "reconfigure"):
-                    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-                if hasattr(sys.stderr, "reconfigure"):
-                    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
-                if not existing_audio:
-                    raise FileNotFoundError(f"Audio download finished but no audio file found for {bvid}")
-                from transcribe_bilibili import transcribe as transcribe_audio
-                result = transcribe_audio(existing_audio, model_size=policy.primary_model, policy=policy)
-                txt = result.get("txt", "")
-                if not str(txt).strip() or str(txt).lstrip().startswith("[transcribe]"):
-                    raise ValueError("ASR returned no usable transcript")
-                timing["download_s"] = round(float(result.get("download_s") or timing["download_s"]), 3)
-                timing["model_load_s"] = round(float(result.get("model_load_s") or 0), 3)
-                timing["transcribe_s"] = round(float(result.get("transcribe_s") or result.get("duration_s") or 0), 3)
-                timing["total_s"] = round(time.time() - task_started, 3)
-                if txt:
-                    _write_transcript_cache(cache_path, txt, kind="asr", audio_path=existing_audio, policy=policy, segments=result.get("timestamped_segments"), locators=result.get('content_locators'), engine=result.get('engine'), fallback_reason=result.get('fallback_reason'))
-                srt = result.get("srt", "")
-                if srt:
-                    with open(os.path.join(output_dir, f"{bvid}_transcript.srt"), "w", encoding="utf-8") as f:
-                        f.write(srt)
-                if txt:
-                    record_media_cache_entry(
-                        cache_path,
-                        kind="transcript",
-                        content_id=bvid,
-                        task_id=task_id,
-                        source_url=f"https://www.bilibili.com/video/{bvid}",
-                        metadata={"transcript_chars": len(txt)},
-                    )
-                task_store.mark_completed(
-                    task_id,
-                    result_path=cache_path,
-                    metadata={
-                        "bvid": bvid,
-                        "transcript_chars": len(txt),
-                        "cache_hit": False,
-                        "subtitle_hit": False,
-                        "phase": "completed",
-                        **policy.compact(),
-                        **timing,
-                    },
-                )
-                log.info(f"[bg] 转录完成: {bvid} ({len(txt)} chars)")
-            except Exception as e:
-                timing["total_s"] = round(time.time() - task_started, 3)
-                task_store.mark_failed(task_id, error=str(e), result_path=cache_path, metadata={"bvid": bvid, **timing})
-                log.error(f"[bg] 转录失败: {bvid}: {e}")
-            finally:
-                try:
-                    if os.path.exists(in_progress_path):
-                        os.remove(in_progress_path)
-                except Exception:
-                    pass
-
-        LocalTaskAdapter(task_store).submit_lifecycle(
-            LocalTaskSpec(
-                task_id=task_id,
-                task_type="bilibili_transcribe",
-                platform="B站",
-                target=bvid,
-                content_id=bvid,
-                result_path=cache_path,
-                max_attempts=1,
-                timeout_s=float(os.environ.get("KR_ASR_TASK_TIMEOUT_SECONDS", "900")),
-                metadata=_asr_task_metadata(
-                    bvid,
-                    policy=policy,
-                    research_session_id=research_session_id,
-                    scope_metadata=scope_metadata,
-                    result_path=cache_path,
-                    subtitle_probe_s=float(subtitle.get("duration_s") or 0),
-                    audio_path=cache_m4a,
-                    in_progress_path=in_progress_path,
-                    phase="queued",
-                ),
-            ),
-            _do_transcribe,
-        )
-
-        if os.environ.get("KR_DURABLE_WORKER") == "1":
-            finished = task_store.get_task(task_id) or {}
-            cached = _read_transcript_cache(cache_path, policy=policy)
-            if cached and finished.get("status") == "completed":
-                return cached
-            return "[transcribe] failed: " + str(finished.get("error_code") or finished.get("status") or "no_result")
-        return ("[transcribe] 语音下载和转写已在后台启动（约1-2分钟），"
-                "完成后可重新调用 get_content_detail 获取转写文本")
-    except Exception as e:
-        log.warning(f"转写失败: {e}")
-        return f"[transcribe] 转写失败: {str(e)}"
+def transcribe_bilibili(bvid, output_dir='', research_session_id='', scope_metadata=None, language=None):
+    """兼容旧Python消费者，执行仍只走同一持久详情用例。"""
+    from runtime.video_tasks import submit_video_detail
+    result = submit_video_detail('B站', f'https://www.bilibili.com/video/{bvid}',
+        language=language, research_session_id=research_session_id, scope=scope_metadata, include_transcript=True)
+    return result.get('transcript') or '[transcribe] 后台任务: ' + result['task_id']
 
 
 def get_bilibili_comments(bvid: str, limit: int = 20) -> List[Dict]:
-    """获取B站视频评论"""
-    headers = {"User-Agent": "Mozilla/5.0", "Referer": "https://www.bilibili.com/"}
+    """兼容列表入口；详情入口使用含分页/失败回执的collect_comments。"""
+    return collect_comments(bvid,options={'root_limit':min(100,max(1,limit))})['comments']
+
+
+def collect_comments(bvid, *, options=None):
+    from runtime.read_options import CommentReadOptions, normalized_options
+    from runtime.execution_context import check_execution, ExecutionStopped
+    scope = normalized_options(CommentReadOptions, options)
+    headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bilibili.com/'}
+    rows, gaps, seen, replies = [], [], set(), []
+    pages, roots, cursor, exhausted = 0, 0, 0, False
+    def get(path, params):
+        nonlocal pages
+        check_execution()
+        if pages >= scope['max_pages']:
+            raise ValueError('comment_page_budget')
+        pages += 1
+        response = httpx.get('https://api.bilibili.com'+path, params=params, headers=headers, timeout=15)
+        response.raise_for_status()
+        data = response.json()
+        if data.get('code') != 0:
+            code = data.get('code')
+            raise ValueError({-101:'login_required',-412:'anti_bot_verification',-352:'anti_bot_verification'}.get(code, 'bilibili_comment_rejected_'+str(code)))
+        return data.get('data') or {}
+    def add(item, root=None):
+        identifier = str(item.get('rpid_str') or item['rpid'])
+        if identifier in seen:
+            return
+        seen.add(identifier)
+        content = item.get('content') or {}
+        parent = item.get('parent_str') or item.get('parent')
+        rows.append({'comment_id': identifier, 'content': content.get('message', ''),
+            'author': (item.get('member') or {}).get('uname', ''), 'likes': item.get('like'), 'created_at': item.get('ctime'),
+            'root_comment_id': root or identifier, 'parent_comment_id': str(parent) if root and parent else root,
+            'is_reply': bool(root), 'relationship_confidence': 'native_parent' if root else 'root',
+            'images': [picture.get('img_src') for picture in content.get('pictures') or [] if picture.get('img_src')],
+            'media_observation': 'content.pictures; unobserved_audio_video_not_asserted'})
     try:
-        resp = httpx.get(
-            f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}",
-            headers=headers, timeout=15,
-        )
-        data = resp.json()
-        if data.get("code") != 0:
-            return []
-        aid = data["data"]["aid"]
-
-        all_comments = []
-        seen = set()
-        for mode in [3, 2]:
-            resp2 = httpx.get(
-                f"https://api.bilibili.com/x/v2/reply/main?oid={aid}&type=1&mode={mode}&ps=5",
-                headers=headers, timeout=15,
-            )
-            d2 = resp2.json()
-            if d2.get("code") == 0:
-                for r in d2.get("data", {}).get("replies", []):
-                    msg = r.get("content", {}).get("message", "").strip()
-                    if msg and msg not in seen:
-                        seen.add(msg)
-                        all_comments.append({
-                            "user": r.get("member", {}).get("uname", ""),
-                            "content": msg,
-                            "likes": r.get("like", 0),
-                        })
-                    if len(all_comments) >= limit:
-                        break
-            if len(all_comments) >= limit:
+        info = get('/x/web-interface/view', {'bvid': bvid})
+        aid = info['aid']
+        while roots < scope['root_limit'] and len(rows) < scope['total_limit']:
+            data = get('/x/v2/reply/main', {'oid': aid, 'type': 1, 'mode': 3 if scope['order']=='relevance' else 2,
+                'next': cursor, 'ps': min(20, scope['root_limit']-roots, scope['total_limit']-len(rows))})
+            previous = len(seen)
+            for item in data.get('replies') or []:
+                if roots >= scope['root_limit'] or len(rows) >= scope['total_limit']:
+                    break
+                identifier = str(item.get('rpid_str') or item['rpid'])
+                if identifier not in seen:
+                    add(item); roots += 1
+                    if item.get('rcount'):
+                        replies.append((identifier, int(item['rcount'])))
+            state = data.get('cursor') or {}
+            exhausted = state.get('is_end') is True
+            next_cursor = state.get('next')
+            if exhausted:
                 break
-        return all_comments
-    except Exception as e:
-        log.warning(f"获取评论失败: {e}")
-        return []
+            if next_cursor is None or next_cursor == cursor or previous == len(seen):
+                gaps.append({'reason': 'root_pagination_unconfirmed'}); break
+            cursor = next_cursor
+        reply_coverage = []
+        for root, total in replies:
+            got, page = 0, 1
+            while got < min(total, scope['reply_limit']) and len(rows) < scope['total_limit']:
+                data = get('/x/v2/reply/reply', {'oid':aid,'type':1,'root':root,'pn':page,
+                    'ps':min(20,scope['reply_limit']-got,scope['total_limit']-len(rows))})
+                before = len(seen)
+                for item in data.get('replies') or []:
+                    if got + len(seen)-before >= min(total,scope['reply_limit']) or len(rows)>=scope['total_limit']:
+                        break
+                    add(item, root)
+                got += len(seen)-before; page += 1
+                if len(seen) == before:
+                    break
+            reply_coverage.append({'root_comment_id':root,'observed_total':total,'returned':got,
+                'requested_window_complete':got>=min(total,scope['reply_limit']),'exhausted':got>=total})
+        satisfied = not gaps and (roots >= scope['root_limit'] or exhausted) and all(r['requested_window_complete'] for r in reply_coverage)
+        source_done = exhausted and all(r['exhausted'] for r in reply_coverage)
+    except ExecutionStopped:
+        raise
+    except Exception as exc:
+        gaps.append({'reason':str(exc) if isinstance(exc,ValueError) else type(exc).__name__, 'automatic_retry':False})
+        satisfied, source_done = False, False
+        reply_coverage = locals().get('reply_coverage', [])
+    return {'comments':rows,'comments_complete':satisfied,'comments_exhausted':source_done,
+        'comments_empty_confirmed':source_done and not rows,
+        'comments_coverage':'observed_zero_comments' if source_done and not rows else 'bounded_api_window',
+        'comments_metadata':{'pages':pages,'returned_roots':roots,'reply_coverage':reply_coverage,'gaps':gaps,
+            'next_root_cursor':cursor,'stop_reason':gaps[0]['reason'] if gaps else 'source_exhausted' if source_done else 'requested_window'}}
 
 
-def filter_bilibili_comments(
-    comments: List[Dict],
-    output_dir: str = "",
-    scope_options: Dict | None = None,
-    bvid: str = "",
-    source_url: str = "",
-) -> List[Dict]:
-    """保留原文、精确去重并缓存；不启动评论模型或后台任务。"""
-    from filter_comments import filter_valuable_comments
-    if not comments:
-        return []
-    output = Path(output_dir) if output_dir else media_cache_subdir("comments")
-    output.mkdir(parents=True, exist_ok=True)
-    signature = hashlib.sha256(json.dumps(comments, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
-    cache_path = output / ("comments_raw_v2_" + signature + ".json")
-    if cache_path.is_file():
-        try:
-            return json.loads(cache_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            pass
-    kept = filter_valuable_comments(comments, verbose=False)["kept_comments"]
-    cache_path.write_text(json.dumps(kept, ensure_ascii=False), encoding="utf-8")
-    return kept
+def filter_bilibili_comments(comments, output_dir="", scope_options=None, bvid="", source_url=""):
+    """历史Python入口；统一委托公共增强步骤，不在采集阶段调用。"""
+    from runtime.video_analysis import filter_video_comments
+    return filter_video_comments({"comments": comments})
 
 
-def deep_analyze_bilibili(
-    bvid: str,
-    basic_info: Dict,
-    research_session_id: str = "",
-    scope_options: Dict | None = None,
-) -> Dict:
-    """百炼 Omni 多模态深度视频分析（后台异步模式）"""
-    return _deep_analyze_video_platform(
-        platform="B站",
-        video_key=bvid,
-        video_url=f"https://www.bilibili.com/video/{bvid}",
-        basic_info=basic_info,
-        task_type="bilibili_qwen_video_analysis",
-        strategy=L2_ANALYSIS_STRATEGY,
-        result_prefix="l2_bilibili_video",
-        research_session_id=research_session_id,
-        scope_metadata=(scope_options or {}).get("task_scope") if isinstance(scope_options, dict) else None,
-    )
-
-
-def deep_analyze_youtube(
-    video_id: str,
-    basic_info: Dict,
-    research_session_id: str = "",
-    scope_options: Dict | None = None,
-) -> Dict:
-    """百炼 Omni YouTube video analysis through the shared L2 pipeline."""
-    return _deep_analyze_video_platform(
-        platform="YouTube",
-        video_key=video_id,
-        video_url=f"https://www.youtube.com/watch?v={video_id}",
-        basic_info=basic_info,
-        task_type="youtube_qwen_video_analysis",
-        strategy="youtube_qwen_video_analysis",
-        result_prefix="l2_youtube_video",
-        research_session_id=research_session_id,
-        scope_metadata=(scope_options or {}).get("task_scope") if isinstance(scope_options, dict) else None,
-    )
-
-
-def _deep_analyze_video_platform(
-    *,
-    platform: str,
-    video_key: str,
-    video_url: str,
-    basic_info: Dict,
-    task_type: str,
-    strategy: str,
-    result_prefix: str,
-    research_session_id: str = "",
-    scope_metadata: Dict | None = None,
-) -> Dict:
-    content_id = _l2_content_fingerprint(video_key, basic_info, strategy=strategy)
-    task_id = f"{result_prefix}_{content_id}"
-    results_dir = str(media_cache_subdir("analysis_results", content_id=content_id, task_id=task_id))
-    result_path = os.path.join(results_dir, f"{content_id}_analysis.json")
-    task_store = get_task_store()
-
-    if os.path.exists(result_path):
-        try:
-            with open(result_path, "r", encoding="utf-8") as f:
-                cached = json.load(f)
-                cached.setdefault("schema_version", L2_MULTIMODAL_SCHEMA_VERSION)
-                cached.setdefault("model_version", L2_MODEL_VERSION)
-                cached.setdefault("content_id", content_id)
-                cached["from_cache"] = True
-                task_store.upsert_task(
-                    task_id=task_id,
-                    task_type=task_type,
-                    platform=platform,
-                    target=video_key,
-                    content_id=content_id,
-                    status="completed",
-                    result_path=result_path,
-                    metadata=_l2_task_metadata(
-                        video_key,
-                        basic_info,
-                        content_id,
-                        strategy=strategy,
-                        cache_hit=True,
-                        research_session_id=research_session_id,
-                        scope_metadata=scope_metadata,
-                    ),
-                )
-                task_store.mark_completed(task_id, result_path=result_path, metadata={"cache_hit": True})
-                return cached
-        except Exception:
-            pass
-
-    existing = task_store.get_task(task_id)
-    if existing and existing.get("status") in {"queued", "running"}:
-        return _l2_processing_response(task_id, content_id, result_path, existing)
-
-    def _run_analysis():
-        task_store.heartbeat(task_id, metadata={"phase": "analysis_start"})
-        log.info(f"[bg] 千问多模态分析开始: {platform} {video_key}")
-        sys.path.insert(0, PROJECT_ROOT)
-        from video_processor import VideoInfo, VideoProcessor
-
-        video = VideoInfo(
-            title=basic_info.get("title", ""),
-            description=basic_info.get("desc", ""),
-            transcript=basic_info.get("transcript", ""),
-            filtered_comments=basic_info.get("filtered_comments", []),
-            duration_seconds=basic_info.get("duration", 0),
-            video_url=video_url,
-        )
-        processor = VideoProcessor()
-        r = processor.process(video, skip_deep=False)
-        task_store.heartbeat(task_id, metadata={"phase": "analysis_finish"})
-
-        result = {
-            "schema_version": L2_MULTIMODAL_SCHEMA_VERSION,
-            "status": "completed",
-            "task_id": task_id,
-            "content_id": content_id,
-            "task_type": task_type,
-            "strategy": strategy,
-            "model_version": L2_MODEL_VERSION,
-            "score": r.score,
-            "decision": r.decision,
-            "scoring_rationale": r.scoring_rationale,
-            "deep_analysis": r.deep_analysis,
-            "analysis_time_s": r.deep_analysis_time_s,
-        }
-        with open(result_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        record_media_cache_entry(
-            result_path,
-            kind="analysis_result",
-            content_id=content_id,
-            task_id=task_id,
-            source_url=video_url,
-            metadata={"platform": platform, "strategy": strategy, "video_key": video_key},
-        )
-        log.info(f"[bg] 千问多模态分析完成: {platform} {video_key}, {result_path}")
-        return {
-            "video_key": video_key,
-            "content_id": content_id,
-            "score": r.score,
-            "decision": r.decision,
-            "analysis_time_s": r.deep_analysis_time_s,
-            "schema_version": L2_MULTIMODAL_SCHEMA_VERSION,
-            "model_version": L2_MODEL_VERSION,
-        }
-
-    adapter = LocalTaskAdapter(task_store)
-    task = adapter.submit(
-        LocalTaskSpec(
-            task_id=task_id,
-            task_type=task_type,
-            platform=platform,
-            target=video_key,
-            content_id=content_id,
-            result_path=result_path,
-            max_attempts=int(os.environ.get("KR_L2_VIDEO_MAX_ATTEMPTS", "2")),
-            retry_interval_s=float(os.environ.get("KR_L2_VIDEO_RETRY_INTERVAL_S", "5")),
-            timeout_s=float(os.environ.get("KR_L2_VIDEO_TIMEOUT_S", "900")),
-            metadata=_l2_task_metadata(
-                video_key,
-                basic_info,
-                content_id,
-                strategy=strategy,
-                research_session_id=research_session_id,
-                scope_metadata=scope_metadata,
-            ),
-        ),
-        _run_analysis,
-    )
-
-    return _l2_processing_response(task_id, content_id, result_path, task, task_type=task_type)
-
-
-def _l2_content_fingerprint(video_key: str, basic_info: Dict, *, strategy: str = L2_ANALYSIS_STRATEGY) -> str:
-    payload = {
-        "video_key": video_key,
-        "strategy": strategy,
-        "model_version": L2_MODEL_VERSION,
-        "title": basic_info.get("title", ""),
-        "duration": basic_info.get("duration", 0),
-        "transcript_hash": hashlib.sha256(str(basic_info.get("transcript") or "").encode("utf-8", errors="ignore")).hexdigest()[:16],
-    }
-    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
-
-
-def _l2_task_metadata(
-    video_key: str,
-    basic_info: Dict,
-    content_id: str,
-    *,
-    strategy: str = L2_ANALYSIS_STRATEGY,
-    cache_hit: bool = False,
-    research_session_id: str = "",
-    scope_metadata: Dict | None = None,
-) -> Dict:
-    metadata = {
-        "video_key": video_key,
-        "title": basic_info.get("title", ""),
-        "content_id": content_id,
-        "strategy": strategy,
-        "schema_version": L2_MULTIMODAL_SCHEMA_VERSION,
-        "model_version": L2_MODEL_VERSION,
-        "cache_hit": cache_hit,
-        "source_url": basic_info.get("url") or f"https://www.bilibili.com/video/{video_key}",
-        "approach": "sampled_media_with_text",
-        "blocks_final_report": True,
-        "result_reread_tool": "get_content_detail",
-    }
-    platform = str(basic_info.get("platform") or "B站")
-    metadata = merge_scope_metadata(
-        _task_scope_metadata(
-            source_url=str(metadata["source_url"]),
-            content_id=content_id,
-            platform=platform,
-            research_session_id=research_session_id,
-            scope_metadata=scope_metadata,
-        ),
-        metadata,
-    )
-    if research_session_id:
-        metadata["research_session_id"] = research_session_id
-    return metadata
-
-
-def _l2_processing_response(task_id: str, content_id: str, result_path: str, task: Dict, *, task_type: str = L2_ANALYSIS_STRATEGY) -> Dict:
-    return {
-        "schema_version": L2_MULTIMODAL_SCHEMA_VERSION,
-        "status": "processing",
-        "task_id": task_id,
-        "content_id": content_id,
-        "task_type": task_type,
-        "model_version": L2_MODEL_VERSION,
-        "result_path": result_path,
-        "task": compact_task_ref(task),
-        "message": f"千问多模态分析已在后台处理中（task_id={task_id}），可用 get_task_status 查询状态",
-        "recommended_next_action": "poll_get_task_status",
-    }
+def deep_analyze_bilibili(bvid, basic_info, research_session_id='', scope_options=None):
+    from runtime.video_tasks import submit_video_detail
+    return submit_video_detail('B站', f'https://www.bilibili.com/video/{bvid}',
+        research_session_id=research_session_id, scope=(scope_options or {}).get('task_scope'), deep=True)
 
 
 def _format_search_response(

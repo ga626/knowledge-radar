@@ -1,6 +1,5 @@
 """控制台只读查看Codex研究与证据；不启动研究或修改研究状态。"""
 from __future__ import annotations
-import base64
 from pathlib import Path
 from runtime.research_workspace import research_action
 
@@ -21,6 +20,9 @@ def workspace_api(records, payload, *, developer=True):
         item = next((row for row in files if row['file_id'] == payload.get('file_id')), None)
         if not item or item.get('type') not in ({'report', 'evidence_sidecar', 'quality_receipt'} if developer else {'report'}):
             raise ValueError('registered_research_file_required')
+        if item.get('version_id'):
+            value=records.assets.fetch(item['version_id'],start=payload.get('start',0),max_chars=8000)
+            return {**value,'name':item['name'],'read_only':True}
         path = Path(item['path'])
         if path.suffix.lower() not in {'.md', '.txt', '.json'}:
             raise ValueError('research_text_file_required')
@@ -39,39 +41,8 @@ def workspace_api(records, payload, *, developer=True):
     if action == 'optional_plan':
         from runtime.optional_media import COMPONENTS, component_plan
         return {'components': [component_plan(name) for name in COMPONENTS]}
-    if action in {'export', 'export_task', 'export_obsidian'}:
-        from runtime.evidence_export import build_bundle, sha
-        reports = []
-        versions = payload.get('version_ids', [])
-        if action != 'export':
-            task_id = str(payload.get('task_id') or '')
-            if not task_id: raise ValueError('research_task_required')
-            files = records.files(task_id).get('files', [])
-            allowed = {row['version_id'] for row in files if row.get('type') == 'fixed_evidence'}
-            if not isinstance(versions, list) or not set(versions).issubset(allowed):
-                raise ValueError('selected_versions_must_belong_to_task')
-            if payload.get('include_report') is True:
-                for row in files:
-                    if row.get('type') != 'report': continue
-                    if Path(row['path']).suffix.lower() not in {'.md','.txt'}: raise ValueError('research_text_file_required')
-                    with Path(row['path']).open('rb') as handle: data = handle.read(2 * 1024 * 1024 + 1)
-                    if len(data) > 2 * 1024 * 1024: raise ValueError('research_file_too_large')
-                    reports.append({'text':data.decode('utf-8-sig'), 'title':row['name']})
-        raw, manifest = build_bundle(records.assets, versions, export_acknowledged=payload.get('export_acknowledged'), reports=reports)
-        if action == 'export_obsidian':
-            from runtime.evidence_export import materialize_bundle
-            from urllib.parse import urlencode
-            # 目标由本次点击显式提供；不发现、遍历或缓存私人 Vault。
-            root = Path(str(payload.get('vault_path') or ''))
-            if not root.is_absolute() or not root.is_dir(): raise ValueError('existing_absolute_vault_required')
-            target = root / 'KnowledgeRadar Inbox' / ('research-' + sha(raw)[:16])
-            result = materialize_bundle(raw, target, approved_root=root)
-            entry = target / (manifest.get('reports', [{}])[0].get('file', 'manifest.json') if manifest.get('reports') else 'manifest.json')
-            uri = 'obsidian://open?' + urlencode({'path':str(entry.resolve())})
-            receipt = {**result, 'sha256':sha(raw), 'open_uri':uri, 'source_store_modified':False}
-            (target / 'delivery-receipt.json').write_text(__import__('json').dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
-            return receipt
-        return {'filename': 'KnowledgeRadar-evidence-' + sha(raw)[:12] + '.zip', 'sha256': sha(raw), 'bytes': len(raw), 'data_base64': base64.b64encode(raw).decode(), 'manifest': manifest}
+    if action in {'export','export_task','export_obsidian'}:
+        raise ValueError('agent_command_required_use_manage_research_artifacts')
     args = payload.get('payload') or payload
     result = research_action(records, action, str(payload.get('task_id') or ''), payload=args)
     return result if developer else user_projection(result)
@@ -79,7 +50,7 @@ def workspace_api(records, payload, *, developer=True):
 
 def user_projection(result):
     """普通用户只收到产品信息；内部原始账本不随隐藏面板下发。"""
-    keep = {'schema','status','research_task_id','objective','budget','project_name','created_at','updated_at','tasks','unreadable_records','read_only','readable_summary','metrics','rounds','files','closeout','view_model','items','asset','text','locator','locators','next_start','truncated','candidate_pool','claim_gaps'}
+    keep = {'schema','status','research_task_id','objective','budget','project_name','created_at','updated_at','tasks','unreadable_records','read_only','readable_summary','metrics','rounds','files','closeout','view_model','items','asset','text','locator','locators','next_start','truncated','candidate_pool','claim_gaps','pending_submissions','gap_assessment','deliveries','next_cursor','generation','ranking','unavailable_count'}
     projected = {key:value for key,value in result.items() if key in keep}
     if 'tasks' in projected: projected['tasks'] = [user_projection(row) for row in projected['tasks']]
     if 'metrics' in projected: projected['metrics'] = {key:value for key,value in projected['metrics'].items() if key not in {'tools','event_count','planned_source_ecologies'}}
@@ -87,5 +58,18 @@ def user_projection(result):
     if 'rounds' in projected: projected['rounds'] = [{key:value for key,value in row.items() if key not in {'events','tool_receipts'}} for row in projected['rounds']]
     if 'candidate_pool' in projected: projected['candidate_pool'] = [{key:row[key] for key in ('title','name','source_ecology') if key in row} for row in projected['candidate_pool']]
     if 'claim_gaps' in projected: projected['claim_gaps'] = [{key:row[key] for key in ('claim_gap_id','reason','status') if key in row} for row in projected['claim_gaps']]
+    if 'pending_submissions' in projected:
+        safe_keys = ('trace_id','tool','status','failure_code','source_ecology','association','receipt_kind','attempts','last_status','reason','updated_at')
+        projected['pending_submissions'] = [{key:row[key] for key in safe_keys if key in row} for row in projected['pending_submissions'] if isinstance(row, dict)]
+    if 'gap_assessment' in projected:
+        assessment = projected['gap_assessment'] if isinstance(projected['gap_assessment'], dict) else {}
+        safe_keys = ('schema','status','research_task_id','phase','stop_assessment','coverage_scope','unregistered_coverage','autonomy_boundary','read_only')
+        projected['gap_assessment'] = {key:assessment[key] for key in safe_keys if key in assessment}
+        projected['gap_assessment']['gaps'] = [
+            {key:row[key] for key in ('code','meaning') if key in row}
+            for row in assessment.get('gaps', []) if isinstance(row, dict)
+        ]
+        counts = assessment.get('counts') if isinstance(assessment.get('counts'), dict) else {}
+        projected['gap_assessment']['counts'] = {key:counts[key] for key in ('candidate_count','upgraded_count','pending_submission_count') if key in counts}
     if 'closeout' in projected: projected['closeout'] = {key:value for key,value in projected['closeout'].items() if key in {'missing_outcomes','critical_claims_without_support','critical_claims_without_receipts','pending_background_tasks','unavailable_evidence_versions'}}
     return projected

@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
+from runtime.execution_context import execution_value
 import os
 import threading
 import time
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, replace
 from typing import Any, Callable, Dict, Optional
 from generic_web.url_policy import public_evidence_payload
 
 from .failure_tags import detect_failure_tags
-from .resource_concurrency import acquire_resource, infer_task_resource
+from .resource_concurrency import acquire_resource, infer_task_resource, ResourceDeferred
 from .tasks import TaskStore, get_task_store
 
 
@@ -38,10 +40,13 @@ class LocalTaskAdapter:
     def submit(self, spec: LocalTaskSpec, fn: Callable[[], Dict[str, Any]]) -> Dict[str, Any]:
         existing = self.store.get_task(spec.task_id)
         if existing and existing.get("status") in {"queued", "running"}:
+            if existing["status"] == "queued" and execution_value("KR_DURABLE_WORKER") == "1" and (existing.get("metadata") or {}).get("durable_parent_task_id") == execution_value("KR_DURABLE_TASK_ID"):
+                self._run(replace(spec, metadata={**(spec.metadata or {}), "attempt_id": existing["metadata"].get("attempt_id")}), fn)
             return existing
         if existing and existing.get("status") == "completed":
             return existing
 
+        spec = replace(spec, metadata={**(spec.metadata or {}), "attempt_id": uuid.uuid4().hex})
         task = self.store.upsert_task(
             task_id=spec.task_id,
             task_type=spec.task_type,
@@ -54,11 +59,12 @@ class LocalTaskAdapter:
             metadata={
                 **(spec.metadata or {}),
                 "adapter": "local_thread",
+                "durable_parent_task_id": execution_value("KR_DURABLE_TASK_ID", ""),
                 "resource_kind": infer_task_resource(spec.task_type, {"resource_kind": spec.resource_kind, **(spec.metadata or {})}),
                 "timeout_s": spec.timeout_s,
             },
         )
-        if os.environ.get("KR_DURABLE_WORKER") == "1":
+        if execution_value("KR_DURABLE_WORKER") == "1":
             self._run(spec, fn)
         else:
             thread = threading.Thread(target=self._run, args=(spec, fn), daemon=True)
@@ -79,7 +85,11 @@ class LocalTaskAdapter:
             and existing.get("status") == "queued"
             and (existing.get("metadata") or {}).get("adapter") == "local_thread_lifecycle"
         ):
+            if execution_value("KR_DURABLE_WORKER") == "1" and (existing.get("metadata") or {}).get("durable_parent_task_id") == execution_value("KR_DURABLE_TASK_ID"):
+                self._run_lifecycle(replace(spec, metadata={**(spec.metadata or {}), "attempt_id": existing["metadata"].get("attempt_id")}), fn)
+                return self.store.get_task(spec.task_id)
             return existing
+        spec = replace(spec, metadata={**(spec.metadata or {}), "attempt_id": uuid.uuid4().hex})
         task = self.store.upsert_task(
             task_id=spec.task_id,
             task_type=spec.task_type,
@@ -92,11 +102,12 @@ class LocalTaskAdapter:
             metadata={
                 **(spec.metadata or {}),
                 "adapter": "local_thread_lifecycle",
+                "durable_parent_task_id": execution_value("KR_DURABLE_TASK_ID", ""),
                 "resource_kind": infer_task_resource(spec.task_type, {"resource_kind": spec.resource_kind, **(spec.metadata or {})}),
                 "timeout_s": spec.timeout_s,
             },
         )
-        if os.environ.get("KR_DURABLE_WORKER") == "1":
+        if execution_value("KR_DURABLE_WORKER") == "1":
             self._run_lifecycle(spec, fn)
         else:
             thread = threading.Thread(target=self._run_lifecycle, args=(spec, fn), daemon=True)
@@ -104,16 +115,32 @@ class LocalTaskAdapter:
         return task
 
     def _run_lifecycle(self, spec: LocalTaskSpec, fn: Callable[[], None]) -> None:
+        attempt_id = (spec.metadata or {}).get("attempt_id")
+        if attempt_id != ((self.store.get_task(spec.task_id) or {}).get("metadata") or {}).get("attempt_id"):
+            return
+        with self.store.writer_scope(spec.task_id, attempt_id):
+            self._execute_lifecycle(spec, fn)
+
+    def _execute_lifecycle(self, spec, fn):
         resource_kind = infer_task_resource(spec.task_type, {"resource_kind": spec.resource_kind, **(spec.metadata or {})})
         with acquire_resource(resource_kind) as resource_meta:
             self.store.heartbeat(spec.task_id, metadata={"phase": "resource_acquired", **resource_meta})
             try:
                 fn()
             except Exception as exc:
+                if isinstance(exc, ResourceDeferred):
+                    raise
                 self.store.mark_failed(spec.task_id, str(exc), error_code=type(exc).__name__)
                 raise
 
     def _run(self, spec: LocalTaskSpec, fn: Callable[[], Dict[str, Any]]) -> None:
+        attempt_id = (spec.metadata or {}).get("attempt_id")
+        if attempt_id != ((self.store.get_task(spec.task_id) or {}).get("metadata") or {}).get("attempt_id"):
+            return
+        with self.store.writer_scope(spec.task_id, attempt_id):
+            self._execute(spec, fn)
+
+    def _execute(self, spec, fn):
         started = time.time()
         last_error = ""
         resource_kind = infer_task_resource(spec.task_type, {"resource_kind": spec.resource_kind, **(spec.metadata or {})})
@@ -159,6 +186,8 @@ class LocalTaskAdapter:
                 )
                 return
             except Exception as exc:
+                if isinstance(exc, ResourceDeferred):
+                    raise
                 last_error = str(exc)
                 tags = detect_failure_tags(type(exc).__name__, last_error)
                 if attempt >= max(1, spec.max_attempts):

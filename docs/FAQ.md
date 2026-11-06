@@ -8,15 +8,11 @@ That is normal for streamable HTTP MCP. Use an MCP client or Agent, not a normal
 
 ## `health_check` is degraded
 
-先区分核心链路与可选能力。缺少可选 Provider、SearXNG、Chrome 或登录 Profile 是待配置状态，不等于核心服务失败。Release 用户在本地配置台补齐需要的项，按 Codex 支持方式刷新后调用 `health_check`；源码开发者才使用验证脚本。
+先区分核心链路与可选能力。缺少可选 Provider、Chrome 或登录 Profile 是待配置状态，不等于核心服务失败。Release 用户在本地配置台补齐需要的项，按 Codex 支持方式刷新后调用 `health_check`；源码开发者才使用验证脚本。
 
 ## Xiaohongshu, BOSS, Liepin, or Maimai do not pass on first install
 
 在你自己的浏览器 Profile 中完成交互式登录。验证码、账号风控和失效会话都需要你手动处理；产品不会代填 Cookie 或绕过验证。完成后重新调用对应工具；仍失败再提交脱敏诊断。
-
-## SearXNG is not running
-
-在本地配置台配置其他网页 Provider，或参阅 [SearXNG](SEARXNG.md)。
 
 ## Node.js or Chrome is missing
 

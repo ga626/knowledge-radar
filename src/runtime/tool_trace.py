@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import wraps
+import inspect
 import hashlib
 import hmac
 import json
@@ -137,7 +139,7 @@ class ToolTraceRecorder:
 
 
 _DEFAULT_RECORDER = ToolTraceRecorder()
-_LOCAL = threading.local()
+_CURRENT_TRACE = ContextVar('kr_tool_trace', default=None)
 _TRACE_FINGERPRINT_KEY = os.environ.get("KR_RESEARCH_FINGERPRINT_KEY", "").encode("utf-8") or secrets.token_bytes(32)
 
 
@@ -157,7 +159,7 @@ def get_tool_trace_recorder() -> ToolTraceRecorder:
 
 
 def _set_current_trace(event: Dict[str, Any]) -> None:
-    _LOCAL.current_trace = event
+    _CURRENT_TRACE.set(dict(event))
 
 
 def set_current_tool_trace(event: Dict[str, Any]) -> None:
@@ -165,7 +167,7 @@ def set_current_tool_trace(event: Dict[str, Any]) -> None:
 
 
 def current_tool_trace() -> Dict[str, Any]:
-    return dict(getattr(_LOCAL, "current_trace", {}) or {})
+    return dict(_CURRENT_TRACE.get() or {})
 
 
 def record_trace_child(
@@ -186,6 +188,9 @@ def record_trace_child(
         return {}
     blocked_keys = {"query", "url", "urls", "cookie", "cookies", "authorization", "token", "profile_id", "account_id"}
     payload = {key: value for key, value in dict(metadata or {}).items() if str(key).lower() not in blocked_keys}
+    from runtime.application import current_request_id
+    if current_request_id():
+        payload['origin_request_id'] = current_request_id()
     child_tool = tool_name or str(parent.get("tool_name") or "")
     event = ToolTraceEvent(
         trace_id=_trace_id(
@@ -268,6 +273,10 @@ def structured_failure_tags(result: Any, exc: Optional[BaseException] = None) ->
 
 @contextmanager
 def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Dict[str, Any]] = None, research_task_id: str = "") -> Iterator[None]:
+    from runtime.application import current_request_id
+    metadata = dict(metadata or {})
+    if current_request_id():
+        metadata['origin_request_id'] = current_request_id()
     started = time.time()
     started_iso = utc_now_iso()
     previous_trace = current_tool_trace()
@@ -286,6 +295,7 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             "tool_name": tool_name,
             "strategy": strategy,
             "status": "running",
+            "research_task_id": research_task_id,
             "elapsed_s": 0.0,
             "retry_count": 0,
             "failure_code": "",
@@ -327,18 +337,23 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             # Runtime import avoids a module cycle: the ledger is optional for
             # ordinary tools, and only an explicit task scope may create one.
             try:
-                from .research_ledger import record_tool_receipt
-                receipt_result = record_tool_receipt(
+                from .research_ledger import submit_tool_result
+                receipt_result = submit_tool_result(
                     task_id=research_task_id, trace_id=trace_id, tool=tool_name, status=status,
                     failure_code=failure_code,
                     source_ecology=str((metadata or {}).get("source_ecology") or ""),
                     association="explicit_task_scope", result=result,
                     elapsed_s=elapsed,
+                    _record_pending=True,
                 )
                 receipt = receipt_result.get("receipt") if isinstance(receipt_result, dict) else None
-                if isinstance(result, dict) and isinstance(receipt, dict):
-                    from .research_ledger import link_tool_result
-                    association = link_tool_result(task_id=research_task_id, tool=tool_name, result=result, receipt=receipt)
+                if isinstance(result, dict) and receipt_result.get('status') != 'recorded':
+                    result['research_receipt'] = {'research_task_id': research_task_id,
+                        'status': 'recording_failed', 'association': 'unverified',
+                        'reason': receipt_result.get('reason') or receipt_result.get('status'),
+                        'recovery': receipt_result.get('recovery', {'status': 'unknown', 'automatic_replay': False})}
+                elif isinstance(result, dict) and isinstance(receipt, dict):
+                    association = receipt_result['candidate_association']
                     result["research_receipt"] = {
                         'research_task_id':research_task_id,
                         'candidate_association':association,
@@ -348,12 +363,12 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
                         "status": receipt.get("status"),
                         "association": receipt.get("association"),
                     }
-            except Exception:
+            except Exception as exc:
                 # Observability must never turn a successful collector result
                 # into a runtime failure.  The absent receipt remains visible
                 # to the ledger contract as unverified, not silently trusted.
                 if isinstance(result, dict):
-                    result['research_receipt'] = {'research_task_id': research_task_id, 'status': 'recording_failed', 'association': 'unverified'}
+                    result['research_receipt'] = {'research_task_id': research_task_id, 'status': 'recording_failed', 'association': 'unverified', 'error_type': type(exc).__name__}
         # A completed root call must not become the implicit parent of the
         # next call on the same worker thread.  This is the minimal isolation
         # guarantee for concurrent and sequential native MCP execution.
@@ -372,6 +387,7 @@ def traced_tool(tool_name: str, *, strategy: str = ""):
     def _decorator(func):
         @wraps(func)
         def _wrapped(*args, **kwargs):
+            inputs = dict(inspect.signature(func).bind_partial(*args, **kwargs).arguments) if args else kwargs
             parent = current_tool_trace()
             is_nested = bool(parent.get("trace_id"))
             metadata: Dict[str, Any] = {
@@ -379,12 +395,12 @@ def traced_tool(tool_name: str, *, strategy: str = ""):
                 "kwargs": sorted(kwargs),
                 "invocation_origin": "internal" if is_nested else "root",
             }
-            raw_query = kwargs.get("query") or kwargs.get("keyword") or kwargs.get("task") or ""
+            raw_query = inputs.get("query") or inputs.get("keyword") or inputs.get("task") or ""
             if raw_query:
                 metadata["query_fingerprint"] = privacy_fingerprint(raw_query)
                 metadata["query_language"] = _query_language(raw_query)
-            research_task_id = kwargs.get("research_task_id") or kwargs.get("task_id") or ""
-            if tool_name == "get_task_status" and kwargs.get("research_action"):
+            research_task_id = inputs.get("research_task_id") or inputs.get("task_id") or ""
+            if tool_name == "get_task_status" or (tool_name == "process_local_evidence" and inputs.get("task_id")):
                 research_task_id = ""  # Read-only projections do not become execution receipts.
             if research_task_id:
                 metadata["research_task_scope"] = privacy_fingerprint(research_task_id)

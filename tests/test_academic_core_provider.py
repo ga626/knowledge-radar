@@ -136,4 +136,5 @@ def test_core_auto_route_requires_configured_key_and_quota(monkeypatch, tmp_path
 
     monkeypatch.setenv("KR_CORE_API_KEY", "dummy")
 
-    assert "core" in _provider_order(AcademicSearchRequest(query="machine learning", provider="auto"), "auto")
+    assert "core" not in _provider_order(AcademicSearchRequest(query="machine learning", provider="auto"), "auto")
+    assert "core" in _provider_order(AcademicSearchRequest(query="machine learning", provider="auto", options={"resolve_fulltext": True}), "auto")

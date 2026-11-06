@@ -153,7 +153,9 @@ def _cmd_call(args: argparse.Namespace) -> int:
             "degraded_reason": args.reason,
             "research_task_id": task_id,
             "tool": tool,
-            "error": str(exc),
+            "error": exc.code if isinstance(exc, FallbackContractError) else "fallback_configuration_failed",
+            "failure_stage": exc.stage if isinstance(exc, FallbackContractError) else "configuration",
+            "attempt_count": exc.attempt_count if isinstance(exc, FallbackContractError) else 1,
             "source_fingerprint": caller_fingerprint,
             "continuity": continuity,
         })
@@ -211,6 +213,7 @@ def _cmd_call(args: argparse.Namespace) -> int:
         "source_fingerprint": invocation.get("source_fingerprint") or caller_fingerprint,
         "tool_list_fingerprint": invocation.get("tool_list_fingerprint"),
         "tool_count": invocation.get("tool_count"),
+        "catalog_identity": invocation.get("catalog_identity"),
         "attempt_count": invocation.get("attempt_count"),
         "retry_failures": invocation.get("retry_failures", []),
         "tool_receipt": receipt.get("receipt", {}),

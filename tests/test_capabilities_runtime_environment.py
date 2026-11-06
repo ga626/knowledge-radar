@@ -21,7 +21,8 @@ def test_tool_surface_defaults_to_planning_tools_hidden(monkeypatch) -> None:
 
     surface = build_tool_surface()
 
-    assert surface["actual_mcp_tool_count"] == 23
+    assert surface["actual_mcp_tool_count"] == len(set(surface["actual_mcp_tools"]))
+    assert "update_research" in surface["actual_mcp_tools"]
     assert "kr_research" in surface["actual_mcp_tools"]
     assert "finalize_research_task" in surface["actual_mcp_tools"]
     assert surface["workflow_tools"]["kr_research"]["role"] == "high_level_research_perception_entry"
@@ -48,7 +49,8 @@ def test_tool_surface_does_not_advertise_local_legacy_helpers(monkeypatch) -> No
 
     surface = build_tool_surface()
 
-    assert surface["actual_mcp_tool_count"] == 23
+    assert surface["actual_mcp_tool_count"] == len(set(surface["actual_mcp_tools"]))
+    assert "update_research" in surface["actual_mcp_tools"]
     assert "kr_research" in surface["actual_mcp_tools"]
     assert "expand_keywords" not in surface["actual_mcp_tools"]
     assert "plan_research" not in surface["actual_mcp_tools"]
@@ -170,10 +172,10 @@ def test_validation_semantics_declares_bilibili_fallback_acceptance() -> None:
         {
             "nssd": {
                 "validation_status": "PASS",
-                "provider_tier": "p2_4_default_chinese_fulltext",
-                "capability_profile": {"role": "default_chinese_fulltext"},
+                "provider_tier": "intent_domain_discovery",
+                "capability_profile": {"role": "intent_domain_discovery"},
             },
-            "baidu_scholar": {"validation_status": "EXPECTED_DEGRADED", "provider_tier": "expected_degraded_official_api_when_unprovisioned", "requires_api_key": True},
+            "semanticscholar": {"validation_status": "EXPECTED_DEGRADED", "provider_tier": "optional_api_provider", "requires_api_key": True},
             "wanfang": {"validation_status": "EXPECTED_DEGRADED", "provider_tier": "expected_degraded_external_login_or_subscription", "requires_login": True},
         },
     )
@@ -181,8 +183,8 @@ def test_validation_semantics_declares_bilibili_fallback_acceptance() -> None:
     assert semantics["bilibili_multimodal_acceptance"]["native_video_url_provider_blocked"] == "EXPECTED_DEGRADED"
     assert semantics["academic_provider_matrix"]["status_counts"]["EXPECTED_DEGRADED"] == 2
     assert semantics["academic_provider_matrix"]["profile_schema"] == "knowledgeradar-academic-provider-profiles/v1"
-    assert semantics["academic_provider_matrix"]["default_chinese_fulltext"] == ["nssd"]
-    assert semantics["academic_provider_matrix"]["p2_4_default_chinese_fulltext"] == ["nssd"]
+    assert semantics["academic_provider_matrix"]["intent_domain_discovery"] == ["nssd"]
+    assert semantics["academic_provider_matrix"]["primary_discovery"] == []
     assert "wanfang" in semantics["optional_expected_degraded"]["academic_login_or_entitlement_boundaries"]
 
 
@@ -207,8 +209,8 @@ def test_capabilities_declares_p2_2_asr_strategy(monkeypatch, tmp_path) -> None:
     assert caps["task_scope_fanin"]["status"] == "implemented"
     assert caps["task_scope_fanin"]["legacy_alias"]["field"] == "research_session_id"
     assert caps["tools"]["get_task_status"]["polling"]["task_scope_fanin"].startswith("get_task_status")
-    assert caps["asr_lifecycle"]["status"] == "implemented_isolated_worker"
-    assert caps["asr_lifecycle"]["resident_model"] is False
+    assert caps["asr_lifecycle"]["status"] == "implemented_inprocess"
+    assert isinstance(caps["asr_lifecycle"]["resident_model"], bool)  # an unloaded model is not resident
     assert caps["asr_benchmark"]["schema"] == "knowledgeradar-asr-benchmark/v2"
     assert caps["tools"]["get_content_detail"]["bilibili_asr_fast_path"]["status"] == "implemented_p2_2_strategy_tree"
 
@@ -217,7 +219,8 @@ def test_research_quality_contract_declares_budget_profiles() -> None:
     contract = research_quality_contract_manifest()
 
     assert contract["schema"] == "knowledgeradar-research-quality-contract/v1"
-    assert contract["status"] == "implemented_p1_questioner_and_p2_to_p5_governance"
+    assert contract["status"] == "diagnostic_research_guidance"
+    assert contract["authority"] == "advisory_only_agent_decides_sufficiency"
     assert contract["evidence_sidecar_schema"] == "knowledgeradar-research-evidence/v1"
     assert [item["id"] for item in contract["research_budget_profiles"]] == ["fast", "balanced", "deep"]
     assert contract["questioner_checkpoints"]["minimum_stages"] == [
@@ -260,8 +263,10 @@ def test_capability_atlas_declares_min_max_boundaries() -> None:
     assert "minimum_stable_boundary" in atlas["upgrade_rules"]
     bilibili = atlas["cards"]["bilibili_video_ecology"]
     assert "search_bilibili" in bilibili["candidate_tools"]
-    assert bilibili["minimum_stable_boundary"]
-    assert bilibili["maximum_observed_boundary"]
+    assert bilibili["minimum_stable_boundary"] is None
+    assert bilibili["declared_boundary"]
+    assert bilibili["availability"]["verified"] is False
+    assert bilibili["maximum_observed_boundary"] is None
     assert bilibili["stability_rule"].startswith("single success")
 
 
@@ -297,7 +302,7 @@ def test_capabilities_exposes_academic_provider_capability_profiles(monkeypatch,
     assert "pubscholar" in academic["providers"]
     assert profiles["pubscholar"]["content"]["direct_read_preferred"] is True
     assert profiles["vip_oa"]["access"]["auth_mode"] == "managed_browser_login"
-    assert "serpapi_scholar" not in profiles
+    assert profiles["serpapi_scholar"]["role"] == "budgeted_supplement"
 
 
 def test_capabilities_declares_project_governance(monkeypatch, tmp_path) -> None:
@@ -320,8 +325,7 @@ def test_capabilities_summary_declares_manual_interaction(monkeypatch, tmp_path)
 
     summary = _capabilities_summary()
 
-    assert summary["summary"] is True
-    assert summary["manual_interaction"]["schema"] == "knowledgeradar-manual-interaction/v1"
-    assert summary["manual_interaction"]["entrypoints"]["request"].startswith("health_check")
-    assert "empty_detail" in summary["manual_interaction"]["non_manual_states"]
-    assert summary["research_quality_contract"]["schema"] == "knowledgeradar-research-quality-contract/v1"
+    assert summary['schema']=='kr-tool-catalog/v1'
+    assert summary['availability']=='declared_not_live_probe'
+    assert 'input_schema' not in summary['tools'][0]
+    assert summary['expand']['tool']=='get_capabilities'

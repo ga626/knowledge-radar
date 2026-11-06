@@ -3,7 +3,7 @@ from search_providers.models import SearchProviderResult, WebSearchRequest
 
 
 def test_canonical_url_strips_tracking_query():
-    assert canonical_url("HTTPS://Example.COM/a/?utm_source=x&b=1#frag") == "https://example.com/a?b=1"
+    assert canonical_url("HTTPS://Example.COM/a/?utm_source=x&b=1#frag") == "https://example.com/a/?b=1"
 
 
 def test_aggregate_results_deduplicates_with_provenance():
@@ -13,7 +13,7 @@ def test_aggregate_results_deduplicates_with_provenance():
     rows = aggregate_results({"searxng": [item_a], "anysearch": [item_b]}, limit=10)
 
     assert len(rows) == 1
-    assert rows[0].raw["provider_provenance"] == ["searxng", "anysearch"]
+    assert rows[0].raw["provider_provenance"] == ["anysearch", "searxng"]
 
 
 def test_coverage_decision_triggers_when_unique_results_are_low():

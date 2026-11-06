@@ -33,6 +33,8 @@ classifiers = [
 dependencies = [
   "mcp>=1.9,<2.0",
   "httpx>=0.27",
+  "ddgs==9.16.1",
+  "primp==2.0.1",
   "pydantic>=2",
   "playwright>=1.44",
   "beautifulsoup4>=4.12",
@@ -40,10 +42,16 @@ dependencies = [
   "trafilatura>=1.12",
   "readability-lxml>=0.8",
   "pypdf>=6.13",
+  "pypdfium2==5.14.0",
   "websocket-client>=1.8",
   "aiofiles>=23",
   "youtube-transcript-api>=0.6",
   "Pillow>=10",
+  "av==17.0.1",
+  "numpy==2.5.4",
+  "requests>=2.34.2,<3",
+  "click>=8.5,<9",
+  "idna>=3.20,<4",
 ]
 
 [project.optional-dependencies]
@@ -56,7 +64,7 @@ Documentation = "https://github.com/ga626/knowledge-radar#readme"
 Issues = "https://github.com/ga626/knowledge-radar/issues"
 
 [project.scripts]
-knowledgeradar = "server:main"
+knowledgeradar = "runtime.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
@@ -78,7 +86,7 @@ onboarding = ["static/*", "assets/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 target-version = "py312"

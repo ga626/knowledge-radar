@@ -24,6 +24,32 @@ def test_fake_ip_requires_independent_public_resolution(monkeypatch):
         public_addresses("https://198.18.0.4/")
 
 
+@pytest.mark.parametrize("first", ["transport", "private", "nxdomain", "both_failed"])
+def test_public_dns_fallback_preserves_security(monkeypatch, first):
+    from generic_web import url_policy
+    url_policy._DNS_CACHE.clear()
+    calls = []
+    def respond(request):
+        calls.append(str(request.url))
+        if request.url.host == "cloudflare-dns.com":
+            if first in {"transport", "both_failed"}:
+                raise httpx.ConnectError("resolver unavailable")
+            return httpx.Response(200, json={"Status": 3} if first == "nxdomain" else {"Status": 0, "Answer": [{"type": 1, "data": "10.0.0.1"}]})
+        if first == "both_failed":
+            raise httpx.ConnectError("second unavailable")
+        return httpx.Response(200, json={"Status": 0, "Answer": [{"type": 1, "data": "203.119.144.202"}]})
+    original = httpx.Client
+    monkeypatch.setattr(httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(respond), **kw))
+    if first == "transport":
+        assert url_policy._public_dns_for_fake_ip("example.org") == ["203.119.144.202"]
+        assert len(calls) == 2
+    else:
+        with pytest.raises(URLPolicyError):
+            url_policy._public_dns_for_fake_ip("example.org")
+        assert len(calls) == (2 if first == "both_failed" else 1)
+    url_policy._DNS_CACHE.clear()
+
+
 @pytest.mark.parametrize("url", ["http://127.0.0.1/", "http://169.254.169.254/", "http://10.0.0.1/", "http://[::1]/",
                                   "http://[::ffff:127.0.0.1]/", "http://localhost/", "http://user:password@example.org/",
                                   "file:///x", "https://example.org:22/x", "http://example.org\\@127.0.0.1/x"])
@@ -115,7 +141,7 @@ def test_detail_url_rejected_before_any_profile_or_handler_access(url, platform)
     def forbidden(*args, **kwargs):
         raise AssertionError("unsafe URL must be rejected before side effects")
     result = execute_detail_request(DetailRequest(url=url, platform=platform), failure_cache=None,
-                                    handle=forbidden, bind_tasks=forbidden, record_evidence=forbidden, chrome_operation=forbidden)
+                                    handle=forbidden, bind_tasks=forbidden, record_evidence=forbidden)
     assert result["failure_type"] == "restricted_url"
 
 

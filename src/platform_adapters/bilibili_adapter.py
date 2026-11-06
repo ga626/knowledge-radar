@@ -23,7 +23,17 @@ class BilibiliAdapter(LegacySearchAdapterMixin):
     )
 
     def __init__(self, search_func: Optional[LegacySearchCallable] = None) -> None:
-        self._search_func = search_func
+        self._search_func = search_func or search_from_request
 
     def search(self, request: SearchRequest) -> SearchResponse:
         return self._call_legacy(request)
+
+    @staticmethod
+    def enhance_detail(request, collected):
+        from detail_strategies.video import enhance_video_detail
+        return enhance_video_detail(request, collected)
+
+
+def search_from_request(request: SearchRequest):
+    from collectors.platform.bilibili import legacy_search_bilibili
+    return legacy_search_bilibili(request.keyword, page_size=request.limit)

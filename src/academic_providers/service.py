@@ -4,28 +4,28 @@ from __future__ import annotations
 
 import time
 import json
-from importlib import import_module
+import hashlib
+import threading
+import copy
+import math
+from dataclasses import replace
+import httpx
 from typing import Dict, List
+from runtime.paid_execution import PaidAdmissionError
 
 from .ar5iv import Ar5ivError
 from .arxiv import ArxivError, ArxivRateLimitError
-from .baidu_scholar import (
-    BaiduScholarAuthError,
-    BaiduScholarError,
-    BaiduScholarProvider,
-    BaiduScholarRateLimitError,
-    BaiduScholarUnavailableError,
-)
 from .citation_import import CitationImportError
+from .chinese_open_access import ChineseOpenAccessError, _fetch_diagnostic
 from .cnki_authorized_browser import cnki_browser_status
 from .core import CoreAuthError, CoreError, CoreProvider, CoreRateLimitError
 from .crossref import CrossrefError
-from .fulltext import extract_academic_fulltext
 from .models import AcademicSearchRequest, AcademicSearchResponse, AcademicWork, normalize_doi, normalize_title
 from .openalex import OpenAlexError
 from .planner import AcademicRoutePlan, analyze_academic_query, plan_academic_search
 from .relevance import rank_by_metadata_relevance, score_metadata_relevance, select_fulltext_candidates
-from .semanticscholar import SemanticScholarError, SemanticScholarRateLimitError
+from .semanticscholar import SemanticScholarAuthError, SemanticScholarError, SemanticScholarRateLimitError, SemanticScholarProvider
+from .wanfang import WanfangProvider
 from .serpapi_scholar import SerpApiScholarAuthError, SerpApiScholarError, SerpApiScholarProvider, SerpApiScholarRateLimitError
 from .unpaywall import UnpaywallAuthError, UnpaywallError
 from .registry import academic_provider_profiles, instantiate_academic_providers
@@ -33,64 +33,27 @@ from runtime.status_schema import classify_provider_status
 
 
 _CACHE: Dict[str, Dict[str, object]] = {}
+_CACHE_LOCK = threading.RLock()
 _LAST_CALL_AT: Dict[str, float] = {}
 _CACHE_TTL_S = 300
+_CACHE_MAX_ENTRIES = 128
 _MIN_INTERVAL_S = 0.5
 _DEFAULT_FULLTEXT_TOP_K = 3
 _DEFAULT_FULLTEXT_MIN_SCORE = 0.15
-P2_4_DEFAULT_CHINESE_FULLTEXT_PROVIDERS = {"nssd", "chinaxiv", "hanspub", "oajrc", "sciopen", "pubscholar", "sciengine", "vip_oa"}
-P2_4_CONNECTED_CHINESE_FULLTEXT_PROVIDERS = {
-    "coaj",
-    "nssd_cn",
-    "ucdrs",
-    "pubscholar",
-    "ivy_publisher",
-    "paper_edu",
-    "calis_thesis",
-    "nstrs",
-    "paperscope",
-    "toaj",
-    "ntur",
-    "hkjo",
-    "gooa",
-    "oalib",
-    "sciengine",
-}
-P2_4_CHINESE_ABSTRACT_SUPPLEMENT_PROVIDERS = {"socolar"}
-P2_4_EXPECTED_DEGRADED_EXTERNAL_PLATFORMS: Dict[str, Dict[str, object]] = {
-    "wanfang": {
-        "configured": False,
-        "available": False,
-        "requires_login": True,
-        "auto_enabled": False,
-        "access_mode": "user_export_or_authorized_browser",
-        "status": "degraded",
-        "provider_tier": "expected_degraded_external_login_or_subscription",
-        "degraded_reason": "Wanfang full-text is not a registered automatic provider; use user citation export/import or an explicit authorized-browser workflow.",
-    },
-}
-LEGACY_EXPLICIT_PROVIDER_CLASSES: Dict[str, str] = {
-    # These providers remain available for explicit reprobe/status reporting,
-    # but they are intentionally not part of the profile-driven auto planner.
-    "coaj": "academic_providers.coaj:CoajProvider",
-    "nssd_cn": "academic_providers.nssd_cn:NssdCnProvider",
-    "ucdrs": "academic_providers.ucdrs:UcdrsProvider",
-    "paper_edu": "academic_providers.paper_edu:PaperEduProvider",
-    "calis_thesis": "academic_providers.calis_thesis:CalisThesisProvider",
-    "nstrs": "academic_providers.nstrs:NstrsProvider",
-    "paperscope": "academic_providers.paperscope:PaperScopeProvider",
-    "toaj": "academic_providers.toaj:ToajProvider",
-    "ntur": "academic_providers.ntur:NturProvider",
-    "gooa": "academic_providers.gooa:GoOaProvider",
-    "oalib": "academic_providers.oalib:OalibProvider",
-    "baidu_scholar": "academic_providers.baidu_scholar:BaiduScholarProvider",
-    "serpapi_scholar": "academic_providers.serpapi_scholar:SerpApiScholarProvider",
-}
+PRIMARY_DISCOVERY_PROVIDERS = {"pubscholar", "openalex"}
+DOMAIN_PROVIDERS = {"nssd", "chinaxiv", "sciengine", "napstic_oa", "arxiv", "europepmc", "nstrs", "calis_thesis", "toaj", "ntur", "hkjo"}
 
 
 def academic_provider_status() -> Dict[str, Dict[str, object]]:
     profiles = academic_provider_profiles()
-    status = {name: _enrich_provider_status(name, provider.status()) for name, provider in _providers().items()}
+    providers = _providers()
+    status = {}
+    for name in providers:
+        try:
+            status[name] = _enrich_provider_status(name, providers[name].status())
+        except (ImportError, OSError, ValueError) as exc:
+            status[name] = {'available':False, 'auto_enabled':False,
+                            'degraded_reason':type(exc).__name__, 'validation_status':'not_ready'}
     for name, item in status.items():
         profile = profiles.get(name)
         if profile:
@@ -106,36 +69,27 @@ def academic_provider_status() -> Dict[str, Dict[str, object]]:
         "degraded_reason": "explicit user-authorized browser workflow only; not part of provider=auto",
     }
     status["cnki_authorized_browser"] = _enrich_provider_status("cnki_authorized_browser", status["cnki_authorized_browser"])
-    for name, item in P2_4_EXPECTED_DEGRADED_EXTERNAL_PLATFORMS.items():
-        status[name] = _enrich_provider_status(name, item)
     return status
 
 
 def _enrich_provider_status(name: str, raw_status: Dict[str, object]) -> Dict[str, object]:
     status = dict(raw_status or {})
     status.setdefault("provider_tier", _academic_provider_tier(name, status))
-    if name == "baidu_scholar":
-        if not status.get("degraded_reason"):
-            status["degraded_reason"] = "Baidu Qianfan is an external API entitlement/quota boundary and is not part of the always-on Chinese full-text acceptance gate."
-        status["validation_status"] = "EXPECTED_DEGRADED"
-    main_chain = name in P2_4_DEFAULT_CHINESE_FULLTEXT_PROVIDERS and bool(status.get("auto_enabled", True))
+    main_chain = name in PRIMARY_DISCOVERY_PROVIDERS
     classification = classify_provider_status(name, status, main_chain=main_chain)
     status["validation_status"] = classification["status_class"]
     status["status_class"] = classification["status_class"]
     status["validation_reason"] = classification["validation_reason"]
     status["blocks_overall_pass"] = classification["blocks_overall_pass"]
+    status['live_verification'] = 'not_checked_by_status_query'
     return status
 
 
 def _academic_provider_tier(name: str, status: Dict[str, object]) -> str:
-    if name in P2_4_DEFAULT_CHINESE_FULLTEXT_PROVIDERS:
-        return "p2_4_default_chinese_fulltext"
-    if name in P2_4_CHINESE_ABSTRACT_SUPPLEMENT_PROVIDERS:
-        return "p2_4_chinese_abstract_discovery_supplement"
-    if name in P2_4_CONNECTED_CHINESE_FULLTEXT_PROVIDERS:
-        return "p2_4_connected_chinese_fulltext"
-    if name == "baidu_scholar":
-        return "expected_degraded_official_api_when_unprovisioned"
+    if name in PRIMARY_DISCOVERY_PROVIDERS:
+        return "primary_discovery"
+    if name in DOMAIN_PROVIDERS:
+        return "intent_domain_discovery"
     if name == "serpapi_scholar":
         return "optional_scholar_metadata_api"
     if name == "citation_import":
@@ -149,11 +103,32 @@ def _academic_provider_tier(name: str, status: Dict[str, object]) -> str:
     return "metadata_provider"
 
 
+def _search_status(providers, names):
+    """发现响应只带本次来源摘要；完整画像由能力目录按需提供。"""
+    result = {}
+    keys = {'configured','available','auto_enabled','requires_api_key','requires_login',
+            'daily_exhausted','monthly_exhausted','degraded_reason','validation_status',
+            'status_class','live_verification'}
+    for name in dict.fromkeys(names):
+        try:
+            method = getattr(providers[name], 'status', None)
+            status = _enrich_provider_status(name, method() if callable(method) else {})
+            result[name] = {k:v for k,v in status.items() if k in keys}
+        except (ImportError, OSError, ValueError) as exc:
+            result[name] = {'available':False,'degraded_reason':type(exc).__name__}
+    return result
+
+
 def cnki_authorized_browser_probe(query: str = "", limit: int = 10, *, cleanup: bool = True) -> Dict[str, object]:
     return cnki_browser_status(query=query, limit=limit, cleanup=cleanup)
 
 
 def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchResponse:
+    try:
+        request = _validated_request(request)
+    except (ValueError, TypeError, OverflowError) as exc:
+        return AcademicSearchResponse(query=str(request.query or ''), provider=str(request.provider or ''),
+            error={'type': 'invalid_input', 'message': str(exc), 'retryable': False, 'request_executed': False})
     provider_name = _normalize_provider_name(request.provider or "openalex")
     providers = _providers()
     if provider_name not in providers and provider_name != "auto":
@@ -164,71 +139,142 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
         )
     route_plan = _provider_plan(request, provider_name)
     order = route_plan.provider_order
-    cache_key = _cache_key(request, order)
-    cached = _CACHE.get(cache_key)
+    cache_key = _cache_key(request, order, providers)
+    with _CACHE_LOCK:
+        for key in list(_CACHE):
+            if time.time() - float(_CACHE[key].get('created_at') or 0) > _CACHE_TTL_S:
+                _CACHE.pop(key, None)
+        cached = copy.deepcopy(_CACHE.get(cache_key))
     if cached and time.time() - float(cached.get("created_at") or 0) <= _CACHE_TTL_S:
         response = cached.get("response")
         if isinstance(response, AcademicSearchResponse):
-            return AcademicSearchResponse(
-                query=response.query,
-                provider=response.provider,
-                items=response.items,
-                error=response.error,
-                metadata={**response.metadata, "cache": {"hit": True, "ttl_s": _CACHE_TTL_S}},
-            )
+            response = copy.deepcopy(response)
+            response = replace(response, metadata={**response.metadata, "cache": {"hit": True, "ttl_s": _CACHE_TTL_S}})
+            response.metadata['fulltext_resolution'] = _resolve_fulltext_candidates(request, response.items)
+            return response
 
     attempted: List[str] = []
     completed: List[str] = []
     errors = []
+    provider_outcomes = []
     all_items: List[AcademicWork] = []
     from .relevance import has_query_evidence
 
     relevant: List[AcademicWork] = []
     used_provider = ""
-    for name in order:
-        provider = providers[name]
+    started = time.monotonic()
+    max_providers = max(1, min(int(request.options.get('max_provider_attempts', 8)), 22))
+    deadline_s = max(1.0, min(float(request.options.get('deadline_s', 90)), 300.0))
+    offset = max(0, min(int(request.options.get('provider_offset', 0)), len(order)))
+    budget = {'max_provider_attempts': max_providers, 'deadline_s': deadline_s,
+              'provider_offset': offset, 'skipped': [], 'boundary': 'provider_attempts_and_cooperative_deadline'}
+    for index, name, resolve, batch_tail, admitted in _provider_attempts(
+            request, order, providers, offset, max_providers, started, deadline_s):
+        from runtime.execution_context import check_execution, ExecutionStopped
+        check_execution()
+        if not admitted and (len(attempted) >= max_providers or time.monotonic() - started >= deadline_s):
+            reason = 'provider_budget_exhausted' if len(attempted) >= max_providers else 'deadline_exhausted'
+            budget['skipped'] = [{'provider': pending, 'reason': reason} for pending in order[index:]]
+            budget['continuation'] = {'provider_offset': index}
+            break
         attempted.append(name)
         try:
-            _rate_limit(name)
-            items = provider.search(request)
-        except (SemanticScholarRateLimitError, ArxivRateLimitError, BaiduScholarRateLimitError, SerpApiScholarRateLimitError, CoreRateLimitError) as exc:
-            errors.append({"provider": name, "type": "rate_limited", "message": str(exc), "retryable": True, "backoff_suggested": True})
+            provider = providers[name]
+            if name in {'pubscholar', 'nstrs'} and not request.options.get('_background_discovery'):
+                from use_cases.academic_discovery import submit_discovery
+                ref = submit_discovery(request, name)
+                provider_outcomes.append({'provider':name, 'outcome':'pending', 'task':ref})
+                continue
+            items = resolve()
+            diagnostics = list(getattr(items, 'diagnostics', []))
+            errors.extend({'provider': name, **diagnostic} for diagnostic in diagnostics if diagnostic.get('type') != 'no_match')
+        except ExecutionStopped:
+            raise
+        except ChineseOpenAccessError as exc:
+            errors.extend({'provider': name, **diagnostic} for diagnostic in exc.diagnostics)
             continue
-        except (BaiduScholarAuthError, SerpApiScholarAuthError, CoreAuthError, UnpaywallAuthError) as exc:
-            errors.append({"provider": name, "type": "auth_required", "message": str(exc), "retryable": False})
+        except (SemanticScholarRateLimitError, ArxivRateLimitError, SerpApiScholarRateLimitError, CoreRateLimitError) as exc:
+            errors.append({"provider": name, "type": "rate_limited", "message": type(exc).__name__, "retryable": True, "backoff_suggested": True})
             continue
-        except BaiduScholarUnavailableError as exc:
-            errors.append({"provider": name, "type": "provider_unavailable", "message": str(exc), "retryable": False})
+        except (SerpApiScholarAuthError, CoreAuthError, UnpaywallAuthError, SemanticScholarAuthError) as exc:
+            errors.append({"provider": name, "type": "auth_required", "message": type(exc).__name__, "retryable": False})
             continue
-        except (OpenAlexError, CrossrefError, SemanticScholarError, ArxivError, Ar5ivError, BaiduScholarError, SerpApiScholarError, CoreError, UnpaywallError) as exc:
-            errors.append({"provider": name, "type": _classify_provider_error(exc), "message": str(exc), "retryable": True})
+        except (OpenAlexError, CrossrefError, SemanticScholarError, ArxivError, Ar5ivError, SerpApiScholarError, CoreError, UnpaywallError) as exc:
+            errors.append({"provider": name, "type": _classify_provider_error(exc), "message": type(exc).__name__, "retryable": True})
             continue
         except CitationImportError as exc:
-            errors.append({"provider": name, "type": "invalid_user_import", "message": str(exc), "retryable": False})
+            errors.append({"provider": name, "type": "invalid_user_import", "message": type(exc).__name__, "retryable": False})
+            continue
+        except PaidAdmissionError as exc:
+            errors.append({"provider": name, "type": "budget_blocked", "message": exc.error_code, "retryable": False})
+            continue
+        except httpx.HTTPError as exc:
+            errors.append({'provider': name, **_fetch_diagnostic(exc)})
             continue
         except Exception as exc:
-            errors.append({"provider": name, "type": "unknown", "message": str(exc), "retryable": True})
+            errors.append({"provider": name, "type": _classify_provider_error(exc), "message": type(exc).__name__, "retryable": True})
             continue
         completed.append(name)
+        candidate_count = len(items)
+        matching_count = sum(not item.raw.get('fallback_sample') and (name == 'citation_import' or has_query_evidence(request.query, item)) for item in items)
+        if candidate_count:
+            outcome = 'results' if matching_count else 'relevance_filtered'
+        elif diagnostics:
+            kinds = [row.get('type') for row in diagnostics]
+            # 首页或其他备用页的空壳不能覆盖明确故障。
+            outcome = next((kind for kind in kinds if kind not in {'no_match', 'search_not_implemented'}),
+                           'no_match' if kinds and all(kind == 'no_match' for kind in kinds) else 'search_not_implemented')
+        else:
+            from .chinese_open_access import ChineseOpenAccessProvider
+            outcome = 'search_response_unparsed' if isinstance(provider, ChineseOpenAccessProvider) else 'no_match'
+            if outcome == 'search_response_unparsed':
+                errors.append({'provider': name, 'type': outcome, 'retryable': False,
+                               'message': '采集器未返回候选且没有无匹配证据；需修复或核验解析链路'})
+        provider_outcomes.append({'provider': name, 'outcome': outcome, 'candidate_count': candidate_count,
+                                  'matching_count': matching_count, 'diagnostics': diagnostics,
+                                  'continuation':getattr(items, 'continuation', None),
+                                  'pagination_support':'explicit_cursor' if hasattr(items, 'continuation') else 'not_implemented'})
         if items:
             all_items.extend(item for item in items if not item.raw.get("fallback_sample"))
-            matching = [item for item in items if not item.raw.get("fallback_sample") and has_query_evidence(request.query, item)]
+            matching = [item for item in items if not item.raw.get("fallback_sample") and (name == 'citation_import' or has_query_evidence(request.query, item))]
             relevant.extend(matching)
             if matching and not used_provider:
                 used_provider = name
-        if len(_dedupe(relevant)) >= max(1, int(request.limit or 5)):
+        required = set(getattr(route_plan, "required_providers", []))
+        if batch_tail and required.issubset(completed) and len(_dedupe(relevant)) >= max(1, int(request.limit or 5)):
+            if index + 1 < len(order):
+                budget['continuation'] = {'provider_offset':index + 1}
+                budget['skipped'] = [{'provider':p, 'reason':'batch_limit_reached'} for p in order[index+1:]]
             break
 
     limit = max(1, min(int(request.limit or 5), 20))
     relevant = _dedupe(relevant)
     ranked = _rank_search_results(request.query, relevant)
-    fulltext_resolution = _resolve_fulltext_candidates(request, ranked)
+    budget['elapsed_s'] = round(time.monotonic() - started, 3)
+    budget['attempted_count'] = len(attempted)
+    budget['missing_required_providers'] = [name for name in getattr(route_plan, 'required_providers', []) if name not in completed]
     deduped = ranked[:limit]
+    from .identity import save_work, load_work
+    filtered = [work for work in _dedupe(all_items) if not any(work.url == hit.url for hit in relevant)]
+    filtered_refs = [{'title':work.title, 'reason':'lexical_filter', 'reference':save_work(work)} for work in filtered]
+    overflow = [work for work in ranked[limit:]]
+    overflow_refs = [{'title':work.title, 'reason':'batch_return_limit', 'reference':save_work(work)} for work in overflow]
+    for work in deduped:
+        work.raw['fulltext_ref'] = save_work(work)
+        if work.raw.get('fulltext_text'):
+            work.raw['fulltext_inline_ref'] = load_work(work.raw['fulltext_ref']).raw['fulltext_inline_ref']
+            work.raw.pop('fulltext_text')
+    fulltext_resolution = {'applied':False, 'reason':'disabled_by_request'}
+    budget['elapsed_s'] = round(time.monotonic() - started, 3)
+    known = {row['provider'] for row in provider_outcomes}
+    provider_outcomes.extend({'provider': name, 'outcome': 'request_failed',
+        'diagnostics': [error for error in errors if error.get('provider') == name]}
+        for name in attempted if name not in known)
     if not deduped:
         return AcademicSearchResponse(
             query=request.query,
             provider=used_provider or "none",
-            error={
+            error=None if any(row.get('task') for row in provider_outcomes) and not errors else {
                 "type": _aggregate_error_type(errors, completed=bool(completed)),
                 "message": "No query-relevant academic results were returned",
                 "details": errors,
@@ -237,10 +283,16 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
             metadata={
                 "attempted_providers": attempted,
                 "completed_providers": completed,
-                "provider_status": academic_provider_status(),
+                "provider_outcomes": provider_outcomes,
+                "execution_budget": budget,
+                "provider_status": _search_status(providers, attempted),
                 "expected_degraded": True,
-                "degraded_reason": "no_relevant_results" if completed else "academic_provider_unavailable",
+                "degraded_reason": provider_outcomes[0]['outcome'] if len(provider_outcomes) == 1 else "mixed_source_outcomes_no_results",
                 "planner": _route_plan_metadata(route_plan),
+                "filtered_candidates": filtered_refs,
+                "additional_candidates":overflow_refs,
+                "pending_discoveries": [row['task'] for row in provider_outcomes if row.get('task')],
+                "fulltext_resolution":fulltext_resolution,
             },
         )
     response = AcademicSearchResponse(
@@ -250,50 +302,97 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
         metadata={
             "attempted_providers": attempted,
             "completed_providers": completed,
+            "provider_outcomes": provider_outcomes,
+            "execution_budget": budget,
             "planner": _route_plan_metadata(route_plan),
             "fallback_used": bool(attempted and used_provider != attempted[0]),
             "errors": errors,
             "cache": {"hit": False, "ttl_s": _CACHE_TTL_S},
-            "provider_status": academic_provider_status(),
+            "provider_status": _search_status(providers, attempted),
             "relevance_ranking": {
-                "discarded_unrelated_count": len(_dedupe(all_items)) - len(relevant),
+                "discarded_unrelated_count": max(0, len(_dedupe(all_items)) - len(relevant)),
                 "identity_verification": "search_candidates_only; title match does not prove edition, year or DOI identity",
                 "strategy": "metadata_title_abstract_source_confidence",
+                "boundary": "基础词面过滤；语义相关性、材料类型适用性和证据充分性由 Codex 判断。",
                 "applied": True,
                 "top_score": score_metadata_relevance(request.query, deduped[0]) if deduped else 0.0,
             },
             "fulltext_resolution": fulltext_resolution,
+            "filtered_candidates": filtered_refs,
+            "additional_candidates":overflow_refs,
+            "pending_discoveries": [row['task'] for row in provider_outcomes if row.get('task')],
         },
     )
-    _CACHE[cache_key] = {"created_at": time.time(), "response": response}
+    # 只缓存无研究作用域、无全文任务引用的书目。后台发现引用不跨研究缓存。
+    if not response.metadata['pending_discoveries']:
+        with _CACHE_LOCK:
+            while len(_CACHE) >= _CACHE_MAX_ENTRIES:
+                _CACHE.pop(next(iter(_CACHE)))
+            _CACHE[cache_key] = {"created_at": time.time(), "response": copy.deepcopy(response)}
+    response.metadata['fulltext_resolution'] = _resolve_fulltext_candidates(request, response.items)
     return response
 
 
+def _search_provider(provider, name, request, started, deadline_s):
+    from runtime.execution_context import check_execution
+    check_execution()
+    _rate_limit(name)
+    remaining = deadline_s - (time.monotonic() - started)
+    if remaining <= 0:
+        raise TimeoutError('academic_discovery_deadline_exceeded')
+    for attr in ('timeout', 'timeout_s'):
+        current = getattr(provider, attr, None)
+        if isinstance(current, (int, float)):
+            setattr(provider, attr, min(current, remaining))
+    result = provider.search(request)
+    check_execution()
+    return result
+
+
+def _provider_attempts(request, order, providers, offset, max_providers, started, deadline_s):
+    """相邻公开API小批并行；有费用/浏览器来源不预发，已发的整批都登记结果。"""
+    from concurrent.futures import ThreadPoolExecutor
+    from contextvars import copy_context
+    fast = {'openalex', 'crossref', 'arxiv', 'europepmc', 'semanticscholar', 'unpaywall'}
+    width = request.options.get('api_parallelism', 3)
+    index = offset
+    with ThreadPoolExecutor(max_workers=width, thread_name_prefix='academic-api') as pool:
+        while index < len(order):
+            end = index + 1
+            if time.monotonic() - started < deadline_s and index < offset + max_providers and order[index] in fast:
+                while (end < min(len(order), index + width, offset + max_providers)
+                       and order[end] in fast):
+                    end += 1
+            if end - index > 1:
+                futures = []
+                for position in range(index, end):
+                    name = order[position]
+                    context = copy_context()
+                    futures.append(pool.submit(context.run, _search_provider, providers[name], name,
+                                               request, started, deadline_s))
+                for position, future in zip(range(index, end), futures):
+                    yield position, order[position], future.result, position == end-1, True
+            else:
+                name = order[index]
+                yield index, name, lambda: _search_provider(providers[name], name, request, started, deadline_s), True, False
+            index = end
+
+
 def _providers() -> Dict[str, object]:
-    providers = instantiate_academic_providers()
-    for provider_id, provider_class in LEGACY_EXPLICIT_PROVIDER_CLASSES.items():
-        providers.setdefault(provider_id, _instantiate_provider(provider_class))
-    return providers
-
-
-def _instantiate_provider(provider_class: str) -> object:
-    module_name, sep, class_name = provider_class.partition(":")
-    if not sep:
-        raise ValueError(f"Invalid provider class spec: {provider_class}")
-    module = import_module(module_name)
-    return getattr(module, class_name)()
+    return instantiate_academic_providers()
 
 
 def _provider_plan(request: AcademicSearchRequest, provider_name: str) -> AcademicRoutePlan:
     profiles = academic_provider_profiles()
-    baidu = BaiduScholarProvider()
     core = CoreProvider()
     serpapi = SerpApiScholarProvider()
+    wanfang = WanfangProvider()
     return plan_academic_search(
         request,
         provider_name,
         profiles,
-        baidu_available=bool(baidu.bearer_token),
+        semantic_available=SemanticScholarProvider().auto_available,
+        wanfang_available=bool(wanfang.enabled and wanfang.api_key),
         core_available=bool(core.api_key and not core.daily_quota.exhausted),
         serpapi_available=bool(serpapi.enabled_for_auto and serpapi.api_key and not serpapi.daily_quota.exhausted),
     )
@@ -304,15 +403,17 @@ def _route_plan_metadata(plan: AcademicRoutePlan) -> Dict[str, object]:
     reason = "explicit_provider"
     if plan.waves and "explicit" not in plan.waves:
         if intent.chinese_like:
-            reason = "chinese_query_metadata_then_open_fulltext_chain"
+            reason = "chinese_primary_then_intent_sources"
         elif intent.doi_like:
-            reason = "doi_query_prefers_unpaywall_then_global_metadata"
+            reason = "doi_crossref_then_oa_lookup"
         elif intent.citation_import:
             reason = "citation_import_then_metadata_chain"
         else:
             reason = "global_metadata_chain"
     return {
-        "schema": "knowledgeradar-academic-route-plan/v1",
+        "schema": "knowledgeradar-academic-route-plan/v2",
+        "required_providers": list(plan.required_providers),
+        "coverage_rule": "complete_primary_and_intent_sources_before_count_stop",
         "reason": reason,
         "provider_order": list(plan.provider_order),
         "waves": {name: list(values) for name, values in plan.waves.items()},
@@ -344,8 +445,7 @@ def _normalize_provider_name(provider: str) -> str:
         "s2": "semanticscholar",
         "google_scholar": "serpapi_scholar",
         "serpapi": "serpapi_scholar",
-        "baidu": "baidu_scholar",
-        "baidu_qianfan": "baidu_scholar",
+        "nssd_cn": "nssd",
         "china_xiv": "chinaxiv",
     }
     return aliases.get(name, name)
@@ -359,13 +459,46 @@ def _looks_like_arxiv_query(query: str) -> bool:
     return analyze_academic_query(AcademicSearchRequest(query=str(query or ""))).arxiv_like
 
 
-def _cache_key(request: AcademicSearchRequest, order: List[str]) -> str:
+def _validated_request(request: AcademicSearchRequest) -> AcademicSearchRequest:
+    if not isinstance(request.query, str) or not request.query.strip():
+        raise ValueError('query must be a nonempty string')
+    if not isinstance(request.options, dict):
+        raise ValueError('options must be an object')
+    options = dict(request.options)
+    if 'source_cursor' in options and (not isinstance(options['source_cursor'], str) or len(options['source_cursor']) > 4000):
+        raise ValueError('source_cursor must be a string of at most 4000 characters')
+    limits = {'max_provider_attempts': (1, 22, True), 'provider_offset': (0, 22, True), 'api_parallelism': (1, 4, True),
+              'deadline_s': (1, 300, False), 'fulltext_top_k': (0, 5, True),
+              'fulltext_min_score': (0, 1, False), 'fulltext_deadline_s': (1, 3600, False), 'source_offset': (0, 100000, True)}
+    for key, (low, high, integer) in limits.items():
+        if key not in options:
+            continue
+        value = options[key]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f'{key} must be a finite number')
+        if integer and int(value) != value:
+            raise ValueError(f'{key} must be an integer')
+        options[key] = max(low, min(int(value) if integer else float(value), high))
+    for key in ('resolve_fulltext', 'need_fulltext', 'has_readable_fulltext', 'include_ocr'):
+        if key in options and not isinstance(options[key], bool):
+            raise ValueError(f'{key} must be a boolean')
+    if isinstance(request.limit, bool) or not isinstance(request.limit, int):
+        raise ValueError('limit must be an integer')
+    return replace(request, query=request.query.strip(), limit=max(1, min(request.limit, 20)), options=options)
+
+
+def _cache_key(request: AcademicSearchRequest, order: List[str], providers=None) -> str:
+    # 配置改变后不复用旧授权结果；只将摘要用于内存键，不写出凭据。
+    identity = {name: {attr: getattr((providers or {}).get(name), attr, None)
+                      for attr in ('api_key', 'email', 'endpoint', 'base_url', 'enabled')}
+                for name in order}
     return "|".join(
         [
             request.query.strip().lower(),
             str(int(request.limit or 5)),
             ",".join(order),
             _options_cache_key(request.options),
+            _options_cache_key(identity),
         ]
     )
 
@@ -374,21 +507,27 @@ def _options_cache_key(options: Dict[str, object]) -> str:
     if not options:
         return "{}"
     try:
-        return json.dumps(options, sort_keys=True, ensure_ascii=True, default=str)[:1000]
+        value = json.dumps(options, sort_keys=True, ensure_ascii=True, default=str)
     except TypeError:
-        return str(sorted((str(key), str(value)) for key, value in options.items()))[:1000]
+        value = str(sorted((str(key), str(value)) for key, value in options.items()))
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 def _rate_limit(provider_name: str) -> None:
-    now = time.time()
-    last = _LAST_CALL_AT.get(provider_name, 0.0)
-    wait = _MIN_INTERVAL_S - (now - last)
-    if wait > 0:
-        time.sleep(wait)
-    _LAST_CALL_AT[provider_name] = time.time()
+    from .rate_limit import wait_interval
+    wait_interval(provider_name, _MIN_INTERVAL_S)
 
 
 def _classify_provider_error(exc: Exception) -> str:
+    if isinstance(exc, PaidAdmissionError):
+        return "budget_blocked"
+    cause = exc
+    for _ in range(5):
+        if isinstance(cause, httpx.HTTPError):
+            return _fetch_diagnostic(cause).get('type', 'request_failed')
+        if not cause.__cause__:
+            break
+        cause = cause.__cause__
     text = str(exc).lower()
     if "429" in text or "rate limit" in text or "too many requests" in text or "限流" in text:
         return "rate_limited"
@@ -410,16 +549,54 @@ def _aggregate_error_type(errors: List[Dict[str, object]], *, completed: bool = 
 
 
 def _dedupe(items: List[AcademicWork]) -> List[AcademicWork]:
-    seen = set()
+    seen = {}
     deduped = []
     for item in items:
         doi = normalize_doi(item.doi)
-        key = doi or _metadata_key(item)
-        if not key or key in seen:
+        key = (doi or _metadata_key(item)) + '|edition:' + str(item.version or 'unknown') + '|type:' + (item.document_type if item.document_type not in {'unknown', 'journal-article', 'article'} else 'article')
+        if not key:
             continue
-        seen.add(key)
-        deduped.append(item)
+        if key in seen:
+            index = seen[key]
+            previous = deduped[index]
+            # 同一 DOI 才合并；标题去重还要求年份与首位作者一致。
+            records = list(previous.raw.get('source_records') or [_source_record(previous)])
+            if _source_record(item) not in records:
+                records.append(_source_record(item))
+            links = list(dict.fromkeys(list(previous.raw.get('fulltext_candidate_urls') or []) +
+                _work_links(previous) + _work_links(item)))
+            raw = {**item.raw, **previous.raw, 'source_records': records, 'fulltext_candidate_urls': links}
+            # 书目聚合不是版本核实或权限升级，任一明确禁止都不能被另一条记录覆盖。
+            raw['edition_merge_verification'] = 'unverified' if item.version == 'unknown' else 'declared_version_match'
+            for permission in ('read_allowed', 'download_allowed', 'cloud_processing_allowed', 'evidence_storage_allowed'):
+                if item.raw.get(permission) is False or previous.raw.get(permission) is False:
+                    raw[permission] = False
+            if item.raw.get('fulltext_text') and not raw.get('fulltext_text'):
+                raw['fulltext_text'] = item.raw['fulltext_text']
+            deduped[index] = replace(previous, abstract=previous.abstract or item.abstract,
+                authors=previous.authors or item.authors, year=previous.year or item.year,
+                document_type=item.document_type if previous.document_type == 'unknown' else previous.document_type,
+                raw=raw)
+            continue
+        seen[key] = len(deduped)
+        deduped.append(copy.deepcopy(item))
     return deduped
+
+
+def _source_record(work):
+    return {'provider_id': _work_provider_id(work), 'url': work.url, 'doi': work.doi,
+            'version': work.version, 'license': work.license, 'full_text_status': work.full_text_status}
+
+
+def _work_links(work):
+    raw = work.raw
+    links = [raw.get(key) for key in ('pdf_url', 'download_url', 'url_for_pdf', 'ar5iv_html_url', 'reader_url', 'open_access_pdf_url', 'fulltext_link', 'url')]
+    primary = raw.get('primary_location') or {}
+    links += [primary.get('pdf_url'), primary.get('landing_page_url')]
+    links += [entry.get('url') for entry in raw.get('full_text_urls', [])
+              if isinstance(entry, dict) and entry.get('availabilityCode') == 'OA']
+    links += raw.get('source_fulltext_urls') or []
+    return [value for value in links if isinstance(value, str) and value.startswith(('http://', 'https://'))]
 
 
 def _rank_search_results(query: str, items: List[AcademicWork]) -> List[AcademicWork]:
@@ -428,10 +605,12 @@ def _rank_search_results(query: str, items: List[AcademicWork]) -> List[Academic
     return rank_by_metadata_relevance(query, items, academic_provider_profiles())
 
 
-def _resolve_fulltext_candidates(request: AcademicSearchRequest, ranked: List[AcademicWork]) -> Dict[str, object]:
+def _resolve_fulltext_candidates(request: AcademicSearchRequest, ranked: List[AcademicWork], *, timeout_s=60) -> Dict[str, object]:
     options = dict(request.options or {})
-    if options.get("resolve_fulltext") is False:
+    if not options.get('resolve_fulltext', options.get('need_fulltext', False)):
         return {"strategy": "top_k_direct_read", "applied": False, "reason": "disabled_by_request"}
+    if options.get('has_readable_fulltext'):
+        return {'strategy': 'top_k_direct_read', 'applied': False, 'reason': 'already_readable'}
     if not ranked:
         return {"strategy": "top_k_direct_read", "applied": False, "reason": "no_ranked_items"}
 
@@ -441,44 +620,34 @@ def _resolve_fulltext_candidates(request: AcademicSearchRequest, ranked: List[Ac
     if top_k <= 0:
         return {"strategy": "top_k_direct_read", "applied": False, "reason": "top_k_zero"}
 
-    candidates = select_fulltext_candidates(request.query, ranked, top_k=top_k, min_score=min_score)
-    attempted: List[Dict[str, object]] = []
-    resolved_count = 0
+    from .fulltext import provider_supports_direct_read
+    eligible = [work for work in ranked if provider_supports_direct_read(_work_provider_id(work), profiles, work=work)]
+    candidates = select_fulltext_candidates(request.query, eligible, top_k=top_k, min_score=min_score)
+    from use_cases.academic_fulltext import request_academic_fulltext
+    from .identity import save_work
+    from runtime.tool_trace import current_tool_trace
+    trace = current_tool_trace()
+    tasks, errors = [], []
+    task_timeout = max(1, min(3600, float(options.get('fulltext_deadline_s', 600))))
     for candidate in candidates:
         provider_id = _work_provider_id(candidate)
-        if not provider_id:
-            continue
-        profile = profiles.get(provider_id)
-        if not profile:
-            continue
-        if not (profile.content.direct_read_preferred or profile.content.html_fulltext or profile.content.pdf_fulltext):
-            continue
-        result = extract_academic_fulltext(provider_id, candidate.url, profiles=profiles)
-        attempted.append(
-            {
-                "provider_id": provider_id,
-                "url": candidate.url,
-                "status": result.status,
-                "text_extractable": result.text_extractable,
-                "text_length": result.text_length,
-                "page_count": result.page_count,
-                "degraded_reason": result.degraded_reason,
-            }
-        )
-        if result.status == "PASS" and result.text_extractable:
-            resolved_count += 1
-            candidate.raw["fulltext_resolution"] = result.to_dict()
-            candidate.raw["fulltext_sample"] = result.sample
-            _mark_fulltext_resolved(candidate, result.text_length)
+        try:
+            reference = candidate.raw.get('fulltext_ref') or save_work(candidate)
+            task = request_academic_fulltext(reference, timeout_s=task_timeout,
+                research_task_id=trace.get('research_task_id',''), include_ocr=options.get('include_ocr'))
+            ref = {'task_id':task['task_id'],'status':task['status'],'provider_id':provider_id,'url':candidate.url}
+            tasks.append(ref)
+            candidate.raw['fulltext_task'] = ref
+        except (ValueError, RuntimeError, OSError) as exc:
+            from runtime.execution_context import ExecutionStopped
+            if isinstance(exc, ExecutionStopped):
+                raise
+            errors.append({'provider_id':provider_id,'reason':type(exc).__name__})
+    return {'strategy':'independent_fulltext_tasks', 'applied':bool(tasks),
+            'candidate_count':len(candidates),'attempted_count':len(tasks),'resolved_count':0,
+            'tasks':tasks,'submission_errors':errors,'requested_scope_complete':not tasks and not candidates,
+            'next_action':'Read get_task_status for each fulltext task, then read fixed evidence via read_knowledge.'}
 
-    return {
-        "strategy": "top_k_direct_read",
-        "applied": bool(attempted),
-        "candidate_count": len(candidates),
-        "attempted_count": len(attempted),
-        "resolved_count": resolved_count,
-        "attempted": attempted,
-    }
 
 
 def _work_provider_id(work: AcademicWork) -> str:

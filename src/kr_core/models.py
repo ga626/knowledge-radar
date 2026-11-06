@@ -95,7 +95,7 @@ class SearchResultItem:
             data["published_at"] = self.published_at
         if self.stats:
             data["stats"] = dict(self.stats)
-        from generic_web.url_policy import public_evidence_payload
+        from kr_core.source_urls import public_evidence_payload
         return public_evidence_payload(attach_result_affordance(self.platform, data))
 
 
@@ -218,8 +218,8 @@ class DetailResponse:
             data["evidence"] = self.evidence.to_mcp_dict()
         if self.metadata:
             data.setdefault("detail_metadata", {}).update(dict(self.metadata))
-        from generic_web.url_policy import public_evidence_payload
-        return public_evidence_payload(data)
+        from kr_core.source_urls import public_detail_payload
+        return public_detail_payload(data)
 
 
 @dataclass(frozen=True)

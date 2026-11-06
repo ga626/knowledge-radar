@@ -57,10 +57,8 @@ def main() -> int:
         requirement = "必填" if required else "可选"
         print(f"{key:28} {masked_status(value):20} {requirement:8} {label}")
 
-    searxng = os.environ.get("SEARXNG_BASE_URL", "").strip()
-    print(f"{'SEARXNG_BASE_URL':28} {('已配置' if searxng else '未配置'):20} 可选       本地 SearXNG 地址")
     print()
-    if configured == 0 and not searxng:
+    if configured == 0:
         print("尚未配置 Web 搜索服务商。基础服务器仍可启动，但 Web 搜索能力需要补齐配置后重新验证。")
     else:
         print("服务商配置检查完成。")

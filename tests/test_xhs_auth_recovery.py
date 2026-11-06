@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from runtime import chrome_manager
-from runtime import xhs_auth_watcher
 from collectors.platform import xiaohongshu
 
 
@@ -103,66 +102,3 @@ def test_bare_xhs_idle_cleanup_is_bound_to_the_waiting_profile(monkeypatch, tmp_
     assert scheduled["started"] is True
     assert "xhs:xhs-b" in chrome_manager._CHROME_IDLE_TIMERS
     assert cleanup_calls == []
-
-
-def test_legacy_xhs_cdp_helper_uses_the_active_profile_resource(monkeypatch) -> None:
-    monkeypatch.setattr(xiaohongshu, "_browser_resource_key", lambda _platform: "xhs:xhs-c")
-
-    endpoint = xiaohongshu._resolve_xhs_cdp_url(lambda resource: f"http://127.0.0.1/{resource}")
-
-    assert endpoint == "http://127.0.0.1/xhs:xhs-c"
-
-
-def test_xhs_manual_deadline_is_reminder_only(monkeypatch, tmp_path) -> None:
-    scheduled = {}
-
-    monkeypatch.setattr(chrome_manager, "set_browser_session_deadline", lambda *args, **kwargs: scheduled.update({"args": args, "kwargs": kwargs}) or {})
-    chrome_manager._CHROME_MANUAL_INTERACTION_EXPIRY_TIMERS.clear()
-    chrome_manager._schedule_manual_interaction_expiry(
-        "xhs:xhs-a",
-        deadline_at=9999999999,
-        profile_dir=str(tmp_path / "xhs-a"),
-        profile_id="xhs-a",
-    )
-
-    assert "xhs:xhs-a" not in chrome_manager._CHROME_MANUAL_INTERACTION_EXPIRY_TIMERS
-    assert scheduled["kwargs"]["metadata"]["deadline_is_reminder_only"] is True
-
-
-def test_watcher_event_only_completes_after_authoritative_probe(monkeypatch) -> None:
-    watcher = xhs_auth_watcher.XhsAuthWatcher("xhs-a")
-    events = []
-    monkeypatch.setattr(watcher, "_record", lambda event, **metadata: events.append((event, metadata)))
-    monkeypatch.setattr(watcher, "_observe_until_event_or_probe_due", lambda: True)
-    monkeypatch.setattr(watcher, "_probe_and_complete", lambda trigger: trigger == "cdp_event")
-
-    watcher._run()
-
-    assert events == [("xhs_auth_watcher_started", {"observation": "cdp_page_dom_lifecycle_events"})]
-
-
-def test_restart_restore_reopens_the_same_profile_before_watching(monkeypatch) -> None:
-    calls = []
-    monkeypatch.setattr(
-        xhs_auth_watcher,
-        "browser_sessions_summary",
-        lambda **_kwargs: {
-            "sessions": [
-                {
-                    "platform": "xhs:xhs-a",
-                    "profile_id": "xhs-a",
-                    "state": "USER_INTERACTING",
-                    "reason": "login_required",
-                    "metadata": {"trigger_evidence": ["login_prompt=true"]},
-                }
-            ]
-        },
-    )
-    monkeypatch.setattr(xhs_auth_watcher, "start_xhs_auth_watcher", lambda profile_id: {"status": "started", "profile_id": profile_id})
-    monkeypatch.setattr(chrome_manager, "request_browser_interaction", lambda *args, **kwargs: calls.append((args, kwargs)) or {"status": "waiting_for_user"})
-
-    restored = xhs_auth_watcher.restore_pending_xhs_auth_watchers()
-
-    assert restored["restored_profile_ids"] == ["xhs-a"]
-    assert calls[0][0] == ("xhs", "login_required")
-    assert calls[0][1]["target_profile_id"] == "xhs-a"

@@ -2,15 +2,17 @@
 
 源码 checkout 的 `scripts\install.bat` 仍是维护者/开发兼容入口。公开包用户使用 `product_install.py`：程序版本与用户数据分离，升级不会覆盖已保存的 API 配置或浏览器资料。
 
+KR 浏览器连接器是内置支持的可选组件；不安装时依赖浏览器的招聘采集不可用，HTTP 功能仍可用。安装器部署版本化 Native Host，仅注册 HKCU 的 `com.knowledgeradar.browser_link`；升级先排空任务，注册失败回滚，旧 Profile 与账号不动。Host 使用 Windows .NET Framework 编译器；缺失时明确报组件条件不足，不另装后台服务。扩展首次安装及站点权限必须由本人确认，此后自动连接，不另设手动配对门槛；浏览器启动和普通断线自动重连，仅恢复通道，不重放网站任务。浏览器身份冲突与协议不兼容停止重连并提示原因。后续商店自动更新；收到更新事件后排空、断开、自动重载并校验协议。商店审核和正式扩展 ID 尚未就绪时，安装计划显示 `store_registration_pending`，HTTP 功能照常可用，不能称普通用户安装链已经验收。分支候选不改写正式安装的注册。
+
 ```bat
 python scripts\product_install.py plan
 python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
 python scripts\product_install.py status
 ```
 
-默认程序根为 `%LOCALAPPDATA%\KnowledgeRadar\app\<version>`，独立 Python 运行时为 `%LOCALAPPDATA%\KnowledgeRadar\runtime\<version>`，数据根为 `%LOCALAPPDATA%\KnowledgeRadar\data`。可通过 `--install-root` 和 `--data-root` 指向其他本地可写盘。`apply` 需要本机可用的 Python 3.12：先核验 ZIP/回执、复制公开程序、创建版本化运行时并安装依赖、启动预检；全部成功后才创建缺失的数据模板、写入单个 Codex MCP block 并部署插件。运行时准备失败不会切换已有 active 或覆盖用户数据。
+默认程序根为 `%LOCALAPPDATA%\KnowledgeRadar\app\<installation_id>`，独立 Python 运行时为 `%LOCALAPPDATA%\KnowledgeRadar\runtime\<installation_id>`，数据根为 `%LOCALAPPDATA%\KnowledgeRadar\data`。可通过 `--install-root` 和 `--data-root` 指向其他本地可写盘。`apply` 需要本机可用的 Python 3.12：先核验 ZIP/回执、复制公开程序、创建版本化运行时并安装依赖、启动预检；全部成功后才创建缺失的数据模板、写入单个 Codex MCP block 并部署插件。运行时准备失败不会切换已有 active 或覆盖用户数据。
 
-维护者只能为已验证的 `maintainer-main` 制品执行 `apply --channel maintainer-main`；普通用户使用 stable Release。两者任一时刻只会由 `active.json` 指向一个运行版本。若新版本无法工作，`rollback` 恢复先前 active 指针和 MCP block，不删除数据：
+main 的 CI 实验包仅交付到已核实仅本人可访问的私有仓库，公开 Actions 不上传实验安装包；缺配置或权限无法核实时停止交付。只有用户针对拟发布制品明确说“可以公开发布”才可提升同一包为 stable，普通用户此前继续获得上一正式版。维护者只能为已验证的 `maintainer-main` 制品执行 `apply --channel maintainer-main`；普通用户使用 stable Release。两者任一时刻只会由 `active.json` 指向一个运行版本。若新版本无法工作，`rollback` 恢复先前 active 指针和 MCP block，不删除数据：
 
 ```bat
 python scripts\product_install.py rollback
@@ -39,30 +41,33 @@ python scripts\product_install.py data-move-rollback
 
 首次填写配置、查看能力包状态或清理过期媒体缓存，可直接打开 `http://localhost:18882/`。Windows 同一安装用户无需浏览器票据或 Cookie；安装器生成的 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 为兼容别名）保留为手动恢复入口。阅读[本地控制台](LOCAL_CONSOLE.md)、[首次成功](FIRST_SUCCESS.md) 与 [能力包与本地健康台](CAPABILITY_PACKS.md)。安装默认注册当前用户登录启动及同任务补启动，可用 `--no-console-autostart` 禁用。开发端口 `18883` 仅维护者显式启用，不随普通安装创建。不要从解压目录或 app 目录运行 `scripts\setup_wizard.bat`；它是源码 checkout 的兼容入口。
 
-## 可选浏览器与 bridge 依赖
+## 可选浏览器与小红书连接
 
-首次安装不会下载 Playwright 浏览器或 Node.js bridge 依赖。需要时可在本地控制台先看计划、再第二次确认；也可手动执行以下命令。`plan` 不写入数据，`apply` 只接受当前计划产生的确认令牌。浏览器下载不登录、不调用付费 API；小红书 bridge 依赖不会绕过验证码或自动启用生产兜底，完成后按 Codex 支持方式刷新或重启。
+首次安装不会下载 Playwright 浏览器或 OpenCLI 依赖。Playwright 可在本地控制台先看计划、再第二次确认，也可手动执行以下命令。`plan` 不写入数据，`apply` 只接受当前计划产生的确认令牌。浏览器下载不登录、不调用付费 API。
 
 ```bat
 python scripts\product_install.py capability-plan --capability browser
 python scripts\product_install.py capability-apply --capability browser --confirmation <plan 中的 confirmation_token>
-
-python scripts\product_install.py capability-plan --capability xhs_bridge
-python scripts\product_install.py capability-apply --capability xhs_bridge --confirmation <plan 中的 confirmation_token>
 ```
 
-两项内容都保存在当前数据根，更新程序不会覆盖。若 Node.js/npm 不可用，bridge 安装会停止并提示先安装它们；安装器不会替你更改系统级 Node、浏览器或代理设置。
+小红书唯一执行方式是日常 Chrome＋OpenCLI。旧 `xhs_bridge` 安装操作已拒绝执行，不会安装 Node Bridge。当前维护者使用 `scripts/kr_opencli.py prepare --source-root <已审查的OpenCLI构建>` 将固定依赖准备到本运行目录；`start` 启动 daemon，`inventory` 列出在线连接，`bind --browser chrome --context-id <核对的context>` 绑定本人确认的日常 Chrome。扩展由用户在 Chrome 官方商店确认权限后启用，账号仍在 Chrome 登录，不迁移 Cookie。此入口暂不自动获取全新构建，不承诺普通安装已包含扩展；详见[能力包](CAPABILITY_PACKS.md)。
 
 ## 已选组件随更新保留
+
+KnowledgeRadar Browser Link（KR 浏览器连接器）是招聘浏览器通道的标配组件，BOSS、猎聘动态页、脉脉共用一个 Native Host；V2EX 与可读公开页面继续走 HTTP。Host 源码随产品交付，安装器在用户级 HKCU 注册版本化可执行文件，更新先停止接收、等待已有任务结束，再切换注册；失败恢复注册和设置。仅回收 KR 的工作标签，不关闭日常 Chrome，不复制账号。
+
+个人 Chrome 首次安装扩展必须由用户在官方商店确认权限，不能承诺静默强装；确认后由商店更新扩展，安装器更新 Host，两端校验协议和代际。当前尚无获批商店 ID／链接，`config/browser-link.json` 明确标记待发布，安装计划显示 `store_registration_pending`，不会伪造注册或把 HTTP 可用说成浏览器链已就绪。开发者模式加载仅用于分支验证，不作为用户安装路径。
 
 更新前已安装并登记的媒体下载器、转写运行时与 Playwright Chromium，会在新版本运行时中恢复后再切换安装身份。未选择的组件和模型不会自动下载；缓存与账号资料留在数据根。FFmpeg 统一按显式配置、数据根工具目录与系统安装解析。组件准备失败时保留已有 active。
 
 
 ## 离线锁定与候选隔离验证
 
+安装器同时生成 `knowledgeradar.cmd`；每次执行按 `active.json` 选择当前程序、运行时与数据根，和 MCP 共用同一个执行内核。`capabilities --tool read_knowledge` 按需展开合同；`runtime status`、`runtime receipts` 和 `runtime receipt <request_id>` 只读诊断，`runtime start` 显式启动。MCP 会话连接时自动连接或启动内核；会话断开不会取消任务。固定证据批次用 `knowledge batch --input <JSON> --output <新文件>`，版本对比用 `knowledge compare <左版本> <右版本> --output <新文件>`；不覆盖已有文件。升级、回滚或数据迁移先检查内核，忙时保留工作并拒绝切换，空闲时安全退出再交接。上述为新版候选合同，须经同制品安装验收后才作为已安装能力。
+
 核心运行时只使用config/runtime-win-py312.lock与runtime-artifacts.json列出的同一wheelhouse，逐SHA核验后通过--no-index --require-hashes安装。当前受控目标为Windows x64/Python3.12；其他平台应生成并验收对应锁，不可复用本锁冒充通用安装。
 
-verify-install需指定独立install/data根和同一ZIP/receipt；只stage程序和运行时，不写active.json、不注册Codex或自启动。待正式收口授权和main身份满足后才可apply。已有同版本但内容不同会拒绝覆盖，应使用独立根或正式新版本。程序、锁与ZIP不一致直接失败，不回退在线解析。回退先验证旧程序和运行时，再切active与插件。
+verify-install需指定独立install/data根和同一ZIP/receipt；只stage程序和运行时，不写active.json、不注册Codex或自启动。待正式收口授权和main身份满足后才可apply。installation_id 由版本和制品元数据指纹组成；相同ID不同内容拒绝覆盖，同版本不同制品各用独立目录并支持回滚。程序、锁与ZIP不一致直接失败，不回退在线解析。回退先验证旧程序和运行时，再切active与插件。
 
 ```powershell
 python scripts/product_install.py verify-install --package-root <extracted-package> --install-root <isolated-root> --data-root <isolated-data> --archive <frozen-zip> --receipt <candidate-receipt>
@@ -72,4 +77,11 @@ python scripts/product_install.py verify-install --package-root <extracted-packa
 
 维护者可在自己的安装执行 `python scripts/product_install.py developer-view --install-root <install-root> --developer-view enable`，为该安装的数据根写入本地维护者标记；disable关闭。下一次加载页面生效，不改MCP、账号或active身份。普通用户默认没有开发者界面，服务端同时限制评测明细和原始研究账本下发。
 
-研究成果在同一任务中选择固定证据和报告后可下载ZIP；Obsidian是可选目标，只显式写入用户指定Vault的KnowledgeRadar Inbox。同一内容重复导出复用同一目录，已被用户修改的内容不会覆盖。没有Obsidian/MensLink时仍能保存、回读和下载成果。
+研究成果在同一任务中选择固定证据和报告后可下载ZIP；Obsidian是可选的文本交付目标。Codex显式指定项目身份、本地报告目标和获准Vault，KR按项目/带日期的任务归档转译全文与报告，不按自身cwd猜归属。重试沿固定版本复用已分配位置，用户修改、移动或删除的目标不会被自动覆盖或重建。没有Obsidian/MensLink时仍能保存、回读和下载成果。
+
+
+### 浏览器组件与来源说明
+
+保留官方 OpenCLI 和 KR Browser Link 各自负责的通道，不要求安装修改版 OpenCLI。连接恢复后无需反复手工重试；若扩展身份或Native Host配对有误，按诊断修复，不以重装、搬Cookie或重复登录代替定位。默认在日常Chrome的独立工作窗口后台执行，仅确认需要人工交互或存在可见性阻断时才前置。
+
+当前来源、内容形态、学术独立全文任务及暂停边界见[来源能力指南](CAPABILITIES.md)。注册或配置成功不代表账号、所有内容形态及媒体都已真实验收。

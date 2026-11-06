@@ -280,11 +280,15 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
         'Set up console build runtime', 'Check console source and reconnect behavior',
         'Verify public package plan', 'Prepare hash-locked offline runtime',
         'Build immutable release candidate', 'Verify the generated candidate',
-        'Upload verified candidate',
+        'Deliver experimental candidate to owner-only private storage',
     )
     for name in product_steps:
         step = next(block for block in text.split('      - name: ') if block.startswith(name + '\n'))
         assert "if: steps.scope.outputs.docs_only != 'true'" in step, name
+    delivery = next(block for block in text.split('      - name: ') if block.startswith('Deliver experimental candidate to owner-only private storage\n'))
+    assert "github.ref == 'refs/heads/main'" in delivery
+    assert 'scripts/private_candidate_delivery.py' in delivery
+    assert 'KR_PRIVATE_DELIVERY_REPOSITORY' in delivery
 
 
 def test_extra_governance_failure_blocks_summary_compare_and_survives_import(tmp_path, monkeypatch):

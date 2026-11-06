@@ -1,0 +1,108 @@
+"""搜索能力的唯一产品目录；连接配置与运行状态不写进描述。"""
+from __future__ import annotations
+
+from typing import Literal
+
+SearchProviderName = Literal['auto', 'anysearch', 'tavily', 'brave', 'exa', 'ddgs',
+                             'codex_web_search', 'codex_builtin_web_search', 'youtube', 'yt', 'github', 'gh']
+
+SEARCH_CATALOG = {'anysearch': {'label': 'AnySearch',
+               'key': 'ANYSEARCH_API_KEY',
+               'kind': 'secret',
+               'role': 'preferred',
+               'default_enabled': True,
+               'cost': 'account_dependent',
+               'purpose': '默认优先的网页发现来源；额度、覆盖以账号与实际结果为准。',
+               'capabilities': {'language': 'native', 'freshness': 'advisory', 'domains': 'post_filter'}},
+ 'tavily': {'label': 'Tavily',
+            'key': 'TAVILY_API_KEY',
+            'kind': 'secret',
+            'role': 'paid_fallback',
+            'default_enabled': True,
+            'cost': 'metered',
+            'purpose': '获准后按失败或明确缺口触发的付费兜底，不要求配置。',
+            'capabilities': {'language': 'unsupported', 'freshness': 'native', 'domains': 'native'}},
+ 'brave': {'label': 'Brave Search',
+           'key': 'BRAVE_SEARCH_API_KEY',
+           'kind': 'secret',
+           'role': 'optional',
+           'default_enabled': False,
+           'cost': 'account_dependent',
+           'purpose': '按需选择独立索引；保存 Key 不会自动开启。',
+           'capabilities': {'language': 'native', 'freshness': 'native', 'domains': 'post_filter'}},
+ 'exa': {'label': 'Exa',
+         'key': 'EXA_API_KEY',
+         'kind': 'secret',
+         'role': 'optional',
+         'default_enabled': False,
+         'cost': 'account_dependent',
+         'purpose': '按需选择语义与内容发现；保存 Key 不会自动开启。',
+         'capabilities': {'language': 'unsupported', 'freshness': 'native', 'domains': 'native'}},
+ 'ddgs': {'label': 'DDGS',
+          'key': '',
+          'kind': 'library',
+          'role': 'optional',
+          'default_enabled': False,
+          'cost': 'local_library',
+          'purpose': '随 KR 管理的轻量搜索库，无需 Key 或独立服务；上游可能限流。',
+          'capabilities': {'language': 'region_hint', 'freshness': 'advisory', 'domains': 'post_filter'}}}
+
+
+def search_fields():
+    return tuple({'key': row['key'], 'label': row['label'], 'group': '网页发现',
+                  'kind': row['kind'], 'provider_id': name}
+                 for name, row in SEARCH_CATALOG.items() if row['key'])
+
+
+def public_catalog():
+    return [{'id': name, **row} for name, row in SEARCH_CATALOG.items()]
+
+
+SEARCH_GUIDES = {'anysearch': {'purpose': '默认优先的网页发现来源；按实际结果与额度使用。',
+               'official_url': 'https://www.anysearch.ai/',
+               'official_label': 'AnySearch 官网',
+               'prerequisite': 'AnySearch 账号',
+               'tier': '默认优先',
+               'steps': ('打开 AnySearch 官方网站并进入自己的控制台。',
+                         '在账号的 API 或开发者设置中创建 API Key。',
+                         '核对套餐、余额或额度提示后复制该 Key。',
+                         '回到这里保存；保存后仍要在真实研究任务中验证可用性。'),
+               'cost_note': '账号、额度与计费由 AnySearch 官方控制台决定。',
+               'screenshot': 'anysearch.jpg',
+               'screenshot_note': '公开官网预览；具体菜单会因账号状态而变化。'},
+ 'tavily': {'purpose': '获准后在失败或明确缺口时使用的付费兜底。',
+            'official_url': 'https://docs.tavily.com/documentation/quickstart',
+            'official_label': 'Tavily Quickstart',
+            'prerequisite': 'Tavily 账号',
+            'tier': '授权兜底',
+            'steps': ('打开官方 Quickstart，并选择 Get an API key。',
+                      '登录或注册自己的 Tavily 账号。',
+                      '在 Dashboard 的 API keys 区域创建或复制一条密钥。',
+                      '回到这里粘贴并保存；页面只确认已填写，不会回显密钥。'),
+            'cost_note': 'Tavily 官方 Quickstart 写明每月免费额度；套餐、速率和余额以你的账号页面为准。',
+            'screenshot': 'tavily.jpg',
+            'screenshot_note': '公开官方 Quickstart 页面预览；登录后的密钥页不会被截图。'},
+ 'brave': {'purpose': '为公开网页研究补充 Brave Search API。',
+           'official_url': 'https://brave.com/search/api/',
+           'official_label': 'Brave Search API',
+           'prerequisite': 'Brave Search API 账号与套餐',
+           'tier': '按需',
+           'steps': ('打开 Brave Search API 官方页并进入 API Dashboard。',
+                     '使用自己的账号创建 Search API 订阅或选择套餐。',
+                     '在 Keys 页面创建一条 Search API Key。',
+                     '复制后回到这里保存；不要把 Key 放进查询文本或截图。'),
+           'cost_note': '套餐、免费额度、地域和速率限制以 Brave Dashboard 为准。',
+           'screenshot': '',
+           'screenshot_note': '该服务的密钥菜单在登录后显示；本页提供官方入口与逐步文字，不伪造登录态截图。'},
+ 'exa': {'purpose': '为网页发现和语义检索提供 Exa 来源。',
+         'official_url': 'https://docs.exa.ai/reference/getting-started',
+         'official_label': 'Exa Getting Started',
+         'prerequisite': 'Exa 账号',
+         'tier': '按需',
+         'steps': ('打开官方 Getting Started 文档并进入自己的 Dashboard。',
+                   '在 Dashboard 的 API Keys 页面新建或复制密钥。',
+                   '先核对项目的额度或账单状态。',
+                   '回到这里粘贴并保存；保存动作不会请求 Exa。'),
+         'cost_note': '额度、计费和模型/搜索能力由 Exa 账号决定。',
+         'screenshot': 'exa.jpg',
+         'screenshot_note': '公开官方 Getting Started 页面预览；Key 仅在你的 Dashboard 内创建。'}}

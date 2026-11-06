@@ -113,19 +113,18 @@ def test_search_mcp_output_does_not_export_access_material():
     assert response["items"][0]["url"] == "https://www.xiaohongshu.com/explore/fixture"
 
 
-def test_canonical_detail_token_lookup_is_profile_scoped_and_expires(monkeypatch):
+def test_canonical_detail_token_lookup_is_context_scoped_and_expires(monkeypatch):
     from collectors.platform import xiaohongshu as xhs
-    from runtime.xhs_task_failover import task_profile
     monkeypatch.setattr(xhs, "_PROTECTED_FETCH", __import__("collections").OrderedDict())
     monkeypatch.setattr(xhs.time, "monotonic", lambda: 100)
-    with task_profile("A"):
-        xhs._remember_xhs_fetch("fixture", "PRIVATE_XSEC_CANARY")
-        assert xhs._recover_xhs_xsec_token("fixture") == "PRIVATE_XSEC_CANARY"
-    with task_profile("B"):
-        assert xhs._cached_xhs_token("fixture") == ""
-    monkeypatch.setattr(xhs.time, "monotonic", lambda: 401)
-    with task_profile("A"):
-        assert xhs._cached_xhs_token("fixture") == ""
+    monkeypatch.setenv("KR_XHS_OPENCLI_CONTEXT_ID", "daily-A")
+    xhs._remember_xhs_fetch("fixture", "PRIVATE_XSEC_CANARY")
+    assert xhs._cached_xhs_token("fixture") == "PRIVATE_XSEC_CANARY"
+    monkeypatch.setenv("KR_XHS_OPENCLI_CONTEXT_ID", "daily-B")
+    assert xhs._cached_xhs_token("fixture") == ""
+    monkeypatch.setenv("KR_XHS_OPENCLI_CONTEXT_ID", "daily-A")
+    monkeypatch.setattr(xhs.time, "monotonic", lambda: 701)
+    assert xhs._cached_xhs_token("fixture") == ""
 
 
 def test_liepin_attributed_jd_without_fixed_heading_and_navigation_are_distinct():
