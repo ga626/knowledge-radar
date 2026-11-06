@@ -1,4 +1,4 @@
-"""BOSS DOM collector through Content Script + Native Messaging.
+"""BOSS DOM collector through the shared OpenCLI daily-browser bridge.
 
 本站点只保留固定 DOM 操作、城市及职位语义；公共通道不包含站点知识。
 """
@@ -9,7 +9,8 @@ import hashlib
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
-from runtime.browser_link import BrowserLink
+import json
+from runtime.native_site import NativeSite
 from runtime.recruitment_city import resolve_recruitment_city
 
 HOME = "https://www.zhipin.com/web/geek/jobs"
@@ -41,17 +42,60 @@ def _failure(code: str, *, request_id: str = "", retryable: bool = False, **extr
         "retryable": retryable,
         "manual_action_required": manual,
         "resume_policy": "stop_no_auto_resume" if code in {'anti_bot_verification','request_outcome_unknown','SECURITY_BLOCK'} else "explicit_retry",
-        "metadata": {"transport": "content_script_native_messaging", "ownership": "borrowed", "request_id": request_id, **extra},
+        "metadata": {"transport": "opencli", "ownership": "borrowed", "request_id": request_id, **extra},
     }
 
 
-def _bridge() -> BrowserLink:
-    return BrowserLink()
+class BossOpenCLI:
+    def request(self, operation, payload, *, platform='boss', timeout_s=30):
+        if operation == 'probe':
+            return {'ok': False, 'code': 'auth_state_unconfirmed', 'request_executed': False}
+        if platform != 'boss' or operation not in {'search','detail','probe','auth_verify','login','attention','release','release_login'}:
+            return {'ok': False, 'code': 'unsupported_boss_operation', 'request_executed': False}
+        url = str(payload.get('url') or '')
+        if url and (urlsplit(url).scheme != 'https' or urlsplit(url).hostname not in {'www.zhipin.com','zhipin.com'}):
+            return {'ok': False, 'code': 'invalid_boss_url', 'request_executed': False}
+        from runtime.opencli_bridge import invoke_page
+        source = Path(__file__).with_name('boss_dom.js').read_text(encoding='utf-8').rstrip().rstrip(';')
+        expression = '(async()=>{const site=' + source + ';return await site.extract(' + json.dumps(operation) + ');})()'
+        return invoke_page(session='kr:boss', operation=operation, url=url, expression=expression,
+            wait_selector='.job-card-wrapper,.job-sec-text,.sign-dialog,.sign-form,.geetest_panel,.verify-wrap,.job-empty-wrapper',
+            passive_manual_login=True, isolated_work=True)
+
+    def health(self):
+        from runtime.xhs_opencli import connection_status
+        status = connection_status()
+        return {'ok': status['connected'], 'connected': status['connected'], 'transport': 'opencli',
+                'auth_state': 'not_probed', 'connection_reason': status['connection_reason']}
+
+    def cancel_task(self, task_id):
+        return {'task_id': task_id, 'browser_closed': False, 'cleanup': 'owned_session_idle_timeout'}
+
+    def cancel(self, request_id):
+        return {'request_id': request_id, 'browser_closed': False, 'cleanup': 'owned_session_idle_timeout'}
+
+
+class BossSite(NativeSite):
+    def bridge(self): return BossOpenCLI()
+    def transport_name(self): return 'opencli'
+    def resource_name(self): return 'opencli:boss'
+
+    def runtime_identity(self):
+        from runtime.opencli_bridge import connection_config
+        config = connection_config()
+        from runtime.browser_channel import browser_resource_contract
+        contract = browser_resource_contract(ownership='borrowed', resource_id='opencli:boss', generation=str(config['context_id']), driver='opencli')
+        return {**contract, 'backend': 'opencli', 'context': config['context_id'],
+                'dom_sha256': hashlib.sha256(Path(__file__).with_name('boss_dom.js').read_bytes()).hexdigest(),
+                'auth_generation': self.state().get('auth_generation', '')}
+
+
+def _bridge():
+    return BossOpenCLI()
 
 
 def _site():
-    from runtime.native_site import NativeSite
-    return NativeSite('boss', 'BOSS直聘', HOME, LOGIN_URL, authenticated)
+    return BossSite('boss', 'BOSS直聘', HOME, LOGIN_URL, authenticated)
 
 
 def state_path(): return _site().state_path()
@@ -109,7 +153,7 @@ def _map_response(response: dict, *, operation: str):
             "platform": "BOSS直聘", "status": "ok" if items else ("empty" if data.get("empty") else "failed"),
             "items": normalized, "total": len(normalized),
             "empty_reason": "no_matching_jobs" if not items and data.get("empty") else "",
-            "metadata": {"transport": "content_script_native_messaging", "source": "dom", "query": data.get("query", ""), "observed_url": data.get("url", "")},
+            "metadata": {"transport": "opencli", "source": "dom", "query": data.get("query", ""), "observed_url": data.get("url", "")},
         }
     content = str(data.get("content") or "")
     if not content:
@@ -128,7 +172,7 @@ def _map_response(response: dict, *, operation: str):
         "detail_quality": quality,
         'salary_claim_allowed': bool(data.get('salary')) and data.get('salary_status') != 'obfuscated_dom',
         'missing_fields': [key for key in ('title', 'company', 'salary') if not data.get(key)],
-        "metadata": {"transport": "content_script_native_messaging", "source": "dom", "observed_url": data.get("url", "")},
+        "metadata": {"transport": "opencli", "source": "dom", "observed_url": data.get("url", "")},
     }
 
 

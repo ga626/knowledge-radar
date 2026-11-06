@@ -27,6 +27,15 @@ class ResearchRecords:
             return {'schema': SCHEMA, 'status': 'unknown_task', 'research_task_id': task_id}
         if payload.get('research_task_id') != task_id:
             raise ValueError('research_record_identity_mismatch')
+        from runtime.research_index import ResearchIndex
+        with ResearchIndex(self.root).connection() as conn:
+            questions = [] if conn is None else [json.loads(row[0]) for row in conn.execute(
+                "SELECT value FROM current WHERE task_id=? AND kind='question' ORDER BY object_id", (task_id,))]
+        if questions:
+            # 初始问题是占位；有显式问题后按Agent的当前记录展示，不改历史账本。
+            payload['claim_gaps'] = [gap for gap in payload.get('claim_gaps', []) if gap.get('reason') != 'initial_research_question'] + [
+                {'claim_gap_id': row['record_id'], 'reason': row.get('text') or 'registered_question',
+                 'status': 'closed' if row.get('closed') else 'open', 'origin': 'research_index'} for row in questions]
         return payload
 
     def recent(self, limit=20):
@@ -91,9 +100,11 @@ _TOOL_ROUNDS = {
     'get_content_detail': 'verification', 'extract_': 'verification', 'analyze_': 'verification',
     'finalize_research_task': 'closeout', 'get_task_status': 'closeout',
 }
-_INTERNAL_ECOLOGIES = {'research_route'}
+_INTERNAL_ECOLOGIES = {'research_route', 'unclassified'}
 _TOOL_ECOLOGIES = {
     'kr_web_search': 'generic_web_ecology',
+    'extract_web_page': 'generic_web_ecology',
+    'extract_dynamic_page': 'generic_web_ecology',
     'search_': 'generic_web_ecology',
     'search_academic': 'academic_literature_ecology',
     'search_github_repositories': 'github_repository_ecology',
@@ -293,8 +304,13 @@ def task_files(payload, *, assets=None):
             'task_id': task_id, 'round': '全程记录', 'status': 'available', 'readable': True,
             'task_title': task_title, 'count': len(receipts), 'tools': task_metrics(payload)['tools'],
         })
-    version_ids = sorted({str(version) for receipt in receipts for version in receipt.get('evidence_versions', []) if str(version)})
-    for version_id in version_ids:
+    version_ids = {str(version) for receipt in receipts for version in receipt.get('evidence_versions', []) if str(version)}
+    if assets is not None and (assets.root / 'index.sqlite3').is_file():
+        with assets.connection() as conn:
+            version_ids.update(row[0] for row in conn.execute(
+                "SELECT DISTINCT s.version_id FROM asset_scopes s JOIN assets a USING(version_id) WHERE s.task_id=? AND a.kind!='report'",
+                (task_id,)))
+    for version_id in sorted(version_ids):
         item = {
             'file_id': f'evidence_version:{version_id}', 'name': version_id[:12], 'label': '固定证据版本', 'type': 'fixed_evidence',
             'task_id': task_id, 'round': '详情与身份核验', 'version_id': version_id, 'status': 'unknown', 'readable': False,
@@ -320,6 +336,11 @@ def research_action(records, action, task_id='', *, payload=None):
     payload = payload or {}
     if not isinstance(payload, dict):
         raise ValueError('object_required')
+    if action in {'inspect', 'files'}:
+        nested_id = str(payload.get('task_id') or '')
+        if task_id and nested_id and task_id != nested_id:
+            raise ValueError('research_task_identity_conflict')
+        task_id = task_id or nested_id
     if action == 'list':
         return records.recent(payload.get('limit', 20))
     if action == 'inspect':

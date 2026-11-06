@@ -74,12 +74,17 @@ def public_evidence_payload(value):
     return value
 
 
+def _public_github_original(value):
+    provenance = value.get('provenance')
+    github = provenance.get('github') if isinstance(provenance, dict) else None
+    return (value.get('platform') == 'GitHub' and value.get('content_fidelity') == 'public_source_original'
+            and isinstance(github, dict) and github.get('public_only') is True)
+
+
 def public_detail_payload(value):
     """公开GitHub原件正文不参与URL清洗，元数据继续脱敏。"""
     clean = public_evidence_payload(value)
-    github = (value.get('provenance') or {}).get('github') or {}
-    if (value.get('platform') == 'GitHub' and value.get('content_fidelity') == 'public_source_original'
-            and github.get('public_only') is True):
+    if _public_github_original(value):
         if isinstance(value.get('content'), str):
             clean['content'] = value['content']
         for original, redacted in zip(value.get('comments') or [], clean.get('comments') or []):
@@ -87,3 +92,19 @@ def public_detail_payload(value):
                 if isinstance(original.get(key), str):
                     redacted[key] = original[key]
     return clean
+
+
+def public_result_payload(value):
+    """执行回执与后台制品共用公开结果投影，保留显式声明的GitHub原文。"""
+    if isinstance(value, dict):
+        clean = public_detail_payload(value)
+        original_github = _public_github_original(value)
+        for key, item in value.items():
+            if original_github and key == 'comments':
+                continue
+            if key in clean and isinstance(item, (dict, list, tuple)):
+                clean[key] = public_result_payload(item)
+        return clean
+    if isinstance(value, (list, tuple)):
+        return [public_result_payload(item) for item in value]
+    return public_evidence_payload(value)

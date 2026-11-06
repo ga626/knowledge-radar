@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController} from './opencli_readiness.mjs';
+import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
@@ -48,7 +48,7 @@ try {
       siteSession:'ephemeral',windowMode:request.operation === 'login' ? 'foreground'
         : 'background',
       idleTimeout:request.idleTimeoutS ?? (request.operation === 'login' ? 300 : 120)}));
-    if (['search','detail'].includes(request.operation)) {
+    if (['search','detail','login'].includes(request.operation)) {
       // Page.connect只构造通道。先绑定本站点工作页，布局诊断/CDP/导航必须同一target。
       const tabs = await page.tabs();
       if (tabs.length > 1) stop('opencli_session_page_ambiguous');
@@ -81,27 +81,23 @@ try {
       return state;
     };
     inspectSignals = signals;
-    const nativeGoto = page.goto.bind(page);
-    const ensureViewport = async () => {
+    const ensureViewport = async (requireLayout) => {
       if (['search','detail'].includes(request.operation)) {
-        const viewport = await page.evaluate(`/* kr:viewport */ ({width:innerWidth,height:innerHeight})`);
-        if (viewport.width !== 1280 || viewport.height !== 800) {
-          // Only the session-owned work tab: background Chrome can expose 0x0.
-          // Use OpenCLI's scoped CDP transport; restore emulation in finally.
-          await page.cdp('Emulation.setDeviceMetricsOverride', {width:1280,height:800,deviceScaleFactor:1,mobile:false});
-          viewportOverride = true;
-          const repaired = await page.evaluate(`/* kr:viewport */ ({width:innerWidth,height:innerHeight})`);
-          if (repaired.width <= 0 || repaired.height <= 0) stop('browser_viewport_unavailable');
-        }
+        // 先登记恢复责任；异常路径也会清理本工作页的模拟覆盖。
+        viewportOverride = true;
+        await ensureOwnedViewport(page, attention, {requireLayout});
       }
     };
     page.goto = async (...args) => {
       stage = 'navigate';
       // Masonry measures its columns during hydration; repair before loading.
-      await ensureViewport();
+      await ensureViewport(false);
       requestExecuted = true;
-      await nativeGoto(...args);
-      await ensureViewport();
+      await navigateOwnedPage(page,client,{url:args[0],contextId:request.contextId,session,surface:'adapter',
+        siteSession:'ephemeral',windowMode:request.operation==='login'?'foreground':'background',
+        idleTimeout:request.idleTimeoutS ?? (request.operation==='login'?300:120)});
+      await page.wait({time:0.5,timeout:2});
+      await ensureViewport(true);
       const state = await signals();
       if (state.login && request.operation !== 'login') stop('AUTH_REQUIRED');
       stage = request.operation;

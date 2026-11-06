@@ -73,6 +73,10 @@ try {
     } else if (passiveLogin) {
       // 人工页面只使用上游原生tabs操作，绝不goto/exec/CDP/采集。
       // 初次交接丢弃旧采集连接；attention只复用，不重载或自动重开。
+      if (['search','detail','comments','auth_verify'].includes(request.operation)) {
+        if (state.risk) stop('SECURITY_BLOCK');
+        if (state.login) stop('AUTH_REQUIRED');
+      }
       if (request.operation === 'login') {
         await client.sendCommand('close-owned-tab', {session:request.session,surface:'adapter',contextId:request.contextId});
         process.env.OPENCLI_CLOSE_OWNED_TAB = '1';

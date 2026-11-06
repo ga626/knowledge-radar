@@ -2478,8 +2478,13 @@ def _health_check_summary() -> Dict:
     xhs_budget = _xhs_budget_state()
     degradation = get_degradation_policy().summary(recent_limit=3)
     profile_registry = profile_registry_summary()
+    from runtime.browser_link import BrowserLink
+    from runtime.channel_admission import current_browser_diagnostics
+    profile_registry, channel_admission = current_browser_diagnostics(
+        profile_registry, opencli=xhs_opencli, native=BrowserLink().health())
     browser_channels = browser_channel_summary(profile_registry.get("profiles", []))
-    channel_admission = build_channel_admission_summary(profile_registry.get("profiles", []))
+    browser_channels['borrowed_channels'] = channel_admission['channels']
+    browser_channels['production_routing'] = 'platform_adapter_owned'
     chrome_runtime = chrome_runtime_summary()
     governed_capability_plan = governed_capability_plan_summary()
     low_risk_execution = _low_risk_execution_probe_declaration()

@@ -558,11 +558,11 @@ def browser_strategy_manifest() -> Dict[str, Any]:
     """Declarative browser/CDP strategy policy; does not launch browsers."""
     return {
         "schema": "knowledgeradar-browser-strategy/v1",
-        "default_base": "chrome_cdp_persistent_profile",
+        "default_base": "adapter_owned_transport",
         "layers": {
             "base": [
                 {"id": "kr_browser_link", "role": "borrowed_browser_primary",
-                    "platforms": ["boss", "liepin_dynamic", "maimai_community", "zhihu"],
+                    "platforms": ["liepin_dynamic", "maimai_community", "zhihu"],
                     "description": "KR浏览器连接器：本人日常Chrome＋Content Script＋单一Native Messaging；HTTP路径不依赖它。",
                     "health_gate": "native protocol compatibility + explicit profile pairing; site authentication checked separately",
                     "configuration_surface": [],
@@ -588,7 +588,7 @@ def browser_strategy_manifest() -> Dict[str, Any]:
                     "risk_level": "low",
                     "cost_level": "medium",
                 },
-                {"id": "opencli_daily_browser", "role": "xiaohongshu_primary",
+                {"id": "opencli_daily_browser", "role": "borrowed_browser_primary", "platforms": ["xiaohongshu", "boss", "wechat"],
                     "description": "借用日常Chrome扩展，不复制Cookie或管理用户进程。",
                     "health_gate": "opencli_connection; authentication requires separate UI probe",
                     "configuration_surface": ["KR_XHS_OPENCLI_ROOT", "KR_XHS_OPENCLI_CONTEXT_ID", "KR_XHS_OPENCLI_ADAPTER_SHA256"]},
@@ -624,7 +624,7 @@ def browser_strategy_manifest() -> Dict[str, Any]:
             ],
         },
         "selection_rules": [
-            "小红书与微信借用日常Chrome的官方OpenCLI；知乎与BOSS借用KR Browser Link。其余来源按适配器合同，不能泛称全部CDP。",
+            "小红书、BOSS与微信借用日常Chrome的官方OpenCLI；知乎、猎聘动态页与脉脉借用KR Browser Link。其余来源按适配器合同，不能泛称全部CDP。",
             "Use KR_CHROME_EXE as the canonical Google Chrome override; Windows App Paths and stable install paths are checked when process environment variables are absent, and Edge is never an implicit fallback.",
             "Use Playwright for ordinary dynamic open-web extraction.",
             "Use raw CDP when platform adapters need profile/session/tab control.",

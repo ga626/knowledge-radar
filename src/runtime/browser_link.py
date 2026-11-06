@@ -43,8 +43,24 @@ class BrowserLink:
     def __init__(self, *, state_file: Path | None = None, client: httpx.Client | None = None):
         self.state_file = state_file or native_state_path()
         self.client = client
+        self.explicit_state = state_file is not None
+
+    def distribution_status(self):
+        if self.explicit_state:
+            return None  # 隔离协议测试显式传入自身state，不代表产品安装。
+        path = Path(__file__).resolve().parents[2] / 'config/browser-link.json'
+        try:
+            metadata = json.loads(path.read_text(encoding='utf-8'))
+        except (OSError, ValueError):
+            return 'browser_link_distribution_unavailable'
+        if not metadata.get('extension_ids') or not metadata.get('store_url'):
+            return 'browser_link_distribution_pending'
+        return None
 
     def health(self) -> dict[str, Any]:
+        pending = self.distribution_status()
+        if pending:
+            return {'ok': False, 'connected': False, 'code': pending, 'request_executed': False}
         state = _read_state(self.state_file)
         if not state.get("port") or not state.get("token"):
             return {"ok": False, "code": "native_host_unavailable", "connected": False}
@@ -60,6 +76,9 @@ class BrowserLink:
             return {"ok": False, "code": "native_host_unreachable", "connected": False}
 
     def request(self, operation: str, payload: dict[str, Any], *, platform: str, timeout_s: float = 30.0) -> dict[str, Any]:
+        pending = self.distribution_status()
+        if pending:
+            return self._failure(pending, str(payload.get('request_id') or ''), request_executed=False)
         from runtime.browser_channel import BorrowedBrowser, browser_site_key, _HELD_SITES
         if browser_site_key(platform) in _HELD_SITES.get():
             return self._request(operation,payload,platform=platform,timeout_s=timeout_s)

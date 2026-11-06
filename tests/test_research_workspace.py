@@ -6,6 +6,58 @@ from runtime.research_workspace import ResearchRecords, research_action
 from kr_core.evidence_assets import EvidenceAssets
 
 
+def test_inspect_supports_documented_payload_identity_and_rejects_conflicts(tmp_path, monkeypatch):
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    task = open_task(objective='payload identity', budget='balanced', considered=[])
+    records = ResearchRecords()
+    tid = task['research_task_id']
+    assert research_action(records, 'inspect', payload={'task_id': tid})['research_task_id'] == tid
+    with pytest.raises(ValueError, match='identity_conflict'):
+        research_action(records, 'inspect', tid, payload={'task_id': 'kr-research-other'})
+
+
+def test_source_metrics_exclude_route_planning_and_administrative_tools():
+    from runtime.research_workspace import task_metrics
+    metrics = task_metrics({'events': [{'kind': 'route_opened', 'source_ecology': 'unclassified'}],
+        'tool_receipts': [{'tool': 'kr_research', 'source_ecology': 'research_route'},
+            {'tool': 'finalize_research_task', 'source_ecology': 'unclassified'},
+            {'tool': 'extract_web_page', 'source_ecology': ''},
+            {'tool': 'record_research_candidates', 'source_ecology': 'youtube_video_ecology'}]})
+    assert metrics['source_ecologies'] == ['generic_web_ecology', 'youtube_video_ecology']
+
+
+def test_workspace_uses_explicit_question_status_without_rewriting_ledger(tmp_path, monkeypatch):
+    from runtime.research_index import ResearchIndex, ResearchWrite
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    task = open_task(objective='question status', budget='balanced', considered=[])
+    tid = task['research_task_id']
+    path = tmp_path / 'research_tasks' / (tid + '.json')
+    before = path.read_bytes()
+    index = ResearchIndex()
+    index.annotate(ResearchWrite(action='question', task_id=tid, question_id='initial', text='question status', closed=True))
+    snapshot = ResearchRecords().snapshot(tid)
+    assert snapshot['claim_gaps'] == [{'claim_gap_id': 'initial', 'reason': 'question status', 'status': 'closed', 'origin': 'research_index'}]
+    assert path.read_bytes() == before
+    index.annotate(ResearchWrite(action='question', task_id=tid, question_id='next', text='new unresolved question'))
+    assert any(g['status'] == 'open' for g in ResearchRecords().snapshot(tid)['claim_gaps'])
+
+
+def test_files_include_explicit_report_reuse_without_unrelated_assets(tmp_path, monkeypatch):
+    from runtime.knowledge import register_report
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    task = open_task(objective='reuse', budget='balanced', considered=[])
+    tid = task['research_task_id']
+    assets = EvidenceAssets(tmp_path / 'assets')
+    reused = assets.put('https://example.org/reused', 'old source text', kind='content', title='old')
+    unrelated = assets.put('https://example.org/unrelated', 'unrelated source', kind='content')
+    report = tmp_path / 'report.md'; report.write_text('summary', encoding='utf-8')
+    register_report(assets=assets, input_path=str(report), approved_input_root=str(tmp_path), input_sha256=hashlib.sha256(report.read_bytes()).hexdigest(), project_id='project', task_id=tid, report_id='report', title='report', derived_from=[reused['version_id']])
+    files = ResearchRecords(assets=assets).files(tid)['files']
+    versions = {r.get('version_id') for r in files}
+    assert reused['version_id'] in versions
+    assert unrelated['version_id'] not in versions
+
+
 def test_query_family_enum_is_public_and_invalid_input_is_rejected_before_execution():
     from runtime import composition
     from runtime.application import OPERATIONS

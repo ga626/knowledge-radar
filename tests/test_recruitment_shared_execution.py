@@ -60,10 +60,36 @@ def test_boss_auth_recovery_changes_failure_cache_identity(monkeypatch):
     before = b.runtime_identity()
     import hashlib
     from pathlib import Path
-    assert before['driver']=='content_script_native_messaging'
+    assert before['driver']=='opencli'
     patch_native(monkeypatch, lambda **kw: {'ok': True, 'data': {'authenticated_ui': True}})
     assert b.complete_login()['status'] == 'ok'
     assert b.runtime_identity() != before
+
+
+def test_boss_uses_shared_opencli_and_passive_login_without_native_transport(monkeypatch):
+    from collectors.platform.boss import BossOpenCLI
+    from runtime import opencli_bridge
+    calls = []
+    monkeypatch.setattr(opencli_bridge, 'invoke_page', lambda **kw: calls.append(kw) or {'ok': True, 'data': {}})
+    result = BossOpenCLI().request('search', {'url': 'https://www.zhipin.com/web/geek/jobs?query=Python'})
+    assert result['ok']
+    assert calls[0]['session'] == 'kr:boss' and calls[0]['isolated_work'] is True
+    assert 'site.extract("search")' in calls[0]['expression']
+    assert calls[0]['passive_manual_login'] is True
+    BossOpenCLI().request('probe', {})
+    assert len(calls) == 1
+
+
+def test_current_diagnostics_do_not_admit_retired_owned_profiles():
+    from runtime.channel_admission import current_browser_diagnostics
+    registry = {'profiles': [{'platform': 'xiaohongshu', 'main_chain_allowed': True, 'launch_policy': 'safe_auto'}]}
+    current, admission = current_browser_diagnostics(registry, opencli={'connected': True}, native={'ok': False, 'code': 'browser_link_distribution_pending'})
+    assert current['profiles'] == [] and current['retired_profile_count'] == 1
+    assert admission['production_routing'] == 'platform_adapter_owned'
+    channels = {row['platform']: row for row in admission['channels']}
+    assert channels['xiaohongshu']['connected'] is True and channels['zhihu']['connected'] is False
+    assert not any(row['main_chain_allowed'] for row in channels.values())
+    assert registry['profiles'][0]['main_chain_allowed'] is True
 
 
 def test_all_recruitment_details_bind_without_server():

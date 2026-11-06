@@ -25,7 +25,7 @@ export const releaseSiteSessionLease=async x=>log({kind:'release',...x});
 export const sendCommand=async(action,opts)=>opts?.chromeMethod==='tabs.query'
  ? [{id:10,title:globalThis.fixtureTitle||'Research',url:'https://www.xiaohongshu.com/explore',windowId:7}]
  : opts?.chromeMethod==='windows.get'?{state:'normal',focused:true}:[];
-export const sendCommandFull=async()=>({page:'fixture-target',data:{visible:true,focused:true}});
+export const sendCommandFull=async(action,opts)=>{if(action==='navigate')log({kind:'goto',url:opts.url,page:opts.page});return {page:'fixture-target',data:{visible:true,focused:true}};};
 """,
         "dist/src/browser/bridge.js": """
 import {appendFileSync} from 'node:fs';
@@ -36,7 +36,8 @@ const page={
   session:'kr:xiaohongshu',surface:'adapter',contextId:'daily-fixture',
   getActivePage:()=> 'fixture-target',setActivePage:()=>{},
   tabs:async()=>[{page:'fixture-target',url:'https://www.xiaohongshu.com/explore'}],
-  goto:async url=>log({kind:'goto',url}),
+  goto:async()=>{throw Error('upstream goto must not inject global patches');},
+  wait:async()=>{},
   cdp:async(method,args)=>{log({kind:'cdp',method,args});viewportReady=method==='Emulation.setDeviceMetricsOverride';return {};},
   evaluate:async js=>{
     if(js.includes('const title=document.title')){const old=globalThis.fixtureTitle||'Research';globalThis.fixtureTitle=JSON.parse(js.match(/document.title=(".*?");/)[1]);return old;}

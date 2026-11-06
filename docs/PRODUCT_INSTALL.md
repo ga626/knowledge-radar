@@ -56,7 +56,7 @@ python scripts\product_install.py capability-apply --capability browser --confir
 
 ## 已选组件随更新保留
 
-KnowledgeRadar Browser Link（KR 浏览器连接器）是招聘浏览器通道的标配组件，BOSS、猎聘动态页、脉脉共用一个 Native Host；V2EX 与可读公开页面继续走 HTTP。Host 源码随产品交付，安装器在用户级 HKCU 注册版本化可执行文件，更新先停止接收、等待已有任务结束，再切换注册；失败恢复注册和设置。仅回收 KR 的工作标签，不关闭日常 Chrome，不复制账号。
+KnowledgeRadar Browser Link（KR 浏览器连接器）是招聘浏览器通道的标配组件，知乎、猎聘动态页、脉脉共用一个 Native Host；BOSS 与小红书复用 OpenCLI Browser Bridge；V2EX 与可读公开页面继续走 HTTP。Host 源码随产品交付，安装器在用户级 HKCU 注册版本化可执行文件，更新先停止接收、等待已有任务结束，再切换注册；失败恢复注册和设置。仅回收 KR 的工作标签，不关闭日常 Chrome，不复制账号。
 
 个人 Chrome 首次安装扩展必须由用户在官方商店确认权限，不能承诺静默强装；确认后由商店更新扩展，安装器更新 Host，两端校验协议和代际。当前尚无获批商店 ID／链接，`config/browser-link.json` 明确标记待发布，安装计划显示 `store_registration_pending`，不会伪造注册或把 HTTP 可用说成浏览器链已就绪。开发者模式加载仅用于分支验证，不作为用户安装路径。
 

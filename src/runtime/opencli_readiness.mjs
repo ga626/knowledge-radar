@@ -5,6 +5,37 @@ import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
 export const visibilityPolicy = globalThis.KRVisibilityPolicy;
 
+// 只导航已绑定工作页；不注入上游goto的页面全局补丁，不重放丢失target。
+export async function navigateOwnedPage(page, client, options) {
+  const target=page.getActivePage();
+  const tabs=await page.tabs();
+  if(!target || !tabs.some(tab=>tab.page===target))
+    throw Object.assign(new Error('browser_navigation_interrupted'),{code:'browser_navigation_interrupted'});
+  const result=await client.sendCommandFull('navigate',{...options,page:target});
+  if(result.page!==target)
+    throw Object.assign(new Error('browser_navigation_interrupted'),{code:'browser_navigation_interrupted'});
+  page.setActivePage(target);
+}
+
+export async function ensureOwnedViewport(page, attention, {requireLayout=true}={}) {
+  const read=()=>page.evaluate('/* kr:viewport */ ({width:innerWidth,height:innerHeight})');
+  let viewport=await read(), overridden=false;
+  if(viewport.width!==1280 || viewport.height!==800){
+    await page.cdp('Emulation.setDeviceMetricsOverride',{width:1280,height:800,deviceScaleFactor:1,mobile:false});
+    overridden=true;viewport=await read();
+  }
+  // 新的about:blank工作页可能尚无布局；导航前不能把它误判为断连。
+  if(requireLayout && (viewport.width<=0 || viewport.height<=0)){
+    await attention.observe({layoutFailedAfterRepair:true});
+    await page.wait({time:0.3,timeout:2});
+    viewport=await read();
+    if(viewport.width<=0 || viewport.height<=0){
+      throw Object.assign(new Error('browser_viewport_unavailable'),{code:'browser_viewport_unavailable'});
+    }
+  }
+  return {overridden};
+}
+
 export function attentionController(page, controlWindow) {
   let presented=false, manual=false, reason='';
   const control = async (foreground, why) => {

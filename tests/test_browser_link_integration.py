@@ -340,22 +340,22 @@ def test_failed_uninstall_resumes_and_keeps_registration(registered_installer,mo
 
 
 def test_durable_unsent_native_busy_defers_without_rate_charge(monkeypatch):
-    from collectors.platform import boss
+    from collectors.platform import liepin
     from runtime import recruitment_governance as g
     from runtime.resource_concurrency import ResourceDeferred
-    from platform_adapters.boss_adapter import BossAdapter
-    resource_available = BossAdapter.resource_ready
+    from platform_adapters.liepin_adapter import LiepinAdapter
+    resource_available = LiepinAdapter.resource_ready
     from runtime.browser_link import BrowserLink
     monkeypatch.setenv('KR_DURABLE_WORKER','1')
     patch_native(monkeypatch,lambda **kw:{'ok':False,'code':'browser_busy','request_executed':False})
-    with pytest.raises(ResourceDeferred,match='browser_link:boss'):
-        boss.search('Python')
-    assert not g.get_runtime_lease_coordinator().resource_leases('recruitment_platform','boss')
-    assert g.check_search_gate('boss')['searches_this_hour']==0
+    with pytest.raises(ResourceDeferred,match='browser_link:liepin'):
+        liepin.legacy_search_liepin('Python')
+    assert not g.get_runtime_lease_coordinator().resource_leases('recruitment_platform','liepin')
+    assert g.check_search_gate('liepin')['searches_this_hour']==0
     monkeypatch.setattr(BrowserLink,'health',lambda self:{'connected':True,'draining':True,'pending':0})
-    assert not resource_available('browser_link:boss')
+    assert not resource_available('browser_link:liepin')
     monkeypatch.setattr(BrowserLink,'health',lambda self:{'connected':True,'pending':0})
-    assert resource_available('browser_link:boss')
+    assert resource_available('browser_link:liepin')
 
 
 def test_unknown_execution_is_never_automatically_deferred(monkeypatch):
@@ -396,17 +396,18 @@ def test_native_control_outcome_reaches_durable_task_state(monkeypatch,tmp_path,
     task_id='native-outcome-'+code
     monkeypatch.setenv('KR_DURABLE_TASK_ID',task_id)
     store=TaskStore(str(tmp_path/'tasks.sqlite3'))
-    store.upsert_task(task_id,'durable_content_detail','BOSS直聘')
+    store.upsert_task(task_id,'durable_content_detail','猎聘')
     job={'task_id':task_id,'attempt_id':'fixture','db_path':store.db_path,'operation':'content_detail','identity':{},
-        'payload':{'url':'https://www.zhipin.com/job_detail/fixture.html','platform':'BOSS直聘'}}
+        'payload':{'url':'https://www.liepin.com/job/123.shtml','platform':'猎聘'}}
     path=tmp_path/'input.json';path.write_text(json.dumps(job),encoding='utf-8')
     patch_native(monkeypatch,lambda **kw:{'ok':False,'code':code,'request_executed':executed})
+    monkeypatch.setattr('collectors.platform.liepin._static_liepin_detail', lambda url: None)
     monkeypatch.setattr(url_policy,'validate_detail_target',lambda *a:None)
     execute_job(path)
     task=store.get_task(task_id)
     assert task['status']==status
     if status=='queued':
-        assert task['metadata']['waiting_resource']=='browser_link:boss'
+        assert task['metadata']['waiting_resource']=='browser_link:liepin'
     else:
         assert task['error_code']=='request_outcome_unknown'
 
@@ -478,3 +479,15 @@ def test_official_window_helper_checks_marker_pid_and_title():
     with pytest.raises(ValueError, match='identity_changed'):
         window_presentation({'action': 'present', 'identity': identity, 'title': marker, 'foreground': False}, windows=windows)
     assert len(windows.calls) == 1
+
+
+def test_unpublished_connector_fails_before_browser_or_http(monkeypatch):
+    from runtime.browser_link import BrowserLink
+    from runtime import browser_channel
+    monkeypatch.setattr(browser_channel, 'ensure_borrowed_browser', lambda *a, **k: pytest.fail('must not launch browser'))
+    bridge = BrowserLink()
+    monkeypatch.setattr(bridge, '_request', lambda *a, **k: pytest.fail('must not contact old host'))
+    assert bridge.health()['code'] == 'browser_link_distribution_pending'
+    result = bridge.request('search', {}, platform='zhihu')
+    assert result['code'] == 'browser_link_distribution_pending'
+    assert result['request_executed'] is False

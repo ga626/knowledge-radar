@@ -183,7 +183,11 @@ def run_optional(payload):
             page_numbers=options.get('page_numbers'),allow_ocr=options.get('include_ocr') is not False,
             enhance_suspicious=options.get('include_ocr') is True,storage_allowed=options.get('storage_allowed',True))
         if not parsed['text'].strip():
-            raise ValueError((parsed.get('ocr_errors') or [{}])[0].get('type', 'pdf_text_unavailable'))
+            code = 'pdf_text_unavailable_ocr_not_requested' if options.get('include_ocr') is False else 'pdf_text_unavailable'
+            return {'status': 'failed', 'failure_type': code, 'request_satisfied': False,
+                    'error': {'type': code, 'message': 'PDF没有可用文字层；本次未请求OCR。' if options.get('include_ocr') is False else 'PDF未取得可用正文，请检查文字层及OCR处理结果。'},
+                    'component': component, 'ocr_status': parsed.get('ocr_status', 'not_requested'),
+                    'evidence_assets': [], 'automatic_retry': False}
         return _save_result({'status': 'acquired', 'component': component, **parsed,
                              'content_locators': parsed['locators'], 'source_kind': 'pdf_text',
                              'missing_text_pages':parsed.get('missing_text_pages', parsed['empty_pages']),

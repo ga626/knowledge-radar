@@ -209,7 +209,7 @@ def _public_detail(html,topic_id,page=1):
         'next_page':page+1 if next_page or max(pages,default=page)>page else None}
 
 
-def detail(url,*,include_comments=False,comment_limit=50,comment_page=1,comment_offset=0):
+def detail(url,*,include_comments=False,comment_limit=50,comment_page=1,comment_offset=0,comment_max_pages=2):
     comment_page=max(1,int(comment_page));comment_offset=max(0,int(comment_offset))
     parsed=urlsplit(url)
     if parsed.scheme!='https' or parsed.hostname not in {'v2ex.com','www.v2ex.com','hk.v2ex.com'} or not re.fullmatch(r'/t/\d+/?',parsed.path):
@@ -228,7 +228,7 @@ def detail(url,*,include_comments=False,comment_limit=50,comment_page=1,comment_
                     if include_comments:
                         collected=[];complete=False;next_page=comment_page;failure=None
                         expected=int(topic['replies']) if topic.get('replies') is not None else None
-                        for page in range(comment_page,comment_page+2):
+                        for page in range(comment_page,comment_page+max(1,min(20,int(comment_max_pages)))):
                             try:
                                 payload=_get(client,f'/api/v2/topics/{identifier}/replies?p={page}',token=token).json()
                                 if not isinstance(payload,dict) or payload.get('success') is not True or not isinstance(payload.get('result'),list):raise ValueError('replies_schema')
@@ -256,6 +256,13 @@ def detail(url,*,include_comments=False,comment_limit=50,comment_page=1,comment_
                         result['comments_complete']=result['comments_complete'] and len(rows)<=comment_offset+comment_limit
                         result['comments_next_page']=comment_page if len(rows)>comment_offset+comment_limit else result.pop('next_page',None)
                         result['comments_next_offset']=comment_offset+comment_limit if len(rows)>comment_offset+comment_limit else 0
+                if include_comments:
+                    result['comments_coverage'] = {'request_satisfied': not result.get('comments_failure') and
+                        (len(result.get('comments', [])) >= comment_limit or result.get('comments_complete') is True),
+                        'exhausted': result.get('comments_complete') is True,
+                        'stop_reason': 'request_failed' if result.get('comments_failure') else
+                            'requested_window' if len(result.get('comments', [])) >= comment_limit else
+                            'source_exhausted' if result.get('comments_complete') else 'comment_page_budget'}
                 return {**result,'platform':'V2EX','url':canonical,'status':'ok','content_type':'community_discussion',
                     'body_verified':True,'job_verified':False,'comments_collected':bool(result.get('comments')),
                     'metadata':{'transport':'http','authentication':'personal_token' if token else 'public','pagination_bounded':True}}

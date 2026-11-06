@@ -12,7 +12,7 @@
   const pageState = () => {
     const text = [...document.querySelectorAll('.sign-dialog,.sign-form,.login-dialog,[role="dialog"],.geetest_panel,.verify-wrap,.captcha-container')].filter(visible).map(e => e.innerText || '').join(' ');
     const path = location.pathname;
-    const risk = /安全验证|访问过于频繁|操作太频繁|滑动验证|访问受限|点击验证/.test(text) || /captcha|\/verify\b|\/safe\//.test(path);
+    const risk = /安全验证|访问过于频繁|操作太频繁|滑动验证|访问受限|点击验证/.test(text) || /captcha|\/verify\b|\/safe\/|^\/web\/passport\/zp\/security\.html$/.test(path);
     const authenticated_ui = [...document.querySelectorAll('.nav-figure img,.user-name')].some(visible);
     const login = !authenticated_ui && (/扫码登录|微信登录|密码登录|验证码登录|登录.*注册/.test(text) || /^\/web\/user\//.test(path));
     return {risk, login, authenticated_ui, url: location.href, title: document.title};
@@ -65,7 +65,7 @@
       content_type: 'recruitment_job_detail', platform: 'BOSS直聘'
     };
   };
-globalThis.KRSites.boss = {
+return {
  extract: async (operation) => operation === 'search' ? extractSearch() : operation === 'probe' || operation === 'auth_verify' ? pageState() : extractDetail(),
  ready: (d, op) => op === 'search' ? !!(d.items?.length || d.empty) : op === 'probe' || op === 'auth_verify' ? !!d.authenticated_ui : (d.content || '').length >= 40,
 };

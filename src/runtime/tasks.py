@@ -1021,6 +1021,21 @@ class TaskStore:
             "reason": reason,
         }
 
+    def link_continuation(self, task_id: str, continuation_task_id: str) -> None:
+        """登记同一逻辑请求的显式续接，不改写原尝试的终态。"""
+        self.initialize()
+        with self._lock, self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            parent = conn.execute('SELECT metadata_json FROM runtime_tasks WHERE task_id=?', (task_id,)).fetchone()
+            child = conn.execute('SELECT metadata_json FROM runtime_tasks WHERE task_id=?', (continuation_task_id,)).fetchone()
+            if not parent or not child or _json_loads(child['metadata_json']).get('retry_of') != task_id:
+                raise ValueError('invalid_task_continuation')
+            metadata = _json_loads(parent['metadata_json'])
+            if metadata.get('continuation_task_id') not in {None, '', continuation_task_id}:
+                raise ValueError('task_continuation_conflict')
+            metadata['continuation_task_id'] = continuation_task_id
+            conn.execute('UPDATE runtime_tasks SET metadata_json=? WHERE task_id=?', (_json_dumps(metadata), task_id))
+
     def heartbeat(self, task_id: str, metadata: Optional[Dict] = None) -> Dict:
         self.initialize()
         metadata = self._writer_metadata(task_id, metadata)

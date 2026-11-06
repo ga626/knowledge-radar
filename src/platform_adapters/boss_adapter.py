@@ -19,8 +19,8 @@ class BossAdapter(BorrowedSearchAdapter):
         comments=False,
         media_extract=False,
         login_required=True,
-        strategies=["browser_link_native", "borrowed_daily_browser", "stop_on_first_challenge"],
-        notes="KR浏览器连接器借用日常Chrome；仅回收KR工作标签，登录等待不占执行槽。",
+        strategies=["opencli", "borrowed_daily_browser", "stop_on_first_challenge"],
+        notes="通过现有OpenCLI借用日常Chrome；仅回收KR工作标签，登录等待不占执行槽。",
     )
 
     def __init__(self, search_func: Optional[LegacySearchCallable] = None) -> None:
@@ -42,6 +42,13 @@ class BossAdapter(BorrowedSearchAdapter):
     @classmethod
     def prepare_detail(cls, request):
         return request
+
+    @classmethod
+    def resource_ready(cls, resource):
+        if resource != 'opencli:boss':
+            return None
+        from runtime.leases import get_runtime_lease_coordinator
+        return not get_runtime_lease_coordinator().resource_leases('recruitment_platform', 'boss')
 
 
 

@@ -279,3 +279,11 @@ def test_visibility_is_resolved_before_one_business_read_without_replay(bridge_f
     background = max(i for i, c in enumerate(calls) if c.get('kind') == 'window-helper' and c.get('foreground') is False)
     assert foreground < reads[0] < background
     assert not any(c['kind'] in {'goto', 'action'} for c in calls)
+
+
+def test_packaged_boss_dom_and_native_extension_routing():
+    node=shutil.which('node')
+    if not node:pytest.skip('node unavailable')
+    root=Path(__file__).resolve().parents[1]
+    result=subprocess.run([node,'--test','tests/test_boss_dom.mjs','tests/test_browser_link_extension.mjs'],cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=20)
+    assert result.returncode==0, result.stdout+'\n'+result.stderr
