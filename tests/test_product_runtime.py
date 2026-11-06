@@ -19,30 +19,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def windows_job_start_owner():
     """在可脱离、关闭即回收子进程的真实Job里启动owner。"""
-    import ctypes
-    from ctypes import wintypes
-    class Basic(ctypes.Structure):
-        _fields_ = [('process_time', ctypes.c_int64), ('job_time', ctypes.c_int64),
-                    ('flags', wintypes.DWORD), ('minimum', ctypes.c_size_t),
-                    ('maximum', ctypes.c_size_t), ('active', wintypes.DWORD),
-                    ('affinity', ctypes.c_size_t), ('priority', wintypes.DWORD),
-                    ('scheduling', wintypes.DWORD)]
-    class Extended(ctypes.Structure):
-        _fields_ = [('basic', Basic), ('io', ctypes.c_uint64 * 6),
-                    ('process_memory', ctypes.c_size_t), ('job_memory', ctypes.c_size_t),
-                    ('peak_process', ctypes.c_size_t), ('peak_job', ctypes.c_size_t)]
-    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
-    kernel.CreateJobObjectW.restype = wintypes.HANDLE
-    kernel.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
-    kernel.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    kernel.GetCurrentProcess.restype = wintypes.HANDLE
-    handle = kernel.CreateJobObjectW(None, None)
-    limits = Extended()
-    limits.basic.flags = 0x2000 | 0x0800  # KILL_ON_JOB_CLOSE | BREAKAWAY_OK
-    if not handle or not kernel.SetInformationJobObject(handle, 9, ctypes.byref(limits), ctypes.sizeof(limits)):
-        raise ctypes.WinError(ctypes.get_last_error())
-    if not kernel.AssignProcessToJobObject(handle, kernel.GetCurrentProcess()):
-        raise ctypes.WinError(ctypes.get_last_error())
+    probe = __import__('runpy').run_path(str(ROOT/'scripts/verify_codex_product.py'))
+    handle = probe['owned_probe_job']()
     print(json.dumps(OwnerClient().start()), flush=True)
     sys.stdin.read()  # 由测试终止launcher，OS关闭其Job；不主动stop owner。
 
@@ -144,6 +122,30 @@ def test_status_and_receipt_do_not_start_or_create(isolated):
     assert client.receipt('missing')['status'] == 'error'
     assert client.receipts()['status'] == 'error'
     assert not client.root.exists()
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows Job启动拒绝')
+def test_restrictive_job_denial_never_falls_back_to_attached_owner(isolated):
+    _, client, _ = isolated
+    code = f'''import sys,runpy
+sys.path.insert(0,{str(ROOT/'src')!r})
+probe=runpy.run_path({str(ROOT/'scripts/verify_codex_product.py')!r})
+job=probe['owned_probe_job'](allow_breakaway=False)
+from runtime.execution_owner import OwnerClient
+try:
+    OwnerClient().start()
+except RuntimeError as error:
+    assert str(error)=='execution_owner_job_breakaway_denied_start_from_user_terminal'
+else:
+    raise AssertionError('restrictive Job unexpectedly allowed owner launch')
+assert OwnerClient().descriptor() is None
+print('denied_without_fallback')
+'''
+    completed = subprocess.run([sys.executable, '-X', 'utf8', '-c', code], cwd=ROOT,
+        capture_output=True, text=True, encoding='utf-8', timeout=20)
+    assert completed.returncode == 0, completed.stderr
+    assert completed.stdout.strip() == 'denied_without_fallback'
+    assert client.descriptor() is None
 
 
 def test_disconnect_reconcile_single_execution_and_busy_stop(running):

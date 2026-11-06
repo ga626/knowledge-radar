@@ -61,7 +61,8 @@ def run_ci(root, suite, ledger, extra_nodes=()):
         for host in HOST_NODES if (root / host.split('::')[0]).is_file()
         for node in nodes if _covers(node, host) or _covers(host, node)))
     offline_nodes = [n for n in nodes if not any(_covers(host, n) for host in host_nodes)]
-    outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 600,
+    # 当前统一批次超过千项；保留逐例进度/慢例与90秒堆栈，整批仍有明确硬期限。
+    outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 1200,
                             "deselect": host_nodes}, tests_dir) if offline_nodes else {"verdict": "PASS", "returncode": 0}
     junit = tests_dir / "junit.xml"
     tests = list(ET.parse(junit).iter("testcase")) if junit.is_file() else []

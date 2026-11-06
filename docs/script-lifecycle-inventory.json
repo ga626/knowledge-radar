@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "89b4952c1551ba45277d8e6a3f45304b542352a3c220af02d74ba82cee2a4018",
+  "content_hash": "98d1aeb0331242d2dc6aa862694cde74510272d6da2611b58f0232cefbc22b0c",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -294,7 +294,7 @@
       "path": "scripts/verify_codex_product.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 16,
+      "reference_count": 25,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

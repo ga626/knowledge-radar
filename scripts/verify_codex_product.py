@@ -28,6 +28,12 @@ REQUIRED_TOOLS = {
 }
 
 
+def owned_probe_job(*, allow_breakaway=True):
+    import runpy
+    entry = runpy.run_path(str(Path(__file__).resolve().parent/'kr_eval/pytest_entry.py'))
+    return entry['owned_probe_job'](allow_breakaway=allow_breakaway)
+
+
 def _reader(handle: Any, lines: queue.Queue[str]) -> None:
     for line in iter(handle.readline, ""):
         lines.put(line)
@@ -117,7 +123,9 @@ def stdio_probe(root: Path = ROOT) -> dict[str, Any]:
             "KR_OWNER_ROOT": str(state_root / "state" / "execution_owner"),
         })
         process = subprocess.Popen(
-            [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src)) + ");runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
+            [str(python_exe), "-X", "utf8", "-c", "import sys,runpy;sys.path.insert(0," + repr(str(src))
+             + ");probe=runpy.run_path(" + repr(str(Path(__file__).resolve()))
+             + ");job=probe['owned_probe_job']();runpy.run_path(" + repr(str(src / "server.py")) + ",run_name='__main__')"],
             cwd=root,
             env=env,
             stdin=subprocess.PIPE,

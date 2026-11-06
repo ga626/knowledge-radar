@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import os
 from pathlib import Path
+import subprocess
 import sys
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -26,10 +29,19 @@ _public_product = _load_script("verify_codex_product")
 _stdio_probe = _public_product.stdio_probe
 
 
-def test_direct_stdio_probe_exposes_research_surface(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize('restrictive_outer_job', [False, True])
+def test_direct_stdio_probe_exposes_research_surface(tmp_path, monkeypatch, restrictive_outer_job) -> None:
     unrelated_owner = tmp_path / "not-owned-by-probe"
     monkeypatch.setenv("KR_OWNER_ROOT", str(unrelated_owner))
-    result = _stdio_probe()
+    if restrictive_outer_job and os.name == 'nt':
+        code = ("import runpy,json; probe=runpy.run_path(" + repr(str(ROOT/'scripts/verify_codex_product.py'))
+                + "); job=probe['owned_probe_job'](allow_breakaway=False); print(json.dumps(probe['stdio_probe']()))")
+        completed = subprocess.run([sys.executable, '-X', 'utf8', '-c', code], cwd=ROOT,
+            capture_output=True, text=True, encoding='utf-8', timeout=60)
+        assert completed.returncode == 0, completed.stderr
+        result = json.loads(completed.stdout)
+    else:
+        result = _stdio_probe()
 
     assert result["status"] == "PASS", result
     assert result['catalog_matches'] and result['initialized_notification_sent']
