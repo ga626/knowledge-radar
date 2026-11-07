@@ -19,7 +19,7 @@ from runtime.file_write_lock import file_write_lock
 from runtime.paths import runtime_state_dir
 from runtime.execution_context import check_execution, ExecutionStopped
 from runtime.knowledge import Contract, encoded, guarded_path, register_report
-from runtime.research_archive import BindContext, SubmitReport, ArchiveTask, ArchiveStatus, RetryArchive, ResearchArchive, RebindReportOutput, stable_target, DISPLAY_LAYOUT, task_display_title
+from runtime.research_archive import BindContext, SubmitReport, ArchiveTask, ArchiveStatus, RetryArchive, ResearchArchive, RebindReportOutput, PlanArchiveLayout, ApplyArchiveLayout, stable_target, DISPLAY_LAYOUT, task_display_title, calendar_layout
 from runtime.research_backup import SnapshotResearch, RestoreResearch
 
 
@@ -65,7 +65,7 @@ class Reindex(Contract):
     action: Literal["upgrade_index"]
 
 
-ArtifactRequest = Annotated[RegisterReport | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
+ArtifactRequest = Annotated[RegisterReport | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
 
 
 def identity(path):
@@ -321,6 +321,7 @@ class DeliveryStore:
             context={'task_id':request.task_id,'project_id':request.project_id,'project_name':request.project_name or metadata.get('project_name') or '未命名项目',
                 'task_title':title,'directory_title':task_display_title(metadata,title),'display_layout':DISPLAY_LAYOUT,
                 'vault_grant_id':request.grant_id,'vault_project_dir':''}
+            context.update(calendar_layout(metadata,title))
         context['vault_grant_id']=request.grant_id
         receipt={'delivery_id':key,'status':'preparing','version_ids':versions,'project_id':request.project_id,'task_id':request.task_id,
             'display_layout':DISPLAY_LAYOUT,'obsidian_observed':'unknown','remote_synced':'not_applicable','attempted_at':time.time()}
@@ -355,6 +356,9 @@ class DeliveryStore:
 def execute(request, store=None):
     store=store or DeliveryStore()
     archive=ResearchArchive(store)
+    if isinstance(request,(PlanArchiveLayout,ApplyArchiveLayout)):
+        from runtime.archive_layout import plan, apply
+        return apply(archive,request) if isinstance(request,ApplyArchiveLayout) else plan(archive,request)
     if isinstance(request,BindContext):return archive.bind(request)
     if isinstance(request,SubmitReport):return archive.submit(request)
     if isinstance(request,RebindReportOutput):return archive.rebind_report_output(request)

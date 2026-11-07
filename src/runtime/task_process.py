@@ -69,6 +69,11 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
             from runtime.composition import execute_research_query
             phase("research_query_begin")
             result = execute_research_query(payload)
+        elif operation == 'platform_discovery':
+            from runtime.composition import execute_platform_discovery
+            phase('platform_discovery_begin')
+            result = (payload['initial_result'] if not (store.get_task(task_id).get('metadata') or {}).get('cooldown_attempts')
+                      else execute_platform_discovery(payload))
         elif operation == 'academic_discovery':
             from use_cases.academic_discovery import execute
             phase('academic_discovery_begin')
@@ -129,8 +134,16 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
         phase("artifact_atomic_commit")
         metadata = {**writer, "artifact_sha256": hashlib.sha256(raw).hexdigest(),
                     "artifact_execution_id": writer['execution_id']}
+        from runtime.task_cooldown import cooldown_plan
+        previous=store.get_task(task_id) or {}
+        cooldown=cooldown_plan(result,operation=operation,attempts=int((previous.get('metadata') or {}).get('cooldown_attempts',0))) if stage=='collection' else None
         if pending_enhancement:
             store.queue_enhancement(task_id, job["attempt_id"], result_path=str(destination), artifact_sha256=metadata["artifact_sha256"], execution_id=writer["execution_id"])
+        elif cooldown:
+            if cooldown['cooldown_attempts']>=cooldown['cooldown_limit']:
+                store.mark_failed(task_id,'bounded cooldown probes exhausted',result_path=str(destination),error_code='cooldown_probe_exhausted',metadata={**metadata,**cooldown,'phase':'cooldown_exhausted'})
+            else:
+                store.mark_waiting_cooldown(task_id,{**metadata,**cooldown,'phase':'waiting_cooldown'},result_path=str(destination))
         elif isinstance(result, dict) and result.get("resume_policy") != "stop_no_auto_resume" and (result.get("manual_action_required") or result.get("status") == "needs_interaction"):
             store.mark_waiting_for_user(task_id, {**metadata, "phase": "waiting_for_user", "resume_policy": "explicit_retry"}, result_path=str(destination))
         elif isinstance(result, dict) and (result.get("error") or result.get("failure_type") or result.get("status") in {"failed", "error", "empty"} or result.get("blocking_tasks")):
@@ -166,7 +179,9 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
             return
         code = getattr(exc, "error_code", "worker_execution_error")
         message = str(exc) if code in {'unsupported_language', 'asr_language_detection_failed'} else type(exc).__name__
-        store.mark_failed(task_id, message, error_code=code, metadata={**writer, "phase": "failed"})
+        diagnostic = {"next_action": exc.next_action, "ocr_attempted": False} if code in {
+            'document_password_required', 'document_password_incorrect', 'document_corrupt'} else {}
+        store.mark_failed(task_id, message, error_code=code, metadata={**writer, "phase": "failed", **diagnostic})
     finally:
         stop.set()
         thread.join(timeout=2)

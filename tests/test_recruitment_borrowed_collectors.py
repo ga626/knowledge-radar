@@ -94,7 +94,7 @@ def test_boss_login_opens_sign_page_once_not_expired_job_page(monkeypatch):
 
 def test_borrowed_attention_does_not_navigate_again_when_auth_unknown(monkeypatch):
     calls = []
-    native_site.write_state(boss.state_path(), {'expires_at': 1})
+    native_site.write_state(boss.state_path(), {'expires_at': native_site.time.time() + 300})
     patch_native(monkeypatch, lambda **kw: calls.append(kw) or {'ok': True, 'data': {}})
     assert boss.request_login(activate=True)['status'] == 'waiting_for_user'
     assert len(calls) == 1 and calls[0]['operation'] == 'attention' and calls[0]['url'] == ''
@@ -224,7 +224,7 @@ def test_v2ex_v2_reply_limit_does_not_claim_all(monkeypatch):
 
 
 def test_pending_manual_page_is_not_probed_in_background(monkeypatch):
-    native_site.write_state(boss.state_path(), {'expires_at': 1, 'cancelled': False})
+    native_site.write_state(boss.state_path(), {'expires_at': native_site.time.time() + 300, 'cancelled': False})
     patch_native(monkeypatch,lambda **kw: pytest.fail('pending login must stay detached'))
     assert boss.probe_auth()['status']=='waiting_for_user'
     assert boss.request_login()['status']=='waiting_for_user'

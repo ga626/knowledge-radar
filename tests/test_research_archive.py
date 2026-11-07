@@ -8,9 +8,13 @@ from concurrent.futures import ThreadPoolExecutor
 import pytest
 from kr_core.evidence_assets import EvidenceAssets
 from runtime.knowledge_delivery import DeliveryStore, Authorize, Deliver
-from runtime.research_archive import ResearchArchive, BindContext, SubmitReport
+from runtime.research_archive import ResearchArchive, BindContext, SubmitReport, calendar_layout
 from runtime.research_backup import SnapshotResearch, RestoreResearch, snapshot, restore
 from runtime import research_ledger as ledger
+
+
+TASK_STAMP = calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'完整测试')['directory_title']
+TASK_RELATIVE = Path('2026年') / TASK_STAMP
 
 
 @pytest.fixture
@@ -40,6 +44,46 @@ def evidence(engine, text='证据原文。\r\n😀\n反证不删除',url='https:
     ref=engine.assets.put(url,text,title='原始资料',metadata={'coverage':'complete'})
     engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
     return ref
+
+
+def test_late_vault_binding_replays_all_fixed_local_rounds(archive):
+    engine, request, local, vault = archive
+    # 模拟日用任务：原文先存入KR，完成多个本地轮次后才授权Vault。
+    context = engine._context('task-a')
+    context['vault_grant_id'] = ''
+    context['vault'] = {'status': 'not_configured'}
+    engine._save(context)
+    first = evidence(engine, '未引用的正文及反证')
+    engine.run('task-a')
+    second = evidence(engine, '第二轮有效全文', 'https://example.org/second')
+    engine.run('task-a')
+    submit(engine)
+    engine.bind(request)
+    for _ in range(4):
+        engine.maintain(limit=20)
+    result = engine.run('task-a', retry=True)
+    assert not result['error_code']
+    for record in result['rounds']:
+        assert record.get('path') != str(engine.assets.root)
+    restored = {}
+    for record in result['rounds']:
+        restored.update(reconstruct(Path(record['path'])))
+    assert restored[first['version_id']] == '未引用的正文及反证'.encode()
+    assert restored[second['version_id']] == '第二轮有效全文'.encode()
+    assert result['vault']['status'] == 'local_committed'
+    before = {str(p): p.read_bytes() for p in vault.rglob('*.md')}
+    engine.run('task-a', retry=True)
+    assert before == {str(p): p.read_bytes() for p in vault.rglob('*.md')}
+
+
+def test_structured_comment_coverage_does_not_abort_full_archive(archive):
+    engine,*_=archive
+    ref=engine.assets.put('https://example.org/comments',json.dumps([{'id':'1','text':'反证评论全文'}]),kind='comments',title='评论',metadata={'coverage':{'returned':1,'has_more':False,'request_satisfied':True}})
+    engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
+    result=engine.run('task-a')
+    assert not result['error_code']
+    folder=Path(result['rounds'][0]['path'])
+    assert '反证评论全文' in next(folder.glob('网页 - *.md')).read_text(encoding='utf-8')
 
 
 def submit(engine,**kw):
@@ -475,12 +519,12 @@ def test_future_automatic_archive_tree_is_readable_and_machine_mapping_internal(
     # 后台维护驱动，不手改任何输出名称。
     engine.maintain()
     result=submit(engine)
-    parent=vault/'同名项目'/'2026-11-02 完整测试'
+    parent=vault/'同名项目'/TASK_RELATIVE
     assert Path(result['vault']['path'])==parent/'总报告.md'
     assert {str(p.relative_to(vault)) for p in vault.rglob('*.md')}=={
-        str(Path('同名项目/2026-11-02 完整测试/总报告.md')),
-        str(Path('同名项目/2026-11-02 完整测试/资料导航.md')),
-        str(Path('同名项目/2026-11-02 完整测试/网页 - 原始资料.md'))}
+        str(Path('同名项目')/TASK_RELATIVE/'总报告.md'),
+        str(Path('同名项目')/TASK_RELATIVE/'资料导航.md'),
+        str(Path('同名项目')/TASK_RELATIVE/'网页 - 原始资料.md')}
     assert_readable_tree(vault)
     folder=Path(result['rounds'][0]['path']);directory=folder/'资料导航.md'
     for link in re.findall(r'\]\(([^)]+)\)',directory.read_text(encoding='utf-8')):
@@ -497,8 +541,8 @@ def test_same_project_reuses_directory_and_new_project_collision_requires_explic
     with pytest.raises(ValueError,match='project_directory_exists_bind_context'):
         bind_another(engine,local,vault,'project-b','task-b')
     bind_another(engine,local,vault,'project-a','task-c')
-    assert (vault/'同名项目'/'2026-11-02 完整测试').is_dir()
-    assert (vault/'同名项目'/'2026-11-02 完整测试（2）').is_dir()
+    assert (vault/'同名项目'/TASK_RELATIVE).is_dir()
+    assert (vault/'同名项目'/'2026年'/(TASK_STAMP+'（2）')).is_dir()
     assert not (vault/'同名项目（2）').exists()
     assert_readable_tree(vault)
 
@@ -516,11 +560,11 @@ def test_existing_user_folder_is_not_adopted_or_overwritten(archive):
 def test_renamed_project_and_task_accept_late_content_without_recreating_old_paths(archive):
     engine,_,_,vault=archive;evidence(engine);first=submit(engine)
     original=vault/'同名项目';original.rename(vault/'我的研究项目')
-    task=vault/'我的研究项目'/'2026-11-02 完整测试';task.rename(task.with_name('已经改名的调研'))
+    task=vault/'我的研究项目'/TASK_RELATIVE;task.rename(task.with_name('已经改名的调研'))
     evidence(engine,'后续资料','https://example.org/late-after-folder-rename')
     later=engine.run('task-a',retry=True)
     assert later['rounds'][0]['status']=='local_committed',later
-    assert Path(later['rounds'][0]['path'])==vault/'我的研究项目'/'已经改名的调研'
+    assert Path(later['rounds'][0]['path'])==vault/'我的研究项目'/'2026年'/'已经改名的调研'
     assert not original.exists() and not task.exists()
     assert_readable_tree(vault)
 
@@ -528,11 +572,11 @@ def test_renamed_project_and_task_accept_late_content_without_recreating_old_pat
 def test_deleted_task_directory_is_not_recreated_for_late_material(archive):
     import shutil
     engine,_,_,vault=archive;evidence(engine);submit(engine)
-    shutil.rmtree(vault/'同名项目'/'2026-11-02 完整测试')
+    shutil.rmtree(vault/'同名项目'/TASK_RELATIVE)
     evidence(engine,'后续资料','https://example.org/late-after-delete')
     result=engine.run('task-a',retry=True)
     assert result['error_code']=='destination_missing_preserved_no_recreation'
-    assert not (vault/'同名项目'/'2026-11-02 完整测试').exists()
+    assert not (vault/'同名项目'/TASK_RELATIVE).exists()
 
 
 def test_multiple_reports_and_supplements_keep_short_human_names(archive):
@@ -542,7 +586,7 @@ def test_multiple_reports_and_supplements_keep_short_human_names(archive):
     result=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='最终更新',
         report_id='e'*64,local_report_path=str(local/'更新报告.md'),content='补齐反证后的结论。'))
     assert Path(result['vault']['path']).name=='总报告（2）.md'
-    task=vault/'同名项目'/'2026-11-02 完整测试'
+    task=vault/'同名项目'/TASK_RELATIVE
     assert {p.name for p in task.iterdir()}=={'总报告.md','总报告（2）.md','资料导航.md','资料导航（2）.md','资料导航（3）.md','网页 - 原始资料.md','网页 - 原始资料（2）.md','网页 - 原始资料（3）.md'}
     assert_readable_tree(vault)
 
@@ -550,7 +594,7 @@ def test_multiple_reports_and_supplements_keep_short_human_names(archive):
 def test_opaque_ids_and_reserved_titles_do_not_leak_into_display(archive):
     engine,_,local,vault=archive
     _,bound=bind_another(engine,local,vault,'f'*64,'a'*64,project_name='b'*64,task_title='CON')
-    assert (vault/'未命名调研'/'2026-11-02 未命名调研').is_dir()
+    assert (vault/'未命名调研'/'2026年'/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'CON')['directory_title']).is_dir()
     ref=engine.assets.put('https://example.org/opaque','保留原文',title='index')
     engine.assets.reference_many([ref['version_id']],'a'*64,project_id='f'*64,task_id='a'*64)
     result=engine.run('a'*64)
@@ -650,7 +694,7 @@ def test_display_metadata_preserves_original_capture_time_and_fixed_task_date(ar
     ref=engine.assets.put('https://example.org/old','old body',title='English original',metadata={'read_at':'2020-01-02T03:04:05Z','language':'en'})
     engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
     result=engine.run('task-a');folder=Path(result['rounds'][0]['path'])
-    assert folder.name=='2026-11-02 完整测试'
+    assert folder.name==TASK_STAMP
     text=next(folder.glob('网页 - *.md')).read_text(encoding='utf-8')
     assert '采集时间：2020-01-02T03:04:05Z' in text and '语言：en' in text and 'English original' in next(folder.glob('网页 - *.md')).name
     monkeypatch.setattr(ledger,'_now',lambda:'2026-11-03T00:00:00+00:00')
@@ -787,7 +831,7 @@ def test_explicit_project_binding_survives_human_rename_without_recreation(archi
     engine.bind(explicit)
     bind_another(engine,local,vault,'project-a','third-task',task_title='追加任务')
     assert not (vault/'同名项目').exists()
-    assert (vault/'人改后的项目名称'/'2026-11-02 追加任务').is_dir()
+    assert (vault/'人改后的项目名称'/'2026年'/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'追加任务')['directory_title']).is_dir()
 
 
 def test_raw_html_archived_only_after_extraction_and_bad_body_is_explicit_gap(archive):
@@ -899,3 +943,47 @@ def test_snapshot_rejects_missing_task_result_instead_of_success(archive, tmp_pa
     with pytest.raises(ValueError, match='snapshot_task_result_missing'):
         snapshot(engine.store, SnapshotResearch(action='snapshot_research', backup_grant_id=grant['grant_id'], project_id='project-a', backup_name='incomplete'))
     assert not (backups / 'incomplete').exists()
+
+
+@pytest.mark.parametrize('role,expected', [('stage','summary_pending'),('final','delivered')])
+def test_closeout_reports_actual_fixed_summary_without_reverse_lock(archive, monkeypatch, role, expected):
+    engine, *_ = archive
+    evidence(engine)
+    delivered = submit(engine, report_role=role)
+    assert delivered['summary'] == expected
+    # close_task不能持有ledger锁后再读取/锁住归档，避免与run反序。
+    original = engine.__class__._context
+    original_guard = ledger._ledger_guard
+    from contextlib import contextmanager
+    held = []
+    @contextmanager
+    def guarded(task):
+        with original_guard(task):
+            held.append(task)
+            try: yield
+            finally: held.pop()
+    def context(self, task):
+        assert not held
+        return original(self, task)
+    monkeypatch.setattr(ledger, '_ledger_guard', guarded)
+    monkeypatch.setattr(engine.__class__, '_context', context)
+    result = ledger.close_task(task_id='task-a', ecology_outcomes=[], stop_rationale='test', key_claims=[])
+    facts = result['closeout']['completion_facts']
+    assert facts['summary'] == expected
+    assert facts['delivery'] == 'delivered'
+    assert facts['summary_version_id'] == delivered['report']['version_id']
+
+
+def test_closeout_does_not_call_historical_delivery_current_after_conflict(archive):
+    engine, *_ = archive
+    evidence(engine)
+    delivered = submit(engine)
+    Path(delivered['local']['path']).write_text('USER CHANGED', encoding='utf-8')
+    conflict = engine.run('task-a')
+    assert conflict['error_code']
+    result = ledger.close_task(task_id='task-a', ecology_outcomes=[], stop_rationale='conflict observed', key_claims=[])
+    facts = result['closeout']['completion_facts']
+    assert facts['summary'] == 'registered'
+    assert facts['delivery'] == 'conflict'
+    assert facts['delivery_error_code'] == conflict['error_code']
+    assert facts['summary_version_id'] == delivered['report']['version_id']

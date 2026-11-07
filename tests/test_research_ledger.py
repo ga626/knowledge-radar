@@ -470,7 +470,7 @@ def test_closeout_distinguishes_required_and_optional_work(monkeypatch, tmp_path
         key_claims=[], quality_status="pass")
     assert result["status"] == expected
     assert result["closeout"]["completion_facts"]["research_decision"] == "agent_owned"
-    assert result["closeout"]["completion_facts"]["delivery"] == "not_evaluated"
+    assert result["closeout"]["completion_facts"]["delivery"] == "not_configured"
     assert bool(result["closeout"]["optional_background_tasks"]) == (not required)
 
 

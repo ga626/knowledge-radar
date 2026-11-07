@@ -66,7 +66,7 @@ class TaskService:
                             log.exception("task maintenance failed; next bounded pass will retry")
                             continue
                         with _MAINTENANCE_LOCK:
-                            active = self.store.managed_tasks(adapter="durable_process", statuses=("queued", "running", "waiting_for_user"))
+                            active = self.store.managed_tasks(adapter="durable_process", statuses=("queued", "running", "waiting_for_user", "waiting_cooldown"))
                             pending = self.store.managed_tasks(adapter="durable_process",
                                 statuses=tuple(TERMINAL_STATUSES), recording_pending=True)
                             from runtime.research_ledger import has_pending_submissions
@@ -121,6 +121,9 @@ class TaskService:
                 self._advance_waiting(task["task_id"])
             except Exception:
                 log.exception("interaction maintenance failed for %s", task["task_id"])
+        for task in self.store.managed_tasks(adapter='durable_process',statuses=('waiting_cooldown',)):
+            try:self._advance_cooldown(task['task_id'])
+            except Exception:log.exception('cooldown maintenance failed for %s',task['task_id'])
         for task in self.store.managed_tasks(adapter="durable_process",
                 statuses=(*TERMINAL_STATUSES, "waiting_for_user"), recording_pending=True):
             try:
@@ -128,6 +131,37 @@ class TaskService:
             except Exception:
                 log.exception("completion maintenance failed for %s", task["task_id"])
         return self.store.cleanup_stale_tasks(reason="runtime_maintenance_stale_task_cleanup")
+
+    def _advance_cooldown(self, task_id):
+        task=self.store.get_task(task_id) or {}
+        if task.get('status')!='waiting_cooldown':return
+        meta=task.get('metadata') or {};now=time.time()
+        if now>=float(meta.get('deadline_at',0)):
+            self.store.mark_failed(task_id,'cooldown exceeded original task deadline',error_code='deadline_exceeded')
+            self.record_completion(task_id);return
+        if int(meta.get('cooldown_attempts',0))>=int(meta.get('cooldown_limit',3)):
+            self.store.mark_failed(task_id,'bounded cooldown probes exhausted',error_code='cooldown_probe_exhausted')
+            self.record_completion(task_id);return
+        if now<float(meta.get('not_before',float('inf'))):return
+        from runtime.leases import get_runtime_lease_coordinator, default_owner
+        coordinator=get_runtime_lease_coordinator()
+        grant=coordinator.acquire_exclusive('cooldown_probe',task.get('platform') or 'unknown',
+            owner=default_owner('cooldown_probe',request_id=uuid.uuid4().hex),ttl_s=max(1,min(3600,float(meta['deadline_at'])-now)))
+        if not grant.acquired:return
+        try:
+            folder=self.root/task_id
+            job=json.loads((folder/'input.json').read_text(encoding='utf-8'))
+            payload=job['payload']
+            if job['operation']=='content_detail':payload.setdefault('options',{})['resume_checkpoint']=True
+            if not self.store.claim_cooldown_probe(task_id,now=now):
+                coordinator.release(grant.lease_id);return
+            job['cooldown_probe_lease_id']=grant.lease_id
+            self.store._mark(task_id,'queued',metadata={'cooldown_probe_lease_id':grant.lease_id,'owner_pid':os.getpid(),'owner_identity':process_identity()})
+            _MONITORS.submit(self._monitor,job,folder,json.dumps(payload,ensure_ascii=False).encode())
+        except Exception:
+            coordinator.release(grant.lease_id)
+            self.store.mark_failed(task_id,'cooldown dispatch failed',error_code='worker_launch_error')
+            raise
 
     def _advance_waiting(self, task_id):
         task = self.store.get_task(task_id)
@@ -233,7 +267,7 @@ class TaskService:
                 self._enhancement_condition.notify()
 
     def submit(self, operation, payload, *, timeout_s=600, scope=None, retry_of="", billing_scope_id=""):
-        if operation not in {"research_query", "academic_fulltext", "academic_discovery", "content_detail", "optional_media", "fixture_echo", "fixture_sleep", "fixture_staged"}:
+        if operation not in {"research_query", "platform_discovery", "academic_fulltext", "academic_discovery", "content_detail", "optional_media", "fixture_echo", "fixture_sleep", "fixture_staged"}:
             raise ValueError("unsupported durable operation")
         if operation.startswith("fixture_") and os.environ.get("KR_TASK_TEST_MODE") != "1":
             raise ValueError("fixture worker is disabled outside isolated tests")
@@ -269,7 +303,7 @@ class TaskService:
             from runtime.model_roles import CLOUD_OCR_MODEL
             identity['academic_document'] = {'pdf_processing':PDF_PROCESSING_CONTRACT,
                 'ocr_model':CLOUD_OCR_MODEL, 'ocr_configured':bool(os.environ.get('SILICONFLOW_API_KEY','').strip())}
-        if operation == "content_detail":
+        if operation in {"content_detail", "platform_discovery"}:
             from runtime.platform_execution import ensure_bindings
             from kr_core.registry import registry
             ensure_bindings()
@@ -400,13 +434,17 @@ class TaskService:
             if current.get("status") == "queued" and (current.get("metadata") or {}).get("phase") == "waiting_resource":
                 self._queue_enhancement(job, folder, execution_input, stage)
                 return
-            if current.get("status") not in {*TERMINAL_STATUSES, "waiting_for_user"}:
+            if current.get("status") not in {*TERMINAL_STATUSES, "waiting_for_user", "waiting_cooldown"}:
                 self.store.mark_interrupted(task_id, "worker_exited_without_committed_result", metadata={"executor": "inprocess"})
         except Exception as exc:
             self.store.mark_failed(task_id, type(exc).__name__, error_code="worker_launch_error")
         finally:
             # 包括排队超时、启动异常和取消等无正文的终态。
             current = self.store.get_task(task_id) or {}
+            probe_lease=job.get('cooldown_probe_lease_id')
+            if probe_lease:
+                from runtime.leases import get_runtime_lease_coordinator
+                get_runtime_lease_coordinator().release(probe_lease)
             if current.get('status') in {*TERMINAL_STATUSES, 'waiting_for_user'}:
                 self.record_completion(task_id)
 
@@ -447,6 +485,12 @@ class TaskService:
         if continuation:
             return {**self.result(continuation, _visited=visited), "resumed_from": task_id}
         response = {"task": compact_task_ref(task), "status": task["status"]}
+        if task['status'] == 'failed' and task.get('error_code') in {
+            'document_password_required', 'document_password_incorrect', 'document_corrupt'}:
+            from runtime.pdf_text import DocumentError
+            code = task['error_code']
+            response['error'] = {'type': code, 'next_action': DocumentError(code).next_action,
+                                 'ocr_attempted': False, 'retryable': False, 'automatic_retry': False}
         if (task.get('metadata') or {}).get('failure_context'):
             response['failure_context'] = task['metadata']['failure_context']
         if task.get("result_path"):
@@ -541,6 +585,9 @@ class TaskService:
             tool = "process_local_evidence" if task["task_type"] == "durable_optional_media" else "get_content_detail"
             if task['task_type'] == 'durable_academic_discovery':
                 tool = 'search_academic'
+            if task['task_type'] == 'durable_platform_discovery':
+                discovery_job = json.loads((self.root / task_id / 'input.json').read_text(encoding='utf-8'))
+                tool = discovery_job['payload']['tool']
             if task["task_type"] == "durable_research_query":
                 tool = {"academic_literature_ecology":"search_academic", "github_repository_ecology":"search_github_repositories",
                     "youtube_video_ecology":"search_youtube", "wechat_public_article_ecology":"search_wechat_articles"}.get(job["payload"]["family"]["source_ecology"],"kr_web_search")

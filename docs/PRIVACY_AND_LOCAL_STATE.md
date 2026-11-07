@@ -2,7 +2,7 @@
 
 公开仓库和 Release 只包含产品代码与配置模板，不包含任何人的密钥、账号、浏览记录、Cookie、Profile、任务内容、报告、日志或下载媒体。
 
-安装后，程序版本与用户数据分离：程序位于 `%LOCALAPPDATA%\KnowledgeRadar\app\<version>`，数据默认位于 `%LOCALAPPDATA%\KnowledgeRadar\data`。更新只替换程序版本，不覆盖数据。可在安装时用 `--install-root`、`--data-root` 选择其他本地可写盘；已安装数据迁移必须遵循 [产品安装与更新](PRODUCT_INSTALL.md) 的 `plan → 确认 → apply → verify/rollback` 流程。
+安装后，程序版本与用户数据分离：程序位于 `%LOCALAPPDATA%\KnowledgeRadar\app\<version>`，数据由本人在首次安装的目录选择器或 `--data-root` 中指定。更新只替换程序版本，不覆盖数据。程序位置可用 `--install-root` 选择；升级继承已有数据根，不重新选择或静默回落；已安装数据迁移必须遵循 [产品安装与更新](PRODUCT_INSTALL.md) 的 `plan → 确认 → apply → verify/rollback` 流程。
 
 ## 数据分类与清理边界
 

@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "KR OpenCLI Bridge",
+  "version": "1.0.26",
+  "description": "KR随包分发的OpenCLI 1.0.26；权限由用户在浏览器确认。Apache-2.0 upstream, pinned v2.0.2.",
+  "permissions": [
+    "debugger",
+    "tabs",
+    "cookies",
+    "activeTab",
+    "alarms",
+    "storage",
+    "tabGroups",
+    "downloads"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "bundle/background.js",
+    "type": "module"
+  },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "OpenCLI",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'self'"
+  },
+  "homepage_url": "https://github.com/jackwener/opencli",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnQQkPjqbidcOD/C39fULsMozwuGmTtN0eoknoPpf+m1+zD1zpUgEYNKWl6eQUJobYyUXjBJGB+24iODsIVM6mg/dGVBANqvPfaW4qbJ2o2UIfRzMLoXK8MI8oL8mK2N2f9mHAtHjnnYpTDQPAbrJ3B7NkbAw8WOxH9EHbpwiPwkTR01mwisrvJWh/ZY9uW4F7YXSH24i8rifeoJMxy+Tdrl0JuGnCjnE6bE81WSkTzKHH6TUEo2gzyuHVJjQOylQqiTDCMlWT7OmCHmtiaJwcxcWF8M9xnStorE6pIHLT5muVd1fyf/JoiRdfBvEXsp6kvfhk33erLMmWcQLrDH1dwIDAQAB"
+}

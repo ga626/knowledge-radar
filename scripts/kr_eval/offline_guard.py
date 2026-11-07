@@ -3,7 +3,33 @@ import socket
 import subprocess
 import weakref
 import os
+import sys
 import pytest
+
+
+def drain_fixture_maintenance():
+    """先停止夹具定时器并排空归档，再让pytest恢复环境及临时目录。"""
+    service = sys.modules.get('runtime.task_service')
+    if service is None:
+        return
+    with service._MAINTENANCE_LOCK:
+        workers = list(service._MAINTENANCE.values())
+        for worker in workers:
+            worker['stop'].set()
+    for worker in workers:
+        worker['thread'].join(timeout=30)
+        if worker['thread'].is_alive():
+            raise RuntimeError('EVAL_OFFLINE_POLICY: fixture maintenance did not stop')
+    with service._MAINTENANCE_LOCK:
+        futures = list(service._ARCHIVE_FUTURES.values())
+    for future in futures:
+        future.result(timeout=30)
+
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    drain_fixture_maintenance()
+    yield
 
 
 def install_network_policy(owned_host_process=False):
@@ -56,6 +82,10 @@ def restore_test_environment():
     # 部分旧安装测试会直接写os.environ；合批后不能把配置带到后续用例。
     previous = dict(os.environ)
     yield
+    # Background maintenance and archive I/O may still hold paths from this
+    # fixture.  Stop and drain them before pytest restores the next fixture's
+    # environment or removes its temporary directory.
+    drain_fixture_maintenance()
     os.environ.clear()
     os.environ.update(previous)
 

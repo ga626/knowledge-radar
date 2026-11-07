@@ -16,7 +16,8 @@ const json = async (path, params, signal) => {
    r = await fetch(url, {credentials:'same-origin', headers:{...headers,'x-csrf-retry':'1','x-csrf-token':csrf}, signal});
  }
  let data = null; try { data = await r.json(); } catch {}
- return {http_status:r.status,data};
+ // Only the public retry deadline crosses the bridge; never return auth/CSRF headers.
+ return {http_status:r.status,data,headers:{'retry-after':r.headers.get('Retry-After')}};
 };
 globalThis.KRSites.maimai = {
  async extract(op, payload, signal) {

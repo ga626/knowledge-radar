@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import math
 import os
 import random
 import time
@@ -12,25 +13,17 @@ from typing import Any, Dict, Mapping, Optional
 
 MANUAL_REASON_TOKENS = {
     "auth",
-    "captcha",
     "cookie",
     "login",
     "manual_action",
-    "platform_verification",
     "qr",
     "scan",
-    "security_verification",
-    "verify",
-    "verification",
-    "人机",
     "扫码",
     "登录",
-    "验证",
-    "验证码",
-    "风控",
 }
 
 RATE_LIMIT_REASON_TOKENS = {
+    "captcha", "verification", "verify", "人机", "验证", "验证码", "风控",
     "429",
     "frequency",
     "frequent",
@@ -130,17 +123,20 @@ def normalize_platform_risk_event(
 
     if _has_any(text, ACCOUNT_RISK_REASON_TOKENS):
         severity = "critical"
-        recoverability = "manual_or_long_cooldown"
-        manual = True
+        recoverability = "cooldown"
+        manual = False
     elif manual:
         severity = "high"
         recoverability = "manual_interaction"
-    elif _has_any(text, RATE_LIMIT_REASON_TOKENS) or outcome_norm in {"blocked", "failed", "degraded"}:
+    elif _has_any(text, RATE_LIMIT_REASON_TOKENS):
         severity = "medium"
         recoverability = "cooldown"
     elif _has_any(text, NON_COOLDOWN_REASON_TOKENS):
         severity = "low"
         recoverability = "no_cooldown"
+    elif outcome_norm in {"blocked", "failed", "degraded"}:
+        severity = "medium"
+        recoverability = "cooldown"
     else:
         severity = "low"
         recoverability = "none" if outcome_norm in {"ok", "pass", "success"} else "inspect"
@@ -170,8 +166,8 @@ def compute_platform_cooldown(
 ) -> Dict[str, Any]:
     """Compute a conservative dynamic cooldown without sleeping.
 
-    Manual/login/captcha events return a zero cooldown because the next action is
-    user interaction, not waiting. Rate-limit events prefer server Retry-After.
+    Login/authentication events wait for the user. Challenges and rate limits
+    use bounded waiting; a server Retry-After takes precedence over local backoff.
     """
 
     data = event.to_dict() if isinstance(event, PlatformRiskEvent) else dict(event or {})
@@ -182,12 +178,12 @@ def compute_platform_cooldown(
     manual = bool(data.get("manual_action_required"))
     recoverability = str(data.get("recoverability") or "")
 
-    if manual or recoverability == "manual_interaction":
+    if retry_after > 0:
+        seconds = math.ceil(retry_after)
+        source = "retry_after"
+    elif manual or recoverability == "manual_interaction":
         seconds = 0
         source = "manual_interaction"
-    elif retry_after > 0:
-        seconds = min(maximum, int(round(retry_after)))
-        source = "retry_after"
     elif recoverability in {"none", "no_cooldown"}:
         seconds = 0
         source = recoverability
@@ -246,7 +242,8 @@ def build_manual_interaction_envelope(
 
 def _safe_float(value: Any) -> float:
     try:
-        return max(0.0, float(value or 0))
+        result = float(value or 0)
+        return max(0.0, result) if math.isfinite(result) else 0.0
     except Exception:
         return 0.0
 
@@ -256,3 +253,26 @@ def _default_jitter_ratio() -> float:
         return max(0.0, float(os.environ.get("KR_PLATFORM_COOLDOWN_JITTER_RATIO", "0.2")))
     except Exception:
         return 0.2
+
+
+def risk_retry_at(state: Mapping[str, Any], *, observed_at: float) -> float:
+    """旧KR自设风险锁有界到期；未知执行结果由调用方单独对账。"""
+    retry_at = _safe_float(state.get("retry_at"))
+    if retry_at:
+        return retry_at
+    return (_safe_float(state.get("at")) or observed_at) + 300
+
+
+def retry_after_seconds(value: Any, *, now: float | None = None) -> float:
+    """读取服务端秒数或HTTP日期；不按本地退避上限裁短。"""
+    seconds = _safe_float(value)
+    if seconds:
+        return seconds
+    from email.utils import parsedate_to_datetime
+    try:
+        parsed = parsedate_to_datetime(str(value))
+        if parsed.tzinfo is None:
+            return 0
+        return max(0, parsed.timestamp() - (time.time() if now is None else now))
+    except (ValueError, TypeError, OverflowError):
+        return 0

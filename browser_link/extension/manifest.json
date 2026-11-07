@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "KnowledgeRadar Browser Link",
-  "version": "0.3.13",
+  "version": "0.3.15",
   "description": "KR 浏览器连接器：在本人授权的日常浏览器中读取研究资料。",
   "permissions": [
     "nativeMessaging",
@@ -56,5 +56,6 @@
       ],
       "run_at": "document_idle"
     }
-  ]
+  ],
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtG+IXjYYMw//lzrouH6SJCzKHeqr3ZEmqfdU3N2mwEdqO/vjx2Rkb7l90Bq1IP3D9iSPINXjMC0mGxDjbph3GZPpjtgkJHBem6s7yUh2iaVHsFzaXEhpFUTCwpxLVS0w2eY9xtkHhur01SXQueWt0DRmJXxR1Lgv+2tpCd1kZkmx7nuBTfnyrE6adaty7+imxNrkudA4yT5xw/LN+f5Rsu/FezoH4rIFLoliTqcQmfP11rlOqeyDiRjblBZKx1N4MUqtlVAVDr2viWdShK6hQ7z2WjG9PWQxq3nUMwpgKGdNBG1fJBc1+GvqCIHsKDUBc2HO3QHxqGN2AMa9HknQVwIDAQAB"
 }

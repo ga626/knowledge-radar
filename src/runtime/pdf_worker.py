@@ -19,6 +19,7 @@ def extract_isolated(source, *, timeout_s, **options):
 
 
 def _extract_isolated(source, *, timeout_s, **options):
+    from runtime.process import background_python_executable, silent_subprocess_popen
     from runtime.execution_context import check_execution
     from runtime.paths import runtime_state_dir
     check_execution()
@@ -33,12 +34,12 @@ def _extract_isolated(source, *, timeout_s, **options):
             import shutil
             shutil.copyfile(source, source_path)
         (folder / 'request.json').write_text(json.dumps(options), encoding='utf-8')
-        command = [sys.executable, str(Path(__file__).resolve()), str(folder)]
+        command = [background_python_executable(), str(Path(__file__).resolve()), str(folder)]
         # 子进程只需要系统执行环境；不继承API Key或运行数据位置。
         environment = {key:value for key,value in os.environ.items()
             if key.upper() in {'SYSTEMROOT','WINDIR','PATH','TEMP','TMP','COMSPEC','PATHEXT','LOCALAPPDATA'}}
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            env=environment, creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0)
+        process = silent_subprocess_popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            env=environment)
         deadline = time.monotonic() + max(.1, timeout_s)
         try:
             while process.poll() is None:
@@ -52,6 +53,9 @@ def _extract_isolated(source, *, timeout_s, **options):
                 raise ValueError('pdf_worker_resource_limit_or_failure')
             result = json.loads(result_path.read_text(encoding='utf-8'))
             if result.get('worker_error'):
+                if result['worker_error'] in {'document_password_required', 'document_password_incorrect', 'document_corrupt'}:
+                    from runtime.pdf_text import DocumentError
+                    raise DocumentError(result['worker_error'])
                 raise ValueError(result['worker_error'])
             if process.returncode:
                 raise ValueError('pdf_worker_nonzero_exit')

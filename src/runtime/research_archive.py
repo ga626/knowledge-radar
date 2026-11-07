@@ -69,6 +69,19 @@ class RebindReportOutput(Contract):
     vault_report_path: str = ''
 
 
+class PlanArchiveLayout(Contract):
+    action: Literal['plan_archive_layout']
+    task_id: str = Field(min_length=1, max_length=96)
+    project_id: str = Field(min_length=1, max_length=200)
+
+
+class ApplyArchiveLayout(Contract):
+    action: Literal['apply_archive_layout']
+    task_id: str = Field(min_length=1, max_length=96)
+    project_id: str = Field(min_length=1, max_length=200)
+    plan_id: str = Field(min_length=64, max_length=64)
+
+
 def sha(raw):
     return hashlib.sha256(raw).hexdigest()
 
@@ -195,6 +208,16 @@ def task_display_title(metadata, title):
     return clean if clean.startswith(date+' ') else date+' '+clean
 
 
+def calendar_layout(metadata, title):
+    """按首次创建时间固定本地日历；全角冒号可作为Windows文件名。"""
+    try:
+        created=datetime.fromisoformat(str(metadata.get('created_at')).replace('Z','+00:00')).astimezone()
+    except (ValueError,TypeError):
+        created=datetime.now().astimezone()
+    return {'directory_layout':'project-year-task-v1', 'directory_year':f'{created.year}年',
+        'directory_title':f'{created:%m}月{created:%d}日 {created:%H}：{created:%M} '+_safe_name(title,'未命名调研')}
+
+
 def _readable_structure(kind, text, meta):
     locations = meta.get('locators') or []
     try:
@@ -295,6 +318,12 @@ def asset_header(row, *, include_title=False):
     kind=meta.get('original_kind') or row['kind']
     labels={'content':'正文','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
     coverage={'complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
+    observed_coverage=meta.get('coverage')
+    if isinstance(observed_coverage,dict):
+        # 评论等公共合同提供结构化覆盖，不能把dict当作映射键。
+        coverage_label='；'.join(str(key)+'：'+str(value) for key,value in observed_coverage.items()) or '未核验'
+    else:
+        coverage_label=coverage.get(str(observed_coverage),'未核验')
     site=(meta.get('source_presentation') or {}).get('site') or meta.get('site_name') or urlsplit(row['source_url']).hostname or '本地资料'
     clean=lambda value: str(value).replace('\n',' ').replace('\r',' ')
     title=f'## {display_subject(row)}\n\n' if include_title else ''
@@ -305,7 +334,7 @@ def asset_header(row, *, include_title=False):
             f'> 来源网站：{clean(site)} · [原文](<{row["source_url"].replace(">","%3E").replace(chr(10),"")}>)\n'
             + (f'> {attribution}\n' if attribution else '') +
             f'> 处理方式：{clean(processing_description(row,meta))}\n'
-            f'> 资料内容：{labels.get(kind,kind)}；语言：{clean(meta.get("language") or "未标注，保持原文")}；完整性：{coverage.get(meta.get("coverage"),"未核验")}\n'
+            f'> 资料内容：{labels.get(kind,kind)}；语言：{clean(meta.get("language") or "未标注，保持原文")}；完整性：{clean(coverage_label)}\n'
             f'> 采集时间：{clean(original or "未记录")}\n\n---\n\n')
 
 
@@ -329,13 +358,24 @@ class ResearchArchive:
             CREATE INDEX IF NOT EXISTS archive_parts_version ON archive_parts(json_extract(payload,'$.version_id'));
             ''')
 
+    def _owner_key(self,root,owner):
+        from runtime.knowledge_delivery import identity
+        root=Path(root);fingerprint=identity(root);canonical=str(root).casefold()
+        with self._connection() as c:
+            if c.execute("SELECT 1 FROM sqlite_master WHERE name='archive_root_aliases'").fetchone():
+                row=c.execute('SELECT identity,canonical_path,canonical_identity FROM archive_root_aliases WHERE root=?',(str(root),)).fetchone()
+                if row:
+                    if json.loads(row[0])!=fingerprint:raise ValueError('destination_identity_changed')
+                    canonical=row[1].casefold();fingerprint=json.loads(row[2])
+        return sha(encoded([fingerprint,canonical,owner]).encode())
+
     def _display_path(self, root, parent, owner, title, *, directory=False, suffix='', explicit_directory=None):
         """自然名称只负责展示；持久占位和文件身份在KR内，重试不重新起名。"""
         from runtime.knowledge_delivery import identity
         self._ensure();root=Path(root);parent=Path(parent)
         guarded_path(root,parent/'__kr_display_scope__');parent=parent.resolve()
         project=owner[0]=='project'
-        owner=sha(encoded([identity(root),str(root).casefold(),owner]).encode())
+        owner=self._owner_key(root,owner)
         explicit=guarded_path(root,explicit_directory) if explicit_directory is not None else None
         with file_write_lock(self.root/'archive-display-names'):
             with self._connection() as c:
@@ -391,6 +431,8 @@ class ResearchArchive:
         project=context.get('vault_project_dir','')
         parent=self._display_path(root,root,['project',context['project_id']],context['project_name'],directory=True,
             explicit_directory=root/project if project else None)
+        if context.get('directory_layout')=='project-year-task-v1':
+            parent=self._display_path(root,parent,['year',context['project_id'],context['directory_year']],context['directory_year'],directory=True)
         title=context.get('directory_title') or context['task_title']
         path=self._display_path(root,parent,['task',context['project_id'],context['task_id']],title,directory=True)
         context['vault_relative']=str(path.relative_to(root))
@@ -431,13 +473,16 @@ class ResearchArchive:
                 local={'status':'pending'}, vault={'status':'pending' if vault else 'not_configured'}, last_watermark=0,
                 observed_revision=0, retry_at=0, attempts=0, error_code='', remote_synced='not_applicable',display_layout=DISPLAY_LAYOUT,
                 directory_title=task_display_title(self._ledger(request.task_id),request.task_title))
+            context.update(calendar_layout(self._ledger(request.task_id),request.task_title))
             context['vault_relative']=str(Path(request.vault_project_dir or _safe_name(request.project_name,'未命名项目'))/_safe_name(request.task_title,'未命名调研'))
             old = self._context(request.task_id)
             if old:
                 if old['project_id'] != request.project_id:
                     raise ValueError('research_project_mismatch_use_new_task')
+                prior_project=Path(old['vault_relative']).parent
+                if old.get('directory_layout')=='project-year-task-v1':prior_project=prior_project.parent
                 if request.vault_project_dir and str(Path(request.vault_project_dir)) not in {
-                    str(Path(old['vault_relative']).parent), str(Path(old.get('vault_project_dir') or Path(old['vault_relative']).parent))}:
+                    str(prior_project), str(Path(old.get('vault_project_dir') or prior_project))}:
                     raise ValueError('archive_target_changed')
                 context['vault_relative']=old['vault_relative']
                 for field in ('local_report_path','vault_relative'):
@@ -503,9 +548,15 @@ class ResearchArchive:
                 'next_action':'bind_context_with_Codex_selected_project_and_targets'}
         rounds=[]
         with closing(sqlite3.connect(self.store.db.resolve().as_uri()+'?mode=ro',uri=True)) as c:
+            pending=c.execute("SELECT COUNT(*) FROM archive_rounds WHERE task_id=? AND COALESCE(json_extract(payload,'$.role'),'archive')!='selection' AND (json_extract(payload,'$.status')!='local_committed' OR (? AND json_extract(payload,'$.target')='kr_evidence_store'))",(task,bool(context.get('vault_grant_id')))).fetchone()[0]
+            conversion_gaps=sum(number for (raw,) in c.execute('SELECT payload FROM archive_rounds WHERE task_id=?',(task,)) for reason,number in json.loads(raw).get('skipped_assets',{}).items() if reason.startswith('正文转换失败'))
             for row in c.execute("SELECT id,payload FROM archive_rounds WHERE task_id=? AND COALESCE(json_extract(payload,'$.role'),'archive')!='selection' ORDER BY watermark DESC LIMIT 10",(task,)):
                 item=json.loads(row[1]);rounds.append({'round_id':row[0],**{key:item.get(key) for key in ('status','count','path','watermark','navigation','skipped_assets')}})
-        return {key:context.get(key) for key in ('task_id','project_id','project_name','context_revision','summary','research','local','vault','report','error_code','retry_at','remote_synced')} | {'status':'tracked','rounds':rounds,'report_count':len(context.get('report_history',[]))+(1 if context.get('report') else 0),
+        pending+=int(self._content_watermark(context)>context['last_watermark'])
+        complete=context.get('summary')=='delivered' and not pending and not conversion_gaps
+        return {key:context.get(key) for key in ('task_id','project_id','project_name','context_revision','summary','research','local','vault','report','error_code','failure_kind','retry_at','remote_synced')} | {'status':'tracked','rounds':rounds,'report_count':len(context.get('report_history',[]))+(1 if context.get('report') else 0),
+            'completion':'complete' if complete else 'incomplete',
+            'source_delivery':{'status':'pending' if pending else 'incomplete' if conversion_gaps else 'vault_committed' if context.get('vault_grant_id') else 'retained_in_kr','pending_rounds':pending,'conversion_gaps':conversion_gaps},
             'retryable':bool(context.get('error_code') and context.get('failure_kind')=='retryable'),
             'next_action':('resolve_lock_or_space_then_retry_archive_same_fixed_version' if context.get('failure_kind')=='retryable' else 'preserve_user_files_inspect_conflict_then_explicitly_rebind_report_output' if context.get('error_code') else 'submit_report' if context['summary']=='summary_pending' else 'read_fixed_report_or_continue_research'),
             'new_evidence_after_report':bool(context.get('report') and self._content_watermark(context)>context['report'].get('source_watermark',0)),'read_only':True}
@@ -607,7 +658,7 @@ class ResearchArchive:
     def _round_plan(self, context):
         # 只把成员ID流入计划表；不把所有正文装进内存。
         with self._connection() as out:
-            pending=out.execute("SELECT id FROM archive_rounds WHERE task_id=? AND json_extract(payload,'$.status')!='local_committed' AND COALESCE(json_extract(payload,'$.role'),'archive')!='selection' ORDER BY watermark LIMIT 1",(context['task_id'],)).fetchone()
+            pending=out.execute("SELECT id FROM archive_rounds WHERE task_id=? AND (json_extract(payload,'$.status')!='local_committed' OR (? AND json_extract(payload,'$.target')='kr_evidence_store')) AND COALESCE(json_extract(payload,'$.role'),'archive')!='selection' ORDER BY watermark,rowid LIMIT 1",(context['task_id'],bool(context.get('vault_grant_id')))).fetchone()
             if pending:
                 return pending[0]
         with self.assets.connection() as c:
@@ -694,6 +745,11 @@ class ResearchArchive:
             record.update(status='local_committed',target='kr_evidence_store',path=str(self.assets.root))
             self._round_save(key,record)
             return record
+        if record.get('target')=='kr_evidence_store':
+            # 本地保留和Vault发布是不同目标。复用原成员/版本/水位，不能重采集。
+            record={name:value for name,value in record.items() if name not in {'target','path','status'}}
+            record['status']='planned'
+            self._round_save(key,record)
         if context.get('display_layout')==DISPLAY_LAYOUT:
             return self._publish_flat(key,context)
         root=self._grant(context['vault_grant_id'],context['project_id'])
@@ -953,6 +1009,10 @@ class ResearchArchive:
         with file_write_lock(self.root/('archive-'+sha(task.encode()))):
             context=self._context(task)
             if not context:return self.status(task)
+            with self._connection() as c:
+                if c.execute("SELECT 1 FROM sqlite_master WHERE name='archive_layout_transactions'").fetchone():
+                    moving=c.execute("SELECT 1 FROM archive_layout_transactions WHERE task_id=? AND json_extract(payload,'$.status')!='committed' LIMIT 1",(task,)).fetchone()
+                    if moving:return self.status(task) | {'error_code':'archive_migration_pending_resume_same_plan'}
             if context.get('restored_requires_reauthorization'):
                 return self.status(task) | {'next_action':'bind_context_to_explicitly_reauthorize_restored_targets'}
             if not retry and context.get('retry_at',0)>time.time():return self.status(task)
@@ -973,7 +1033,7 @@ class ResearchArchive:
                 key=self._round_plan(context)
                 if key:
                     record=self._publish_round(key,context)
-                    context['last_watermark']=record['watermark']
+                    context['last_watermark']=max(context['last_watermark'],record['watermark'])
                 ledger=self._ledger(task)
                 context['research']='stopped' if ledger and ledger.get('status')!='open' else 'open'
                 if context.get('report'):
@@ -985,7 +1045,7 @@ class ResearchArchive:
                     self._report_endpoint(context,'local',root,Path(context['report'].get('local_report_path') or context['local_report_path']),raw)
                     if context['vault_grant_id']:
                         vault=self._grant(context['vault_grant_id'],context['project_id'])
-                        self._report_endpoint(context,'vault',vault,Path(context['report']['vault_report_path']) if context['report'].get('vault_report_path') else self._task_directory(context)/context['report'].get('vault_name','final-report.md'),raw)
+                        self._report_endpoint(context,'vault',vault,Path(context['report']['vault_report_path']) if context['report'].get('vault_report_path') else self._task_directory(context)/context['report'].get('vault_name','总报告.md'),raw)
                     context['summary']=('delivered' if context['report'].get('role','final')=='final' else 'summary_pending') if context['local']['status']=='local_committed' and context['vault']['status'] in {'local_committed','not_configured'} else 'registered'
                 with self.assets.connection() as c:
                     rev=c.execute('SELECT revision FROM archive_dirty WHERE task_id=?',(task,)).fetchone()
@@ -1019,7 +1079,9 @@ class ResearchArchive:
             ledger=self._ledger(task)
             research='stopped' if ledger and ledger.get('status')!='open' else 'open'
             pending_report=context.get('report') and context.get('summary')!='delivered'
-            if mark>context['last_watermark'] or pending_report or research!=context.get('research') or context.get('error_code'):
+            with self._connection() as c:
+                pending_round=c.execute("SELECT 1 FROM archive_rounds WHERE task_id=? AND COALESCE(json_extract(payload,'$.role'),'archive')!='selection' AND (json_extract(payload,'$.status')!='local_committed' OR (? AND json_extract(payload,'$.target')='kr_evidence_store')) LIMIT 1",(task,bool(context.get('vault_grant_id')))).fetchone()
+            if mark>context['last_watermark'] or pending_round or pending_report or research!=context.get('research') or context.get('error_code'):
                 self.run(task)
         return len(rows)
 

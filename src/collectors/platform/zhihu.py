@@ -52,11 +52,12 @@ def cancel_login(): return _site().cancel_login()
 def probe_auth(): return _site().probe_auth()
 
 def failure(kind, *, url='', message='', **extra):
-    manual = kind in {'login_required', 'anti_bot_verification', 'request_outcome_unknown'}
+    manual = kind == 'login_required'
+    cooling = kind in {'anti_bot_verification', 'rate_limited'}
     messages = {
         'access_forbidden': '知乎拒绝访问（403）；没有足够证据判定登录失效，不自动重试或换通道。',
-        'anti_bot_verification': '知乎要求安全验证或暂时限制访问；本人处理后显式继续。',
-        'rate_limited': '知乎返回限流；停止该支线，不自动重放。',
+        'anti_bot_verification': '知乎要求安全验证或暂时限制访问；等待冷却后有限检查，不自动操作验证码。',
+        'rate_limited': '知乎返回限流；按冷却计划等待后有限检查。',
         'login_required': '知乎明确要求登录；请在已配对的日常浏览器中登录后确认继续。',
         'legal_restriction': '知乎返回法律/地区访问限制。',
         'not_found': '该知乎内容已删除或不存在。',
@@ -71,7 +72,7 @@ def failure(kind, *, url='', message='', **extra):
             'error': {'type': kind, 'error': message, 'message': message, 'failure_type': kind,
                       'retryable': False, 'manual_action_required': manual},
             'manual_action_required': manual, 'retryable': False,
-            'resume_policy': 'stop_no_auto_resume' if kind in {'anti_bot_verification', 'rate_limited', 'request_outcome_unknown'} else 'explicit_retry',
+            'resume_policy': 'bounded_read_only_probe' if cooling else 'stop_no_auto_resume' if kind == 'request_outcome_unknown' else 'explicit_retry',
             'recommended_action': "health_check(mode='request_browser_interaction:zhihu:manual_login')" if manual else '核对页面与通道状态后显式重试。', **extra}
 
 def _reader_comments(**payload):

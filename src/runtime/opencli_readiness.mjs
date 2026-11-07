@@ -43,6 +43,25 @@ export function attentionController(page, controlWindow) {
     return controlWindow(foreground, why);
   };
   return {
+    async withNativeInput(action) {
+      // Native keyboard commands require a visible page. Present only this
+      // verified owned window, before input; this is not a timeout retry.
+      if(manual)throw new Error('browser_manual_interaction_pending');
+      const hidden=await page.evaluate('/* kr:native-input */ document.hidden');
+      let moved=false;
+      if(hidden===true && !presented){
+        const result=await control(true,'native_input_required');
+        if(result?.skipped)throw new Error('browser_native_input_window_ownership_changed');
+        presented=true;reason='native_input_required';moved=true;
+      }
+      try{return await action();}
+      catch(error){
+        if(moved && !manual){await control(false,'native_input_failed');presented=false;}
+        throw error;
+      }
+      // Keep the same page visible through its resulting render. observe() or
+      // finish() restores it after extraction, including the outer error path.
+    },
     async observe({layoutFailedAfterRepair=false,resolvePrior=false}={}) {
       const state=await page.evaluate(`/* kr:visibility */ (${visibilityPolicy.observe.toString()})()`);
       if(!state?.visibility)return {action:'none'};

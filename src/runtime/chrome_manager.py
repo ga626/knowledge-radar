@@ -2549,7 +2549,7 @@ def _ensure_chrome_debugging_locked(
     try:
         creationflags = 0
         if os.name == "nt" and detach:
-            creationflags = getattr(subprocess, "DETACHED_PROCESS", 0) | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         proc = silent_subprocess_popen(
             cmd,
             stdout=subprocess.DEVNULL,

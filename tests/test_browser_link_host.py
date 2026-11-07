@@ -39,7 +39,7 @@ def executable(tmp_path_factory):
     compiler=Path(os.environ.get('WINDIR',r'C:\Windows'))/'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
     if not compiler.is_file():pytest.skip('Windows Framework compiler required')
     target=tmp_path_factory.mktemp('browser-link-host')/'BrowserLinkHost.exe'
-    run=subprocess.run([str(compiler),'/nologo','/target:exe','/reference:System.Web.Extensions.dll','/out:'+str(target),
+    run=subprocess.run([str(compiler),'/nologo','/target:winexe','/reference:System.Web.Extensions.dll','/out:'+str(target),
         str(ROOT/'browser_link/host/BrowserLinkHost.cs')],capture_output=True,timeout=30)
     assert run.returncode==0,run.stderr.decode(errors='replace')+run.stdout.decode(errors='replace')
     return target

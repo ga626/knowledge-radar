@@ -120,3 +120,13 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+# Bundled KR OpenCLI Bridge
+
+OpenCLI Browser Bridge, extension 1.0.26 from OpenCLI 2.0.2, is included at
+`browser_link/opencli_bridge/`. Upstream: https://github.com/jackwener/opencli,
+commit `97dc0cd5214b9602bcda78d7422f231ee8a803e9`, Apache License 2.0.
+The complete license is included in that directory. KR changes the manifest name,
+description and public identity key, and relocates the prebuilt background script
+from `dist/` to `bundle/` without changing its bytes. Original source and build
+inputs are included. This is an independently identified bundled extension;
+it does not claim the upstream store identity or store approval.

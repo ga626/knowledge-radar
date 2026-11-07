@@ -280,13 +280,21 @@ class _ConsoleMutex:
 
 
 def _spawn(command: list[str], *, log_path: Path) -> subprocess.Popen[Any]:
+    # 启动脚本可先于产品装配运行；仅从同包src载入统一的进程合同。
+    program = Path(command[command.index("--program-root") + 1]) if "--program-root" in command else Path(__file__).resolve().parents[1]
+    source = str(program / "src")
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from runtime.process import background_python_executable, silent_subprocess_popen
+    if Path(command[0]).resolve() == Path(sys.executable).resolve():
+        command = [background_python_executable(), *command[1:]]
     log_path.parent.mkdir(parents=True, exist_ok=True)
     stream = log_path.open("a", encoding="utf-8")
     options: dict[str, Any] = {"stdin": subprocess.DEVNULL, "stdout": stream, "stderr": stream, "close_fds": True}
     if os.name == "nt":
-        options["creationflags"] = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
     try:
-        return subprocess.Popen(command, **options)
+        return silent_subprocess_popen(command, **options)
     finally:
         stream.close()
 
@@ -539,9 +547,11 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
     task_name = _task_name(context)
     if not enabled:
         return f"Unregister-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Confirm:$false -ErrorAction SilentlyContinue"
-    runtime = Path(sys.executable).with_name("pythonw.exe")
-    if not runtime.is_file():
-        runtime = Path(sys.executable)
+    source = str(context.program / "src")
+    if source not in sys.path:
+        sys.path.insert(0, source)
+    from runtime.process import background_python_executable
+    runtime = Path(background_python_executable())
     if context.role == "stable":
         helper = context.install_root / "console_product.py"
         if validate_helper and not helper.is_file():

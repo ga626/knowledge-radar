@@ -58,6 +58,7 @@ jobs:
           node --check src/onboarding/static/console.js
           node --check src/onboarding/static/research_workspace.js
           node --test tests/test_console_reconnect.mjs
+          node --test tests/test_browser_visibility.mjs
 
       - name: Verify public package plan
         if: steps.scope.outputs.docs_only != 'true'

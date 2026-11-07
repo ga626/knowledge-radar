@@ -7,6 +7,7 @@ import json
 import importlib.util
 from pathlib import Path
 import shutil
+import subprocess
 import sqlite3
 from runtime.process import silent_subprocess_run
 import sys
@@ -230,23 +231,23 @@ def optional_capabilities() -> list[dict[str, Any]]:
             "depends_on": ("node",),
             "boundary": "浏览器扩展由本人确认权限后启用；KR只回收自有标签，不关闭日常浏览器。",
             "restart_required": False,
-            "guide": {"official_url": "https://chromewebstore.google.com/detail/opencli/ildkmabpimmkaediidaifkhjpohdnifk",
-                "official_label": "Chrome官方扩展页面",
-                "steps": ("在日常Chrome中确认OpenCLI Browser Bridge的权限后启用扩展。",
+            "bundle_component":"opencli",
+            "guide": {"steps": ("点击准备随包扩展并复制路径；在Chrome扩展管理页开启开发者模式，加载已解压的扩展。",
                     "由KR核对固定OpenCLI版本及daemon连接，绑定这个日常Chrome的context；不选Testing浏览器。",
                     "在该Chrome登录小红书；Cookie留在浏览器，KR不复制。",
                     "返回刷新连接检测；扩展在线与账号登录分别检查。")},
         },
         {
             "id": "browser_link", "label": "KR 浏览器连接器",
-            "description": "知乎、猎聘动态页和脉脉共用一个原生通道；账号留在日常Chrome。",
+            "description": "知乎、BOSS、猎聘动态页和脉脉共用一个原生通道；账号留在日常Chrome。",
             "status": "ready" if browser_link_health.get('ok') else "needs_connection" if connector.get('extension_ids') else "distribution_pending",
             "status_label": "已连接" if browser_link_health.get('ok') else "等待连接Chrome" if connector.get('extension_ids') else "等待扩展正式分发",
             "requirement": "浏览器站点必需，HTTP功能无需", "install_mode": "guided",
             "restart_required": False,
-            "boundary": "Host随KR更新；首次扩展安装和权限由本人确认，不需要开发者模式。",
-            "guide": {"official_url": connector.get('store_url'), "official_label": "KR 浏览器连接器官方商店页（发布后提供）",
-                "steps": ("确认商店扩展权限。", "扩展自动连接本机Host，保留本人日常Chrome身份。", "在站点工作标签登录；连接状态不等于账号登录状态。")},
+            "boundary": "扩展和Host随KR交付。浏览器首次加载需要本人确认；未知旧Host注册会保留并提示接管。",
+            "bundle_component":"browser_link",
+            "host_handoff":True,
+            "guide": {"steps": ("点击准备随包扩展并复制路径。", "在日常Chrome扩展管理页开启开发者模式，点击“加载已解压的扩展”；升级后重新加载。", "扩展连接本机Host；连接状态与站点登录分别核验，文件准备好不表示已经连接。")},
         },
         {
             "id": "media_downloader",
@@ -287,13 +288,14 @@ def optional_capabilities() -> list[dict[str, Any]]:
 def local_component_catalog() -> dict[str, Any]:
     """Organize local setup by user goal, with every download owned by the console."""
     chrome = resolve_managed_chrome()
-    node_available = bool(shutil.which("node"))
+    node=node_component_status()
+    node_available=node['status']=='ready'
     from runtime.dependency_preflight import _ffmpeg_path
 
     ffmpeg_available = bool(_ffmpeg_path())
     selectable = {row["id"]: row for row in optional_capabilities()}
     return {
-        "summary": "插件本体只安装控制台和基础研究路径；所有额外功能组件都在这里按你的选择下载或完成安装引导。",
+        "summary": "基础研究随KR安装。浏览器连接、资料归档和媒体处理按需启用；已有配置在升级后继续保留。",
         "groups": [
             {
                 "id": "web_automation",
@@ -309,7 +311,7 @@ def local_component_catalog() -> dict[str, Any]:
                     {
                         "id": "chrome",
                         "label": "Google Chrome",
-                        "description": "小红书、BOSS与微信通过OpenCLI复用日常Chrome；知乎、猎聘动态页与脉脉使用KR浏览器连接器。",
+                        "description": "小红书、微信读书与微信动态正文通过OpenCLI复用日常Chrome；知乎、BOSS、猎聘动态页与脉脉使用KR浏览器连接器。",
                         "status": "ready" if chrome else "not_installed",
                         "requirement": "启用平台账号后必需",
                         "install_mode": "guided",
@@ -328,7 +330,8 @@ def local_component_catalog() -> dict[str, Any]:
                         "id": "node",
                         "label": "Node.js 与 npm",
                         "description": "启用OpenCLI浏览器连接所需的运行环境。",
-                        "status": "ready" if node_available else "not_installed",
+                        "status": node['status'],
+                        "status_label": node['label'],
                         "requirement": "启用OpenCLI后必需",
                         "install_mode": "guided",
                         "boundary": "在此查看官方安装引导并在安装后重新检测；它本身不会自动启用任何平台访问。",
@@ -336,7 +339,7 @@ def local_component_catalog() -> dict[str, Any]:
                             "official_url": "https://nodejs.org/en/download",
                             "official_label": "打开 Node.js 官方下载页",
                             "steps": (
-                                "下载并安装 Node.js 的长期支持版（LTS）。",
+                                "下载并安装 Node.js 长期支持版（LTS），要求至少 20.18.1。",
                                 "安装时保留 npm；完成后重新打开本地控制台。",
                                 "回到本页刷新检测，再按小红书连接引导启用扩展并绑定Chrome。",
                             ),
@@ -345,6 +348,10 @@ def local_component_catalog() -> dict[str, Any]:
                     selectable["xhs_bridge"],
                     selectable["browser_link"],
                 ],
+            },
+            {
+                "id":"knowledge_archive", "label":"资料归档与Obsidian", "description":"KR本地保存完整资料；Obsidian是可选的阅读入口。授权与软件安装分别核验。",
+                "items":[obsidian_component_status()],
             },
             {
                 "id": "media_understanding",
@@ -376,6 +383,52 @@ def local_component_catalog() -> dict[str, Any]:
             },
         ],
     }
+
+
+def node_component_status():
+    executable=shutil.which('node')
+    if not executable:return {'status':'not_installed','label':'尚未安装（需要≥20.18.1）'}
+    try:
+        import re
+        result=silent_subprocess_run([executable,'--version'],capture_output=True,text=True,timeout=4,check=False)
+        match=re.fullmatch(r'v?(\d+)\.(\d+)\.(\d+)\s*',result.stdout)
+        version=tuple(map(int,match.groups())) if match and result.returncode==0 else ()
+        ready=bool(version and version>=(20,18,1))
+        return {'status':'ready' if ready else 'outdated','label':('已检测到 ' if ready else '需要升级 ')+result.stdout.strip()[:30]}
+    except (OSError,ValueError,subprocess.TimeoutExpired):return {'status':'unavailable','label':'运行环境检测失败'}
+
+
+def obsidian_component_status():
+    candidates=[Path(os.environ.get('LOCALAPPDATA',''))/'Obsidian/Obsidian.exe',Path(os.environ.get('PROGRAMFILES',''))/'Obsidian/Obsidian.exe']
+    installed=any(path.is_file() for path in candidates) or bool(shutil.which('Obsidian'))
+    from runtime.knowledge_delivery import DeliveryStore
+    store=DeliveryStore();grants=0
+    if store.db.is_file():
+        import sqlite3
+        with sqlite3.connect(store.db.resolve().as_uri()+'?mode=ro',uri=True) as connection:
+            grants=connection.execute('SELECT COUNT(*) FROM grants WHERE active=1').fetchone()[0]
+    return {'id':'obsidian','label':'Obsidian阅读与资料库授权','status':'available' if installed else 'not_installed',
+        'status_label':('已检测到软件' if installed else '未检测到软件')+' · '+('已有授权目标（逐任务核验）' if grants else '尚未授权归档目标'),
+        'description':'每项调研按项目、年份和日期时间归档；报告与全部有效来源正文一并保存。',
+        'requirement':'选装','install_mode':'guided','boundary':'安装软件不等于授权资料库。已有目标保留；由Codex按项目绑定明确的本地库，不扫描私人目录。',
+        'guide':{'official_url':'https://obsidian.md/download','official_label':'打开Obsidian官方下载页',
+            'steps':('安装Obsidian，打开你选择的资料库。','告诉Codex项目名称及允许归档的库目录；授权后按任务绑定。','回到研究记录查看报告和来源交付状态；人改内容不会被升级覆盖。')}}
+
+
+def bundled_component_prepare(component):
+    if component not in {'browser_link','opencli'}:raise ValueError('unknown_browser_component')
+    item=_run_product_installer(['component-prepare','--component',component],timeout=180)
+    return {'status':item['status'],'path':item['path'],'extension_id':item['extension_id'],
+        'next_step':'在Chrome扩展管理页开启开发者模式，选择“加载已解压的扩展”，选择上面的文件夹；已有版本请点重新加载。浏览器确认完成后刷新检测。'}
+
+
+def browser_host_console_action(confirmation=''):
+    if confirmation:
+        payload=_run_product_installer(['browser-host-apply','--confirmation',confirmation],timeout=180)
+        return {'status':payload['status'],'next_step':'Host已交接。请在Chrome重新加载Browser Link，再刷新检测；已有账号与配对记录保留。'}
+    payload=_run_product_installer(['browser-host-plan'],timeout=30)
+    return {'status':payload['status'],'confirmation_token':payload.get('confirmation_token'),
+        'next_step':'将切换本机Browser Link的Host注册，保留旧Host文件；确认接管后生效。' if payload.get('confirmation_token') else '未发现需要接管的Host注册；准备扩展并完成浏览器加载。'}
 
 
 def _run_product_installer(arguments: list[str], *, timeout: int) -> dict[str, Any]:
@@ -422,8 +475,22 @@ def data_root_move_console_plan(target_root: str) -> dict[str, Any]:
         "required_free_bytes": int(payload.get("required_free_bytes", 0)),
         "browser_lock_count": len(locks) if isinstance(locks, list) else 0,
         "confirmation_token": str(payload.get("confirmation_token", "")),
-        "next_step": "计划不会迁移数据。请复制确认令牌，按产品安装文档中的 data-move-apply 命令执行。",
+        "next_step": "核对数据量和目标目录后，点击确认迁移。原目录保留；切换后需重新打开控制台并刷新Codex连接。",
     }
+
+
+def data_root_move_console_apply(target_root,confirmation):
+    if not target_root.strip() or not confirmation:raise ValueError('请先生成并确认迁移计划。')
+    payload=_run_product_installer(['data-move-apply','--data-root',target_root,'--confirmation',confirmation],timeout=1800)
+    return {'status':payload['status'],'restart_required':True,'source_retained':True,
+        'next_step':'数据已迁移，原目录保留。请重新打开本地控制台并刷新Codex连接；在此之前旧连接会拒绝新任务。'}
+
+
+def data_root_move_console_rollback(confirmation):
+    if confirmation!='restore_retained_source':raise ValueError('请先确认恢复迁移前数据目录。')
+    payload=_run_product_installer(['data-move-rollback'],timeout=180)
+    return {'status':payload['status'],'restart_required':True,'target_preserved':True,
+        'next_step':'已恢复迁移前的数据目录，目标目录保留。请重新打开控制台并刷新Codex连接。'}
 
 
 def optional_capability_plan(capability: str) -> dict[str, Any]:
@@ -493,6 +560,7 @@ _TASK_LABELS = {
 }
 _TASK_STATUS_LABELS = {
     "waiting_for_user": "等待你完成登录或验证",
+    "waiting_cooldown": "平台冷却中，到期自动进行有限探测",
     "interrupted": "已中断，可继续",
     "queued": "排队中",
     "running": "处理中",

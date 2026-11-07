@@ -8,7 +8,32 @@ MAX_TEXT_CHARS = 2_000_000
 MAX_EXPANDED_CONTENT_BYTES = 96 * 1024 * 1024
 PDF_PROCESSING_CONTRACT = 'page-ledger-ocr-v4'
 
+
+class DocumentError(ValueError):
+    """稳定机器分类，不携带密码、原文、文件路径或pypdf内部异常。"""
+    def __init__(self, code):
+        super().__init__(code)
+        self.error_code = code
+        self.next_action = {
+            'document_password_required': 'provide_an_authorized_decrypted_pdf_copy',
+            'document_password_incorrect': 'provide_an_authorized_decrypted_pdf_copy',
+            'document_corrupt': 'replace_with_a_valid_pdf_from_the_source',
+        }.get(code, 'inspect_document_processing_limits')
+
 def extract_pdf_text(source, *, max_pages=None, max_bytes=MAX_PDF_BYTES, max_chars=MAX_TEXT_CHARS, page_numbers=None):
+    from pypdf.errors import FileNotDecryptedError, PdfReadError, ParseError, LimitReachedError
+    try:
+        return _extract_pdf_text(source, max_pages=max_pages, max_bytes=max_bytes,
+                                 max_chars=max_chars, page_numbers=page_numbers)
+    except FileNotDecryptedError:
+        raise DocumentError('document_password_required') from None
+    except LimitReachedError:
+        raise ValueError('document_expansion_budget_exceeded') from None
+    except (PdfReadError, ParseError, EOFError):
+        raise DocumentError('document_corrupt') from None
+
+
+def _extract_pdf_text(source, *, max_pages, max_bytes, max_chars, page_numbers):
     from pypdf import PdfReader
     from kr_core.evidence_locators import document_text
     from pathlib import Path
@@ -17,6 +42,8 @@ def extract_pdf_text(source, *, max_pages=None, max_bytes=MAX_PDF_BYTES, max_cha
     if size > max_bytes:
         raise ValueError('document_too_large')
     reader = PdfReader(BytesIO(source) if isinstance(source, bytes) else source)
+    if reader.is_encrypted and not reader.decrypt(""):
+        raise DocumentError('document_password_required') from None
     count = len(reader.pages)
     if count > MAX_PDF_PAGES:
         raise ValueError('document_page_budget_exceeded')

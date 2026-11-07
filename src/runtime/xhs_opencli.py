@@ -40,9 +40,10 @@ class XhsReadOptions(BaseModel):
 
 UPSTREAM_SHA = "97dc0cd5214b9602bcda78d7422f231ee8a803e9"
 REVIEWED_ADAPTER_SHA256 = "473be8a1ff6185e2242c7ecc9914bd8b4d38f75a2c9ce81531249cf48b88083b"
-RISK_CODES = {"SECURITY_BLOCK", "CAPTCHA_REQUIRED", "RATE_LIMITED", "anti_bot_verification", "COMMAND_RESULT_UNKNOWN"}
-PAID_REASONS = RISK_CODES | {"AUTH_REQUIRED", "signed_link_expired_search_again", "empty_detail",
-    "dead_link", "empty_results", "EMPTY_RESULT", "COMMENTS_NOT_LOADED", "browser_disconnected", "opencli_caller_timeout"}
+RISK_CODES = {"SECURITY_BLOCK", "CAPTCHA_REQUIRED", "anti_bot_verification"}
+UNKNOWN_CODES = {"COMMAND_RESULT_UNKNOWN", "opencli_caller_timeout", "caller_timeout", "opencli_invalid_output"}
+PAID_REASONS = RISK_CODES | {"RATE_LIMITED", "AUTH_REQUIRED", "signed_link_expired_search_again", "empty_detail",
+    "dead_link", "empty_results", "EMPTY_RESULT", "COMMENTS_NOT_LOADED", "browser_disconnected"}
 
 
 def _media_failure_reason(exc):
@@ -159,7 +160,7 @@ def connection_status():
     return {"status": "ok" if connected else "not_connected", "configured": configured,
         "connected": connected, "backend": "opencli", "ownership": "borrowed",
         "connection_reason": reason, "execution_prepares_daemon": True,
-        "auth_state": "not_probed", "risk_stopped": (state_dir() / "stop.json").is_file(),
+        "auth_state": "not_probed", "risk_stopped": bool(_stop_gate()),
         "login": _json(state_dir() / "login.json"), "single_account": True,
         "detail": "日常Chrome扩展已连接；账号登录未探测。" if connected else
             "后台服务未运行或暂不可达；执行入口会按需准备，不代表Chrome关闭或扩展未安装。" if not status and configured else
@@ -174,22 +175,49 @@ def cancel_login():
     return {"status": "cancelled", "browser_closed": False, "owned_tab_cleanup": "native_idle_timeout"}
 
 def latch(reason):
-    if (state_dir() / "stop.json").is_file():
-        return
-    _save(state_dir() / "stop.json", {"reason": reason, "at": time.time(),
-        "context_id": setting("KR_XHS_OPENCLI_CONTEXT_ID")})
+    from runtime.file_write_lock import file_write_lock
+    with file_write_lock(state_dir() / "risk"):
+        previous = _json(state_dir() / "stop.json")
+        if previous.get("unknown_outcome"):
+            return
+        # 一条请求的一次观察；拒绝后的查询/入场检查不会更新期限。
+        now = time.time()
+        if previous.get("reason") == reason and _stop_gate():
+            return
+        seconds = 60
+        _save(state_dir() / "stop.json", {"reason": reason, "at": now,
+            "retry_at": now + seconds, "unknown_outcome": reason in UNKNOWN_CODES,
+            "context_id": setting("KR_XHS_OPENCLI_CONTEXT_ID")})
+
+
+def _stop_gate():
+    path = state_dir() / "stop.json"
+    state = _json(path)
+    if not state:
+        return {}
+    from runtime.platform_risk import risk_retry_at
+    if state.get("unknown_outcome") or state.get("reason") in UNKNOWN_CODES:
+        return {"code": "COMMAND_RESULT_UNKNOWN", "retry_after_s": 0}
+    until = risk_retry_at(state, observed_at=path.stat().st_mtime)
+    if until <= time.time():
+        return {}
+    return {"code": "RATE_LIMITED" if state.get("reason") == "RATE_LIMITED" else "platform_cooldown",
+            "retry_after_s": until-time.time()}
 
 def _failure(code, *, executed=True, data=None):
     restricted = code in RISK_CODES
-    if restricted:
+    if executed and (restricted or code == "RATE_LIMITED" or code in UNKNOWN_CODES):
         latch(code)
     if executed and (restricted or code == "AUTH_REQUIRED"):
         _observe_account("needs_verification" if restricted else "needs_login", code)
-    kind = "anti_bot_verification" if restricted else "login_required" if code == "AUTH_REQUIRED" else code
-    return {"ok": False, "status": "needs_interaction" if restricted or code == "AUTH_REQUIRED" else "failed",
+    kind = ("request_outcome_unknown" if code in UNKNOWN_CODES else "rate_limited" if code == "RATE_LIMITED" else
+            "anti_bot_verification" if restricted else "login_required" if code == "AUTH_REQUIRED" else code)
+    return {"ok": False, "status": "needs_interaction" if code == "AUTH_REQUIRED" else "failed",
         "platform": "小红书", "error": {"error": code, "type": kind, "retryable": False},
-        "failure_type": kind, "manual_action_required": restricted or code == "AUTH_REQUIRED",
+        "failure_type": kind, "manual_action_required": code == "AUTH_REQUIRED",
         "request_executed": executed, "data": data or {},
+        "next_action": "inspect_original_request_receipt_do_not_replay" if code in UNKNOWN_CODES else
+            "wait_for_cooldown_then_new_bounded_attempt" if code in {"RATE_LIMITED", "platform_cooldown"} else "inspect_platform_state",
         "metadata": {"transport": "opencli", "fallback_used": False}}
 
 def _run(operation, **kwargs):
@@ -236,7 +264,6 @@ def _run(operation, **kwargs):
             input=json.dumps(payload, ensure_ascii=False), capture_output=True,
             encoding="utf-8", timeout=150, cwd=str(root))
     except subprocess.TimeoutExpired:
-        latch("caller_timeout")
         return _failure("opencli_caller_timeout")
     except OSError:
         return _failure("opencli_process_unavailable", executed=False)
@@ -267,8 +294,9 @@ def _ensure_daemon(root, node):
 
 def invoke(operation, **kwargs):
     control = operation in {"inventory", "inspect", "release", "resume"}
-    if not control and (state_dir() / "stop.json").is_file():
-        return _failure("anti_bot_verification", executed=False)
+    gate = _stop_gate() if not control else {}
+    if gate:
+        return {**_failure(gate["code"], executed=False), "retry_after_s": gate["retry_after_s"]}
     if operation in {"search", "detail"} and _json(state_dir() / "login.json"):
         state = interaction_state()
         if state != "ready":
@@ -345,7 +373,7 @@ def complete_login():
 
 def interaction_state():
     # Risk latches never auto-clear. Authentication wait is bounded and holds no worker/lease.
-    if (state_dir() / "stop.json").is_file():
+    if _stop_gate():
         return "blocked"
     pending = _json(state_dir() / "login.json")
     if not pending:
@@ -364,6 +392,13 @@ def _recover_or_fallback(response, operation, *, task_id="", **payload):
         return response
     error = response.get("error") or {}
     code = error.get("error", "") if isinstance(error, dict) else str(error)
+    if code in UNKNOWN_CODES or response.get("failure_type") == "request_outcome_unknown":
+        return response
+    if code in RISK_CODES or code in {'RATE_LIMITED','platform_cooldown'}:
+        response['resume_policy']='bounded_read_only_probe'
+        response['retry_after_s']=_stop_gate().get('retry_after_s',60)
+        response['next_action']='wait_for_cooldown_then_new_bounded_attempt'
+        return response
     pending = _json(state_dir() / "login.json")
     if code == "AUTH_REQUIRED" and not pending:
         response["login_recovery"] = request_login()

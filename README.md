@@ -32,8 +32,10 @@ KnowledgeRadar 是 Windows 优先、local-first 的 MCP 产品：代码从 GitHu
 2. 安装 Python 3.12，在解压目录运行：
 
    ```bat
-   python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
+   python scripts\product_install.py apply --choose-data-root --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json
    ```
+
+首次安装会打开目录选择器，由你选择数据保存位置；也可显式传 `--data-root`。以后升级省略此参数，保留既有路径和状态。
 
 3. 运行安装器生成的 `console.cmd`（`configure.cmd` 仍兼容）。控制台固定为 `http://127.0.0.1:18882/`，只监听当前电脑；登录 Windows 后会自动启动。已填项目不会回显，留空不会清除已有配置。
 4. 按 Codex 的方式重启/刷新后，在 Codex 调用 `health_check`，再调用 `get_capabilities`。预期能看到本机状态和当前工具面；未配置的可选能力会说明下一步，而不是泄露配置值。
@@ -65,10 +67,10 @@ flowchart LR
 | --- | --- | --- |
 | 核心网页研究 | 配置任一网页搜索来源即可增强；未配也会如实报告 | 不把缺 Provider 说成搜索成功 |
 | 学术与公开视频 | 按需配置 Provider | 显示额度、网络或开放访问边界 |
-| 中文内容平台 / 招聘 | 可能需要登录或人工验证 | 报告 `NEEDS_INTERACTION` / 降级，不绕过验证 |
+| 中文内容平台 / 招聘 | Chrome、Node、随包扩展；可能需要登录 | 登录由本人完成，暂时风控进入有限自动冷却，不绕过验证 |
 | 多模态 | 由你配置模型与预算 | 不会默认产生付费模型调用 |
 
-页面中的能力包和健康摘要均为脱敏状态；首屏不会递归扫描大数据根，空间扫描由用户主动发起。需要 Playwright Chromium 或小红书诊断 bridge 时，先生成本地计划、再第二次确认下载；默认不下载、不登录、不调用付费 API。它只会隔离 manifest 已登记且过期的媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
+页面中的能力包和健康摘要均为脱敏状态；首屏不会递归扫描大数据根，空间扫描由用户主动发起。Browser Link 与 KR OpenCLI Bridge 随包提供，组件页引导本人在 Chrome 加载及确认权限。Chrome、Node、Obsidian 提供官方引导；Playwright 和媒体组件按需确认下载，不自动登录或调用付费 API。它只会隔离 manifest 已登记且过期的媒体缓存，不会清理密钥、Profile 或日志。细节见 [能力包](docs/CAPABILITY_PACKS.md) 与 [隐私和本地状态](docs/PRIVACY_AND_LOCAL_STATE.md)。
 
 ## 三种入口，避免走错路径
 

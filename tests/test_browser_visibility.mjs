@@ -30,6 +30,23 @@ function pageFixture(initial) {
   const page={evaluate:async()=>state,wait:async()=>{},cdp:async(method,args)=>actions.push({method,...args})};
   return {page,actions,set:value=>state=value};
 }
+
+test('native input presents only an owned hidden page and restores after failure without replay',async()=>{
+  const actions=[];
+  const c=attentionController({evaluate:async()=>true},async(foreground,reason)=>actions.push({foreground,reason}));
+  let inputs=0;
+  await assert.rejects(()=>c.withNativeInput(async()=>{inputs++;throw Error('input unknown');}),/input unknown/);
+  assert.equal(inputs,1);
+  assert.deepEqual(actions.map(a=>a.foreground),[true,false]);
+  assert.equal(c.metadata().presented,false);
+  actions.length=0;
+  assert.equal(await c.withNativeInput(async()=>42),42);
+  assert.deepEqual(actions.map(a=>a.foreground),[true]);
+  await c.finish();
+  assert.deepEqual(actions.map(a=>a.foreground),[true,false]);
+  const changed=attentionController({evaluate:async()=>true},async()=>({skipped:true}));
+  await assert.rejects(()=>changed.withNativeInput(async()=>assert.fail('input after ownership change')),/ownership_changed/);
+});
 test('visibility recovery never navigates and always returns to background at completion',async()=>{
   const p=pageFixture({visibility:{hidden:true,dom_ready:true,reason:'zero_viewport'}});
   const c=attentionController(p.page,(foreground,reason)=>p.page.cdp("test-window-control",{foreground,reason}));

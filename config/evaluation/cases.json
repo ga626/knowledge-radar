@@ -1251,8 +1251,8 @@
     },
     {
       "case_id": "account.route_order",
-      "version": 5,
-      "oracle_version": 4,
+      "version": 6,
+      "oracle_version": 5,
       "capabilities": [
         "account.recovery"
       ],
@@ -1266,7 +1266,9 @@
         "tests/evaluation/test_platform_resume.py",
         "tests/test_xhs_cdp_dependency_boundary.py",
         "tests/test_browser_link_integration.py",
-        "tests/test_real_chain_remediation.py"
+        "tests/test_real_chain_remediation.py",
+        "tests/test_xhs_filter_panel.py",
+        "tests/test_recruitment_borrowed_collectors.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1292,10 +1294,16 @@
         "src/runtime/browser_link.py",
         "src/runtime/native_site.py",
         "tests/test_browser_link_integration.py",
-        "tests/test_real_chain_remediation.py"
+        "tests/test_real_chain_remediation.py",
+        "tests/test_xhs_filter_panel.py",
+        "src/runtime/xhs_search_filters.mjs",
+        "src/runtime/opencli_readiness.mjs",
+        "tests/test_recruitment_borrowed_collectors.py",
+        "src/collectors/platform/liepin.py",
+        "src/collectors/platform/maimai.py"
       ],
-      "success": "单账号恢复与风控停止，金额/次数预留，真实Node边界接通KR搜索到模型接口和归档；fixture不证明真人账号可用。",
-      "change_reason": "阶段一二：应用装配独立、跨入口请求回执、批量恢复、公共网页真实worker及媒体复用。"
+      "success": "单账号恢复与风控停止，金额/次数预留，真实Node边界接通KR搜索到模型接口和归档；fixture不证明真人账号可用。 小红书AI搜索查询编码、原生输入、独立提交控件与筛选判定。",
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。小红书AI搜索查询编码、原生输入、独立提交控件与筛选判定。"
     },
     {
       "case_id": "task.fanin",
@@ -1489,8 +1497,8 @@
     },
     {
       "case_id": "task.durable",
-      "version": 9,
-      "oracle_version": 9,
+      "version": 10,
+      "oracle_version": 10,
       "capabilities": [
         "task.lifecycle"
       ],
@@ -1516,7 +1524,10 @@
         "tests/test_opencli_readiness.py",
         "tests/test_v2ex_city_filter.py",
         "tests/test_product_status.py",
-        "tests/test_health_agent_summary.py"
+        "tests/test_health_agent_summary.py",
+        "tests/test_task_cooldown.py",
+        "tests/test_platform_risk.py",
+        "tests/test_hardening_regressions.py"
       ],
       "layer": "integration",
       "auto": true,
@@ -1587,10 +1598,19 @@
         "src/kr_core/source_urls.py",
         "src/onboarding/product_status.py",
         "tests/test_boss_dom.mjs",
-        "tests/test_browser_link_extension.mjs"
+        "tests/test_browser_link_extension.mjs",
+        "tests/test_task_cooldown.py",
+        "tests/test_platform_risk.py",
+        "src/runtime/task_cooldown.py",
+        "src/runtime/platform_risk.py",
+        "src/runtime/tasks.py",
+        "tests/test_hardening_regressions.py",
+        "src/runtime/pdf_text.py",
+        "src/runtime/pdf_worker.py",
+        "src/runtime/recruitment_governance.py"
       ],
-      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。",
-      "change_reason": "六阶段首轮缺陷回归：公开原文、候选关联、评论预算、续接收口、浏览器路由与分发门禁；夹具通过不代表外部平台准入。"
+      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。 风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。",
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。"
     },
     {
       "case_id": "account.facts",
@@ -1636,8 +1656,8 @@
     },
     {
       "case_id": "content.contracts",
-      "version": 10,
-      "oracle_version": 10,
+      "version": 11,
+      "oracle_version": 11,
       "capabilities": [
         "mcp.get_content_detail"
       ],
@@ -1655,7 +1675,8 @@
         "tests/test_browser_link_integration.py",
         "tests/test_opencli_readiness.py",
         "tests/test_xhs_runner_contract.py",
-        "tests/test_wechat_chain.py"
+        "tests/test_wechat_chain.py",
+        "tests/test_maimai_csrf.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1717,10 +1738,12 @@
         "tests/test_wechat_chain.py",
         "src/runtime/pdf_text.py",
         "src/detail_strategies/wechat.py",
-        "src/collectors/platform/wechat.py"
+        "src/collectors/platform/wechat.py",
+        "tests/test_maimai_csrf.py",
+        "browser_link/extension/sites/maimai.js"
       ],
       "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
-      "change_reason": "补微信PDF附件选页/OCR许可贯通和独立页账本回读；保留日常Chrome静默冷启动、精确窗口分组归属、匿名浏览器释放及签名空白页回归。fixture不冒充真实平台通过。"
+      "change_reason": "2026-11-07全链修复：将脉脉动态CSRF回归接入现有内容合同。"
     },
     {
       "case_id": "storage.lifecycle",
@@ -1907,8 +1930,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 4,
-      "oracle_version": 4,
+      "version": 5,
+      "oracle_version": 5,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -1922,7 +1945,8 @@
         "tests/test_research_archive.py",
         "tests/test_mcp_tool_schema_contract.py",
         "tests/test_strategy_tree_registry.py",
-        "tests/test_p0_p7_governance.py"
+        "tests/test_p0_p7_governance.py",
+        "tests/test_archive_layout.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -1964,10 +1988,12 @@
         "tests/test_mcp_tool_schema_contract.py",
         "tests/test_strategy_tree_registry.py",
         "tests/test_p0_p7_governance.py",
-        "scripts/kr_eval/ci.py"
+        "scripts/kr_eval/ci.py",
+        "tests/test_archive_layout.py",
+        "src/runtime/archive_layout.py"
       ],
-      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。",
-      "change_reason": "文档漂移修复：来源语义同源、公共输出合同、文档CI及可重现生成检查；保留既有归档行为合同。 PR前扫尾：141项归档/治理检查在240秒边界结束，执行上限按实测调整为360秒，不减少检查。"
+      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。",
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。"
     },
     {
       "case_id": "surface.read_knowledge",
@@ -2037,15 +2063,18 @@
     },
     {
       "case_id": "runtime.product_form",
-      "version": 3,
-      "oracle_version": 3,
+      "version": 4,
+      "oracle_version": 4,
       "capabilities": [
         "runtime.product_form"
       ],
       "executor": "pytest",
       "nodes": [
         "tests/test_product_runtime.py",
-        "tests/test_continuity_fallback.py"
+        "tests/test_continuity_fallback.py",
+        "tests/test_data_relocation.py",
+        "tests/test_browser_components.py",
+        "tests/test_runtime_process.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2071,10 +2100,18 @@
         "src/runtime/continuity_fallback.py",
         "scripts/kr_mcp_continuity.py",
         "tests/test_continuity_fallback.py",
-        "config/codex-product/tool-contracts.json"
+        "config/codex-product/tool-contracts.json",
+        "tests/test_data_relocation.py",
+        "tests/test_browser_components.py",
+        "src/runtime/data_relocation.py",
+        "src/runtime/browser_components.py",
+        "config/browser-components.json",
+        "scripts/browser_link_install.py",
+        "tests/test_runtime_process.py",
+        "src/runtime/process.py"
       ],
-      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。",
-      "change_reason": "PR前扫尾：备用通道制品目录、ExceptionGroup失败回执及CI实际收集回归。",
+      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。 用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。",
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。",
       "owned_host_process": true
     },
     {

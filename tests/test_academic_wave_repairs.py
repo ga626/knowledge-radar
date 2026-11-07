@@ -297,7 +297,7 @@ def test_pdf_page_locators_survive_academic_storage_and_readback(tmp_path, monke
         def __init__(self, text): self.text = text
         def get(self, key): return None
         def extract_text(self): return self.text
-    monkeypatch.setattr('pypdf.PdfReader', lambda _: SimpleNamespace(pages=[Page('Page one\nMethod'), Page('Page two\nResults')]))
+    monkeypatch.setattr('pypdf.PdfReader', lambda _: SimpleNamespace(is_encrypted=False, pages=[Page('Page one\nMethod'), Page('Page two\nResults')]))
     parsed = extract_pdf_text(b'%PDF-fixture')
     assert {row['page'] for row in parsed['locators']} == {1, 2}
     response = {'items': [{'url': 'https://example.org/paper', 'raw': {

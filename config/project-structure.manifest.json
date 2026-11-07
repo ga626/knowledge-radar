@@ -1,6 +1,16 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-11-06",
+  "updated_at": "2026-11-07",
+  "research_archive_contract": {
+    "new_task_layout": "<project>/<year>年/<month>月<day>日 <hour>：<minute> <task>/",
+    "history_migration": "Explicit identity and hash checked plan/apply; preserve source versions and user changes.",
+    "delivery_progress": "Evidence retention and Vault delivery have independent completion; late Vault binding replays fixed historical rounds."
+  },
+  "browser_component_contract": {
+    "sources": "browser_link/extension and browser_link/opencli_bridge (Apache-2.0 upstream source plus audited extension build)",
+    "installation": "Verified snapshots under the chosen install root; stable loaded directory, browser consent and live protocol verification remain separate.",
+    "state": "Component choices and receipts remain in the selected data root; incompatible or unowned existing assets require explicit handoff."
+  },
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [
@@ -40,7 +50,7 @@
     {
       "path": "src/runtime/",
       "area": "dev_runtime",
-      "role": "入口中立业务装配 composition、类型合同、唯一执行所有者、统一请求回执与维护边界；MCP只挂载应用合同，CLI批量复用同一执行内核。公共媒体获取/增强不含站点规则。 阶段③ research_index 在私密研究数据中维护增量候选、问题关系和变化投影；knowledge 只读固定水位及可回查证据。 研究归档的展示合同统一为项目/首次创建日期与任务，任务下按来源中文前缀平铺Markdown；证据版本、轮次与哈希留在KR内部，新布局不自动搬动旧成果。 归档维护按实际状态根定位；研究快照独立解析任务库和任务产物路径，记录来源布局并在新目录恢复时重绑定，不迁移现有数据。 公共PDF合同在pdf_text/document_contract中维护选页、加工身份、页账本和可恢复OCR；comments_contract/comments_view统一六平台评论和可回查筛选。浏览器资源由既有租约协调器管理，扩展只拥有专属工作窗口/页面，借用进程不关闭。 日常Chrome冷启动使用Windows非激活最小化的带随机标记空白窗口；独立短命守护仅回收该窗口，不关闭用户浏览器或读取Profile。",
+      "role": "入口中立业务装配 composition、类型合同、唯一执行所有者、统一请求回执与维护边界；MCP只挂载应用合同，CLI批量复用同一执行内核。公共媒体获取/增强不含站点规则。 阶段③ research_index 在私密研究数据中维护增量候选、问题关系和变化投影；knowledge 只读固定水位及可回查证据。 研究归档的展示合同统一为项目/首次创建日期与任务，任务下按来源中文前缀平铺Markdown；证据版本、轮次与哈希留在KR内部，新布局不自动搬动旧成果。 归档维护按实际状态根定位；研究快照独立解析任务库和任务产物路径，记录来源布局并在新目录恢复时重绑定，不迁移现有数据。 公共PDF合同在pdf_text/document_contract中维护选页、加工身份、页账本和可恢复OCR；comments_contract/comments_view统一六平台评论和可回查筛选。浏览器资源由既有租约协调器管理，扩展只拥有专属工作窗口/页面，借用进程不关闭。 日常Chrome冷启动使用Windows非激活最小化的带随机标记空白窗口；独立短命守护仅回收该窗口，不关闭用户浏览器或读取Profile。 Windows后台Python入口由process模块核验GUI子系统并沿用同一venv，execution_owner保留单owner和Job脱离；统一拒绝覆盖NO_WINDOW的冲突标志，不以控制台解释器回退。站点冷却按已有时间戳纯读到期，未知执行结果仍独立对账。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
@@ -436,7 +446,7 @@
     "legacy_accounts": "默认record_profile_state仅转发Observation；旧JSON兼容只读。显式path参数仅历史fixture使用。",
     "protected_fetch": "公开canonical与私有签名交接分离，任务输入/结果不落明文访问令牌。小红书固定OpenCLI日常浏览器桥接；KR只借用context，回收自有tab/session，不关闭用户浏览器。",
     "platform_bindings": "显式注册搜索适配器、详情工厂、运行身份和详情后处理；公共用例与任务服务不识别小红书后端。旧平台逐个迁移，不建立自动插件框架；无消费者的旧小红书候选准入、账号池治理与路线评分执行模块删除，历史记录不删除。",
-      "borrowed_browser": "小红书与BOSS固定借用日常Chrome和现有OpenCLI；BOSS DOM合同在src/collectors/platform/boss_dom.js，旧Browser Link接线移除。知乎、猎聘与脉脉共用KR Browser Link，正式商店身份缺失时明确阻断。公共层仅负责通道、身份、代际、独占租约、取消和资源回收；HTTP不依赖浏览器。借用不授予进程关闭权，登录等待释放worker，风控锁须人工确认。",
+    "borrowed_browser": "小红书与BOSS固定借用日常Chrome和现有OpenCLI；BOSS DOM合同在src/collectors/platform/boss_dom.js，旧Browser Link接线移除。知乎、猎聘与脉脉共用KR Browser Link，正式商店身份缺失时明确阻断。公共层仅负责通道、身份、代际、独占租约、取消和资源回收；HTTP不依赖浏览器。借用不授予进程关闭权，登录等待释放worker，风控锁须人工确认。",
     "paid_fallback": "独立出口配额，无全局总预算：百炼10元/日；搜索按月免费credits或日次数，TikHub2个API请求/日，云OCR1.5免费且服从远端配额。未知价仅记录；同一账本跨进程预留，发送未知不自动重发。万方停用，未配置SerpAPI不纳费用管理。",
     "speech_quality": "自然语音与合成smoke分开；CER/WER不覆盖数字/专名/语义人工复核；未绑定音频和转写身份的金标不赋PASS。",
     "optional_media": "图片/扫描PDF仅经核心PDFium渲染后调用硅基流动PaddleOCR-VL 1.5，需密钥且会上传授权页面；失败不转CPU。文字PDF本地解析。ASR和Office解析沿用各自config/optional-*-win-py312.lock、独立安装回执、代码/权重身份及输入授权根；默认不下载模型，复用资源租约。 ASR唯一后端sherpa-onnx 2.0.1 CPU INT8，固定模型归档/文件SHA，按模型生成语言标签仅接受中文/英文；原Transformers安装回执不得复用。",

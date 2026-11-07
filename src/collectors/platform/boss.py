@@ -32,7 +32,8 @@ def search_url(keyword: str, city: str = "") -> str:
 
 
 def _failure(code: str, *, request_id: str = "", retryable: bool = False, **extra):
-    manual = code in {'login_required','anti_bot_verification','request_outcome_unknown','AUTH_REQUIRED','SECURITY_BLOCK'}
+    manual = code in {'login_required','AUTH_REQUIRED'}
+    cooling = code in {'anti_bot_verification','SECURITY_BLOCK','rate_limited'}
     return {
         "platform": "BOSS直聘",
         "status": "failed",
@@ -41,7 +42,7 @@ def _failure(code: str, *, request_id: str = "", retryable: bool = False, **extr
         "items": [],
         "retryable": retryable,
         "manual_action_required": manual,
-        "resume_policy": "stop_no_auto_resume" if code in {'anti_bot_verification','request_outcome_unknown','SECURITY_BLOCK'} else "explicit_retry",
+        "resume_policy": "bounded_read_only_probe" if cooling else "stop_no_auto_resume" if code == 'request_outcome_unknown' else "explicit_retry",
         "metadata": {"transport": "opencli", "ownership": "borrowed", "request_id": request_id, **extra},
     }
 

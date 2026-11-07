@@ -62,9 +62,18 @@ def test_pdf_25_missing_pages_batch_and_reuse(monkeypatch):
     assert first["original_asset"]["sha256"] == first["input_sha256"]
 
 
-def test_pdf_crash_keeps_success_and_unknown_without_replay(monkeypatch):
+@pytest.mark.parametrize("clock_step", [0, -1])
+def test_pdf_crash_keeps_success_and_unknown_without_replay(monkeypatch, clock_step):
     from runtime import pdf_text, cloud_ocr
     from runtime.execution_context import ExecutionStopped
+    from kr_core import evidence_assets
+    from types import SimpleNamespace
+    from itertools import count
+
+    # Consecutive durable snapshots can share a timestamp, or the wall clock
+    # can move backwards. Neither may select an earlier execution fact.
+    ticks = count(1800000000, clock_step)
+    monkeypatch.setattr(evidence_assets, "time", SimpleNamespace(time=lambda: next(ticks)))
 
     calls = []
 
