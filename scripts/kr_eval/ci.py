@@ -61,7 +61,11 @@ def run_ci(root, suite, ledger, extra_nodes=()):
         host if _covers(node, host) else node
         for host in HOST_NODES if (root / host.split('::')[0]).is_file()
         for node in nodes if _covers(node, host) or _covers(host, node)))
-    scale_nodes = list(SCALE_NODES)
+    # Only route the expensive scale case when the selected scope explicitly
+    # includes its module/case.  A synthetic `tests/` selection in contract
+    # tests must remain one offline batch plus the owned-host batch.
+    scale_nodes = [scale for scale in SCALE_NODES
+                   if scale in nodes or any(n.split('::')[0] == 'tests/test_research_archive.py' for n in nodes)]
     offline_nodes = [n for n in nodes if not any(_covers(host, n) for host in host_nodes)]
     # 当前统一批次超过千项；保留逐例进度/慢例与90秒堆栈，整批仍有明确硬期限。
     outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 1200,
