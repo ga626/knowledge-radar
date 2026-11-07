@@ -96,8 +96,10 @@ def active_client():
     if not root:
         return True
     try:
+        if (Path(root)/'backup/data-move-pending.json').is_file():return False
         active = json.loads((Path(root)/'active.json').read_text(encoding='utf-8'))
-        return Path(active['program_root']).resolve() == Path(__file__).resolve().parents[2]
+        return (Path(active['program_root']).resolve() == Path(__file__).resolve().parents[2]
+                and (not os.environ.get('KR_DATA_ROOT') or Path(active['data_root']).resolve()==Path(os.environ['KR_DATA_ROOT']).resolve()))
     except (OSError, ValueError, KeyError, TypeError):
         return False
 
@@ -390,7 +392,7 @@ def serve(*, root=None, bootstrap=None):
                     from runtime.leases import get_runtime_lease_coordinator
                     with admission:
                         store = get_task_store()
-                        tasks = store.managed_tasks(adapter='durable_process', statuses=('queued', 'running'))
+                        tasks = store.managed_tasks(adapter='durable_process', statuses=('queued', 'running', 'waiting_cooldown', 'waiting_for_user'))
                         from runtime.research_ledger import has_pending_submissions
                         pending = store.managed_tasks(adapter='durable_process', statuses=('completed', 'failed', 'cancelled', 'interrupted'), recording_pending=True)
                         if active_calls or receipts.active() or tasks or pending or has_pending_submissions() or get_runtime_lease_coordinator().active_leases(limit=1):

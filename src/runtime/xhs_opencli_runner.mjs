@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import {repairFilterEvaluation} from './xhs_search_filters.mjs';
+import {repairFilterEvaluation,evaluateSearchNavigation} from './xhs_search_filters.mjs';
 import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
@@ -18,6 +18,7 @@ let stage = 'connect';
 const session = 'kr:xiaohongshu';
 const stop = code => { throw Object.assign(new Error(code), {code}); };
 const timings = {};
+let searchNavigation;
 const runnerStarted = performance.now();
 const measure = async (name, action) => {
   const started = performance.now();
@@ -128,7 +129,16 @@ try {
     } else if (request.operation === 'search') {
       const {command} = await load('clis/xiaohongshu/search.js');
       const evaluate = page.evaluate.bind(page);
-      page.evaluate = expression => evaluate(repairFilterEvaluation(expression));
+      page.evaluate = async expression => {
+        const execute=()=>evaluateSearchNavigation(evaluate,async text=>{
+          await page.insertText(text);
+          await page.pressKey('End');
+        },repairFilterEvaluation(expression),request.keyword);
+        const result = typeof expression==='string' && expression.includes('ambiguous_or_missing_search_button')
+          ? await attention.withNativeInput(execute) : await execute();
+        if (result?.navigation) searchNavigation = result.navigation;
+        return result;
+      };
       data = await measure('search_s', () => command.func(page,{query:request.keyword,limit:request.limit,sort:'comprehensive',
         'note-type':['image','video'].includes(request.search_type)?request.search_type:'all',
         'publish-time':'anytime',scope:'all',location:'all'}));
@@ -318,7 +328,9 @@ try {
     } catch (signalError) { code = signalError.code || code; }
   }
   // Retain actionable, allowlisted upstream reasons, never raw URLs/tokens.
-  const message = String(error.message || '');
+  const message = searchNavigation && /in-site search navigation timed out/.test(String(error.message))
+    ? `xiaohongshu in-site search readiness not confirmed after ${searchNavigation.budget_ms/1000}s (query_match=${searchNavigation.query_match}, rendered=${searchNavigation.rendered})`
+    : String(error.message || '');
   if(attention){try{await attention.observe({layoutFailedAfterRepair:viewportOverride && /masonry remained collapsed|visible browser page/.test(message)});}catch{/* Never hide original error. */}}
   const reason = message.match(/search_input_not_available|search_input_not_filled|ambiguous_search_input|ambiguous_or_missing_search_button|search_button_disabled|filter_panel_not_found|ambiguous_filter_trigger|ambiguous_filter_panel|filter_option_not_found|filter_option_not_active|filter_layout_mismatch|filter_group_not_found/)?.[0]
     || (/Unexpected Xiaohongshu.*payload shape/.test(message) ? 'unexpected_search_payload'
@@ -353,6 +365,7 @@ try {
   }
 }
 output.metadata={...output.metadata,...(attention?{attention:attention.metadata()}:{}),work_page_closed:workClosed,work_session:session,
+  ...(searchNavigation?{search_navigation:searchNavigation}:{}),
   retained_for_interaction:retainedForInteraction,
   ...(retainedForInteraction?{retention_max_s:request.idleTimeoutS ?? 120,automatic_retry:false}:{}),
   ...(cleanupWarnings.length?{cleanup_warnings:cleanupWarnings}:{})};

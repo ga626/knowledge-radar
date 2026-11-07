@@ -251,7 +251,8 @@ def installer():
 def test_install_plan_is_read_only_and_does_not_invent_store_id(tmp_path):
     module=installer();before=list(tmp_path.iterdir())
     plan=module.plan(ROOT,tmp_path/'install',tmp_path/'data')
-    assert plan['status']=='store_registration_pending' and not plan['registration']
+    assert plan['status']=='ready' and plan['registration']
+    assert plan['extension_ids']==['gjpefddhmkinebmgfblaidofllfckhbi']
     assert not plan['store_url'] and list(tmp_path.iterdir())==before
 
 
@@ -277,8 +278,7 @@ def test_foreign_registration_cannot_be_overwritten(monkeypatch,tmp_path):
     monkeypatch.setattr(module,'plan',lambda *a:{'registration':True})
     monkeypatch.setattr(module,'read_registration',lambda:'C:/foreign-install/host.json')
     monkeypatch.setattr(module,'write_registration',lambda *a:pytest.fail('must not overwrite another installation'))
-    with pytest.raises(RuntimeError,match='owned_by_another'):
-        module.apply(ROOT,tmp_path/'install',tmp_path/'data')
+    assert module.apply(ROOT,tmp_path/'install',tmp_path/'data')['status']=='registration_conflict'
 
 
 @pytest.fixture
@@ -318,6 +318,65 @@ def test_failed_upgrade_restores_same_version_settings_and_resumes(registered_in
     with pytest.raises(OSError):module.apply(ROOT,install,data)
     assert before==(manifest.read_bytes(),settings.read_bytes())
     assert current[0]==str(manifest) and calls==['drain','resume']
+
+
+def test_registry_unknown_result_is_read_back_before_rollback(registered_installer,monkeypatch,tmp_path):
+    module,install,data,current,calls,manifest,settings=registered_installer
+    before=settings.read_bytes()
+    new_manifest=manifest.with_name('new-host.json')
+    original=module.plan
+    monkeypatch.setattr(module,'plan',lambda *a:{**original(*a),'manifest':str(new_manifest)})
+    writes=[]
+    def write(value):
+        current[0]=value;writes.append(value)
+        if len(writes)==1:raise OSError('committed then connection lost')
+    monkeypatch.setattr(module,'write_registration',write)
+    with pytest.raises(OSError):module.apply(ROOT,install,data)
+    assert current[0]==str(manifest) and settings.read_bytes()==before
+    assert not new_manifest.exists() and writes==[str(new_manifest),str(manifest)]
+
+
+def test_restore_preserves_host_settings_edited_after_apply(registered_installer):
+    module,install,data,current,calls,manifest,settings=registered_installer
+    receipt=module.apply(ROOT,install,data);calls.clear()
+    settings.write_text(json.dumps({'state_file':str(data/'human.json')}))
+    with pytest.raises(RuntimeError,match='current_registration_modified_preserved'):module.restore(receipt,install)
+    assert 'human.json' in settings.read_text() and not calls
+
+
+@pytest.mark.parametrize('operation',['apply','restore'])
+def test_host_human_edit_during_drain_is_preserved(registered_installer,monkeypatch,operation):
+    module,install,data,current,calls,manifest,settings=registered_installer
+    receipt=module.apply(ROOT,install,data) if operation=='restore' else None
+    calls.clear()
+    def control(state,action):
+        calls.append(action)
+        if action=='drain':settings.write_text(json.dumps({'state_file':str(data/'human-during-drain.json')}))
+        return {'ok':True,'pending':0,'connected':True}
+    monkeypatch.setattr(module,'_control',control)
+    with pytest.raises(RuntimeError,match='changed_before'):
+        module.restore(receipt,install) if operation=='restore' else module.apply(ROOT,install,data)
+    assert 'human-during-drain.json' in settings.read_text()
+    assert calls==['drain','resume'] and current[0]==str(manifest)
+
+
+def test_external_handoff_rejects_changed_old_assets(registered_installer,monkeypatch,tmp_path):
+    module,install,data,current,calls,manifest,settings=registered_installer
+    old=tmp_path/'external';old.mkdir()
+    old_host=old/'BrowserLinkHost.exe';old_host.write_bytes(b'old host')
+    old_settings=old/'host-settings.json';old_settings.write_text(json.dumps({'state_file':str(data/'old.json')}))
+    old_manifest=old/'host.json';old_manifest.write_text(json.dumps({'name':module.HOST,'type':'stdio','path':str(old_host)}))
+    current[0]=str(old_manifest)
+    plan=module.handoff_plan(install)
+    old_host.write_bytes(b'updated old host')
+    with pytest.raises(RuntimeError,match='handoff_plan_stale'):
+        module.apply(ROOT,install,data,handoff_confirmation=plan['confirmation_token'])
+    assert current[0]==str(old_manifest) and not calls
+    plan=module.handoff_plan(install)
+    receipt=module.apply(ROOT,install,data,handoff_confirmation=plan['confirmation_token'])
+    old_settings.write_text(json.dumps({'state_file':str(data/'changed.json')}))
+    with pytest.raises(RuntimeError,match='previous_registration_modified_preserved'):module.restore(receipt,install)
+    assert current[0]==str(manifest) and 'changed.json' in old_settings.read_text()
 
 
 def test_restore_drains_current_host_before_reverting_files(registered_installer):
@@ -486,6 +545,7 @@ def test_unpublished_connector_fails_before_browser_or_http(monkeypatch):
     from runtime import browser_channel
     monkeypatch.setattr(browser_channel, 'ensure_borrowed_browser', lambda *a, **k: pytest.fail('must not launch browser'))
     bridge = BrowserLink()
+    monkeypatch.setattr(bridge,'distribution_status',lambda:'browser_link_distribution_pending')
     monkeypatch.setattr(bridge, '_request', lambda *a, **k: pytest.fail('must not contact old host'))
     assert bridge.health()['code'] == 'browser_link_distribution_pending'
     result = bridge.request('search', {}, platform='zhihu')

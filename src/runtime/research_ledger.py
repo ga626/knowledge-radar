@@ -818,7 +818,9 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
     from runtime.research_archive import ResearchArchive
     from runtime.knowledge_delivery import DeliveryStore
     try:
-        archive = ResearchArchive(DeliveryStore())._context(task_id)
+        tracker=ResearchArchive(DeliveryStore())
+        archive=tracker.status(task_id)
+        if archive.get('status')=='context_pending':archive=None
         delivery_error = archive.get("error_code", "") if archive else ""
         delivery_observation = {
             "summary": ("registered" if archive.get("report") else "summary_pending") if delivery_error else
@@ -830,7 +832,10 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
                          else "pending") if archive else "not_configured",
             "delivery_error_code": delivery_error,
             "delivery_observed_at": _now(),
+            "source_delivery": archive.get('source_delivery',{}) if archive else {},
         }
+        if archive and archive.get('source_delivery',{}).get('status') in {'pending','incomplete'} and delivery_observation['delivery']=='delivered':
+            delivery_observation['delivery']='pending'
     except (OSError, ValueError, sqlite3.Error):
         delivery_observation = {"summary": "unknown", "summary_version_id": "", "delivery": "unavailable",
                                 "delivery_observed_at": _now()}

@@ -1712,7 +1712,34 @@ def search_xiaohongshu(
     if isinstance(result, dict):
         result = _xhs_route_receipt(result, run_id=run_id)
     _record_search_evidence("小红书", keyword, result)
-    return result
+    return _persist_discovery_cooldown(result, tool='search_xiaohongshu', platform='小红书',
+        arguments={'keyword': keyword, 'limit': requested_limit, 'search_type': search_type, 'research_task_id': research_task_id})
+
+
+def _persist_discovery_cooldown(result, *, tool, platform, arguments):
+    """首次已确证风险转为持久等待；worker重探沿同一只读调用，禁止嵌套提交。"""
+    from runtime.execution_context import execution_value
+    from runtime.task_cooldown import cooldown_plan
+    if execution_value('KR_DURABLE_WORKER') == '1' or cooldown_plan(result, operation='platform_discovery') is None:
+        return result
+    from runtime.task_service import TaskService
+    from runtime.tasks import compact_task_ref
+    service = TaskService()
+    task = service.submit('platform_discovery', {'tool': tool, 'platform': platform,
+        'arguments': arguments, 'initial_result': result}, timeout_s=600,
+        scope={'research_task_id': arguments.get('research_task_id', '')})
+    return {**result, 'accepted': True, 'task_id': task['task_id'], 'task': compact_task_ref(task),
+            'result_tool': 'get_task_status', 'resume_policy': 'bounded_read_only_probe',
+            'manual_action_required': False}
+
+
+def execute_platform_discovery(payload):
+    functions = {'search_xiaohongshu': search_xiaohongshu, 'search_zhihu': search_zhihu,
+                 'search_recruitment': search_recruitment}
+    function = functions.get(payload['tool'])
+    if function is None: raise ValueError('unsupported_platform_discovery')
+    # 同一应用合同；绕过根工具trace，由TaskService写唯一的后台完成回执。
+    return function.__wrapped__(**payload['arguments'])
 
 
 def _xiaohongshu_expected_degraded() -> Dict:
@@ -1797,7 +1824,8 @@ def search_zhihu(
         original_args={"keyword": keyword, "limit": limit},
     )
     _record_search_evidence("知乎", keyword, result)
-    return result
+    return _persist_discovery_cooldown(result, tool='search_zhihu', platform='知乎',
+        arguments={'keyword': keyword, 'limit': limit, 'research_task_id': research_task_id})
 
 
 ensure_bindings()
@@ -2087,13 +2115,16 @@ def search_recruitment(
             original_tool="search_recruitment",
             original_args={"platform": platform, "keyword": keyword, "city": city, "limit": limit, "research_task_id": research_task_id},
         )
-        return _recruitment_open_web_fallback_after_route_failure(
+        final = _recruitment_open_web_fallback_after_route_failure(
             platform=platform,
             keyword=keyword,
             city=city,
             limit=limit,
             direct_result=promoted,
         )
+        return _persist_discovery_cooldown(final, tool='search_recruitment',
+            platform=_RECRUITMENT_DISPLAY_PLATFORM.get(platform, platform),
+            arguments={'platform': platform, 'keyword': keyword, 'city': city, 'limit': limit, 'research_task_id': research_task_id})
     except Exception as e:
         log.error(f"招聘搜索异常 [{platform}]: {e}")
         return {"error": str(e), "platform": platform}
@@ -2821,7 +2852,7 @@ def read_knowledge(request: ReadRequest) -> ReadResult:
 
 @application_tool( group="delivery")
 def manage_research_artifacts(request: ArtifactRequest) -> Dict:
-    """登记获准报告、授权/撤销目标或交付固定版本。新任务按项目/首次创建日期与任务平铺Markdown，文件名为来源加原题或已有中文标题；自动命名不调用模型。选取只生成链接并复用正文，机器映射留KR内部。先授权目标，重试同请求对账，人改、移动或删除均受保护；旧任务不自动搬迁。"""
+    """授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年份/首次日期时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。"""
     from runtime.knowledge_delivery import execute
     return execute(request)
 

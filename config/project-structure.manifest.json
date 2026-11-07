@@ -1,6 +1,16 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
   "updated_at": "2026-11-07",
+  "research_archive_contract": {
+    "new_task_layout": "<project>/<year>年/<month>月<day>日 <hour>：<minute> <task>/",
+    "history_migration": "Explicit identity and hash checked plan/apply; preserve source versions and user changes.",
+    "delivery_progress": "Evidence retention and Vault delivery have independent completion; late Vault binding replays fixed historical rounds."
+  },
+  "browser_component_contract": {
+    "sources": "browser_link/extension and browser_link/opencli_bridge (Apache-2.0 upstream source plus audited extension build)",
+    "installation": "Verified snapshots under the chosen install root; stable loaded directory, browser consent and live protocol verification remain separate.",
+    "state": "Component choices and receipts remain in the selected data root; incompatible or unowned existing assets require explicit handoff."
+  },
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",
   "areas": [

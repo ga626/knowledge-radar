@@ -53,7 +53,13 @@ class BrowserLink:
             metadata = json.loads(path.read_text(encoding='utf-8'))
         except (OSError, ValueError):
             return 'browser_link_distribution_unavailable'
-        if not metadata.get('extension_ids') or not metadata.get('store_url'):
+        if not metadata.get('extension_ids'):
+            return 'browser_link_distribution_pending'
+        if metadata.get('distribution')=='bundled_unpacked':
+            from runtime.browser_components import verify_component
+            try:verify_component('browser_link')
+            except (OSError,ValueError):return 'browser_link_bundle_invalid'
+        elif not metadata.get('store_url'):
             return 'browser_link_distribution_pending'
         return None
 
@@ -70,6 +76,8 @@ class BrowserLink:
             payload = response.json()
             if not isinstance(payload, dict):
                 raise ValueError('invalid_health_result')
+            if not self.explicit_state and payload.get('extension_version')!=json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8')).get('extension_version'):
+                return {**payload,'ok':False,'code':'browser_extension_reload_required'}
             return {**payload, "ok": response.is_success and bool(payload.get("connected")) and payload.get("protocol") == 1
                     and not payload.get('draining') and payload.get('generation') == state.get('generation')}
         except (httpx.HTTPError, ValueError):
@@ -79,6 +87,11 @@ class BrowserLink:
         pending = self.distribution_status()
         if pending:
             return self._failure(pending, str(payload.get('request_id') or ''), request_executed=False)
+        if not self.explicit_state:
+            current=_read_state(self.state_file)
+            expected=json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8')).get('extension_version')
+            if current.get('extension_version') and current['extension_version']!=expected:
+                return self._failure('browser_extension_reload_required',str(payload.get('request_id') or ''),request_executed=False)
         from runtime.browser_channel import BorrowedBrowser, browser_site_key, _HELD_SITES
         if browser_site_key(platform) in _HELD_SITES.get():
             return self._request(operation,payload,platform=platform,timeout_s=timeout_s)

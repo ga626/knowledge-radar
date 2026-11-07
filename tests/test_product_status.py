@@ -289,7 +289,8 @@ def test_local_component_catalog_groups_everything_by_user_goal(tmp_path, monkey
     groups = {group["id"]: group for group in catalog["groups"]}
     all_items = {item["id"]: item for group in groups.values() for item in group["items"]}
 
-    assert set(groups) == {"web_automation", "platform_sessions", "media_understanding"}
+    assert set(groups) == {"web_automation", "platform_sessions", "media_understanding", "knowledge_archive"}
+    assert {item['id'] for item in groups['knowledge_archive']['items']}=={'obsidian'}
     assert {"browser"} == {item["id"] for item in groups["web_automation"]["items"]}
     assert {"chrome", "node", "xhs_bridge", "browser_link"} == {item["id"] for item in groups["platform_sessions"]["items"]}
     assert {"media_downloader", "transcription_model", "docling", "ffmpeg"} == {item["id"] for item in groups["media_understanding"]["items"]}

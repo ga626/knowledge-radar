@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 import json
+import math
 import os
 from pathlib import Path
 import sqlite3
@@ -20,7 +21,7 @@ from runtime.status_schema import normalize_error_code
 from runtime.task_scope import SERVER_RUN_ID
 
 
-TASK_STATUSES = ("queued", "running", "waiting_for_user", "completed", "failed", "skipped", "cancelled", "interrupted")
+TASK_STATUSES = ("queued", "running", "waiting_for_user", "waiting_cooldown", "completed", "failed", "skipped", "cancelled", "interrupted")
 TERMINAL_STATUSES = ("completed", "failed", "skipped", "cancelled", "interrupted")
 _TASK_WRITERS = ContextVar("kr_task_writers", default={})
 
@@ -196,7 +197,7 @@ def compact_task_ref(task: Optional[Dict[str, Any]], *, now: float | None = None
     status = str(task.get("status") or "")
     error = str(task.get("error") or "")
     reason = error or _safe_metadata_value(metadata, "cleanup_reason", "reason", "phase", "last_error")
-    next_action = "poll_get_task_status" if status in {"queued", "running"} else "read_result_ref"
+    next_action = "poll_get_task_status" if status in {"queued", "running", "waiting_cooldown"} else "read_result_ref"
     if status in {"failed", "cancelled", "skipped"}:
         next_action = "inspect_error"
     compact = {
@@ -222,6 +223,10 @@ def compact_task_ref(task: Optional[Dict[str, Any]], *, now: float | None = None
         "poll_after_seconds": 3 if status in {"queued", "running"} else 0,
         "recommended_next_action": next_action,
     }
+    if status=='waiting_cooldown':
+        compact['not_before']=metadata.get('not_before',0)
+        compact['poll_after_seconds']=max(1,math.ceil(float(metadata.get('not_before',ts))-ts))
+        compact['recommended_next_action']='wait_for_automatic_bounded_probe_or_cancel'
     timing = _compact_timing(metadata)
     if timing:
         compact["timing"] = timing
@@ -547,6 +552,25 @@ class TaskStore:
 
     def mark_running(self, task_id: str, metadata: Optional[Dict] = None) -> Dict:
         return self._mark(task_id, "running", started=True, increment_attempt=True, metadata=metadata)
+
+    def mark_waiting_cooldown(self, task_id, metadata, *, result_path=''):
+        return self._mark(task_id,'waiting_cooldown',metadata=metadata,result_path=result_path)
+
+    def claim_cooldown_probe(self, task_id, *, now=None):
+        """同任务的多个维护者只能消费一次到期探测；不重置原截止时间。"""
+        self.initialize();timestamp=now_ts() if now is None else now
+        with self._lock,self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row=conn.execute("SELECT metadata_json FROM runtime_tasks WHERE task_id=? AND status='waiting_cooldown'",(task_id,)).fetchone()
+            if not row:return False
+            meta=_json_loads(row['metadata_json'])
+            if float(meta.get('not_before',float('inf')))>timestamp:return False
+            if float(meta.get('deadline_at',0))<=timestamp:return False
+            if int(meta.get('cooldown_attempts',0))>=int(meta.get('cooldown_limit',3)):return False
+            meta['cooldown_attempts']=int(meta.get('cooldown_attempts',0))+1
+            meta['phase']='cooldown_probe_queued'
+            conn.execute("UPDATE runtime_tasks SET status='queued',updated_at=?,metadata_json=? WHERE task_id=? AND status='waiting_cooldown'",(timestamp,_json_dumps(meta),task_id))
+            return True
 
     def mark_completed(self, task_id: str, result_path: str = "", metadata: Optional[Dict] = None) -> Dict:
         return self._mark(task_id, "completed", finished=True, result_path=result_path, metadata=metadata)

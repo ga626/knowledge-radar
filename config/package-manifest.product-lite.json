@@ -42,7 +42,9 @@
     "browser_link/host/**",
     "config/browser-link.json",
     "scripts/browser_link_install.py",
-    "docs/CAPABILITIES.md"
+    "docs/CAPABILITIES.md",
+    "browser_link/opencli_bridge/**",
+    "config/browser-components.json"
   ],
   "exclude": [
     ".git/**",

@@ -13,25 +13,17 @@ from typing import Any, Dict, Mapping, Optional
 
 MANUAL_REASON_TOKENS = {
     "auth",
-    "captcha",
     "cookie",
     "login",
     "manual_action",
-    "platform_verification",
     "qr",
     "scan",
-    "security_verification",
-    "verify",
-    "verification",
-    "人机",
     "扫码",
     "登录",
-    "验证",
-    "验证码",
-    "风控",
 }
 
 RATE_LIMIT_REASON_TOKENS = {
+    "captcha", "verification", "verify", "人机", "验证", "验证码", "风控",
     "429",
     "frequency",
     "frequent",
@@ -131,8 +123,8 @@ def normalize_platform_risk_event(
 
     if _has_any(text, ACCOUNT_RISK_REASON_TOKENS):
         severity = "critical"
-        recoverability = "manual_or_long_cooldown"
-        manual = True
+        recoverability = "cooldown"
+        manual = False
     elif manual:
         severity = "high"
         recoverability = "manual_interaction"
@@ -174,8 +166,8 @@ def compute_platform_cooldown(
 ) -> Dict[str, Any]:
     """Compute a conservative dynamic cooldown without sleeping.
 
-    Manual/login/captcha events return a zero cooldown because the next action is
-    user interaction, not waiting. Rate-limit events prefer server Retry-After.
+    Login/authentication events wait for the user. Challenges and rate limits
+    use bounded waiting; a server Retry-After takes precedence over local backoff.
     """
 
     data = event.to_dict() if isinstance(event, PlatformRiskEvent) else dict(event or {})

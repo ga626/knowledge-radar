@@ -37,7 +37,6 @@ LEASED_BROWSER_PLATFORMS = {"boss", "liepin", "maimai"}
 PLATFORM_LEASE_TTL_S = 180
 NO_COOLDOWN_REASONS = {
     "city_mapping_missing",
-    "anti_bot_verification",
     "empty_results",
     "no_results",
     "zero_results",
@@ -48,7 +47,6 @@ NO_COOLDOWN_REASONS = {
     "no_page_target",
     "city_mismatch",
     "login_required",
-    "platform_verification_required",
     "manual_action_required",
     "auth_preflight_failed",
     "tool_failure_needs_repair",
@@ -411,7 +409,6 @@ def record_search_outcome(
         scope={"account_slot": account_slot, "keyword": keyword, "city": city},
         manual_action_required=normalized_reason in {
             "login_required",
-            "platform_verification_required",
             "manual_action_required",
             "auth_preflight_failed",
         },

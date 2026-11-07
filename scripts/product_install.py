@@ -44,6 +44,13 @@ def browser_link_lifecycle():
     return module
 
 
+def browser_host_plan(install_root):
+    active=load_active(install_root)
+    if not active:raise RuntimeError('installed_product_required')
+    lifecycle=browser_link_lifecycle()
+    return {**lifecycle.handoff_plan(install_root),'scope':'native_host_registration_only'}
+
+
 def cli_lifecycle():
     import importlib.util
     spec = importlib.util.spec_from_file_location('kr_product_cli', Path(__file__).with_name('product_cli_launcher.py'))
@@ -65,6 +72,51 @@ def installation_maintenance(function):
         with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT):
             return function(*args, **kwargs)
     return guarded
+
+
+@installation_maintenance
+def browser_host_apply(install_root, confirmation):
+    active=load_active(install_root)
+    if not confirmation:raise RuntimeError('explicit_host_handoff_required')
+    lifecycle=browser_link_lifecycle()
+    if lifecycle.handoff_plan(install_root)['confirmation_token']!=confirmation:
+        raise RuntimeError('browser_link_handoff_plan_stale')
+    result=lifecycle.apply(Path(active['program_root']),install_root,Path(active['data_root']),handoff_confirmation=confirmation)
+    active['browser_link']=result
+    write_json_atomic(install_root/'active.json',active)
+    write_json_atomic(Path(active['data_root'])/'receipts/browser-host-handoff.json',result)
+    return result
+
+
+@installation_maintenance
+def bundled_component_apply(install_root, component):
+    active=load_active(install_root)
+    if not active:raise RuntimeError('installed_product_required')
+    return _prepare_bundled_component(Path(active['program_root']),install_root,Path(active['data_root']),component)
+
+
+def _prepare_bundled_component(program_root, install_root, data_root, component):
+    """Use the same drain boundary for upgrades and console preparation."""
+    sys.path.insert(0,str(program_root/'src'))
+    from runtime.browser_components import prepare_component,component_status
+    arguments={'program':program_root,'install':install_root,'state':data_root/'state'}
+    status=component_status(component,**arguments)
+    if status['status']=='prepared':return status
+    if component=='opencli':_quiesce_data_bridges(data_root)
+    lifecycle=browser_link_lifecycle()
+    state=None;drained={}
+    if component=='browser_link':
+        registered=lifecycle.read_registration()
+        # Preparing our extension files does not authorize touching another
+        # installation's Host. Registration handoff remains a separate action.
+        if registered and Path(registered).resolve().is_relative_to((install_root/'components/browser_link').resolve()):
+            state=lifecycle._registered_state(registered,install_root)
+            drained=lifecycle._drain_idle(state,'component_update')
+    try:
+        result=prepare_component(component,**arguments)
+    finally:
+        if state and drained.get('connected',True):lifecycle._control(state,'resume')
+    return result
 
 
 def sha256_file(path: Path) -> str:
@@ -240,6 +292,36 @@ def load_active(install_root: Path) -> dict[str, Any]:
     return payload
 
 
+def select_data_root(install_root: Path, requested: str = '', *, first_install_required=False) -> Path:
+    """升级继承唯一active记录；首次安装须显式选择，不猜另一份空数据。"""
+    active_path=install_root/'active.json'
+    current=load_active(install_root) if active_path.exists() else None
+    if requested:return Path(requested).expanduser().resolve()
+    if current:
+        selected=Path(str(current.get('data_root') or '')).expanduser()
+        if not selected.is_absolute() or not selected.is_dir():raise RuntimeError('selected data root unavailable; restore it or use explicit data migration')
+        return selected.resolve()
+    if first_install_required:raise RuntimeError('first installation requires an explicitly selected --data-root')
+    return install_root/'data'
+
+
+def choose_data_root():
+    """安装界面只选择目录；取消不会产生安装或数据变更。"""
+    if os.name!='nt':raise RuntimeError('use --data-root on this operating system')
+    sys.path.insert(0,str(PACKAGE_ROOT/'src'))
+    from runtime.process import silent_subprocess_run
+    script=("Add-Type -AssemblyName System.Windows.Forms; "
+        "$dialog=New-Object System.Windows.Forms.FolderBrowserDialog; "
+        "$dialog.Description='KnowledgeRadar: choose your data directory'; "
+        "if($dialog.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK){"
+        "[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false); "
+        "[Console]::Write($dialog.SelectedPath)}else{exit 2}")
+    selected=silent_subprocess_run(['powershell.exe','-NoProfile','-STA','-Command',script],
+        capture_output=True,text=True,encoding='utf-8',timeout=1800)
+    if selected.returncode or not selected.stdout.strip():raise RuntimeError('data directory selection cancelled; installation not started')
+    return selected.stdout.strip()
+
+
 def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False, suffix=".tmp") as handle:
@@ -250,6 +332,15 @@ def write_json_atomic(path: Path, payload: dict[str, Any]) -> None:
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _write_text_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True,exist_ok=True)
+    with tempfile.NamedTemporaryFile('w',encoding='utf-8',dir=path.parent,delete=False,suffix='.tmp') as handle:
+        temporary=Path(handle.name)
+        handle.write(text);handle.flush();os.fsync(handle.fileno())
+    try:temporary.replace(path)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def replace_mcp_block(text: str, block: str) -> str:
@@ -743,13 +834,12 @@ def _refresh_active_mcp_block(install_root: Path, active: dict[str, Any]) -> Non
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
-    config.write_text(
+    _write_text_atomic(config,
         ensure_mcp_catalog_wait(
             replace_mcp_block(
                 config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)
             )
         ),
-        encoding="utf-8",
     )
 
 
@@ -850,7 +940,8 @@ def tree_summary(path: Path) -> dict[str, Any]:
 
 def _owner_ephemeral(relative: Path) -> bool:
     # 选主锁与进程描述符不是用户资料；维护接管不能改变迁移确认令牌。
-    return relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log'})
+    return ((relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log'}))
+        or relative.as_posix() in {'runtime/browser_link/host.json','state/xhs_opencli/daemon.json','state/xhs_opencli/daemon.log'})
 
 
 def _tree_manifest(path: Path) -> dict[str, str]:
@@ -858,12 +949,34 @@ def _tree_manifest(path: Path) -> dict[str, str]:
     if not path.is_dir():
         raise RuntimeError("data root is unavailable")
     rows: dict[str, str] = {}
+    for item in path.rglob('*'):
+        if item.is_symlink() or (hasattr(item,'is_junction') and item.is_junction()):raise RuntimeError('data migration links require explicit resolution; source preserved')
     for item in sorted((entry for entry in path.rglob("*") if entry.is_file()), key=lambda entry: entry.as_posix()):
         relative = item.relative_to(path).as_posix()
         if _owner_ephemeral(Path(relative)):
             continue
         rows[relative] = f"{item.stat().st_size}:{sha256_file(item)}"
     return rows
+
+
+def _quiesce_data_bridges(source):
+    """只停止已登记且无任务/租约的KR daemon；从不终止日常Chrome。"""
+    descriptor=source/'state/xhs_opencli/daemon.json'
+    if descriptor.is_file():
+        from runtime.process_identity import process_identity
+        record=json.loads(descriptor.read_text(encoding='utf-8'))
+        if type(record.get('pid')) is not int or record['pid']<=0 or not record.get('identity'):
+            raise RuntimeError('opencli daemon descriptor invalid; existing process preserved')
+        if record.get('identity') and process_identity(record.get('pid'))==record['identity']:
+            import httpx
+            with httpx.Client(trust_env=False,timeout=3) as client:
+                status=client.get('http://127.0.0.1:19825/status',headers={'X-OpenCLI':'1'}).json()
+                if status.get('pid')!=record['pid'] or status.get('daemonVersion')!='2.0.2':raise RuntimeError('opencli daemon identity changed; data migration stopped')
+                if status.get('pending') or status.get('sessionLeases'):raise RuntimeError('wait for OpenCLI tasks and session leases before data migration')
+                client.post('http://127.0.0.1:19825/shutdown',headers={'X-OpenCLI':'1'}).raise_for_status()
+            until=time.monotonic()+5
+            while time.monotonic()<until and process_identity(record['pid'])==record['identity']:time.sleep(.05)
+            if process_identity(record['pid'])==record['identity']:raise RuntimeError('opencli daemon shutdown incomplete')
 
 
 def _migration_token(source: Path, target: Path, source_summary: dict[str, Any]) -> str:
@@ -873,6 +986,7 @@ def _migration_token(source: Path, target: Path, source_summary: dict[str, Any])
             "target": str(target.resolve()),
             "files": source_summary["files"],
             "bytes": source_summary["bytes"],
+            "content_manifest": _tree_manifest(source),
         },
         ensure_ascii=False,
         sort_keys=True,
@@ -896,6 +1010,22 @@ def data_root_move_plan(install_root: Path, target_root: Path) -> dict[str, Any]
     """
     install_root = install_root.resolve()
     active = load_active(install_root)
+    pending=install_root/'backup/data-move-pending.json'
+    if pending.is_file():
+        journal=json.loads(pending.read_text(encoding='utf-8'))
+        if Path(journal['target'])!=target_root.resolve():raise RuntimeError('resume the existing data-root migration first')
+        if _tree_manifest(Path(journal['source']))!=journal['source_files']:
+            raise RuntimeError('migration source changed; preserve both roots and inspect')
+        if journal.get('phase')=='copying':
+            if active!=journal['previous']:raise RuntimeError('active installation changed during data migration')
+            return {**journal['plan'],'resume':True}
+        if journal.get('phase')=='binding':raise RuntimeError('data binding interrupted; use data-move-rollback to restore the retained source before retrying')
+        target_files=_tree_manifest(Path(journal['target']))
+        for name in journal.get('generated_receipts',[]):target_files.pop(name,None)
+        if _tree_manifest(Path(journal['source']))!=journal['source_files'] or target_files!=journal['target_files']:
+            raise RuntimeError('migration files changed; preserve both roots and inspect')
+        if active not in (journal['previous'],journal['active']):raise RuntimeError('active installation changed during data migration')
+        return {**journal['plan'],'resume':True}
     source = Path(str(active["data_root"])).resolve()
     target = target_root.resolve()
     if source == target or source in target.parents or target in source.parents:
@@ -918,7 +1048,7 @@ def data_root_move_plan(install_root: Path, target_root: Path) -> dict[str, Any]
         "target": {"exists": target.exists(), "free_bytes": volume.free},
         "required_free_bytes": source_summary["bytes"] + max(5 * 1024**3, source_summary["bytes"] // 5),
         "browser_lock_relative_paths": locked,
-        "confirmation_token": _migration_token(source, target, source_summary),
+        "confirmation_token": hashlib.sha256((_migration_token(source, target, source_summary)+json.dumps(active,sort_keys=True)).encode()).hexdigest()[:24],
         "copy_verify_switch": True,
         "keeps_source_for_rollback": True,
         "will_not_modify_development_source": True,
@@ -936,39 +1066,72 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
         raise RuntimeError("target volume does not have the required free space")
     install_root = install_root.resolve()
     active = load_active(install_root)
-    source = Path(str(active["data_root"])).resolve()
+    pending=install_root/'backup/data-move-pending.json'
+    journal=json.loads(pending.read_text(encoding='utf-8')) if pending.is_file() else None
+    source = Path(journal['source'] if journal else str(active["data_root"])).resolve()
     target = target_root.resolve()
     staging_parent = target.parent
     staging_parent.mkdir(parents=True, exist_ok=True)
-    staging = Path(tempfile.mkdtemp(prefix=".data-root-staging-", dir=staging_parent))
-    started = int(time.time())
-    try:
-        copied = staging / "payload"
-        shutil.copytree(source, copied, copy_function=shutil.copy2,
-                        ignore=lambda directory, names: [name for name in names if _owner_ephemeral((Path(directory)/name).relative_to(source))])
-        if _tree_manifest(source) != _tree_manifest(copied):
-            raise RuntimeError("copied data does not match source manifest")
-        copied.replace(target)
-    finally:
-        shutil.rmtree(staging, ignore_errors=True)
-    previous = dict(active)
+    started = journal['started'] if journal else int(time.time())
+    sys.path.insert(0,str(PACKAGE_ROOT/'src'))
+    previous = dict(journal['previous'] if journal else active)
     active["data_root"] = str(target)
     active["data_root_hash"] = path_hash(target)
     active["previous_data_root"] = str(source)
     active["data_root_migration_token"] = plan["confirmation_token"]
+    if not journal:
+        staging=staging_parent/('.data-root-staging-'+uuid4().hex)
+        journal={'phase':'copying','staging':str(staging),'source':str(source),'target':str(target),'source_files':_tree_manifest(source),
+            'previous':previous,'active':active,'plan':plan,'started':started,
+            'generated_receipts':[f'receipts/codex-config.before-data-move-{started}.toml',f'receipts/data-root-move-{started}.json']}
+        write_json_atomic(pending,journal)
+    if journal.get('phase')=='copying':
+        _quiesce_data_bridges(source)
+        lifecycle=browser_link_lifecycle();registration=lifecycle.read_registration() if (Path(active['program_root'])/'config/browser-link.json').is_file() else None
+        if registration:
+            old_state=lifecycle._registered_state(registration,install_root)
+            lifecycle._drain_idle(old_state,'data_migration')
+        staging=Path(journal['staging'])
+        if staging.parent!=staging_parent or not staging.name.startswith('.data-root-staging-'):raise RuntimeError('data migration staging identity invalid')
+        copied=staging/'payload'
+        if target.is_dir() and any(target.iterdir()):
+            if _tree_manifest(target)!=journal['source_files']:raise RuntimeError('migration target changed; preserve and inspect')
+        else:
+            if copied.exists():
+                existing=_tree_manifest(copied)
+                if any(journal['source_files'].get(name)!=digest for name,digest in existing.items()):raise RuntimeError('migration staging changed; preserve and inspect')
+            def copy_missing(src,dest):
+                if Path(dest).exists():
+                    if sha256_file(Path(src))!=sha256_file(Path(dest)):raise RuntimeError('migration staging changed')
+                    return dest
+                return shutil.copy2(src,dest)
+            shutil.copytree(source,copied,dirs_exist_ok=True,copy_function=copy_missing,
+                ignore=lambda directory,names:[name for name in names if _owner_ephemeral((Path(directory)/name).relative_to(source))])
+            if _tree_manifest(source)!=journal['source_files'] or _tree_manifest(copied)!=journal['source_files']:raise RuntimeError('copied data does not match source manifest')
+            if target.exists():target.rmdir()  # 计划指定且仍为空的目标目录。
+            copied.replace(target)
+        journal['phase']='binding';write_json_atomic(pending,journal)
+        from runtime.data_relocation import relocate_owned_state
+        relocate_owned_state(source,target)
+        journal.update(phase='switching',target_files=_tree_manifest(target));write_json_atomic(pending,journal)
+        if staging.exists():staging.rmdir()
+    if (Path(active['program_root'])/'config/browser-link.json').is_file():
+        host=browser_link_lifecycle().apply(Path(active['program_root']),install_root,target)
+        if host.get('status')=='registration_conflict':raise RuntimeError('resolve the existing Browser Link Host registration before data migration')
+        active['browser_link']=host;journal['active']=active;write_json_atomic(pending,journal)
     runtime = _active_runtime(install_root, active)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
     config.parent.mkdir(parents=True, exist_ok=True)
     if config.is_file():
-        shutil.copyfile(config, target / "receipts" / f"codex-config.before-data-move-{started}.toml")
-    config.write_text(
+        config_backup=target / "receipts" / f"codex-config.before-data-move-{started}.toml"
+        if not config_backup.exists():shutil.copyfile(config,config_backup)
+    _write_text_atomic(config,
         ensure_mcp_catalog_wait(
             replace_mcp_block(
                 config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, runtime)
             )
         ),
-        encoding="utf-8",
     )
     write_json_atomic(install_root / "backup" / "active.before-data-move.json", previous)
     write_json_atomic(install_root / "active.json", active)
@@ -983,29 +1146,60 @@ def data_root_move_apply(install_root: Path, target_root: Path, confirmation: st
         "wizard_launcher": str(launcher),
     }
     write_json_atomic(target / "receipts" / f"data-root-move-{started}.json", receipt)
+    write_json_atomic(install_root/'backup/data-move-rollback-guard.json',{'target':str(target),'files':_tree_manifest(target),
+        'source':str(source),'source_files':_tree_manifest(source)})
+    pending.unlink()
     return receipt
 
 
 @installation_maintenance
 def data_root_move_rollback(install_root: Path) -> dict[str, Any]:
     install_root = install_root.resolve()
+    pending=install_root/'backup/data-move-pending.json'
+    if pending.is_file():
+        journal=json.loads(pending.read_text(encoding='utf-8'))
+        if load_active(install_root)!=journal['previous'] or _tree_manifest(Path(journal['source']))!=journal['source_files']:
+            raise RuntimeError('migration has switched or source changed; preserve both roots and resume the transaction')
+        if (Path(journal['previous']['program_root'])/'config/browser-link.json').is_file():
+            host=browser_link_lifecycle().apply(Path(journal['previous']['program_root']),install_root,Path(journal['source']))
+            if host.get('status')=='registration_conflict':raise RuntimeError('resolve Browser Link Host conflict before restoring data root')
+        previous=journal['previous']
+        runtime=_active_runtime(install_root,previous)
+        codex_home=Path(os.environ.get('CODEX_HOME',Path.home()/'.codex')).resolve()
+        config=codex_home/'config.toml';config.parent.mkdir(parents=True,exist_ok=True)
+        _write_text_atomic(config,ensure_mcp_catalog_wait(replace_mcp_block(
+            config.read_text(encoding='utf-8') if config.is_file() else '',active_mcp_block(previous,runtime))))
+        write_product_wizard_launcher(previous,runtime)
+        refresh_console_autostart(install_root,runtime)
+        write_json_atomic(install_root/'backup/data-move-aborted.json',journal)
+        pending.unlink()
+        return {'status':'ROLLED_BACK','target_preserved':True,'source_restored':True}
     backup = install_root / "backup" / "active.before-data-move.json"
     if not backup.is_file():
         raise RuntimeError("no data-root migration rollback record is available")
+    guard=install_root/'backup/data-move-rollback-guard.json'
+    if not guard.is_file():raise RuntimeError('data-root rollback requires a verified post-migration manifest')
+    guard_value=json.loads(guard.read_text(encoding='utf-8'))
+    if _tree_manifest(Path(guard_value['target']))!=guard_value['files']:
+        raise RuntimeError('new data has changed after migration; preserve and reconcile before rollback')
+    if _tree_manifest(Path(guard_value['source']))!=guard_value['source_files']:
+        raise RuntimeError('retained source changed after migration; reconcile before rollback')
     previous = json.loads(backup.read_text(encoding="utf-8"))
     previous_root = Path(str(previous.get("data_root") or "")).resolve()
     if not previous_root.is_dir():
         raise RuntimeError("previous data root is unavailable")
+    if (Path(previous['program_root'])/'config/browser-link.json').is_file():
+        host=browser_link_lifecycle().apply(Path(previous['program_root']),install_root,previous_root)
+        if host.get('status')=='registration_conflict':raise RuntimeError('resolve Browser Link Host conflict before restoring data root')
     runtime = _active_runtime(install_root, previous)
     codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
     config = codex_home / "config.toml"
-    config.write_text(
+    _write_text_atomic(config,
         ensure_mcp_catalog_wait(
             replace_mcp_block(
                 config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(previous, runtime)
             )
         ),
-        encoding="utf-8",
     )
     write_json_atomic(install_root / "active.json", previous)
     launcher = write_product_wizard_launcher(previous, runtime)
@@ -1347,6 +1541,10 @@ def apply_install(
     receipt_path: Path | None = None,
     enable_console_autostart: bool = False,
 ) -> dict[str, Any]:
+    if (install_root/'active.json').is_file():
+        current=load_active(install_root)
+        if Path(current['data_root']).resolve()!=data_root.resolve():
+            raise RuntimeError('upgrade cannot change selected data root; use data-move-plan and data-move-apply')
     plan = build_plan(package_root, install_root, data_root, python_exe)
     provenance = verify_product_package(package_root)
     if archive is None or receipt_path is None:
@@ -1367,6 +1565,12 @@ def apply_install(
     product_python = Path(staged["runtime_python"])
     model_configuration = migrate_model_configuration(data_root, program_root)
     restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
+    browser_components={}
+    if (program_root/'config/browser-components.json').is_file():
+        sys.path.insert(0,str(program_root/'src'))
+        for component in ('browser_link','opencli'):
+            try:browser_components[component]=_prepare_bundled_component(program_root,install_root,data_root,component)
+            except ValueError as error:browser_components[component]={'status':'conflict','error':str(error)}
     active = {
         "schema": ACTIVE_SCHEMA,
         "channel": channel,
@@ -1379,6 +1583,7 @@ def apply_install(
         "archive_sha256": str(artifact_receipt["archive_sha256"]),
         "source_commit": provenance["source_commit"],
         "model_configuration": model_configuration,
+        "browser_components": browser_components,
     }
     active_path = install_root / "active.json"
     if active_path.is_file():
@@ -1529,11 +1734,15 @@ def main(argv: list[str] | None = None) -> int:
             "capability-plan",
             "capability-apply",
             "developer-view",
+            "browser-host-plan",
+            "browser-host-apply",
+            "component-prepare",
         ),
     )
     parser.add_argument("--package-root", default=str(PACKAGE_ROOT))
     parser.add_argument("--install-root", default=str(default_install_root()))
     parser.add_argument("--data-root", default="")
+    parser.add_argument('--choose-data-root',action='store_true',help='show the native Windows data directory picker before installation')
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--channel", choices=("stable", "maintainer-main"), default="stable")
     parser.add_argument("--archive", default="", help="downloaded candidate/release ZIP")
@@ -1542,6 +1751,7 @@ def main(argv: list[str] | None = None) -> int:
         "--legacy-root", default="", help="existing private development/runtime root; read only for migration"
     )
     parser.add_argument("--confirmation", default="", help="confirmation token returned by data-move-plan")
+    parser.add_argument('--component',choices=('browser_link','opencli'),default='')
     parser.add_argument(
         "--capability", choices=CAPABILITY_IDS, default="", help="optional capability to inspect or install"
     )
@@ -1555,9 +1765,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         package_root = Path(args.package_root).resolve()
         install_root = Path(args.install_root).resolve()
-        data_root = Path(args.data_root).resolve() if args.data_root else install_root / "data"
+        if args.choose_data_root:
+            if args.data_root or args.command not in {'plan','verify-install','apply'}:raise ValueError('choose-data-root is only for installation without --data-root')
+            if (install_root/'active.json').exists():raise ValueError('upgrades inherit the selected directory; use the data migration wizard to change it')
+            args.data_root=choose_data_root()
+        data_root = select_data_root(install_root,args.data_root,first_install_required=args.command in {'plan','verify-install','apply','migrate-plan','migrate-apply'})
         python_exe = Path(args.python).resolve()
-        if args.command == "developer-view":
+        if args.command=='browser-host-plan':
+            result=browser_host_plan(install_root)
+        elif args.command=='browser-host-apply':
+            result=browser_host_apply(install_root,args.confirmation)
+        elif args.command=='component-prepare':
+            if not args.component:raise ValueError('component-prepare requires --component')
+            result=bundled_component_apply(install_root,args.component)
+        elif args.command == "developer-view":
             if not args.developer_view:
                 raise ValueError("developer-view requires --developer-view enable|disable")
             result = set_developer_view(install_root, args.developer_view == "enable")

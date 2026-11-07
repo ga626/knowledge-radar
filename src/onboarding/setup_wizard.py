@@ -23,6 +23,10 @@ from onboarding.product_status import (
     console_configuration_snapshot,
     dashboard_snapshot,
     data_root_move_console_plan,
+    data_root_move_console_apply,
+    data_root_move_console_rollback,
+    bundled_component_prepare,
+    browser_host_console_action,
     diagnostic_snapshot,
     expired_media_cleanup,
     installation_summary,
@@ -252,12 +256,21 @@ def _handler_factory(server: WizardServer):
                 "/api/config",
                 "/api/media-cleanup",
                 "/api/data-move-plan",
+                "/api/data-move-apply",
+                "/api/data-move-rollback",
+                "/api/component-prepare",
+                "/api/browser-host-plan",
+                "/api/browser-host-apply",
                 "/api/capability-plan",
                 "/api/capability-apply",
                 "/api/console/stop",
             }
             if self.path not in allowed:
                 self._send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "不存在的操作。"})
+                return
+            install_root=os.environ.get('KR_INSTALL_ROOT','')
+            if install_root and (Path(install_root)/'backup/data-move-pending.json').is_file() and self.path not in {'/api/data-move-plan','/api/data-move-apply','/api/data-move-rollback','/api/console/stop'}:
+                self._send_json(HTTPStatus.CONFLICT,{'ok':False,'error':'数据迁移尚未完成，请在原迁移计划中继续；其他写入已暂停。'})
                 return
             local_config = self.path == "/api/config" and _preview_config_is_isolated()
             if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"} and not local_config:
@@ -288,6 +301,18 @@ def _handler_factory(server: WizardServer):
                     response = recover_account(str(payload.get("profile_id") or ""), str(payload.get("action") or ""))
                 elif self.path == "/api/data-move-plan":
                     response = data_root_move_console_plan(str(payload.get("target_root") or ""))
+                elif self.path=='/api/data-move-apply':
+                    response=data_root_move_console_apply(str(payload.get('target_root') or ''),str(payload.get('confirmation') or ''))
+                elif self.path=='/api/data-move-rollback':
+                    response=data_root_move_console_rollback(str(payload.get('confirmation') or ''))
+                elif self.path == '/api/component-prepare':
+                    response=bundled_component_prepare(str(payload.get('component') or ''))
+                elif self.path == '/api/browser-host-plan':
+                    response=browser_host_console_action()
+                elif self.path == '/api/browser-host-apply':
+                    confirmation=str(payload.get('confirmation') or '')
+                    if not confirmation:raise ValueError('请先生成Host接管计划。')
+                    response=browser_host_console_action(confirmation)
                 elif self.path == "/api/capability-plan":
                     response = optional_capability_plan(str(payload.get("capability") or ""))
                 elif self.path == "/api/capability-apply":

@@ -9,11 +9,11 @@ KnowledgeRadar 不会要求你在第一次安装时配置所有服务。核心�
 | 核心网页研究 | 希望搜索或提取公开网页时 | 你选择的搜索服务配置 | 至少填写一个搜索来源；额度、网络与来源可访问性仍会影响结果。 |
 | 学术资料 | 希望扩展学术元数据来源时 | 可选 API 配置 | 机构授权、付费墙和 provider 额度不会被绕过。 |
 | 模型服务 | 需要视频、图片或模型理解时 | 可选模型 API 配置 | 调用可能计费；本地转写模型与媒体缓存不在能力中心配置。 |
-| 登录平台与招聘 | 实际访问需要登录的平台时 | 你的浏览器 Profile 与本地状态 | 验证码、风控或平台策略会要求你手动完成操作，或返回明确降级。 |
+| 登录平台与招聘 | 实际访问需要登录的平台时 | 你的浏览器 Profile 与本地状态 | 登录/扫码由本人完成；暂时风控等待到期后作有界只读尝试，不自动解验证码或绕过挑战。 |
 
 能力中心只展示上述需要填写 Key、URL 或完成人工登录的配置。诊断与隐私属于“设置与帮助”，不再伪装成一个待配置能力。
 
-本地组件页按功能展示，而不是按“电脑已有软件 / 任务时下载”分类。插件本体只安装控制台与基础研究路径；额外组件都必须在本地控制台经过“生成计划 → 第二次确认安装”，不会随插件本体安装或打开页面而下载。
+本地组件页按功能展示，而不是按“电脑已有软件 / 任务时下载”分类。插件本体只安装控制台与基础研究路径；Browser Link 与 KR OpenCLI Bridge 扩展文件随包校验并准备，首次由本人在 Chrome 加载和确认。其他需要下载的运行时/模型先生成计划、再第二次确认；打开页面不会自动下载。Chrome、Node 与 Obsidian 软件提供官方引导。
 
 | 按需能力 | 下载到哪里 | 何时需要 | 不会做什么 |
 | --- | --- | --- | --- |
@@ -31,7 +31,7 @@ python scripts\product_install.py capability-plan --capability browser
 python scripts\product_install.py capability-apply --capability browser --confirmation <plan 中的 confirmation_token>
 ```
 
-小红书不再使用上面的旧 bridge 安装入口。维护者先用 `python scripts/kr_opencli.py prepare --source-root <已审查的OpenCLI构建>` 准备固定版本，再运行 `start` 和 `inventory`；本人在日常 Chrome 启用官方扩展后，用 `bind --browser chrome --context-id <核对的context>` 绑定。`status` 只读检查连接。当前准备入口要求已有受审查构建，不提供从任意 npm 版本自动下载或静默安装扩展；扩展在线也不等于账号已登录。
+小红书不再使用上面的旧 bridge 安装入口。维护者先用 `python scripts/kr_opencli.py prepare --source-root <已审查的OpenCLI构建>` 准备固定版本，再运行 `start` 和 `inventory`；本人在日常 Chrome 加载随包 KR OpenCLI Bridge 后，用 `bind --browser chrome --context-id <核对的context>` 绑定。`status` 只读检查连接。运行时准备要求固定受审查构建；随包扩展不自动获得浏览器权限。组件页分别显示文件准备、通道连接与站点登录，扩展在线不等于账号已登录。
 
 ## 本地健康台
 
@@ -44,7 +44,7 @@ Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cm
 - 产品数据根的分类空间摘要；
 - 只针对已过期媒体缓存的可恢复隔离操作。
 
-控制台还可以生成不含路径、文件名、账号或配置值的数据根迁移计划；真正迁移仍必须在命令行执行带令牌的 `data-move-apply`。脱敏诊断可在本机查看或导出，适合在提交 Issue 前人工核对；不要上传任何 Profile、Cookie、日志或原始配置文件。
+控制台可生成脱敏的数据根迁移计划，再确认执行；恢复原目录也需两次点击确认。复制、校验、路径重绑定及切换沿安装器同一合同，命令行入口仍可用。脱敏诊断可在本机查看或导出，适合在提交 Issue 前人工核对；不要上传任何 Profile、Cookie、日志或原始配置文件。
 
 页面只监听 `127.0.0.1`。密钥不会回显，空间摘要不显示文件名、路径或内容。隔离操作要求同源会话 token，且只会把 manifest 已登记且过期的媒体缓存移入可恢复隔离区；它**不会**删除 API Key、浏览器 Profile、Cookie、日志、模型或未知文件。
 
@@ -54,3 +54,7 @@ Release 用户运行 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cm
 - 若新版本无法运行，使用 `python scripts\product_install.py rollback` 恢复上一个 active 版本；不会删除数据。
 - 安装后需要重启或按 Codex 支持的方式刷新，令 Codex 重新读取唯一的 MCP 配置块。详见 [产品安装与更新](PRODUCT_INSTALL.md)。
 - `health_check` 与 `get_capabilities` 返回的是运行时的脱敏状态；“需要人工操作”或“预期降级”不等于核心服务崩溃。
+
+## Obsidian 与知识归档
+
+组件页区分软件安装与归档目标授权，提供 Obsidian 官方下载。授权后按动态项目名/年份/日期时间任务保存总报告和全部有效来源文本；报告已到、资料待补和完整交付分别显示。状态位于本人选择的数据目录，升级保留。旧布局通过有归属、身份和哈希检查的计划迁移，人改内容保留。

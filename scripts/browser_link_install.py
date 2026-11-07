@@ -29,7 +29,8 @@ def plan(program_root: Path, install_root: Path, data_root: Path):
     if not source.is_file():
         raise ValueError('browser_link_host_source_missing')
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    component = install_root / 'components/browser_link' / digest[:20]
+    component_digest=hashlib.sha256(source.read_bytes()+b'\x00winexe-v1').hexdigest()
+    component = install_root / 'components/browser_link' / component_digest[:20]
     return {'status': 'ready' if identifiers else 'store_registration_pending', 'registration': bool(identifiers),
         'source': str(source), 'source_sha256': digest, 'component_root': str(component),
         'manifest': str(component / (HOST + '.json')), 'host': str(component / 'BrowserLinkHost.exe'),
@@ -119,20 +120,59 @@ def _drain_idle(state_file, action):
     return drained
 
 
-def apply(program_root: Path, install_root: Path, data_root: Path):
+def handoff_plan(install_root: Path):
+    """An explicit, content-bound handoff preserves the previous host registration."""
+    value=read_registration()
+    if not value:return {'status':'not_needed','confirmation_token':None}
+    payload=_registration_fingerprint(value)
+    payload['destination_install_root']=str(install_root.resolve())
+    return {'status':'PLAN','previous_registration':value,'confirmation_token':hashlib.sha256(json.dumps(payload,sort_keys=True).encode()).hexdigest(),
+        'previous_identity':payload,'preserves_previous_files':True}
+
+
+def _registration_fingerprint(value):
+    path=Path(value)
+    manifest=json.loads(path.read_text(encoding='utf-8-sig'))
+    if manifest.get('name')!=HOST or manifest.get('type')!='stdio':
+        raise RuntimeError('browser_link_unknown_registration_preserved')
+    host=Path(manifest.get('path',''))
+    if not host.is_file():raise RuntimeError('browser_link_previous_host_missing')
+    settings=host.with_name('host-settings.json')
+    payload={'registration':value,'manifest_sha256':hashlib.sha256(path.read_bytes()).hexdigest(),
+        'host_sha256':hashlib.sha256(host.read_bytes()).hexdigest()}
+    payload['settings_sha256']=hashlib.sha256(settings.read_bytes()).hexdigest() if settings.is_file() else None
+    return payload
+
+
+def apply(program_root: Path, install_root: Path, data_root: Path, *, handoff_confirmation=None):
     item = plan(program_root, install_root, data_root)
-    # HTTP-only installs remain functional; missing store approval is explicit.
+    # HTTP-only installs remain functional when the connector is unavailable.
     if not item['registration']:
         return item
     before = read_registration()
-    _assert_owned(before, install_root)
-    previous_state = _registered_state(before, install_root)
+    external=False;previous_identity=None
+    try:_assert_owned(before, install_root)
+    except RuntimeError:
+        external=True
+        if handoff_confirmation is None:
+            return {**item,'status':'registration_conflict','previous_registration':before,'next_action':'explicit_host_handoff_required'}
+        candidate=handoff_plan(install_root)
+        if handoff_confirmation!=candidate['confirmation_token']:
+            raise RuntimeError('browser_link_handoff_plan_stale')
+        previous_identity=candidate['previous_identity'].copy();previous_identity.pop('destination_install_root',None)
+    previous_state = None if external else _registered_state(before, install_root)
+    if external:
+        previous_manifest=json.loads(Path(before).read_text(encoding='utf-8-sig'))
+        previous_settings=Path(previous_manifest['path']).with_name('host-settings.json')
+        if previous_settings.is_file():
+            previous_state=Path(json.loads(previous_settings.read_text(encoding='utf-8-sig'))['state_file'])
+            if not previous_state.is_absolute():raise RuntimeError('browser_link_previous_state_not_absolute')
     host = Path(item['host']); host.parent.mkdir(parents=True, exist_ok=True)
     if not host.is_file():
         compiler = Path(os.environ.get('WINDIR', r'C:\Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
         if not compiler.is_file():
             raise RuntimeError('browser_link_framework_compiler_unavailable')
-        subprocess.run([str(compiler), '/nologo', '/target:exe', '/reference:System.Web.Extensions.dll',
+        subprocess.run([str(compiler), '/nologo', '/target:winexe', '/reference:System.Web.Extensions.dll',
                         '/out:' + str(host), item['source']], check=True, capture_output=True,
                        creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
     manifest = {'name': HOST, 'description': 'KnowledgeRadar Browser Link', 'path': str(host), 'type': 'stdio',
@@ -142,7 +182,12 @@ def apply(program_root: Path, install_root: Path, data_root: Path):
     state_file = previous_state or Path(item['state_file'])
     files = _snapshot([host.with_name('host-settings.json'), Path(item['manifest'])])
     drained = _drain_idle(state_file, 'upgrade')
+    mutating=False
     try:
+        if (read_registration()!=before or _snapshot([Path(name) for name in files])!=files
+                or (external and _registration_fingerprint(before)!=previous_identity)):
+            raise RuntimeError('browser_link_registration_changed_before_apply')
+        mutating=True
         host.with_name('host-settings.json').write_text(json.dumps({'state_file': item['state_file']}), encoding='utf-8')
         Path(item['manifest']).write_text(json.dumps(manifest, indent=2), encoding='utf-8')
         write_registration(item['manifest'])
@@ -150,14 +195,21 @@ def apply(program_root: Path, install_root: Path, data_root: Path):
             _control(state_file, 'shutdown')
     except Exception:
         try:
-            _restore_files(files)
-            write_registration(before)
+            if mutating:
+                current=read_registration()
+                if current not in {before,item['manifest']}:
+                    raise RuntimeError('browser_link_registration_changed_preserved')
+                # A registry call may have committed before reporting an error.
+                if current==item['manifest'] and current!=before:write_registration(before)
+                _restore_files(files)
         finally:
             if drained.get('connected', True):
                 _control(state_file,'resume')
         raise
     return {**item, 'previous_registration': before, 'previous_files': files, 'host_sha256': hashlib.sha256(host.read_bytes()).hexdigest(),
-        'extension_install': 'user_store_consent_required', 'status': 'registered'}
+        'external_handoff':external,'previous_identity':previous_identity,
+        'applied_identity':_registration_fingerprint(item['manifest']),
+        'extension_install': 'user_unpacked_load_consent_required', 'status': 'registered'}
 
 
 def restore(receipt, install_root):
@@ -173,23 +225,35 @@ def restore(receipt, install_root):
         _assert_owned(current, install_root)
         if current != receipt['manifest']:
             raise RuntimeError('browser_link_registration_changed_since_apply')
+        if receipt.get('applied_identity') and _registration_fingerprint(current)!=receipt['applied_identity']:
+            raise RuntimeError('browser_link_current_registration_modified_preserved')
         state_file = _registered_state(current, install_root)
         files = receipt.get('previous_files', {})
         for name in files:
             if not Path(name).resolve().is_relative_to((install_root / 'components/browser_link').resolve()):
                 raise RuntimeError('browser_link_restore_file_outside_installation')
-        _assert_owned(receipt.get('previous_registration'), install_root)
+        if not receipt.get('external_handoff'):
+            _assert_owned(receipt.get('previous_registration'), install_root)
+        elif _registration_fingerprint(receipt['previous_registration'])!=receipt.get('previous_identity'):
+            raise RuntimeError('browser_link_previous_registration_modified_preserved')
         forward = _snapshot([Path(name) for name in files])
         drained = _drain_idle(state_file, 'rollback')
+        mutating=False
         try:
+            if read_registration()!=current or _snapshot([Path(name) for name in files])!=forward:
+                raise RuntimeError('browser_link_registration_changed_before_restore')
+            mutating=True
             _restore_files(files)
             write_registration(receipt.get('previous_registration'))
             if drained.get('connected', True):
                 _control(state_file, 'shutdown')
         except Exception:
             try:
-                _restore_files(forward)
-                write_registration(current)
+                if mutating:
+                    if read_registration() not in {current,receipt.get('previous_registration')}:
+                        raise RuntimeError('browser_link_registration_changed_preserved')
+                    _restore_files(forward)
+                    write_registration(current)
             finally:
                 if drained.get('connected', True):
                     _control(state_file, 'resume')

@@ -2,9 +2,12 @@
   "name": "KnowledgeRadar Browser Link",
   "host": "com.knowledgeradar.browser_link",
   "protocol": 1,
-  "extension_ids": [],
+  "extension_ids": [
+    "gjpefddhmkinebmgfblaidofllfckhbi"
+  ],
   "store_url": null,
-  "distribution": "not_published",
+  "distribution": "bundled_unpacked",
   "max_inflight": 2,
-  "per_site_inflight": 1
+  "per_site_inflight": 1,
+  "extension_version": "0.3.15"
 }

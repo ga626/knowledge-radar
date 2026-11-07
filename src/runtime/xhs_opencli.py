@@ -184,7 +184,7 @@ def latch(reason):
         now = time.time()
         if previous.get("reason") == reason and _stop_gate():
             return
-        seconds = 60 if reason == "RATE_LIMITED" else 300
+        seconds = 60
         _save(state_dir() / "stop.json", {"reason": reason, "at": now,
             "retry_at": now + seconds, "unknown_outcome": reason in UNKNOWN_CODES,
             "context_id": setting("KR_XHS_OPENCLI_CONTEXT_ID")})
@@ -212,9 +212,9 @@ def _failure(code, *, executed=True, data=None):
         _observe_account("needs_verification" if restricted else "needs_login", code)
     kind = ("request_outcome_unknown" if code in UNKNOWN_CODES else "rate_limited" if code == "RATE_LIMITED" else
             "anti_bot_verification" if restricted else "login_required" if code == "AUTH_REQUIRED" else code)
-    return {"ok": False, "status": "needs_interaction" if restricted or code == "AUTH_REQUIRED" else "failed",
+    return {"ok": False, "status": "needs_interaction" if code == "AUTH_REQUIRED" else "failed",
         "platform": "小红书", "error": {"error": code, "type": kind, "retryable": False},
-        "failure_type": kind, "manual_action_required": restricted or code == "AUTH_REQUIRED",
+        "failure_type": kind, "manual_action_required": code == "AUTH_REQUIRED",
         "request_executed": executed, "data": data or {},
         "next_action": "inspect_original_request_receipt_do_not_replay" if code in UNKNOWN_CODES else
             "wait_for_cooldown_then_new_bounded_attempt" if code in {"RATE_LIMITED", "platform_cooldown"} else "inspect_platform_state",
@@ -393,6 +393,11 @@ def _recover_or_fallback(response, operation, *, task_id="", **payload):
     error = response.get("error") or {}
     code = error.get("error", "") if isinstance(error, dict) else str(error)
     if code in UNKNOWN_CODES or response.get("failure_type") == "request_outcome_unknown":
+        return response
+    if code in RISK_CODES or code in {'RATE_LIMITED','platform_cooldown'}:
+        response['resume_policy']='bounded_read_only_probe'
+        response['retry_after_s']=_stop_gate().get('retry_after_s',60)
+        response['next_action']='wait_for_cooldown_then_new_bounded_attempt'
         return response
     pending = _json(state_dir() / "login.json")
     if code == "AUTH_REQUIRED" and not pending:

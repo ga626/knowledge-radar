@@ -45,11 +45,11 @@ class NativeSite:
     def failure(self, code, **extra):
         kind = {'SECURITY_BLOCK': 'anti_bot_verification', 'AUTH_REQUIRED': 'login_required',
                 'risk_latched': 'anti_bot_verification', 'outcome_latched': 'request_outcome_unknown'}.get(code, code)
-        manual = kind in {'anti_bot_verification', 'login_required', 'pending_manual_interaction'}
+        manual = kind in {'login_required', 'pending_manual_interaction'}
         return {'ok': False, 'platform': self.display, 'status': 'needs_interaction' if manual else 'failed',
                 'failure_type': kind, 'error': {'type': kind, 'failure_type': kind, 'manual_action_required': manual},
                 'manual_action_required': manual, 'items': [], 'retryable': False,
-                'resume_policy': 'stop_no_auto_resume' if kind in {'anti_bot_verification', 'request_outcome_unknown'} else 'explicit_retry',
+                'resume_policy': 'stop_no_auto_resume' if kind == 'request_outcome_unknown' else 'bounded_read_only_probe' if kind in {'anti_bot_verification','platform_cooldown','rate_limited'} else 'explicit_retry',
                 'next_action': 'inspect_original_request_receipt_do_not_replay' if kind == 'request_outcome_unknown' else 'wait_for_cooldown_then_new_bounded_attempt' if kind == 'platform_cooldown' else 'inspect_platform_state',
                 'metadata': {'transport': self.transport_name(), 'ownership': 'borrowed'}, **extra}
 
@@ -62,7 +62,7 @@ class NativeSite:
         retry_at = risk_retry_at(state, observed_at=observed) if state.get('risk') else 0
         reason = ('outcome_latched' if state.get('unknown_outcome') else
                   'platform_cooldown' if retry_at > now else
-                  'pending_manual_interaction' if (state.get('expires_at') or 0) > now and not state.get('cancelled') else 'ok')
+                  'pending_manual_interaction' if (state.get('expires_at') or 0) > now and not state.get('cancelled') and not state.get('risk') else 'ok')
         # Transport availability is not account authentication or remote rate state.
         return {'allowed': reason == 'ok', 'reason': reason,
                 'manual_action_required': reason == 'pending_manual_interaction',
@@ -97,7 +97,7 @@ class NativeSite:
                     # Late results must not clear a newer cancellation or risk observation.
                     write_state(self.state_path(), {**current, 'risk': bool(current.get('risk') or code == 'SECURITY_BLOCK'),
                         'unknown_outcome': bool(current.get('unknown_outcome') or uncertain), 'reason': code,
-                        'at': time.time(), 'retry_at': max(time.time()+300, float(current.get('retry_at') or 0))})
+                        'at': time.time(), 'retry_at': max(time.time()+60, float(current.get('retry_at') or 0))})
             result = self.failure('outcome_latched' if uncertain else code,
                 request_executed=response.get('request_executed', False))
             result['metadata']['transport_failure'] = code

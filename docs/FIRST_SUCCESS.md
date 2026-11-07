@@ -10,9 +10,9 @@
 
 ## 正确的安装与配置路径
 
-1. 解压 Release，在目录内执行 `python scripts\product_install.py apply --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json`。
+1. 解压 Release，在目录内执行 `python scripts\product_install.py apply --choose-data-root --channel stable --archive KnowledgeRadar.zip --receipt candidate-receipt.json`，在 Windows 对话框中选择数据保存目录；也可用 `--data-root <所选目录>`。
 2. 打开 `%LOCALAPPDATA%\KnowledgeRadar\console.cmd`（`configure.cmd` 仍可用）；固定地址为 `http://127.0.0.1:18882/`。安装会在当前用户登录时启动本地宿主；控制规则见[本地控制台](LOCAL_CONSOLE.md)。不要从解压目录或 app 目录运行 `setup_wizard.bat`。
-3. 只填写需要启用的字段，保存后关闭页面。配置写入 `%LOCALAPPDATA%\KnowledgeRadar\data\config\runtime.env`，不回显任何值。
+3. 只填写需要启用的字段，配置写入所选数据目录的 `config/runtime.env`，不回显值。在“本地组件”按功能查看 Chrome、Node、随包扩展及 Obsidian 的安装与连接引导；不要求一次装齐。
 4. 按 Codex 的方式重启/刷新 MCP，再调用 `health_check` 与 `get_capabilities`。
 
 ## 什么算第一次成功
@@ -23,7 +23,7 @@
 
 ## 升级与回滚
 
-对新 Release 重复安装命令即可更新。数据根不会被覆盖；如需退回上一稳定版本，使用：
+对新 Release 执行安装命令时省略 `--choose-data-root` 和 `--data-root`，继承已有位置、授权和组件状态。更改位置使用控制台迁移向导。若需退回上一稳定版本，使用：
 
 ```bat
 python scripts\product_install.py rollback
