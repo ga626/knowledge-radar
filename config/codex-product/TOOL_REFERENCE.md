@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`2ed10f3628846f1e62d72d46109da04821cd9f159962d9cea3463e099fecf9bc`
+合同指纹：`770af084874528d6cb2b017df63e16d2d566b069b71794a3a7b481ddc621f1f1`
 
 ## advance_research_candidate
 
@@ -3464,7 +3464,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
 
 ## manage_research_artifacts
 
-登记获准报告、授权/撤销目标或交付固定版本。新任务按项目/首次创建日期与任务平铺Markdown，文件名为来源加原题或已有中文标题；自动命名不调用模型。选取只生成链接并复用正文，机器映射留KR内部。先授权目标，重试同请求对账，人改、移动或删除均受保护；旧任务不自动搬迁。
+授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年份/首次日期时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。
 
 ```json
 {
@@ -3558,6 +3558,42 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
   },
   "input": {
     "$defs": {
+      "ApplyArchiveLayout": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "apply_archive_layout",
+            "title": "Action",
+            "type": "string"
+          },
+          "plan_id": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "task_id",
+          "project_id",
+          "plan_id"
+        ],
+        "title": "ApplyArchiveLayout",
+        "type": "object"
+      },
       "ArchiveStatus": {
         "additionalProperties": false,
         "properties": {
@@ -3776,6 +3812,35 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           "delivery_id"
         ],
         "title": "DeliveryStatus",
+        "type": "object"
+      },
+      "PlanArchiveLayout": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "plan_archive_layout",
+            "title": "Action",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "task_id",
+          "project_id"
+        ],
+        "title": "PlanArchiveLayout",
         "type": "object"
       },
       "RebindReportOutput": {
@@ -4087,12 +4152,14 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
       "request": {
         "discriminator": {
           "mapping": {
+            "apply_archive_layout": "#/$defs/ApplyArchiveLayout",
             "archive_status": "#/$defs/ArchiveStatus",
             "archive_task": "#/$defs/ArchiveTask",
             "authorize_destination": "#/$defs/Authorize",
             "bind_context": "#/$defs/BindContext",
             "deliver": "#/$defs/Deliver",
             "delivery_status": "#/$defs/DeliveryStatus",
+            "plan_archive_layout": "#/$defs/PlanArchiveLayout",
             "rebind_report_output": "#/$defs/RebindReportOutput",
             "register_report": "#/$defs/RegisterReport",
             "restore_research": "#/$defs/RestoreResearch",
@@ -4140,6 +4207,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           },
           {
             "$ref": "#/$defs/RebindReportOutput"
+          },
+          {
+            "$ref": "#/$defs/PlanArchiveLayout"
+          },
+          {
+            "$ref": "#/$defs/ApplyArchiveLayout"
           },
           {
             "$ref": "#/$defs/SnapshotResearch"
