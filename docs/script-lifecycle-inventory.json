@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "98d1aeb0331242d2dc6aa862694cde74510272d6da2611b58f0232cefbc22b0c",
+  "content_hash": "06e69fcb145937011941552efcf46d91d809d3afb98f367402234baf4e5b390b",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -14,7 +14,7 @@
       "path": "scripts/browser_link_install.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 13,
+      "reference_count": 16,
       "action": "may_move_after_targeted_checks"
     },
     {
