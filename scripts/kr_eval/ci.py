@@ -11,6 +11,7 @@ from .runner import _pytest, comparison_identity, execute
 HOST_NODE = 'tests/test_product_console_launcher.py::test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable'
 HOST_NODES = (HOST_NODE, 'tests/test_product_runtime.py',
               'tests/test_codex_stdio_contract.py::test_direct_stdio_probe_exposes_research_surface')
+SCALE_NODES = ('tests/test_research_archive.py::test_ten_thousand_versions_frozen_membership',)
 
 
 def _covers(parent, child):
@@ -60,14 +61,28 @@ def run_ci(root, suite, ledger, extra_nodes=()):
         host if _covers(node, host) else node
         for host in HOST_NODES if (root / host.split('::')[0]).is_file()
         for node in nodes if _covers(node, host) or _covers(host, node)))
+    scale_nodes = list(SCALE_NODES)
     offline_nodes = [n for n in nodes if not any(_covers(host, n) for host in host_nodes)]
     # 当前统一批次超过千项；保留逐例进度/慢例与90秒堆栈，整批仍有明确硬期限。
     outcome = _pytest(root, {"nodes": offline_nodes, "timeout_seconds": 1200,
-                            "deselect": host_nodes}, tests_dir) if offline_nodes else {"verdict": "PASS", "returncode": 0}
+                            "deselect": [*host_nodes, *scale_nodes]}, tests_dir) if offline_nodes else {"verdict": "PASS", "returncode": 0}
     junit = tests_dir / "junit.xml"
     tests = list(ET.parse(junit).iter("testcase")) if junit.is_file() else []
     evidence = [{"path": p.relative_to(folder).as_posix(), "sha256": file_hash(p)} for p in tests_dir.iterdir() if p.is_file()]
     batches = {"offline": outcome}
+    if scale_nodes:
+        scale_dir = folder / 'scale-process'
+        scale_dir.mkdir()
+        scale = _pytest(root, {"nodes": scale_nodes, "timeout_seconds": 360,
+                               "faulthandler_timeout": 300}, scale_dir)
+        batches['scale_process'] = scale
+        scale_junit = scale_dir / 'junit.xml'
+        if scale_junit.is_file():
+            tests.extend(ET.parse(scale_junit).iter('testcase'))
+        evidence.extend({"path": p.relative_to(folder).as_posix(), "sha256": file_hash(p)}
+                        for p in scale_dir.iterdir() if p.is_file())
+        if scale['verdict'] != 'PASS':
+            outcome = {**outcome, 'verdict': scale['verdict'], 'returncode': scale.get('returncode')}
     if host_nodes:
         host_dir = folder / 'host-process'
         host_dir.mkdir()

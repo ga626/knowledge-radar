@@ -34,7 +34,7 @@ def _pytest(root, case, folder):
     if not nodes or any(n.startswith("-") or not (safe_path(root, n.split("::")[0]).is_file() or (n.startswith("tests/") and safe_path(root, n).is_dir())) for n in nodes):
         raise ValueError("invalid or missing pytest node")
     junit = folder / "junit.xml"
-    command = [sys.executable, str(root / "scripts/kr_eval/pytest_entry.py"), "-vv", "--durations=20", "-o", "faulthandler_timeout=90", "-p", "scripts.kr_eval.offline_guard", "-p", "no:cacheprovider",
+    command = [sys.executable, str(root / "scripts/kr_eval/pytest_entry.py"), "-vv", "--durations=20", "-o", f"faulthandler_timeout={case.get('faulthandler_timeout', 90)}", "-p", "scripts.kr_eval.offline_guard", "-p", "no:cacheprovider",
                f"--junitxml={junit}", *(["--kr-owned-host-process"] if case.get("owned_host_process") else []),
                *[f"--deselect={node}" for node in case.get("deselect", [])], *nodes]
     started = time.monotonic()
