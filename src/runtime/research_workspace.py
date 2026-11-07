@@ -7,6 +7,7 @@ from pathlib import Path
 from collections import Counter
 from runtime.paths import runtime_state_dir
 from runtime.research_ledger import assess_task_gaps
+from runtime.file_write_lock import read_observed
 from kr_core.evidence_assets import EvidenceAssets
 
 SCHEMA = 'knowledgeradar-research-records/v1'
@@ -22,7 +23,7 @@ class ResearchRecords:
             raise ValueError('invalid_research_task_id')
         path = self.root / 'research_tasks' / (task_id + '.json')
         try:
-            payload = json.loads(path.read_text(encoding='utf-8'))
+            payload = json.loads(read_observed(path).decode('utf-8'))
         except FileNotFoundError:
             return {'schema': SCHEMA, 'status': 'unknown_task', 'research_task_id': task_id}
         if payload.get('research_task_id') != task_id:

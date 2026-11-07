@@ -19,6 +19,7 @@ import uuid
 from typing import Any
 
 from .paths import runtime_state_dir
+from .file_write_lock import read_observed
 
 
 SCHEMA = "knowledgeradar-research-task-ledger/v3"
@@ -678,7 +679,7 @@ def _read(task_id: str) -> dict[str, Any]:
     if not path.is_file():
         return {}
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(read_observed(path).decode('utf-8'))
     except (OSError, json.JSONDecodeError) as exc:
         raise ValueError("research_ledger_unreadable") from exc
     if not isinstance(payload, dict):
