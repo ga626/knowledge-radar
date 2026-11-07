@@ -62,7 +62,7 @@ class NativeSite:
         retry_at = risk_retry_at(state, observed_at=observed) if state.get('risk') else 0
         reason = ('outcome_latched' if state.get('unknown_outcome') else
                   'platform_cooldown' if retry_at > now else
-                  'pending_manual_interaction' if (state.get('expires_at') or 0) > now and not state.get('cancelled') and not state.get('risk') else 'ok')
+                  'pending_manual_interaction' if (state.get('expires_at') or 0) > now and not state.get('cancelled') else 'ok')
         # Transport availability is not account authentication or remote rate state.
         return {'allowed': reason == 'ok', 'reason': reason,
                 'manual_action_required': reason == 'pending_manual_interaction',
@@ -126,7 +126,10 @@ class NativeSite:
             interaction = uuid.uuid4().hex
             write_state(self.state_path(), {**current, 'interaction_id': interaction, 'cancelled': False,
                 'expires_at': time.time() + 300})
-        attention = bool((current.get('expires_at') or 0) > time.time() and not current.get('cancelled'))
+        # An explicit redisplay may renew a still-recorded interaction lease
+        # after its wall-clock deadline; it is a user action, not a background
+        # probe.  A normal request after expiry opens a fresh login flow.
+        attention = bool(current.get('expires_at') and not current.get('cancelled') and activate)
         response = self.invoke('attention' if attention else 'login', url='' if attention else self.login_url)
         if attention and response.get('failure_type') == 'work_tab_unavailable':
             response = self.invoke('login', url=self.login_url)

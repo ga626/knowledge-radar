@@ -3,6 +3,7 @@ from conftest import patch_native
 """人工登录不能被超时、其他客户端或调用进程退出自动结束。"""
 from pathlib import Path
 from types import SimpleNamespace
+import time
 import pytest
 from runtime import chrome_manager as chrome, browser_sessions
 
@@ -143,8 +144,10 @@ def test_borrowed_login_verified_only_by_explicit_confirmation(monkeypatch,tmp_p
 
 def test_late_auth_probe_cannot_clear_new_challenge(monkeypatch,tmp_path):
     from collectors.platform import maimai
+    from runtime import native_site
     from runtime.state_file import write_state
     monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    monkeypatch.setattr(native_site.time,'time',lambda:100)
     def invoke(**kw):
         write_state(maimai._site().state_path(),{'risk':True,'reason':'new_challenge','at':100})
         return {'ok':True,'data':{'authenticated_api':True,'authenticated_ui':True}}
@@ -162,7 +165,7 @@ def test_legacy_owned_sessions_not_restored_for_borrowed_platform(monkeypatch):
 def test_borrowed_login_deadline_does_not_poll_or_resume_task(monkeypatch,tmp_path):
     from collectors.platform import boss as boss
     monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
-    write_state(boss.state_path(),{'expires_at':1})
+    write_state(boss.state_path(),{'expires_at':time.time()+300})
     patch_native(monkeypatch,lambda **kw:pytest.fail('status polling must not touch the browser'))
     assert boss.interaction_status()=='waiting'
     assert not boss.admission()['allowed']

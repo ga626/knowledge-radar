@@ -7,6 +7,29 @@ import time
 import pytest
 
 
+def test_fixture_cleanup_stops_maintenance_before_restoring_environment(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from scripts.kr_eval import offline_guard
+    from runtime import task_service
+    stop = threading.Event()
+    observed = []
+    monkeypatch.setenv('KR_STATE_DIR', 'fixture-still-owned')
+    worker = threading.Thread(target=lambda: (stop.wait(5), observed.append(os.environ['KR_STATE_DIR'])))
+    worker.start()
+    monkeypatch.setattr(task_service, '_MAINTENANCE', {'fixture': {'stop': stop, 'thread': worker}})
+    with ThreadPoolExecutor(1) as pool:
+        future = pool.submit(lambda: (stop.wait(5), observed.append(os.environ['KR_STATE_DIR'])))
+        monkeypatch.setattr(task_service, '_ARCHIVE_FUTURES', {'fixture': future})
+        try:
+            offline_guard.drain_fixture_maintenance()
+            assert not worker.is_alive() and future.done()
+            assert observed == ['fixture-still-owned', 'fixture-still-owned']
+        finally:
+            stop.set()
+            worker.join(timeout=5)
+
+
 def test_only_fixture_owned_loopback_listener_is_allowed():
     root=Path(__file__).resolve().parents[2]
     code='''

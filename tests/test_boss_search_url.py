@@ -61,19 +61,18 @@ def test_login_request_is_single_and_explicit_completion_resumes(monkeypatch):
     assert boss.admission()["allowed"]
 
 
-def test_challenge_latch_no_automatic_navigation_or_resume(monkeypatch):
+def test_challenge_cools_down_without_navigation_or_manual_unlock(monkeypatch):
     calls=[]
+    monkeypatch.setattr(boss.time,'time',lambda:1000)
     patch_native(monkeypatch,lambda **kw:calls.append(kw) or {"ok":False,"code":"SECURITY_BLOCK"})
     assert boss.search("q")["failure_type"]=="anti_bot_verification"
-    assert boss.search("q2")["failure_type"]=="anti_bot_verification"
+    assert boss.search("q2")["failure_type"]=="platform_cooldown"
     assert len(calls)==1
     assert boss.interaction_status()=="blocked"
-    assert chrome.request_browser_interaction("boss")["status"]=="waiting_for_user"
-    assert calls[-1]["operation"]=="login" and calls[-1]["url"]==boss.LOGIN_URL
-    assert boss.interaction_status()=="blocked"
-    patch_native(monkeypatch,lambda **_: {"ok":True,"data":{"authenticated_ui":True}})
-    assert chrome.complete_browser_interaction("boss")["status"]=="ok"
+    assert not boss.admission()['manual_action_required']
+    monkeypatch.setattr(boss.time,'time',lambda:1301)
     assert boss.admission()["allowed"]
+    assert len(calls)==1  # 状态读取不导航，不恢复旧请求。
 
 
 def test_cancel_only_releases_owned_tab(monkeypatch):

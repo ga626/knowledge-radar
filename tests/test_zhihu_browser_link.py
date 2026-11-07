@@ -61,7 +61,7 @@ def test_short_answer_accepts_canonical_redirect_and_short_text(monkeypatch):
 
 
 @pytest.mark.parametrize('kind,manual',[('access_forbidden',False),('rate_limited',False),
-    ('legal_restriction',False),('not_found',False),('login_required',True),('anti_bot_verification',True)])
+    ('legal_restriction',False),('not_found',False),('login_required',True),('anti_bot_verification',False)])
 def test_typed_failure_never_becomes_empty_or_generic_login(monkeypatch,kind,manual):
     calls=[]
     patch_native(monkeypatch, lambda **kw:calls.append(kw) or {'ok':True,'data':{'adapter_version':z.ADAPTER_VERSION,'failure_type':kind,'url':URL}})

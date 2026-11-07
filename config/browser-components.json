@@ -13,7 +13,7 @@
         "icons/radar-32.png": "e197bbea7e9f89096905b4c758fcdceb4c6f6d0099b8c466b88c326039b373d8",
         "icons/radar-48.png": "4454cd66fa16719ee98cb29bdf91419d3bc95db69db18d65048be6d2aeb9c554",
         "icons/radar.svg": "23dc90c31a63ae9cfd2e128d41b714a69bb9986501dd3c449e473a332bd3882b",
-        "manifest.json": "74b8144cb78904ba65b6557a292730b511e405d60fc7b12b2e89696d292c1b07",
+        "manifest.json": "66089496f34b84a9d0fbc45b05b22b254f9ab1a8fd8b647cd2e73fa49b4f324b",
         "sites/liepin.js": "71af855844a6445ec559fceccd18c397bd80fc3d35f52a177e61dbc20cef7667",
         "sites/maimai.js": "1e14e9caf834af010c7ff961b1a9630bfb19cb18b5beeacf2b7b8e03a0b1c7fe",
         "sites/registry.js": "d5c69c45ce3340fa06b04f3b37e75a8feaea6fd760cbf4187eaafcb679d5373f",
@@ -24,7 +24,7 @@
         "status.js": "f384022a0e4bb0153b82ac3bff09507dfd0f320ff448b9d6447f6baf977d7c2d",
         "visibility.js": "74f631c6bf737cd65c0320d7638a74cd821a1a9d50939ba1d0e92159f6c0c227"
       },
-      "tree_sha256": "a3c3e91c05a11db2fdae58ca10f84c5222407dbf7172760ca2cf74e27003e805",
+      "tree_sha256": "64ea9b015049763b5c9f56a845ecabd2291a6e767fab7c1a0eeeff66938b3a16",
       "distribution": "bundled_unpacked"
     },
     "opencli": {
@@ -39,7 +39,7 @@
         "icons/icon-48.png": "60a028b636ae832d995158ecec742c47cad7784187ab06108410154194217184",
         "idle.html": "a7ce613c2d1c48adc243a1e8125abe76644615df65538e0f468dd06a95222957",
         "LICENSE": "0210b8b66cf00358242cb921ba2be3a46dfe0190159b1b952388a3880ce1ff54",
-        "manifest.json": "e6b094dea66e1a432a6abaa12d220bbe0d8e390a6f4bb348060c80e8a85007a6",
+        "manifest.json": "9ab8829dcdfb27b78078c6ff060b7b7212247d4e60ca0b6d32be512f546fd3dd",
         "package-lock.json": "ac9e6d3ccc358599f4f292eecd94fd713d18b3cd8c50f6986391a51cacbabff9",
         "package.json": "49bc441cd0145a6ec048edeed9e05257ef482c575647bc8266cd1f42064b7146",
         "popup.html": "37215847a4be981631c457678a1125f44ba8d2d1859973290f2bfc1e01b35a9d",
@@ -61,7 +61,7 @@
         "tsconfig.json": "90c8ab09779c5c8cec42a768ae5af8701830e90d970ff0f786ddeed8737843f1",
         "vite.config.ts": "4892d866483d13d87a65d988d99d19d0861a763a3c1ca15667dfdb62c6cc18dc"
       },
-      "tree_sha256": "53c6060f8c82535c474390cdd5bdba2d3423b8437ffb6df2377e8958cb01c0ce",
+      "tree_sha256": "4afa349d8397423bc2239a18fdf5ebfcc2c2f71a0bc0f979593ca5e9dba77eb4",
       "distribution": "bundled_unpacked",
       "upstream_commit": "97dc0cd5214b9602bcda78d7422f231ee8a803e9",
       "upstream_version": "2.0.2",
