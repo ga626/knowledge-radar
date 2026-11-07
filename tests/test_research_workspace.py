@@ -88,6 +88,42 @@ def test_projection_reads_original_ledger_and_does_not_create_files(tmp_path, mo
     assert not (tmp_path / 'evidence_assets').exists()
 
 
+@pytest.mark.skipif(__import__('os').name!='nt',reason='Windows file sharing contract')
+@pytest.mark.parametrize('reader',['workspace','ledger','archive'])
+def test_ledger_readers_share_delete_during_atomic_replacement(tmp_path,monkeypatch,reader):
+    import ctypes
+    from ctypes import wintypes
+    import json
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    task_id='kr-research-shared-read'
+    path=tmp_path/'research_tasks'/(task_id+'.json')
+    path.parent.mkdir()
+    payload={'research_task_id':task_id,'status':'open','tool_receipts':[]}
+    original=json.dumps(payload).encode('utf-8');path.write_bytes(original)
+    api=ctypes.WinDLL('kernel32',use_last_error=True)
+    api.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+    api.CreateFileW.restype=wintypes.HANDLE
+    api.CloseHandle.argtypes=[wintypes.HANDLE]
+    # A replacement can hold DELETE access while readers must share it. This
+    # reproduces the Windows race deterministically, without scheduling sleeps.
+    handle=api.CreateFileW(str(path),0x00010000,7,None,3,0,None)
+    assert handle!=wintypes.HANDLE(-1).value,ctypes.get_last_error()
+    try:
+        if reader=='workspace':
+            actual=ResearchRecords(tmp_path).snapshot(task_id)
+        elif reader=='ledger':
+            from runtime.research_ledger import read_task
+            actual=read_task(task_id=task_id)
+        else:
+            from runtime.research_archive import ResearchArchive
+            from types import SimpleNamespace
+            actual=ResearchArchive._ledger(SimpleNamespace(root=tmp_path/'knowledge_delivery'),task_id)
+        assert actual==payload
+    finally:
+        api.CloseHandle(handle)
+    assert path.read_bytes()==original
+
+
 @pytest.mark.parametrize('action', ['create','claim','heartbeat','handoff','cancel','event','reserve','settle','finish','review','request_expansion','evidence_withdraw'])
 def test_projection_rejects_second_lifecycle(tmp_path, action):
     with pytest.raises(ValueError, match='read_only'):

@@ -10,6 +10,24 @@ _LOCK = threading.RLock()
 _PATH_LOCKS = weakref.WeakValueDictionary()
 
 
+def read_observed(path):
+    """读取完整文件快照，并允许Windows写入方原子替换路径。"""
+    if os.name!='nt':return path.read_bytes()
+    import ctypes,msvcrt
+    from ctypes import wintypes
+    api=ctypes.WinDLL('kernel32',use_last_error=True)
+    api.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
+    api.CreateFileW.restype=wintypes.HANDLE
+    api.CloseHandle.argtypes=[wintypes.HANDLE]
+    handle=api.CreateFileW(str(path),0x80000000,7,None,3,0x00200000,None)
+    if handle==wintypes.HANDLE(-1).value:raise ctypes.WinError(ctypes.get_last_error())
+    try:descriptor=msvcrt.open_osfhandle(handle,os.O_RDONLY|os.O_BINARY)
+    except BaseException:
+        api.CloseHandle(handle)
+        raise
+    with os.fdopen(descriptor,'rb') as stream:return stream.read()
+
+
 @contextmanager
 def file_write_lock(path):
     lock_path = Path(str(path) + ".lock")

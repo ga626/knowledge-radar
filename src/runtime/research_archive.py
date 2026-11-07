@@ -15,7 +15,7 @@ from urllib.parse import quote, urlsplit
 from typing import Literal
 from pydantic import Field
 from runtime.execution_context import check_execution
-from runtime.file_write_lock import file_write_lock
+from runtime.file_write_lock import file_write_lock, read_observed
 from runtime.knowledge import Contract, encoded, guarded_path
 from runtime.research_storage import admit_bytes, reserve_bytes
 
@@ -1095,7 +1095,7 @@ class ResearchArchive:
         if not task or Path(task).name!=task or '/' in task or chr(92) in task:raise ValueError('invalid_research_task_id')
         path=self.root.parent/'research_tasks'/(task+'.json')
         if not path.is_file():return {}
-        return json.loads(path.read_text(encoding='utf-8'))
+        return json.loads(read_observed(path).decode('utf-8'))
 
     def _has_contexts(self):
         with closing(sqlite3.connect(self.store.db.resolve().as_uri()+'?mode=ro',uri=True)) as c:

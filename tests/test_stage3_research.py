@@ -131,24 +131,30 @@ def test_snapshot_latest_version_scope_is_fixed(tmp_path):
 
 
 def test_firstwave_all_selected_queries_and_async(research,monkeypatch,tmp_path):
+    import threading
     from runtime import composition
     from runtime.task_service import TaskService
     from runtime.tasks import TaskStore
     tid,index,_=research
     service=TaskService(TaskStore(str(tmp_path/'tasks.sqlite3')))
     monkeypatch.setattr('runtime.task_service.TaskService',lambda:service)
+    release_slow=threading.Event()
     def search(query,**kwargs):
         from runtime.execution_context import check_execution
-        until=time.monotonic()+(.8 if query=='slow' else .02)
-        while time.monotonic()<until:
-            check_execution();time.sleep(.01)
+        if query=='slow':
+            # Hold the slow query until cancellation. A wall-clock comparison
+            # measures runner load rather than asynchronous task independence.
+            deadline=time.monotonic()+10
+            while not release_slow.wait(.01):
+                check_execution()
+                if time.monotonic()>=deadline:
+                    raise AssertionError('first wave must return before the slow query finishes')
         return {'items':[{'url':'https://a.test/'+query}],'total':1}
     monkeypatch.setattr(composition,'kr_web_search',search)
     families=[{'family_id':q,'query':q,'source_ecology':'generic_web_ecology','intent':'discovery'} for q in ['slow','fast']]
-    started=time.monotonic()
-    waves=composition._research_first_wave({'query':'q','selected_source_ecologies':['generic_web_ecology'],'query_families':families},3,tid)
     try:
-        assert len(waves)==2 and time.monotonic()-started<.7
+        waves=composition._research_first_wave({'query':'q','selected_source_ecologies':['generic_web_ecology'],'query_families':families},3,tid)
+        assert len(waves)==2
         deadline=time.monotonic()+5
         while time.monotonic()<deadline:
             if service.result(waves[1]['task']['task_id'])['status']=='completed':break
@@ -162,6 +168,7 @@ def test_firstwave_all_selected_queries_and_async(research,monkeypatch,tmp_path)
             time.sleep(.02)
         assert index.read(tid,view='feedback')['query_outcomes']['failed']==1
     finally:
+        release_slow.set()
         service.stop_maintenance()
 
 
