@@ -180,11 +180,9 @@ def _response_failure(probe):
     data=probe.get('data') if isinstance(probe.get('data'),dict) else {}
     status=probe.get('http_status',0)
     if status==429:
-        from runtime.state_file import write_state
-        from runtime.file_write_lock import file_write_lock
-        with file_write_lock(_site().state_path()):
-            write_state(_site().state_path(),{**_site().state(),'risk':True,'reason':'rate_limited_remote'})
-        return _failure('rate_limited','脉脉限制访问频率，停止采集并交人工。',manual=True)
+        gate = _site().record_rate_limit(probe.get('retry_after_s') or (probe.get('headers') or {}).get('retry-after'))
+        return {**_failure('rate_limited','脉脉限制访问频率，等待冷却后再发起有界读取。'),
+                'retry_after_s': gate['retry_after_s']}
     if status==401 or data.get('error_code') in {401,'401','not_login'}:
         result=_failure('login_required','请在日常Chrome完成脉脉登录。',manual=True)
         result['interaction']=request_login();return result

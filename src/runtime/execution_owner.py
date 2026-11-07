@@ -24,6 +24,7 @@ from pydantic_core import to_jsonable_python
 from runtime.file_write_lock import file_write_lock
 from runtime.paths import runtime_state_dir
 from runtime.process_identity import process_identity
+from runtime.process import background_python_executable, silent_subprocess_popen
 
 PROTOCOL = 1
 MAX_REQUEST = 2 * 1024 * 1024
@@ -166,22 +167,20 @@ class OwnerClient:
                 return current
             env = dict(os.environ, KR_RUNTIME_ROLE='owner')
             source = Path(__file__).resolve().parents[1]
-            command = [sys.executable, '-X', 'utf8', '-c',
+            command = [background_python_executable(), '-X', 'utf8', '-c',
                        'import sys,runpy; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module("runtime.execution_owner",run_name="__main__")', str(source)]
             env['PYTHONPATH'] = str(source)
             env['KR_OWNER_ROOT'] = str(self.root.resolve())
             kwargs = {'cwd': str(source.parent), 'env': env, 'stdin': subprocess.DEVNULL,
                       'stdout': subprocess.DEVNULL, 'close_fds': True}
             if os.name == 'nt':
-                # DETACHED_PROCESS只脱离控制台，仍会继承宿主的KILL_ON_JOB_CLOSE。
-                # 显式启动的安装owner独立于单次宿主/命令；禁止失败后退回短命子进程。
-                kwargs['creationflags'] = (subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS
-                                           | subprocess.CREATE_BREAKAWAY_FROM_JOB)
+                # GUI入口贯穿venv/base链；Job脱离与控制台分离是两件事。
+                kwargs['creationflags'] = subprocess.CREATE_BREAKAWAY_FROM_JOB
             else:
                 kwargs['start_new_session'] = True
             with (self.root / 'startup.log').open('ab') as log:
                 try:
-                    child = subprocess.Popen(command, stderr=log, **kwargs)
+                    child = silent_subprocess_popen(command, stderr=log, **kwargs)
                 except OSError as exc:
                     if os.name == 'nt' and exc.winerror == 5:
                         raise RuntimeError('execution_owner_job_breakaway_denied_start_from_user_terminal') from exc

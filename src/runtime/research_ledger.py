@@ -814,6 +814,26 @@ def _quality_receipt_ok(*, report_path: str, evidence_path: str, quality_receipt
 
 def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rationale: str, key_claims: list[dict[str, Any]], quality_status: str = "", transcript_status: str = "unavailable", report_path: str = "", evidence_path: str = "", quality_receipt_path: str = "") -> dict[str, Any]:
     """记录执行、证据与报告检查事实；缺口不阻断Agent自主停止。"""
+    # 固定时点观察，不在ledger锁内取得归档锁，也不触发交付/恢复。
+    from runtime.research_archive import ResearchArchive
+    from runtime.knowledge_delivery import DeliveryStore
+    try:
+        archive = ResearchArchive(DeliveryStore())._context(task_id)
+        delivery_error = archive.get("error_code", "") if archive else ""
+        delivery_observation = {
+            "summary": ("registered" if archive.get("report") else "summary_pending") if delivery_error else
+                       archive.get("summary", "unknown") if archive else "summary_pending",
+            "summary_version_id": (archive.get("report") or {}).get("version_id", "") if archive else "",
+            "delivery": ("conflict" if archive.get("failure_kind") == "conflict" else "pending") if delivery_error else
+                        ("delivered" if archive.get("local", {}).get("status") == "local_committed"
+                         and archive.get("vault", {}).get("status") in {"local_committed", "not_configured"}
+                         else "pending") if archive else "not_configured",
+            "delivery_error_code": delivery_error,
+            "delivery_observed_at": _now(),
+        }
+    except (OSError, ValueError, sqlite3.Error):
+        delivery_observation = {"summary": "unknown", "summary_version_id": "", "delivery": "unavailable",
+                                "delivery_observed_at": _now()}
     with _ledger_guard(task_id):
         payload = _read(task_id)
         if not payload:
@@ -919,9 +939,8 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
                 "required_execution": "failed" if required_failures else "pending" if pending_tasks else "completed",
                 "research_recording": "pending" if pending_submissions else "recorded",
                 "research_decision": "agent_owned",
-                "delivery": "not_evaluated",
                 "delivery_read_tool": "manage_research_artifacts.archive_status",
-                "summary": "summary_pending_until_fixed_report_submitted",
+                **delivery_observation,
                 "evidence_validation": "gaps" if critical_without_support or critical_without_receipts or unavailable_versions else "verified_registered_claims_only",
                 "report_check": "verified_pass" if quality_status == "pass" and quality_receipt_valid else "unverified",
                 "stop_authority": "agent",

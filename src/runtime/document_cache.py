@@ -75,8 +75,11 @@ def processing_snapshot(key, *, timeout_s):
     try:
         assets = EvidenceAssets()
         with assets.connection() as conn:
+            # Snapshots are appended while holding this processing key's lease.
+            # Their causal order is the committed insertion order, not wall time
+            # (which can tie or move backwards and replay an unknown paid call).
             row = conn.execute(
-                "SELECT a.version_id FROM assets a JOIN sources s USING(source_id) WHERE s.withdrawn=0 AND a.kind='document_processing' AND json_extract(a.metadata,'$.processing_key')=? ORDER BY a.captured_at DESC LIMIT 1",
+                "SELECT a.version_id FROM assets a JOIN sources s USING(source_id) WHERE s.withdrawn=0 AND a.kind='document_processing' AND json_extract(a.metadata,'$.processing_key')=? ORDER BY a.rowid DESC LIMIT 1",
                 (key,),
             ).fetchone()
         cached = None

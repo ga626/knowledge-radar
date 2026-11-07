@@ -2,6 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
+import {repairFilterEvaluation} from './xhs_search_filters.mjs';
 import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
@@ -126,6 +127,8 @@ try {
       data.tabs = data.tabs.map(tab => ({id:tab.id,page:tab.page,title:tab.title,url:String(tab.url || '').split('?')[0]}));
     } else if (request.operation === 'search') {
       const {command} = await load('clis/xiaohongshu/search.js');
+      const evaluate = page.evaluate.bind(page);
+      page.evaluate = expression => evaluate(repairFilterEvaluation(expression));
       data = await measure('search_s', () => command.func(page,{query:request.keyword,limit:request.limit,sort:'comprehensive',
         'note-type':['image','video'].includes(request.search_type)?request.search_type:'all',
         'publish-time':'anytime',scope:'all',location:'all'}));

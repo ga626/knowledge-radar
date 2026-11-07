@@ -27,7 +27,7 @@ def chrome_command(executable, marker, *, isolated_profile=None):
 
 def start(executable):
     from runtime.paths import runtime_state_dir
-    from runtime.process import silent_subprocess_popen
+    from runtime.process import background_python_executable, silent_subprocess_popen
     if os.name != 'nt':
         raise OSError('quiet_daily_chrome_start_requires_windows')
     marker = 'KR-startup-' + uuid.uuid4().hex
@@ -36,7 +36,7 @@ def start(executable):
     env = dict(os.environ)
     # Pin the helper to this candidate, not an installed package on PATH.
     env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1]) + os.pathsep + env.get('PYTHONPATH', '')
-    return silent_subprocess_popen([sys.executable, str(Path(__file__).resolve()),
+    return silent_subprocess_popen([background_python_executable(), str(Path(__file__).resolve()),
         '--chrome', str(executable), '--marker', marker, '--receipt', str(receipt)],
         env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -99,7 +99,8 @@ def supervise(executable, marker, receipt, *, isolated_profile=None, lifetime_s=
     state = {'schema': 'kr-browser-bootstrap/v1', 'marker': marker,
              'isolated_probe': isolated_profile is not None, 'may_close_browser_process': False,
              'owned_window_ever_foreground': False, 'bootstrap_window_closed': False}
-    process = subprocess.Popen(chrome_command(executable, marker, isolated_profile=isolated_profile),
+    from runtime.process import silent_subprocess_popen
+    process = silent_subprocess_popen(chrome_command(executable, marker, isolated_profile=isolated_profile),
         startupinfo=startup, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     state['launcher_pid'] = process.pid
     deadline = time.monotonic() + lifetime_s

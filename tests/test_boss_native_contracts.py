@@ -61,7 +61,10 @@ def test_risk_latches_in_native_state_and_stops_next_admission():
     from collectors.platform.boss import _map_response, admission
     result = _map_response({'ok': True, 'data': {'risk': True}}, operation='search')
     assert result['failure_type'] == 'SECURITY_BLOCK'
-    assert admission()['reason'] == 'SECURITY_BLOCK' and not admission()['allowed']
+    gate = admission()
+    assert gate['reason'] == 'platform_cooldown' and not gate['allowed']
+    assert 0 < gate['retry_after_s'] <= 300
+    assert gate['manual_action_required'] is False
 
 
 def test_boss_identity_uses_opencli_without_native_host(monkeypatch):

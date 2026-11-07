@@ -899,3 +899,47 @@ def test_snapshot_rejects_missing_task_result_instead_of_success(archive, tmp_pa
     with pytest.raises(ValueError, match='snapshot_task_result_missing'):
         snapshot(engine.store, SnapshotResearch(action='snapshot_research', backup_grant_id=grant['grant_id'], project_id='project-a', backup_name='incomplete'))
     assert not (backups / 'incomplete').exists()
+
+
+@pytest.mark.parametrize('role,expected', [('stage','summary_pending'),('final','delivered')])
+def test_closeout_reports_actual_fixed_summary_without_reverse_lock(archive, monkeypatch, role, expected):
+    engine, *_ = archive
+    evidence(engine)
+    delivered = submit(engine, report_role=role)
+    assert delivered['summary'] == expected
+    # close_task不能持有ledger锁后再读取/锁住归档，避免与run反序。
+    original = engine.__class__._context
+    original_guard = ledger._ledger_guard
+    from contextlib import contextmanager
+    held = []
+    @contextmanager
+    def guarded(task):
+        with original_guard(task):
+            held.append(task)
+            try: yield
+            finally: held.pop()
+    def context(self, task):
+        assert not held
+        return original(self, task)
+    monkeypatch.setattr(ledger, '_ledger_guard', guarded)
+    monkeypatch.setattr(engine.__class__, '_context', context)
+    result = ledger.close_task(task_id='task-a', ecology_outcomes=[], stop_rationale='test', key_claims=[])
+    facts = result['closeout']['completion_facts']
+    assert facts['summary'] == expected
+    assert facts['delivery'] == 'delivered'
+    assert facts['summary_version_id'] == delivered['report']['version_id']
+
+
+def test_closeout_does_not_call_historical_delivery_current_after_conflict(archive):
+    engine, *_ = archive
+    evidence(engine)
+    delivered = submit(engine)
+    Path(delivered['local']['path']).write_text('USER CHANGED', encoding='utf-8')
+    conflict = engine.run('task-a')
+    assert conflict['error_code']
+    result = ledger.close_task(task_id='task-a', ecology_outcomes=[], stop_rationale='conflict observed', key_claims=[])
+    facts = result['closeout']['completion_facts']
+    assert facts['summary'] == 'registered'
+    assert facts['delivery'] == 'conflict'
+    assert facts['delivery_error_code'] == conflict['error_code']
+    assert facts['summary_version_id'] == delivered['report']['version_id']

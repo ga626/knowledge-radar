@@ -166,7 +166,9 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
             return
         code = getattr(exc, "error_code", "worker_execution_error")
         message = str(exc) if code in {'unsupported_language', 'asr_language_detection_failed'} else type(exc).__name__
-        store.mark_failed(task_id, message, error_code=code, metadata={**writer, "phase": "failed"})
+        diagnostic = {"next_action": exc.next_action, "ocr_attempted": False} if code in {
+            'document_password_required', 'document_password_incorrect', 'document_corrupt'} else {}
+        store.mark_failed(task_id, message, error_code=code, metadata={**writer, "phase": "failed", **diagnostic})
     finally:
         stop.set()
         thread.join(timeout=2)

@@ -28,11 +28,11 @@ from runtime.platform_risk import compute_platform_cooldown, normalize_platform_
 log = logging.getLogger("mcp-server")
 
 # 默认配置
-DEFAULT_SEARCH_COOLDOWN_S = 1800  # 搜索失败后冷却 30 分钟
+DEFAULT_SEARCH_COOLDOWN_S = 60
 DEFAULT_MIN_SEARCH_INTERVAL_S = 10  # 最小搜索间隔 10 秒
 DEFAULT_MAX_SEARCHES_PER_HOUR = 30  # 每小时最大搜索次数
 DEFAULT_MAX_FAILURES_PER_HOUR = 5
-DEFAULT_SEARCH_COOLDOWN_MAX_S = 7200
+DEFAULT_SEARCH_COOLDOWN_MAX_S = 300
 LEASED_BROWSER_PLATFORMS = {"boss", "liepin", "maimai"}
 PLATFORM_LEASE_TTL_S = 180
 NO_COOLDOWN_REASONS = {
@@ -84,21 +84,21 @@ NO_COOLDOWN_REASONS |= LOCAL_FAILURE_REASONS
 PLATFORM_CONFIG: Dict[str, Dict[str, Any]] = {
     'v2ex': {'min_search_interval_s': 2, 'max_searches_per_hour': 120},
     "boss": {
-        "search_cooldown_s": 1800,
-        "search_cooldown_max_s": 7200,
+        "search_cooldown_s": 60,
+        "search_cooldown_max_s": 300,
         "min_search_interval_s": 15,
         "max_searches_per_hour": 12,
         "max_failures_per_hour": 3,
     },
     "liepin": {
-        "search_cooldown_s": 1800,
-        "search_cooldown_max_s": 7200,
+        "search_cooldown_s": 60,
+        "search_cooldown_max_s": 300,
         "min_search_interval_s": 10,
         "max_searches_per_hour": 30,
     },
     "maimai": {
-        "search_cooldown_s": 3600,  # 脉脉 WAF 更严格，冷却更长
-        "search_cooldown_max_s": 14400,
+        "search_cooldown_s": 60,
+        "search_cooldown_max_s": 300,
         "min_search_interval_s": 20,
         "max_searches_per_hour": 15,
     },
@@ -183,8 +183,11 @@ def check_search_gate(
     try:
         conn = _get_conn()
         # 检查冷却状态
-        query = "SELECT cooldown_until, outcome, reason FROM recruitment_search_gate WHERE platform = ?"
-        params: list[Any] = [platform]
+        # 本表仅记录KR自己的退避；服务端Retry-After由站点适配器单独保存。
+        # 对历史长退避作只读解释，不重写历史，也不裁短服务端期限。
+        maximum = int(config.get("search_cooldown_max_s", DEFAULT_SEARCH_COOLDOWN_MAX_S))
+        query = "SELECT MIN(cooldown_until, ts + ?) AS effective_until, outcome, reason FROM recruitment_search_gate WHERE platform = ?"
+        params: list[Any] = [maximum, platform]
         if account_norm:
             query += " AND (account_slot = ? OR account_slot = '')"
             params.append(account_norm)
@@ -192,7 +195,7 @@ def check_search_gate(
         excluded = sorted(NO_COOLDOWN_REASONS)
         query += " AND lower(reason) NOT IN (" + ",".join("?" for _ in excluded) + ")"
         params.extend(excluded)
-        query += " ORDER BY cooldown_until DESC LIMIT 1"
+        query += " ORDER BY effective_until DESC LIMIT 1"
         row = conn.execute(query, tuple(params)).fetchone()
 
         if row and row[0] and row[0] > now and str(row[2] or "").lower() not in NO_COOLDOWN_REASONS:
@@ -263,17 +266,7 @@ def check_search_gate(
                 "scope": {"account_slot": account_norm, "keyword": keyword_norm, "city": city_norm},
             }
 
-        if failure_count >= max_failures_per_hour:
-            return {
-                "allowed": False,
-                "reason": f"账号/关键词/城市失败次数已达上限（{failure_count}/{max_failures_per_hour}）",
-                "cooldown_remaining_s": 0,
-                "searches_this_hour": count,
-                "failures_this_hour": failure_count,
-                "max_searches_per_hour": max_per_hour,
-                "max_failures_per_hour": max_failures_per_hour,
-                "scope": {"account_slot": account_norm, "keyword": keyword_norm, "city": city_norm},
-            }
+        # 失败次数保留为诊断数据；冷却到期后不叠加一小时的隐含失败锁。
 
         return {
             "allowed": True,
@@ -321,10 +314,10 @@ def check_platform_admission(
         if resource == 'http' and browser.get('reason') == 'pending_manual_interaction':
             browser = {'allowed': True}
         if not browser['allowed']:
-            reason = {'SECURITY_BLOCK': 'anti_bot_verification', 'rate_limited_remote': 'anti_bot_verification',
+            reason = {'SECURITY_BLOCK': 'anti_bot_verification', 'rate_limited_remote': 'rate_limited',
                 'outcome_latched': 'request_outcome_unknown', 'opencli_caller_timeout': 'request_outcome_unknown'}.get(browser['reason'], browser['reason'])
             return {'allowed': False, 'reason_code': reason, 'reason': reason,
-                'manual_action_required': True, 'retry_after_s': 0}
+                'manual_action_required': bool(browser.get('manual_action_required')), 'retry_after_s': browser.get('retry_after_s', 0)}
     gate = check_search_gate(platform_norm, account_slot=account_slot, keyword=keyword, city=city, operation=operation)
     if not gate.get("allowed"):
         retry_after = float(gate.get("cooldown_remaining_s") or 0)
@@ -502,9 +495,11 @@ def _latest_cooldown_seconds(
         query += " ORDER BY ts DESC LIMIT 1"
         row = conn.execute(query, tuple(params)).fetchone()
         conn.close()
-        if not row or not row[0] or not row[1]:
+        maximum = int(PLATFORM_CONFIG.get(platform, {}).get("search_cooldown_max_s", DEFAULT_SEARCH_COOLDOWN_MAX_S))
+        effective_until = min(float(row[0]), float(row[1]) + maximum) if row and row[0] and row[1] else 0
+        if not effective_until or effective_until <= time.time() - 300:
             return 0
-        return max(0, int(float(row[0]) - float(row[1])))
+        return max(0, int(effective_until - float(row[1])))
     except Exception:
         return 0
 

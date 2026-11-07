@@ -447,6 +447,12 @@ class TaskService:
         if continuation:
             return {**self.result(continuation, _visited=visited), "resumed_from": task_id}
         response = {"task": compact_task_ref(task), "status": task["status"]}
+        if task['status'] == 'failed' and task.get('error_code') in {
+            'document_password_required', 'document_password_incorrect', 'document_corrupt'}:
+            from runtime.pdf_text import DocumentError
+            code = task['error_code']
+            response['error'] = {'type': code, 'next_action': DocumentError(code).next_action,
+                                 'ocr_attempted': False, 'retryable': False, 'automatic_retry': False}
         if (task.get('metadata') or {}).get('failure_context'):
             response['failure_context'] = task['metadata']['failure_context']
         if task.get("result_path"):

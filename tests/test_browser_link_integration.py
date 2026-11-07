@@ -209,7 +209,7 @@ def test_liepin_http_429_stops_before_dynamic_fallback(monkeypatch):
     monkeypatch.setattr(url_policy,'guarded_fetch',lambda url,**kw:httpx.Response(429,request=httpx.Request('GET',url)))
     monkeypatch.setattr(BrowserLink,'request',lambda *a,**kw:pytest.fail('no fallback past rate wall'))
     result=liepin.detail('https://www.liepin.com/job/123.shtml')
-    assert result['failure_type']=='anti_bot_verification'
+    assert result['failure_type']=='rate_limited'
     assert not liepin.admission()['allowed']
 
 

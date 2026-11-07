@@ -144,11 +144,8 @@ def _static_liepin_detail(url: str) -> Optional[Dict]:
         from collectors.platform.jobposting import parse_jobposting
         raw = guarded_fetch(url, timeout=20, headers={'User-Agent':'Mozilla/5.0','Accept':'text/html'})
         if raw.status_code == 429:
-            from runtime.state_file import write_state
-            from runtime.file_write_lock import file_write_lock
-            with file_write_lock(_site().state_path()):
-                write_state(_site().state_path(),{**_site().state(),'risk':True,'reason':'rate_limited_remote'})
-            return _site().failure('SECURITY_BLOCK')
+            gate = _site().record_rate_limit(raw.headers.get('retry-after'))
+            return _site().failure('rate_limited', retry_after_s=gate['retry_after_s'])
         if raw.status_code >= 400:return None
         from urllib.parse import urlsplit
         if urlsplit(str(raw.url)).path != urlsplit(url).path:return None

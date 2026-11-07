@@ -45,25 +45,34 @@ class NativeSite:
     def failure(self, code, **extra):
         kind = {'SECURITY_BLOCK': 'anti_bot_verification', 'AUTH_REQUIRED': 'login_required',
                 'risk_latched': 'anti_bot_verification', 'outcome_latched': 'request_outcome_unknown'}.get(code, code)
-        manual = kind in {'anti_bot_verification', 'login_required', 'request_outcome_unknown', 'pending_manual_interaction'}
+        manual = kind in {'anti_bot_verification', 'login_required', 'pending_manual_interaction'}
         return {'ok': False, 'platform': self.display, 'status': 'needs_interaction' if manual else 'failed',
                 'failure_type': kind, 'error': {'type': kind, 'failure_type': kind, 'manual_action_required': manual},
                 'manual_action_required': manual, 'items': [], 'retryable': False,
                 'resume_policy': 'stop_no_auto_resume' if kind in {'anti_bot_verification', 'request_outcome_unknown'} else 'explicit_retry',
+                'next_action': 'inspect_original_request_receipt_do_not_replay' if kind == 'request_outcome_unknown' else 'wait_for_cooldown_then_new_bounded_attempt' if kind == 'platform_cooldown' else 'inspect_platform_state',
                 'metadata': {'transport': self.transport_name(), 'ownership': 'borrowed'}, **extra}
 
     def admission(self):
         state = self.state()
-        reason = ('SECURITY_BLOCK' if state.get('risk') else 'outcome_latched' if state.get('unknown_outcome')
-                  else 'pending_manual_interaction' if state.get('expires_at') and not state.get('cancelled') else 'ok')
+        now = time.time()
+        # 查询只解释已有时间戳，不清锁、不探测、不延长期限。
+        from runtime.platform_risk import risk_retry_at
+        observed = self.state_path().stat().st_mtime if self.state_path().exists() else now
+        retry_at = risk_retry_at(state, observed_at=observed) if state.get('risk') else 0
+        reason = ('outcome_latched' if state.get('unknown_outcome') else
+                  'platform_cooldown' if retry_at > now else
+                  'pending_manual_interaction' if (state.get('expires_at') or 0) > now and not state.get('cancelled') else 'ok')
         # Transport availability is not account authentication or remote rate state.
-        return {'allowed': reason == 'ok', 'reason': reason, 'manual_action_required': reason != 'ok'}
+        return {'allowed': reason == 'ok', 'reason': reason,
+                'manual_action_required': reason == 'pending_manual_interaction',
+                'retry_after_s': max(0, retry_at-now) if reason == 'platform_cooldown' else 0}
 
     def invoke(self, operation, *, url='', **payload):
         if operation not in {'login', 'attention', 'probe', 'release_login', 'release', 'auth_verify'}:
             gate = self.admission()
             if not gate['allowed']:
-                return self.failure(gate['reason'], request_executed=False)
+                return self.failure(gate['reason'], request_executed=False, retry_after_s=gate.get('retry_after_s', 0))
         response = self.bridge().request(operation, {'url': url, **payload}, platform=self.platform)
         data = response.get('data') or {}
         code = response.get('code') or response.get('failure_type') or ''
@@ -75,6 +84,10 @@ class NativeSite:
         elif data.get('login') or data.get('detail_login_required'):
             code = 'AUTH_REQUIRED'
         if code and (not response.get('ok') or code in {'SECURITY_BLOCK', 'AUTH_REQUIRED'}):
+            if code in {'RATE_LIMITED', 'rate_limited', 'HTTP_429'}:
+                gate = self.record_rate_limit(response.get('retry_after_s') or (response.get('headers') or {}).get('retry-after'))
+                return self.failure('rate_limited', request_executed=response.get('request_executed', False),
+                                    retry_after_s=gate['retry_after_s'])
             uncertain = response.get('request_executed') is not False and code in {
                 'native_command_timeout', 'native_host_unreachable', 'browser_disconnected', 'native_host_disconnected',
                 'opencli_caller_timeout', 'COMMAND_RESULT_UNKNOWN'}
@@ -83,7 +96,8 @@ class NativeSite:
                     current = self.state()
                     # Late results must not clear a newer cancellation or risk observation.
                     write_state(self.state_path(), {**current, 'risk': bool(current.get('risk') or code == 'SECURITY_BLOCK'),
-                        'unknown_outcome': bool(current.get('unknown_outcome') or uncertain), 'reason': code, 'at': time.time()})
+                        'unknown_outcome': bool(current.get('unknown_outcome') or uncertain), 'reason': code,
+                        'at': time.time(), 'retry_at': max(time.time()+300, float(current.get('retry_at') or 0))})
             result = self.failure('outcome_latched' if uncertain else code,
                 request_executed=response.get('request_executed', False))
             result['metadata']['transport_failure'] = code
@@ -93,15 +107,26 @@ class NativeSite:
         response['platform'] = self.display
         return response
 
+    def record_rate_limit(self, retry_after=None):
+        from runtime.platform_risk import retry_after_seconds
+        now = time.time()
+        with file_write_lock(self.state_path()):
+            current = self.state()
+            seconds = retry_after_seconds(retry_after, now=now) or 60
+            until = max(now+seconds, float(current.get('retry_at') or 0))
+            write_state(self.state_path(), {**current, 'risk': True, 'reason': 'rate_limited_remote',
+                        'at': now, 'retry_at': until})
+        return {'retry_after_s': until-now}
+
     def request_login(self, *, activate=False):
         with file_write_lock(self.state_path()):
             current = self.state()
-            if current.get('expires_at') and not current.get('cancelled') and not activate:
+            if (current.get('expires_at') or 0) > time.time() and not current.get('cancelled') and not activate:
                 return {'status': 'waiting_for_user', 'platform': self.platform, 'expires_at': current['expires_at']}
             interaction = uuid.uuid4().hex
             write_state(self.state_path(), {**current, 'interaction_id': interaction, 'cancelled': False,
                 'expires_at': time.time() + 300})
-        attention = bool(current.get('expires_at') and not current.get('cancelled'))
+        attention = bool((current.get('expires_at') or 0) > time.time() and not current.get('cancelled'))
         response = self.invoke('attention' if attention else 'login', url='' if attention else self.login_url)
         if attention and response.get('failure_type') == 'work_tab_unavailable':
             response = self.invoke('login', url=self.login_url)
@@ -138,7 +163,7 @@ class NativeSite:
         return {'status': 'cancelled', 'platform': self.platform}
 
     def probe_auth(self):
-        if self.state().get('expires_at') and not self.state().get('cancelled'):
+        if (self.state().get('expires_at') or 0) > time.time() and not self.state().get('cancelled'):
             return {'status': 'waiting_for_user', 'auth_state': 'unknown', 'platform': self.platform}
         # Never navigate, refresh or open a login window during a background auth probe.
         result = self.invoke('probe')
@@ -148,9 +173,11 @@ class NativeSite:
 
     def interaction_status(self):
         current = self.state()
-        if current.get('risk') or current.get('unknown_outcome') or current.get('cancelled'):
+        if not self.admission()['allowed'] and not ((current.get('expires_at') or 0) > time.time()):
             return 'blocked'
-        return 'waiting' if current.get('expires_at') else 'ready' if current.get('verified_at') else 'blocked'
+        if current.get('cancelled'):
+            return 'blocked'
+        return 'waiting' if (current.get('expires_at') or 0) > time.time() else 'expired' if current.get('expires_at') else 'ready' if current.get('verified_at') else 'blocked'
 
     def runtime_identity(self):
         from runtime.browser_channel import browser_resource_contract

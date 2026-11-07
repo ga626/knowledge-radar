@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 import hashlib
+import math
 import os
 import random
 import time
@@ -135,12 +136,15 @@ def normalize_platform_risk_event(
     elif manual:
         severity = "high"
         recoverability = "manual_interaction"
-    elif _has_any(text, RATE_LIMIT_REASON_TOKENS) or outcome_norm in {"blocked", "failed", "degraded"}:
+    elif _has_any(text, RATE_LIMIT_REASON_TOKENS):
         severity = "medium"
         recoverability = "cooldown"
     elif _has_any(text, NON_COOLDOWN_REASON_TOKENS):
         severity = "low"
         recoverability = "no_cooldown"
+    elif outcome_norm in {"blocked", "failed", "degraded"}:
+        severity = "medium"
+        recoverability = "cooldown"
     else:
         severity = "low"
         recoverability = "none" if outcome_norm in {"ok", "pass", "success"} else "inspect"
@@ -182,12 +186,12 @@ def compute_platform_cooldown(
     manual = bool(data.get("manual_action_required"))
     recoverability = str(data.get("recoverability") or "")
 
-    if manual or recoverability == "manual_interaction":
+    if retry_after > 0:
+        seconds = math.ceil(retry_after)
+        source = "retry_after"
+    elif manual or recoverability == "manual_interaction":
         seconds = 0
         source = "manual_interaction"
-    elif retry_after > 0:
-        seconds = min(maximum, int(round(retry_after)))
-        source = "retry_after"
     elif recoverability in {"none", "no_cooldown"}:
         seconds = 0
         source = recoverability
@@ -246,7 +250,8 @@ def build_manual_interaction_envelope(
 
 def _safe_float(value: Any) -> float:
     try:
-        return max(0.0, float(value or 0))
+        result = float(value or 0)
+        return max(0.0, result) if math.isfinite(result) else 0.0
     except Exception:
         return 0.0
 
@@ -256,3 +261,26 @@ def _default_jitter_ratio() -> float:
         return max(0.0, float(os.environ.get("KR_PLATFORM_COOLDOWN_JITTER_RATIO", "0.2")))
     except Exception:
         return 0.2
+
+
+def risk_retry_at(state: Mapping[str, Any], *, observed_at: float) -> float:
+    """旧KR自设风险锁有界到期；未知执行结果由调用方单独对账。"""
+    retry_at = _safe_float(state.get("retry_at"))
+    if retry_at:
+        return retry_at
+    return (_safe_float(state.get("at")) or observed_at) + 300
+
+
+def retry_after_seconds(value: Any, *, now: float | None = None) -> float:
+    """读取服务端秒数或HTTP日期；不按本地退避上限裁短。"""
+    seconds = _safe_float(value)
+    if seconds:
+        return seconds
+    from email.utils import parsedate_to_datetime
+    try:
+        parsed = parsedate_to_datetime(str(value))
+        if parsed.tzinfo is None:
+            return 0
+        return max(0, parsed.timestamp() - (time.time() if now is None else now))
+    except (ValueError, TypeError, OverflowError):
+        return 0

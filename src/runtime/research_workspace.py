@@ -100,7 +100,7 @@ _TOOL_ROUNDS = {
     'get_content_detail': 'verification', 'extract_': 'verification', 'analyze_': 'verification',
     'finalize_research_task': 'closeout', 'get_task_status': 'closeout',
 }
-_INTERNAL_ECOLOGIES = {'research_route', 'unclassified'}
+_INTERNAL_ECOLOGIES = {'research_route', 'unclassified', '_'}
 _TOOL_ECOLOGIES = {
     'kr_web_search': 'generic_web_ecology',
     'extract_web_page': 'generic_web_ecology',
@@ -138,6 +138,13 @@ def _ecology_for_tool(tool):
 
 def _items(payload, key):
     return [item for item in payload.get(key, []) if isinstance(item, dict)]
+
+
+def _source_ecology(item):
+    ecology = str(item.get('source_ecology') or '').strip()
+    if not ecology or ecology in _INTERNAL_ECOLOGIES:
+        ecology = _ecology_for_tool(item.get('tool'))
+    return ecology if ecology not in _INTERNAL_ECOLOGIES else ''
 
 
 def summarize_task(payload):
@@ -200,6 +207,7 @@ def task_rounds(payload):
         grouped[key]['tool_receipts'].append({
             'at': receipt.get('at'), 'tool': receipt.get('tool'), 'status': receipt.get('status'),
             'receipt_id': receipt.get('receipt_id'), 'elapsed_s': receipt.get('elapsed_s'),
+            'source_ecology': _source_ecology(receipt),
         })
     rounds = []
     for key, item in grouped.items():
@@ -214,7 +222,7 @@ def task_rounds(payload):
             item['failed_calls'] = sum(round_statuses.get(status, 0) for status in ('failed', 'error'))
             item['partial_calls'] = sum(round_statuses.get(status, 0) for status in ('partial', 'degraded'))
             item['elapsed_s'] = round(sum(float(row.get('elapsed_s') or 0) for row in round_receipts if isinstance(row.get('elapsed_s'), (int, float))), 3)
-            item['source_ecologies'] = sorted({ecology for row in item['events'] + round_receipts for ecology in [str(row.get('source_ecology') or '') or _ecology_for_tool(row.get('tool'))] if ecology and ecology not in _INTERNAL_ECOLOGIES})
+            item['source_ecologies'] = sorted({ecology for row in item['events'] + round_receipts for ecology in [_source_ecology(row)] if ecology})
             item['started_at'] = min(times) if times else None
             item['ended_at'] = max(times) if times else None
             rounds.append(item)
@@ -227,8 +235,8 @@ def task_metrics(payload):
     events = _items(payload, 'events')
     statuses = Counter(str(item.get('status') or 'partial') for item in calls)
     tools = Counter(str(item.get('tool') or 'unknown') for item in calls)
-    ecologies = {ecology for item in receipts + events for ecology in [str(item.get('source_ecology') or '') or _ecology_for_tool(item.get('tool'))] if ecology and ecology not in _INTERNAL_ECOLOGIES}
-    planned_ecologies = {str(item.get('source_ecology') or '') for item in _items(payload, 'candidate_ecologies') if str(item.get('source_ecology') or '')}
+    ecologies = {ecology for item in receipts + events for ecology in [_source_ecology(item)] if ecology}
+    planned_ecologies = {ecology for item in _items(payload, 'candidate_ecologies') for ecology in [_source_ecology(item)] if ecology}
     versions = {str(version) for receipt in receipts for version in receipt.get('evidence_versions', []) if str(version)}
     gaps = [item for item in _items(payload, 'claim_gaps') if str(item.get('status') or 'open') not in {'closed', 'resolved'}]
     closeout = payload.get('closeout') if isinstance(payload.get('closeout'), dict) else {}

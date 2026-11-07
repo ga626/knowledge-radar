@@ -12,6 +12,7 @@ from collectors.platform import maimai
     ([{'status': 200, 'data': {'result':'ok'}}], 200, 1),
     ([{'status': 204}], 204, 1),
     ([{'status': 204, 'token': 'test-only-csrf'}, {'status': 403, 'data': {'error_type':'CSRF_TOKEN_MISMATCH'}}], 403, 2),
+    ([{'status': 429, 'retry': '7200'}], 429, 1),
 ])
 def test_maimai_same_origin_csrf_handshake(responses, expected_status, expected_calls):
     from pathlib import Path
@@ -23,7 +24,7 @@ const sandbox={KRSites:{},AbortController,location:{pathname:'/community/home/re
  document:{querySelectorAll:()=>[]},URLSearchParams,
  fetch:async(url,options)=>{calls.push({url,headers:options.headers,credentials:options.credentials});
  const item=input.responses.shift();if(!item)throw Error('unexpected extra request');
- return {status:item.status,headers:{get:()=>item.token||null},json:async()=>item.data||null};}};
+ return {status:item.status,headers:{get:name=>name==='Retry-After'?(item.retry||null):(item.token||null)},json:async()=>item.data||null};}};
 vm.createContext(sandbox);vm.runInContext(input.script,sandbox);
 sandbox.KRSites.maimai.extract('probe',{},new AbortController().signal).then(value=>process.stdout.write(JSON.stringify({result:value.probe,calls})));
 """
@@ -39,6 +40,8 @@ sandbox.KRSites.maimai.extract('probe',{},new AbortController().signal).then(val
         assert calls[1]['headers']['x-csrf-retry'] == '1'
         assert calls[1]['headers']['x-csrf-token'] == 'test-only-csrf'
     assert 'test-only-csrf' not in json.dumps(result)
+    if expected_status == 429:
+        assert result['headers'] == {'retry-after': '7200'}
 
 @pytest.mark.parametrize('probe,expected_failure', [
     ({'http_status':204,'data':None}, 'auth_probe_inconclusive'),
