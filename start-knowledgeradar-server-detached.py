@@ -10,7 +10,12 @@ from urllib.parse import urlparse
 
 
 KR_ROOT = os.environ.get("KR_ROOT", "").strip() or os.path.dirname(os.path.abspath(__file__))
-PYTHON_EXE = os.path.join(KR_ROOT, ".python312", "python.exe")
+_CONSOLE_PYTHON_EXE = os.path.join(KR_ROOT, ".python312", "python.exe")
+_GUI_PYTHON_EXE = os.path.join(KR_ROOT, ".python312", "pythonw.exe")
+# A venv's python.exe may be a console launcher layered over a base runtime.
+# Use the matching pythonw executable for the long-lived server when present;
+# the fallback keeps source checkouts and non-Windows installs working.
+PYTHON_EXE = _GUI_PYTHON_EXE if os.name == "nt" and os.path.isfile(_GUI_PYTHON_EXE) else _CONSOLE_PYTHON_EXE
 SERVER_SCRIPT = os.path.join(KR_ROOT, "src", "server.py")
 BRIDGE_SCRIPT = os.path.join(KR_ROOT, "bridge", "xhs_mcp_bridge.cjs")
 STATE_DIR = (

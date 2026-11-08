@@ -435,6 +435,8 @@ def search(keyword, limit, search_type, *, options=None):
         return {**response, "items": [], "total": 0}
     from generic_web.url_policy import canonical_url
     items = []
+    observed_types = set()
+    filter_mismatch = False
     rows = response.get("data") or []
     if isinstance(rows, dict):
         rows = rows.get("items") or []
@@ -444,17 +446,32 @@ def search(keyword, limit, search_type, *, options=None):
         if not note:
             continue
         public_url = "https://www.xiaohongshu.com/explore/" + note[1]
+        observed_type = str(row.get('type') or row.get('note_type') or '').strip().lower()
+        if observed_type in {'image', 'video'}:
+            observed_types.add(observed_type)
+            if search_type in {'image', 'video'} and observed_type != search_type:
+                filter_mismatch = True
+                continue
         items.append({"title": row.get("title",""), "author": row.get("author",""),
             "url": canonical_url(public_url), "canonical_url": canonical_url(public_url),
             "fetch_url": fetch_url, "note_id": note[1], "likes": row.get("likes"),
-            "platform":"小红书", "type": search_type if search_type in {"image","video"} else "unknown",
+            # 只有页面返回了明确类型才填写类型；不能把 requested filter
+            # 当成已验证的每条结果类型。
+            "platform":"小红书", "type": observed_type or "unknown",
             "published_at":"", "date_provenance":"not_observed"})
     if not items:
         return {**_failure("empty_results"), "items": [], "total": 0}
     # Preserve the existing private, in-memory signed handoff for isolated workers.
     from collectors.platform.xiaohongshu import _protect_xhs_search_fetch
     _protect_xhs_search_fetch(items)
-    return {"items":items,"total":len(items),"platform":"小红书","metadata":{"transport":"opencli",**response.get("metadata",{})}}
+    metadata = {"transport":"opencli", **response.get("metadata", {}),
+                "requested_search_type": search_type,
+                "observed_note_types": sorted(observed_types),
+                "filter_verification": "verified" if search_type in {'image','video'} and items and observed_types == {search_type}
+                                     else "unverified" if search_type in {'image','video'} else "not_requested"}
+    if filter_mismatch:
+        metadata['filter_mismatch_observed'] = True
+    return {"items":items,"total":len(items),"platform":"小红书","metadata":metadata}
 
 def validate_media_url(url):
     target = urlsplit(url)

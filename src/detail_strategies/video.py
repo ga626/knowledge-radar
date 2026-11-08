@@ -26,6 +26,10 @@ class VideoDetailStrategy:
         check_execution()
         started = time.monotonic()
         data = self.collect(request)
+        # 视频简介是元数据层，不能被当成视频正文归档。保留兼容字段
+        # ``content`` 供旧调用方读取，同时给公共证据层一个稳定的语义键。
+        if isinstance(data.get('desc'), str) and data.get('desc').strip():
+            data.setdefault('video_description', data['desc'])
         data.setdefault('content', data.get('desc', ''))
         from routing import attach_routing_metadata
         attach_routing_metadata(request.url, data)

@@ -14,6 +14,8 @@ if (-not $env:KR_MCP_PORT) { $env:KR_MCP_PORT = "18765" }
 
 $bundledPython = Join-Path $root ".python312\python.exe"
 $python = if (Test-Path -LiteralPath $bundledPython) { $bundledPython } else { "python" }
+$pythonw = [System.IO.Path]::Combine([System.IO.Path]::GetDirectoryName($python), "pythonw.exe")
+if (Test-Path -LiteralPath $pythonw) { $python = $pythonw }
 $server = Join-Path $root "src\server.py"
 $stdout = Join-Path $logDir "knowledgeradar-hidden.out.log"
 $stderr = Join-Path $logDir "knowledgeradar-hidden.err.log"

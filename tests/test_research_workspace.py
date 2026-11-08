@@ -26,6 +26,16 @@ def test_source_metrics_exclude_route_planning_and_administrative_tools():
     assert metrics['source_ecologies'] == ['generic_web_ecology', 'youtube_video_ecology']
 
 
+def test_source_metrics_ignore_administrative_tool_even_if_legacy_label_is_present():
+    from runtime.research_workspace import task_metrics
+    metrics = task_metrics({'events': [], 'tool_receipts': [
+        {'tool': 'finalize_research_task', 'source_ecology': 'generic_web_ecology'},
+        {'tool': 'record_research_candidates', 'source_ecology': 'youtube_video_ecology'},
+        {'tool': 'search_youtube', 'source_ecology': '_'},
+    ]})
+    assert metrics['source_ecologies'] == ['youtube_video_ecology']
+
+
 def test_workspace_uses_explicit_question_status_without_rewriting_ledger(tmp_path, monkeypatch):
     from runtime.research_index import ResearchIndex, ResearchWrite
     monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))

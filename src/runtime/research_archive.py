@@ -209,13 +209,19 @@ def task_display_title(metadata, title):
 
 
 def calendar_layout(metadata, title):
-    """按首次创建时间固定本地日历；全角冒号可作为Windows文件名。"""
+    """按首次创建时间固定本地日历，并使用物理层安全的展示标题。
+
+    目录名同时出现在 Windows 文件系统和 Obsidian 的展示树中，因此两者
+    必须共享同一套可移植命名合同。半角 ``/`` 和 ``:`` 会分别被解释成
+    路径分隔符或被 Windows 拒绝，不能再用中文日期和全角时间分隔符制造
+    两套看起来不同的标题。
+    """
     try:
         created=datetime.fromisoformat(str(metadata.get('created_at')).replace('Z','+00:00')).astimezone()
     except (ValueError,TypeError):
         created=datetime.now().astimezone()
-    return {'directory_layout':'project-year-task-v1', 'directory_year':f'{created.year}年',
-        'directory_title':f'{created:%m}月{created:%d}日 {created:%H}：{created:%M} '+_safe_name(title,'未命名调研')}
+    return {'directory_layout':'project-year-task-v2', 'directory_year':f'{created.year}年',
+        'directory_title':f'{created:%m-%d %H-%M} '+_safe_name(title,'未命名调研')}
 
 
 def _readable_structure(kind, text, meta):
@@ -271,7 +277,7 @@ def readable_asset(assets, row):
     kind=row['kind'];meta=json.loads(row['metadata']);text=assets._verified_text(row)
     if kind in {'transcript_map','images','media_manifest'}:
         return None, '仅供机器定位或媒体引用'
-    if kind not in {'content','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
+    if kind not in {'content','video_description','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
         return None, '未知资料类型，需显式提供正文转换'
     rendered=text
     if kind in {'comments','tables'}:
@@ -295,6 +301,8 @@ def readable_asset(assets, row):
 
 def processing_description(row, meta):
     kind=meta.get('original_kind') or row['kind']
+    if kind == 'video_description':
+        return '视频平台简介（元数据层）'
     method=meta.get('processing_method')
     if method:return str(method).replace('\n',' ')[:160]
     if kind=='transcript':
@@ -316,7 +324,7 @@ def asset_header(row, *, include_title=False):
     if isinstance(original,(int,float)):
         original=datetime.fromtimestamp(original,timezone.utc).isoformat()
     kind=meta.get('original_kind') or row['kind']
-    labels={'content':'正文','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
+    labels={'content':'正文','video_description':'视频简介','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
     coverage={'complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
     observed_coverage=meta.get('coverage')
     if isinstance(observed_coverage,dict):
@@ -431,7 +439,7 @@ class ResearchArchive:
         project=context.get('vault_project_dir','')
         parent=self._display_path(root,root,['project',context['project_id']],context['project_name'],directory=True,
             explicit_directory=root/project if project else None)
-        if context.get('directory_layout')=='project-year-task-v1':
+        if context.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:
             parent=self._display_path(root,parent,['year',context['project_id'],context['directory_year']],context['directory_year'],directory=True)
         title=context.get('directory_title') or context['task_title']
         path=self._display_path(root,parent,['task',context['project_id'],context['task_id']],title,directory=True)
@@ -480,7 +488,7 @@ class ResearchArchive:
                 if old['project_id'] != request.project_id:
                     raise ValueError('research_project_mismatch_use_new_task')
                 prior_project=Path(old['vault_relative']).parent
-                if old.get('directory_layout')=='project-year-task-v1':prior_project=prior_project.parent
+                if old.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:prior_project=prior_project.parent
                 if request.vault_project_dir and str(Path(request.vault_project_dir)) not in {
                     str(prior_project), str(Path(old.get('vault_project_dir') or prior_project))}:
                     raise ValueError('archive_target_changed')

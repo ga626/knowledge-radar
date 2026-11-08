@@ -194,6 +194,15 @@ def test_signed_candidates_keep_private_handoff_without_fabricated_dates(monkeyp
     assert "private" not in json.dumps(response_from_legacy("小红书",result).to_mcp_dict())
 
 
+def test_search_does_not_fabricate_note_type_when_browser_did_not_return_one(monkeypatch):
+    monkeypatch.setattr(oc, "invoke", lambda *a, **k: {"ok": True, "data": [
+        {"title": "图文", "url": URL + "?xsec_token=private", "author": "甲"},
+    ]})
+    result = oc.search("通勤包", 3, "image")
+    assert result['items'][0]['type'] == 'unknown'
+    assert result['metadata']['filter_verification'] == 'unverified'
+
+
 def test_risk_latch_stops_before_browser(monkeypatch):
     oc.latch("SECURITY_BLOCK")
     monkeypatch.setattr(oc,"_run",lambda *a,**k:pytest.fail("risk must stop"))

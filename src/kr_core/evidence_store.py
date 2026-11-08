@@ -93,19 +93,32 @@ class EvidenceStore:
         if parsed_coverage in {'complete_selectable_text', 'complete_text_and_ocr', 'partial'}:
             response['content_coverage']['parts']['content']['coverage'] = parsed_coverage
         refs = []
-        for kind in ("content", "transcript", "ocr_text"):
+        content_value = response.get("content")
+        video_description = response.get("video_description")
+        # 视频采集器历史上把简介放进 content。新合同保留兼容读取，
+        # 但固定资产只以 video_description 归档，避免 Obsidian 把简介标成正文。
+        skip_legacy_video_content = (
+            isinstance(video_description, str) and video_description.strip()
+            and isinstance(content_value, str)
+            and content_value.strip() == video_description.strip()
+            and str(platform).lower() in {"b站", "bilibili", "youtube"}
+        )
+        parts = ("video_description", "transcript", "ocr_text") if skip_legacy_video_content else ("content", "video_description", "transcript", "ocr_text")
+        for kind in parts:
             value = response.get(kind)
             if isinstance(value, str) and value.strip():
                 if response.get("evidence_storage_allowed") is False:
                     response.setdefault("evidence_storage_gaps", []).append({"part": kind, "reason": "storage_not_permitted"})
                     continue
                 try:
-                    parts = (response.get('content_coverage') or {}).get('parts') or {}
-                    part = parts.get('ocr' if kind == 'ocr_text' else kind) or {}
+                    coverage_parts = (response.get('content_coverage') or {}).get('parts') or {}
+                    part = coverage_parts.get('ocr' if kind == 'ocr_text' else kind) or {}
                     metadata = {"extractor": str((response.get("detail_metadata") or {}).get("strategy") or response.get("collector") or platform), "coverage": str(part.get('coverage') or 'unknown'),
                         'source_platform':platform,'content_format':response.get('content_format','text'),
                         'original_captured_at':response.get('fetched_at') or response.get('captured_at') or utc_now_iso(),
                         **{key:response[key] for key in ('display_title_zh','title_zh','display_title','language','source_presentation','site_name','processing_method') if response.get(key)}}
+                    if kind == 'video_description':
+                        metadata.update(coverage='metadata_description', source_layer='video_metadata')
                     if kind == 'transcript':
                         transcript_meta=response.get('transcript_metadata') or {}
                         metadata.update(transcript_source=transcript_meta.get('source',''),
