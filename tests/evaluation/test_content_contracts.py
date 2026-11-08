@@ -114,3 +114,28 @@ def test_challenge_html_cannot_become_an_article():
     from generic_web.models import GenericWebRequest
     result = collect_rendered_html(GenericWebRequest("https://example.org/paper"), html="<html><title>Client Challenge</title><body>Please enable JavaScript to continue</body></html>")
     assert result.error and result.error["type"] == "access_challenge"
+
+
+def test_local_asr_and_abstract_cannot_claim_original_article_body():
+    from kr_core.evidence_coverage import content_coverage
+    asr = content_coverage({'content':'Actual spoken words','source_kind':'asr'})
+    assert asr['parts']['content']['source_role'] == 'transcript'
+    abstract = content_coverage({'content':'Summary only','source_kind':'abstract'},{'content_scope':'fulltext'})
+    assert not abstract['request_satisfied']
+
+
+@pytest.mark.parametrize('html,blocked',[
+    ('<body><main><h1>验证码实现</h1><p>Client challenge pages can be diagnosed. This article describes login security.</p></main></body>',False),
+    ('<body><aside>Please enable JavaScript to continue</aside><article><h1>公告</h1><p>服务将于下周停止。</p></article></body>',False),
+    ('<body><article><h1>公告</h1><p>服务将于下周停止。</p></article></body>',False),
+    ('<body><div id="app"></div><script>location.replace("/target")</script></body>',True),
+    ('<head><meta http-equiv="refresh" content="0;url=/target"></head><body>Redirecting...</body>',True),
+])
+def test_access_shell_recognition_preserves_real_short_articles(html,blocked):
+    from bs4 import BeautifulSoup
+    from generic_web.collector import _check_page_body, GenericWebError
+    soup=BeautifulSoup(html,'html.parser')
+    if blocked:
+        with pytest.raises(GenericWebError):_check_page_body(soup,collector='fixture',status_code=200)
+    else:
+        _check_page_body(soup,collector='fixture',status_code=200)

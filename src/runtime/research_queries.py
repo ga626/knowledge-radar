@@ -2,8 +2,11 @@
 from __future__ import annotations
 import hashlib
 import re
+from contextvars import ContextVar
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+
+CURRENT_RESEARCH_ACTION = ContextVar('kr_research_action', default=None)
 
 
 class ResearchQuery(BaseModel):
@@ -17,6 +20,8 @@ class ResearchQuery(BaseModel):
     family_id: str = ''
     parent_event_id: str = ''
     gap_id: str = ''
+    question_id: str = Field(default='', max_length=128)
+    action_id: str = Field(default='', max_length=200)
 
 
 def normalize_ecology(value):
@@ -48,6 +53,7 @@ def query_families(objective, supplied=None):
             raise ValueError('query_intent_required')
         ecology, resolution = normalize_ecology(row.get('source_ecology'))
         result.append({'family_id': str(row.get('family_id') or 'query-' + hashlib.sha256((query+'|'+ecology+'|'+str(row.get('intent'))).encode()).hexdigest()[:16]), 'query': query, 'intent': row['intent'], 'language': str(row.get('language') or 'unknown')[:24], 'source_ecology': ecology, 'ecology_resolution': resolution, 'parent_event_id': str(row.get('parent_event_id') or ''), 'gap_id': str(row.get('gap_id') or ''), 'origin': 'executor_supplied', 'translation_verified': False})
+        result[-1].update(question_id=str(row.get('question_id') or ''), action_id=str(row.get('action_id') or ''))
     return result
 
 

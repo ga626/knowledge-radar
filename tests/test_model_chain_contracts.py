@@ -190,7 +190,7 @@ def test_corrupt_receipt_degrades_component_view(tmp_path, monkeypatch):
     monkeypatch.setenv("KR_OPTIONAL_COMPONENT_RECEIPTS_DIR", str(tmp_path))
     (tmp_path / "docling.json").write_text('{broken', encoding="utf-8")
     plan = optional_media.component_plan("docling")
-    assert plan["status"] == "not_installed"
+    assert plan["status"] == "incompatible"
 
 
 def test_model_timeout_ends_real_worker_descendants():

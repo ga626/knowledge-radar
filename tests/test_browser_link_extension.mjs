@@ -100,7 +100,8 @@ test('login attention focuses once, no reload; passive probe creates no tab',asy
 });
 
 test('unconfirmed authentication retains the diagnostic tab without a successful login',async()=>{
- const s=await setup();s.command('verify','zhihu','auth_verify',{url:'https://www.zhihu.com/'});await tick();
+ const s=await setup();s.command('login','zhihu','login',{url:'https://www.zhihu.com/'});await tick();s.result('login','zhihu');await tick();
+ s.command('verify','zhihu','auth_verify',{url:'https://www.zhihu.com/'});await tick();
  s.result('verify','zhihu',{authenticated_ui:false,failure_type:'auth_state_unconfirmed'});await tick();
  assert.equal(s.storage.ownedTabs[0][1].retained,true);
  assert.equal(s.sent.find(x=>x.request_id==='verify').data.authenticated_ui,false);
@@ -224,7 +225,7 @@ test('risk page is retained even when transport returned success',async()=>{
 test('diagnostic history stays bounded and foreign acknowledgements are ignored',async()=>{
  const s=await setup();s.command('a');await tick();
  s.runtime.onMessage.emit({kind:'content-started',request_id:'a',generation:'wrong',platform:'liepin'},{id:'ext',frameId:0,tab:{id:7}},()=>{});
- for(let i=0;i<100;i++)s.chrome.tabs.onUpdated.emit(7,{status:'loading'},{id:7,url:'https://www.liepin.com/web/geek/jobs?secret=hidden'});
+ for(let i=0;i<100;i++)s.chrome.tabs.onUpdated.emit(7,{status:'complete'},{id:7,url:'https://www.liepin.com/web/geek/jobs?secret=hidden'});
  await tick();s.command('diag','liepin','probe',{diagnostics_only:true});await tick();
  const data=s.sent.find(x=>x.request_id==='diag').data;
  assert.equal(data.events.length,80);assert.ok(!data.events.some(x=>x.stage==='content_started'));
@@ -351,4 +352,27 @@ test('BOSS is absent from native routes and extension permissions',()=>{
  assert.ok(!JSON.stringify(manifest).includes('zhipin.com'));
  const ctx=vm.createContext({URL});vm.runInContext(readFileSync(new URL('../browser_link/extension/sites/routes.js',import.meta.url),'utf8'),ctx);
  assert.equal(ctx.KRSiteRoutes.boss,undefined);
+});
+
+test('replacement document terminates dispatched context and rejects its late result',async()=>{
+ const s=await setup();s.command('race','zhihu','search',{url:'https://www.zhihu.com/search?q=test'});await tick();
+ s.runtime.onMessage.emit({kind:'content-started',request_id:'race',generation:'gen',platform:'zhihu'},
+  {id:'ext',frameId:0,documentId:'old-doc',tab:{id:7}},()=>{});
+ s.chrome.tabs.onUpdated.emit(7,{status:'loading'},{id:7,url:'https://www.zhihu.com/'});await tick();
+ s.runtime.onMessage.emit({kind:'content-ready',platform:'zhihu',url:'https://www.zhihu.com/'},
+  {id:'ext',frameId:0,documentId:'new-doc',tab:{id:7}},()=>{});
+ s.result('race','zhihu');await tick();
+ const results=s.sent.filter(x=>x.type==='result'&&x.request_id==='race');
+ assert.equal(results.length,1);assert.equal(results[0].code,'COMMAND_RESULT_UNKNOWN');
+ assert.equal(s.content.filter(x=>x.kind==='extract').length,1);
+});
+
+test('manual handoff survives expiry and idle without background login polling',async()=>{
+ const s=await setup();s.command('a');await tick();
+ attentionMessage(s,'a',{interaction:{visible:true,kind:'qr'}});await tick();s.result('a','liepin',{login:true});await tick();
+ const item=s.storage.ownedTabs[0][1];item.lastUsed=0;item.manualUntil=1;item.retainUntil=1;item.autoAttention.until=1;
+ const actions=s.content.length,windows=s.windowUpdates.length;
+ s.chrome.alarms.onAlarm.emit({name:'attention:liepin'});s.chrome.alarms.onAlarm.emit({name:'idle'});await tick();
+ assert.equal(s.removed.length,0);assert.equal(s.content.length,actions);assert.equal(s.windowUpdates.length,windows);
+ assert.ok(!readFileSync(new URL('../browser_link/extension/content.js',import.meta.url),'utf8').includes('watchInteraction'));
 });

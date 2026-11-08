@@ -51,9 +51,17 @@ def query_outcome(result):
     return "ok"
 
 
+class EvidenceRef(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    version_id: str = Field(pattern=r'^[a-f0-9]{64}$')
+    start: int = Field(ge=0)
+    end: int = Field(gt=0)
+    role: str = Field(default='source_text', max_length=80)
+
+
 class ResearchWrite(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    action: Literal["question", "link", "relation", "fold", "repair", "host_request"]
+    action: Literal["question", "link", "relation", "fold", "repair", "host_request", "scope", "assessment", "decision", "action"]
     task_id: str = Field(min_length=1, max_length=96, pattern=r"^[A-Za-z0-9_-]+$")
     record_id: str = Field(default="", max_length=128)
     question_id: str = Field(default="", max_length=128)
@@ -61,11 +69,34 @@ class ResearchWrite(BaseModel):
     candidate_id: str = Field(default="", max_length=128)
     related_candidate_id: str = Field(default="", max_length=128)
     version_id: str = Field(default="", max_length=64)
-    relation: Literal["background", "supports", "contradicts", "uncertain", "same_origin", "quotes", "independent"] = "background"
+    relation: Literal["background", "supports", "supports_with_limits", "contradicts", "uncertain", "same_origin", "quotes", "independent"] = "background"
     confidence: Literal["declared", "suspected", "confirmed"] = "declared"
     rationale: str = Field(default="", max_length=2000)
     folded: bool = False
     closed: bool = False
+    required: bool = True
+    languages: list[str] = Field(default_factory=list, max_length=20)
+    populations: list[str] = Field(default_factory=list, max_length=20)
+    regions: list[str] = Field(default_factory=list, max_length=20)
+    information_roles: list[str] = Field(default_factory=list, max_length=20)
+    time_scope: str = Field(default='', max_length=500)
+    content_scope: str = Field(default='', max_length=500)
+    revision: int = Field(default=1, ge=1)
+    claim_id: str = Field(default='', max_length=128)
+    evidence_refs: list[EvidenceRef] = Field(default_factory=list, max_length=40)
+    counterevidence_refs: list[EvidenceRef] = Field(default_factory=list, max_length=40)
+    applicability: str = Field(default='', max_length=2000)
+    basis: str = Field(default='', max_length=2000)
+    uncertainty: str = Field(default='', max_length=2000)
+    supersedes: str = Field(default='', max_length=128)
+    decision: Literal['', 'continue', 'stop', 'defer'] = ''
+    unresolved_questions: list[str] = Field(default_factory=list, max_length=100)
+    reopen_conditions: str = Field(default='', max_length=2000)
+    family_id: str = Field(default='', max_length=200)
+    action_id: str = Field(default='', max_length=200)
+    attempt_id: str = Field(default='', max_length=200)
+    receipt_id: str = Field(default='', max_length=128)
+    question_revision: int = Field(default=0, ge=0)
 
 
 class ResearchIndex:
@@ -210,28 +241,61 @@ class ResearchIndex:
         if req.version_id:
             from kr_core.evidence_assets import EvidenceAssets
             (assets or EvidenceAssets(read_only=True)).fetch(req.version_id, max_chars=1)
+        for ref in [*req.evidence_refs, *req.counterevidence_refs]:
+            self.validate_ref(ref.model_dump(), assets)
+        if req.action == 'assessment' and (not req.claim_id or not req.question_id or not req.evidence_refs
+                                          or not req.basis.strip() or not req.applicability.strip()):
+            raise ValueError('assessment_requires_claim_question_evidence_basis_applicability')
+        if req.action == 'assessment':
+            from kr_core.evidence_assets import EvidenceAssets
+            repository = assets or EvidenceAssets(read_only=True)
+            with repository.connection() as evidence_conn:
+                for ref in [*req.evidence_refs, *req.counterevidence_refs]:
+                    if not evidence_conn.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND task_id=?', (ref.version_id, req.task_id)).fetchone():
+                        raise ValueError('evidence_not_registered_to_research_task')
+        if req.action == 'decision' and (not req.decision or not req.rationale.strip()):
+            raise ValueError('decision_and_rationale_required')
         with self.connection(write=True) as conn:
             for cid in (req.candidate_id, req.related_candidate_id):
                 if cid and not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='candidate' AND object_id=?", (req.task_id, cid)).fetchone():
                     raise ValueError("unknown_candidate")
-            if req.action == "question":
+            if req.supersedes:
+                if not conn.execute('SELECT 1 FROM current WHERE task_id=? AND kind=? AND object_id=?',
+                                    (req.task_id, req.action, req.supersedes)).fetchone():
+                    raise ValueError('unknown_superseded_record')
+            if req.action in {'question', 'scope'}:
                 if not req.text.strip():
                     raise ValueError("question_text_required")
                 oid = req.question_id or hashlib.sha256(req.text.encode()).hexdigest()[:20]
+                if req.action == 'scope' and not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='question' AND object_id=?",(req.task_id,oid)).fetchone():
+                    raise ValueError('unknown_question')
             else:
-                if not req.rationale.strip():
+                if not (req.rationale.strip() or req.action == 'assessment' and req.basis.strip()):
                     raise ValueError("rationale_required")
                 if req.action in {"fold", "relation"} and not req.candidate_id:
                     raise ValueError("candidate_required")
                 if req.action == "relation" and (not req.related_candidate_id or req.related_candidate_id == req.candidate_id):
                     raise ValueError("distinct_related_candidate_required")
-                if req.action == "link":
-                    if not req.version_id or not req.question_id:
+                if req.action in {'link', 'assessment'}:
+                    if (req.action == 'link' and not req.version_id) or not req.question_id:
                         raise ValueError("question_and_evidence_version_required")
                     if not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='question' AND object_id=?", (req.task_id, req.question_id)).fetchone():
                         raise ValueError("unknown_question")
-                oid = req.candidate_id if req.action == "fold" else (req.record_id or hashlib.sha256(encoded([req.question_id, req.candidate_id, req.related_candidate_id, req.version_id, req.relation]).encode()).hexdigest()[:24])
+                if req.action == 'action':
+                    if not req.action_id or not req.receipt_id:
+                        raise ValueError('action_and_receipt_required')
+                    if not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='receipt' AND object_id=?",(req.task_id, req.receipt_id)).fetchone():
+                        raise ValueError('unknown_receipt')
+                oid = req.candidate_id if req.action == "fold" else (req.record_id or hashlib.sha256(encoded([req.action, req.question_id, req.candidate_id, req.related_candidate_id, req.version_id, req.relation, req.claim_id, req.evidence_refs and [r.model_dump() for r in req.evidence_refs],req.supersedes,req.decision,req.action_id,req.receipt_id]).encode()).hexdigest()[:24])
             value = {**req.model_dump(), "record_id": oid, "author": "agent", "assessment": "agent_declared_not_program_verified"}
+            if req.action in {'question', 'scope'}:
+                prior = self.question_at(conn, req.task_id, oid)
+                fields = ('text','required','languages','populations','regions','information_roles','time_scope','content_scope','closed')
+                changed = prior and any(value.get(k) != prior.get(k) for k in fields)
+                value['revision'] = max(req.revision, int(prior.get('revision', 0)) + bool(changed))
+            if req.action == 'assessment':
+                question = self.question_at(conn, req.task_id, req.question_id)
+                value['question_revision'] = req.question_revision or question.get('revision',1)
             self.put(conn, req.task_id, req.action, oid, value, encoded(value))
         return {"status": "recorded", "record_id": oid, "author": "agent"}
 
@@ -259,22 +323,31 @@ class ResearchIndex:
                 return result
             if view == "feedback":
                 result = self.feedback(conn, task_id, after_seq, high, base, assets)
-                for key in ("questions_without_valid_links", "unresolved_counterevidence"):
+                for key in ("questions_without_valid_links", "unresolved_counterevidence", "questions_without_reviewed_support", "scope_gaps", "assessments_requiring_review", "unplanned_receipts"):
                     result[key + "_count"] = len(result[key])
                     if len(result[key])>limit: result["truncated"] = True
                     result[key] = result[key][:limit]
+                # 反馈是摘要；大量问题不能让停止/收尾因为字数预算失败。
+                while len(encoded(result)) > max_chars:
+                    arrays = [k for k,v in result.items() if isinstance(v,list) and v]
+                    if not arrays:
+                        raise ValueError("budget_too_small_increase_max_chars")
+                    result[max(arrays,key=lambda k:len(encoded(result[k])))].pop()
+                    result['truncated'] = True
                 if len(encoded(result)) > max_chars:
                     raise ValueError("budget_too_small_increase_max_chars")
                 return result
             # 不用OFFSET；续页只跳过已经读过的序号，撤回或折叠不移动其他行。
             clause = "" if view == "changes" else " AND kind=? AND NOT EXISTS(SELECT 1 FROM changes n WHERE n.task_id=c.task_id AND n.kind=c.kind AND n.object_id=c.object_id AND n.seq>c.seq AND n.seq<=?)"
-            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch"}
+            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action"}
             if view != "changes" and view not in kinds:
                 raise ValueError("invalid_research_view")
             params = [task_id, after_seq, high] + ([] if view == "changes" else [kinds[view], high])
             rows = conn.execute("SELECT c.* FROM changes c WHERE task_id=? AND seq>? AND seq<=?" + clause + " ORDER BY seq", params)
             for row in rows:
                 value = json.loads(row["value"])
+                if view == 'questions':
+                    value = self.question_at(conn,task_id,row['object_id'],high)
                 if query and query.casefold() not in encoded(value).casefold():
                     base["next_after_seq"] = row["seq"]
                     continue
@@ -288,6 +361,8 @@ class ResearchIndex:
                         base["next_after_seq"] = row["seq"]
                         continue
                 value = self.available(value, assets)
+                if view == 'assessments':
+                    value = self.assessment_review(value, self.question_at(conn,task_id,value.get('question_id'),high),assets,task_id)
                 record = {"seq": row["seq"], "record_kind": row["kind"], **value}
                 base["items"].append(record)
                 if len(base["items"]) > limit or len(encoded(base)) > max_chars:
@@ -302,7 +377,43 @@ class ResearchIndex:
             return base
 
     @staticmethod
+    def validate_ref(ref, assets=None):
+        from kr_core.evidence_assets import EvidenceAssets
+        if ref['end'] <= ref['start']:
+            raise ValueError('invalid_evidence_locator')
+        result = (assets or EvidenceAssets(read_only=True)).fetch(ref['version_id'], start=ref['end']-1, max_chars=1)
+        if not result.get('text'):
+            raise ValueError('evidence_locator_out_of_range')
+
+    @staticmethod
+    def question_at(conn, task_id, question_id, high=9223372036854775807):
+        row = conn.execute("SELECT value FROM changes WHERE task_id=? AND kind IN ('question','scope') AND object_id=? AND seq<=? ORDER BY seq DESC LIMIT 1",(task_id,question_id,high)).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    @staticmethod
+    def assessment_review(value, question, assets, task_id):
+        if value.get('availability') == 'unavailable':
+            return {**value,'review_required':True,'review_reason':'evidence_unavailable'}
+        if question.get('revision',1) != value.get('question_revision',1):
+            return {**value,'review_required':True,'review_reason':'question_scope_changed'}
+        from kr_core.evidence_assets import EvidenceAssets
+        repository = assets or EvidenceAssets(read_only=True)
+        newer = []
+        with repository.connection() as conn:
+            for ref in [*value.get('evidence_refs',[]),*value.get('counterevidence_refs',[])]:
+                newer.extend(row[0] for row in conn.execute('''SELECT n.version_id FROM assets n
+                    JOIN assets old ON n.source_id=old.source_id AND n.kind=old.kind AND n.rowid>old.rowid
+                    JOIN asset_scopes s ON s.version_id=n.version_id AND s.task_id=?
+                    WHERE old.version_id=? ORDER BY n.rowid''',(task_id,ref['version_id'])))
+        return {**value,'review_required':True,'review_reason':'source_version_changed','newer_versions':sorted(set(newer))} if newer else value
+
+    @staticmethod
     def available(value, assets=None):
+        for ref in [*value.get('evidence_refs', []), *value.get('counterevidence_refs', [])]:
+            try:
+                ResearchIndex.validate_ref(ref, assets)
+            except (OSError, ValueError):
+                return {**value, 'availability':'unavailable', 'assessment':'excluded_from_support', 'review_required':True}
         if value.get("version_id"):
             from kr_core.evidence_assets import EvidenceAssets
             try:
@@ -317,8 +428,33 @@ class ResearchIndex:
         for row in rows:
             groups.setdefault(row["kind"], []).append(self.available(json.loads(row["value"]), assets))
         links = [x for x in groups.get("link", []) if x.get("version_id") and not x.get("closed")]
-        questions = groups.get("question", [])
+        superseded = {x.get('supersedes') for x in groups.get('assessment', []) if x.get('supersedes')}
+        questions = [self.question_at(conn,task_id,q['record_id'],high) for q in groups.get('question',[])]
+        assessments = [self.assessment_review(x,next((q for q in questions if q['record_id']==x.get('question_id')),{}),assets,task_id)
+                       for x in groups.get('assessment',[]) if x.get('record_id') not in superseded and not x.get('closed')]
+        review_required = [{'record_id':x['record_id'],'question_id':x.get('question_id'),
+                            'reason':x.get('review_reason'),'newer_versions':x.get('newer_versions',[])}
+                           for x in assessments if x.get('review_required')]
+        assessments = [x for x in assessments if not x.get('review_required')]
+        support = [x for x in assessments if x.get('relation') in {'supports', 'supports_with_limits'}]
+        scope_gaps = []
+        for q in questions:
+            if q.get('closed') or not q.get('required', True):
+                continue
+            # 反证也覆盖其实际读过的语言/人群；覆盖与支持是两个问题。
+            reviewed = [x for x in assessments if x.get('question_id') == q['record_id']]
+            gaps = {name: sorted(set(q.get(name, [])) - {v for x in reviewed for v in x.get(name, [])})
+                    for name in ('languages', 'populations', 'regions', 'information_roles')}
+            scalar_gaps = {name: q.get(name,'') for name in ('time_scope','content_scope')
+                           if q.get(name) and not any(x.get(name)==q[name] for x in reviewed)}
+            if not reviewed or any(gaps.values()) or scalar_gaps:
+                scope_gaps.append({'question_id':q['record_id'], **{'missing_'+k:v for k,v in gaps.items()},
+                                   **{'missing_'+k:v for k,v in scalar_gaps.items()},
+                                   'basis':'agent_declared_scope_only', 'time_scope':q.get('time_scope',''),
+                                   'content_scope':q.get('content_scope','')})
         queries = groups.get("query", [])
+        parents = {x.get('parent_family_id') for x in queries if x.get('parent_family_id')}
+        queries = [x for x in queries if not (x.get('status') == 'planned' and x.get('family_id') in parents)]
         relation_counts = {v: sum(x.get("confidence") == v for x in groups.get("relation", [])) for v in ("declared", "suspected", "confirmed")}
         counts = {kind: len(values) for kind, values in groups.items()}
         delta = conn.execute("SELECT kind,COUNT(*) FROM changes WHERE task_id=? AND seq>? AND seq<=? GROUP BY kind", (task_id, after, high)).fetchall()
@@ -328,7 +464,14 @@ class ResearchIndex:
         return {**base, "next_after_seq": high, "counts": counts, "change_counts": dict(delta),
                 "new_materials":new_materials,"material_progress":progress,
                 "questions_without_valid_links": [q["record_id"] for q in questions if not q.get("closed") and not any(l.get("question_id") == q["record_id"] for l in links)],
-                "unresolved_counterevidence": [l["record_id"] for l in links if l.get("relation") == "contradicts"],
+                "questions_without_reviewed_support": [q['record_id'] for q in questions if not q.get('closed') and not any(x.get('question_id') == q['record_id'] for x in support)],
+                "scope_gaps":scope_gaps,
+                "assessments_requiring_review":review_required,
+                "assessment_basis":"agent_declared_not_program_verified",
+                "unplanned_receipts": [x['receipt_id'] for x in groups.get('receipt', [])
+                    if x.get('tool') != 'kr_research' and not (x.get('research_action') or {}).get('action_id') and not any(a.get('receipt_id') == x['receipt_id'] for a in groups.get('action', []))
+                    and not any(q.get('receipt_id') == x['receipt_id'] for q in queries)],
+                "unresolved_counterevidence": [l["record_id"] for l in [*links, *assessments] if l.get("relation") == "contradicts" or l.get('counterevidence_refs')],
                 "query_outcomes": {s: sum(q.get("status") == s for q in queries) for s in ("planned", "running", "ok", "partial", "failed", "skipped")},
                 "zero_result_queries": sum(q.get("status") == "ok" and q.get("returned_count") == 0 for q in queries),
                 "origin_relations": relation_counts, "origin_independence": "not_inferred_from_domain_or_receipt_count",

@@ -83,7 +83,9 @@ def prepare_component(component, *, acknowledged=False):
     frozen = Path(__file__).resolve().parents[2] / role["requirements_lock"]
     if not frozen.is_file() or file_sha(frozen) != role["requirements_sha256"]:
         raise ValueError("optional_frozen_lock_identity_mismatch")
-    root = receipt_root().resolve() / "artifacts" / component
+    # 新职责使用独立准备目录，失败下载不能污染仍在使用的旧权重。
+    revision = __import__('hashlib').sha256((role['weight_revision']+'|'+role['requirements_sha256']).encode()).hexdigest()[:16]
+    root = receipt_root().resolve() / "artifacts" / component / revision
     wheels = root / "wheels"
     wheels.mkdir(parents=True, exist_ok=True)
     # Wheel-only 安装避免运行不受控构建脚本；每个依赖进入 hash 锁。

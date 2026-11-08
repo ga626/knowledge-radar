@@ -98,6 +98,21 @@ def test_host_negotiates_protocol_and_does_not_leak_token_in_health(peer):
     assert 'token' not in health
 
 
+def test_original_operation_receipt_is_read_only_and_does_not_replay(peer):
+    with ThreadPoolExecutor() as pool:
+        future=pool.submit(peer.command,'receipt-source','zhihu')
+        command=peer.next()
+        pending=peer.http('receipt',{'request_id':'receipt-source'}).json()
+        assert pending['status']=='pending'
+        peer.result(command)
+        response=future.result().json()
+    for _ in range(2):
+        stored=peer.http('receipt',{'request_id':'receipt-source'}).json()
+        assert stored['status']=='recorded' and stored['result']==response
+    assert peer.messages.empty()
+    assert peer.http('receipt',{'request_id':'never-sent'}).json()['status']=='unknown'
+
+
 def test_read_only_diagnostic_probe_uses_existing_host_protocol(peer):
     with ThreadPoolExecutor() as pool:
         future=pool.submit(peer.command,'diagnose','zhihu',operation='probe',payload={'diagnostics_only':True})

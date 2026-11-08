@@ -12,7 +12,7 @@ from runtime.optional_media import COMPONENTS, component_plan, validate_receipt 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=["plan", "prepare", "install", "uninstall", "submit"])
+    parser.add_argument("action", choices=["plan", "prepare", "install", "rollback", "uninstall", "submit"])
     parser.add_argument("--purge-downloads", action="store_true")
     parser.add_argument("--acknowledge-download", action="store_true")
     parser.add_argument("--component", required=True, choices=list(COMPONENTS))
@@ -30,6 +30,9 @@ def main():
         from runtime.optional_media import install_component
 
         result = install_component(args.component, json.loads(args.payload_file.read_text(encoding="utf-8-sig")))
+    elif args.action == 'rollback':
+        from runtime.optional_media import rollback_component
+        result = rollback_component(args.component)
     elif args.action == "uninstall":
         from runtime.optional_media import uninstall_component
 

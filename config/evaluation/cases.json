@@ -433,8 +433,8 @@
       }
     },
     {
-      "version": 3,
-      "oracle_version": 1,
+      "version": 4,
+      "oracle_version": 2,
       "capabilities": [
         "mcp.health_check"
       ],
@@ -446,7 +446,7 @@
       "case_id": "surface.health_check",
       "executor": "surface",
       "entry": "health_check",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='默认summary为声明/任务摘要；诊断用diagnostic_summary，完整探活用full；微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='summary')])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='summary')])",
       "layer": "contract",
       "auto": true,
       "success": "注册名、签名、文档一致；不证明平台连通。"
@@ -2116,15 +2116,18 @@
     },
     {
       "case_id": "research.incremental_evidence",
-      "version": 1,
-      "oracle_version": 1,
+      "version": 2,
+      "oracle_version": 2,
       "capabilities": [
         "research.incremental_evidence",
         "mcp.update_research"
       ],
       "executor": "pytest",
       "nodes": [
-        "tests/test_stage3_research.py"
+        "tests/test_stage3_research.py",
+        "tests/test_research_candidate_records.py",
+        "tests/test_research_mechanism_verification.py",
+        "tests/test_research_state_review.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2139,9 +2142,15 @@
         "src/runtime/composition.py",
         "src/search_providers/aggregation.py",
         "src/search_providers/service.py",
-        "tests/test_stage3_research.py"
+        "tests/test_stage3_research.py",
+        "tests/test_research_candidate_records.py",
+        "tests/test_research_mechanism_verification.py",
+        "tests/test_research_state_review.py",
+        "src/runtime/research_queries.py",
+        "src/runtime/tool_trace.py",
+        "src/search_providers/constraints.py"
       ],
-      "success": "候选保留、稳定分页、撤回实时生效、数值否定保护、可逆折叠、失败不当零命中、慢查询可取消且不阻挡快查询；不代表账号或安装验收。"
+      "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。"
     },
     {
       "case_id": "fixture.github_objects",

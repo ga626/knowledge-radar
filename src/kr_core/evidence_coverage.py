@@ -8,19 +8,23 @@ def body_observation(response):
     metadata = response.get('detail_metadata') or response.get('metadata') or {}
     text = str(response.get('content') or response.get('text') or '').strip()
     normalized = re.sub(r'\s+', ' ', text).strip(' .!…\n').casefold()
-    title = str(response.get('title') or '').strip().casefold()
+    title = str(response.get('title') or '').strip().casefold().rstrip('.…')
     declared = response.get('body_state') or metadata.get('body_state')
-    state = declared or ('description' if response.get('video_description') is not None else 'body' if text else 'unknown')
-    if (title in {'client challenge', 'just a moment...', 'verify you are human'}
+    kind = response.get('source_kind') or metadata.get('source_kind') or ''
+    known = {'asr':'transcript','subtitle':'transcript','transcript':'transcript','abstract':'abstract',
+             'index':'index','video_description':'description','ocr':'ocr_text'}
+    state = declared or known.get(kind) or ('description' if text and text == str(response.get('video_description') or '').strip() else 'body' if text else 'unknown')
+    if (title in {'client challenge', 'just a moment', 'verify you are human'}
+            or normalized == 'client challenge'
             or normalized.startswith(('client challenge ', 'please enable javascript to continue', 'enable javascript and cookies to continue'))):
         state = 'access_challenge'
     elif normalized in {'redirecting', 'redirecting you', '正在跳转', '跳转中'}:
         state = 'redirect_shell'
     elif normalized in {'loading', 'please wait', '加载中', '正在加载', 'please enable javascript'}:
         state = 'navigation_shell'
-    return {'body_state': state, 'asset_kind': response.get('asset_kind') or state,
-            'source_role': response.get('source_role') or state,
-            'actual_scope': response.get('actual_scope') or state,
+    return {'body_state': state, 'asset_kind': response.get('asset_kind') or metadata.get('asset_kind') or state,
+            'source_role': response.get('source_role') or metadata.get('source_role') or state,
+            'actual_scope': response.get('actual_scope') or metadata.get('actual_scope') or state,
             'missing_reason': state if state in {'access_challenge', 'redirect_shell', 'navigation_shell'} else ''}
 
 

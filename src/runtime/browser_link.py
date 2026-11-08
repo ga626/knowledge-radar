@@ -182,6 +182,10 @@ class BrowserLink:
     def cancel(self, request_id: str) -> dict[str, Any]:
         return self._cancel('/cancel', {'request_id': request_id}, request_id)
 
+    def receipt(self, request_id: str) -> dict[str, Any]:
+        """只读原请求结果；未知或Host换代都不触发重放。"""
+        return self._cancel('/receipt', {'request_id': request_id}, request_id)
+
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         return self._cancel('/cancel_task', {'task_id': task_id}, task_id)
 

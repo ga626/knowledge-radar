@@ -102,6 +102,109 @@ def test_feedback_not_saturation_and_withdrawal(research):
     assert f['semantic_saturation']=='not_computed' and f['stop_decision']=='agent_owned'
 
 
+def test_assessments_preserve_scope_and_do_not_fill_another_language(research):
+    tid, index, assets = research
+    q = index.annotate(ResearchWrite(action='question',task_id=tid,text='中文开发者实践',required=True,languages=['zh'],information_roles=['experience']))['record_id']
+    ref = assets.put('https://a.test/english','English vendor claim: not production ready.')
+    assets.reference_many([ref['version_id']], tid, task_id=tid)
+    record = index.annotate(ResearchWrite(action='assessment',task_id=tid,question_id=q,claim_id='production',
+        relation='contradicts',basis='The original explicitly says not production ready.',applicability='English vendor statement only',
+        uncertainty='No Chinese developer experience collected',languages=['en'],information_roles=['vendor_statement'],
+        evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':len('English vendor claim: not production ready.')}]),assets=assets)
+    feedback = index.read(tid,view='feedback',assets=assets)
+    assert q in feedback['questions_without_reviewed_support']
+    assert feedback['unresolved_counterevidence'] == [record['record_id']]
+    assert feedback['scope_gaps'][0]['missing_languages'] == ['zh']
+    assert feedback['semantic_saturation'] == 'not_computed'
+
+
+def test_invalid_locator_and_withdrawn_assessment_are_not_support(research):
+    tid, index, assets = research
+    q = index.annotate(ResearchWrite(action='question',task_id=tid,text='why'))['record_id']
+    ref = assets.put('https://a.test/source','bounded original')
+    assets.reference_many([ref['version_id']], tid, task_id=tid)
+    args = dict(action='assessment',task_id=tid,question_id=q,relation='supports',claim_id='claim',basis='read original',applicability='test')
+    with pytest.raises(ValueError,match='locator'):
+        index.annotate(ResearchWrite(**args,evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':999}]),assets=assets)
+    index.annotate(ResearchWrite(**args,evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':7}]),assets=assets)
+    assert not index.read(tid,view='feedback',assets=assets)['questions_without_reviewed_support']
+    assets.withdraw(ref['source_id'])
+    assert index.read(tid,view='feedback',assets=assets)['questions_without_reviewed_support'] == [q]
+
+
+def test_decision_records_limits_without_approving_saturation(research):
+    tid, index, assets = research
+    saved = index.annotate(ResearchWrite(action='decision',task_id=tid,decision='defer',rationale='Chinese sources blocked',
+                                       unresolved_questions=['cn-experience'],reopen_conditions='Login then retry once'))
+    rows = index.read(tid,view='decisions')['items']
+    assert rows[0]['record_id'] == saved['record_id'] and rows[0]['decision'] == 'defer'
+    assert index.read(tid,view='feedback')['stop_decision'] == 'agent_owned'
+
+
+def test_read_counterevidence_covers_language_without_supporting_opposite_claim(research):
+    tid,index,assets=research
+    q=index.annotate(ResearchWrite(action='question',task_id=tid,text='Multiple concurrent writers?',languages=['en']))['record_id']
+    ref=assets.put('https://a.test/wal','Only one writer at a time.')
+    assets.reference_many([ref['version_id']],tid,task_id=tid)
+    index.annotate(ResearchWrite(action='assessment',task_id=tid,question_id=q,claim_id='multiwriter',relation='contradicts',
+        basis='Explicitly one writer',applicability='WAL same database',languages=['en'],
+        evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':25}]),assets=assets)
+    f=index.read(tid,view='feedback',assets=assets)
+    assert not f['scope_gaps'], 'English was reviewed even though it refutes the claim'
+    assert q in f['questions_without_reviewed_support'] and f['unresolved_counterevidence']
+
+
+def test_scope_revision_and_new_source_version_reopen_review(research):
+    tid, index, assets = research
+    q = index.annotate(ResearchWrite(action='question', task_id=tid, question_id='q', text='Practice', languages=['en']))['record_id']
+    first = assets.put('https://a.test/versioned', 'Original claim')
+    assets.reference_many([first['version_id']], tid, task_id=tid)
+    assessment = dict(action='assessment',task_id=tid,question_id=q,claim_id='c',relation='supports',
+        basis='Original claim',applicability='Original scope',languages=['en'],
+        evidence_refs=[{'version_id':first['version_id'],'start':0,'end':14}])
+    index.annotate(ResearchWrite(**assessment), assets=assets)
+    assert not index.read(tid,view='feedback',assets=assets)['questions_without_reviewed_support']
+    index.annotate(ResearchWrite(action='scope',task_id=tid,question_id=q,text='Practice',languages=['zh'],rationale='Chinese perspective required'))
+    feedback = index.read(tid,view='feedback',assets=assets)
+    assert feedback['questions_without_reviewed_support'] == [q]
+    assert feedback['assessments_requiring_review'][0]['reason'] == 'question_scope_changed'
+    question=index.read(tid,view='questions',assets=assets)['items'][0]
+    assert question['languages']==['zh'] and question['revision']==2
+    assert feedback['scope_gaps'][0]['missing_languages'] == ['zh']
+    index.annotate(ResearchWrite(**{**assessment,'record_id':'new-scope','languages':['zh']}),assets=assets)
+    newer = assets.put('https://a.test/versioned','Changed claim')
+    assets.reference_many([newer['version_id']], tid, task_id=tid)
+    feedback = index.read(tid,view='feedback',assets=assets)
+    assert feedback['questions_without_reviewed_support'] == [q]
+    assert any(x['reason'] == 'source_version_changed' for x in feedback['assessments_requiring_review'])
+    assert assets.fetch(first['version_id'])['text'] == 'Original claim'
+    rows = index.read(tid,view='assessments',assets=assets)['items']
+    assert all(x['review_required'] for x in rows)
+
+
+def test_query_action_reaches_real_trace_receipt(research, monkeypatch):
+    from runtime import composition
+    from runtime.tool_trace import traced_tool
+    from runtime.research_queries import CURRENT_RESEARCH_ACTION
+    from runtime.research_ledger import read_task
+    tid, index, _ = research
+    @traced_tool('kr_web_search')
+    def search(query, language='', research_task_id='', **kwargs):
+        return {'items':[{'url':'https://a.test/query','title':'candidate'}]}
+    monkeypatch.setattr(composition,'kr_web_search', search)
+    family = {'family_id':'family','action_id':'action','question_id':'question','language':'zh',
+              'query':'中文实践','source_ecology':'generic_web_ecology'}
+    result = composition.execute_research_query({'family':family,'research_task_id':tid,'limit':1})
+    receipt = result['research_receipt']
+    assert receipt['research_action']['action_id'] == 'action'
+    assert receipt['research_action']['question_id'] == 'question'
+    assert receipt['research_action']['attempt_id']
+    saved = next(x for x in read_task(task_id=tid)['tool_receipts'] if x['receipt_id']==receipt['receipt_id'])
+    assert saved['research_action'] == receipt['research_action']
+    assert not index.read(tid,view='feedback')['unplanned_receipts']
+    assert CURRENT_RESEARCH_ACTION.get() is None
+
+
 def test_query_failed_is_not_zero(research):
     tid,index,_=research
     for key,state in [('a','ok'),('b','failed')]:

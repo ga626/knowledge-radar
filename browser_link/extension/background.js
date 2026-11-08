@@ -12,6 +12,8 @@ let diagnosticEvents=[],diagnosticWrite=Promise.resolve();
 function record(p,stage,{code='',host=''}={}) {
   const row={at:Date.now(),request_id:String(p.id || '').slice(0,96),platform:p.platform,
     operation:p.operation || '',tab_id:p.tabId ?? null,stage};
+  if(p.documentId)row.document_id=p.documentId;
+  if(p.generation)row.generation=p.generation;
   if(code)row.code=/^[a-z_]{1,64}$/.test(code)?code:'operation_failed';
   if(host && SITES[p.platform]?.includes(host))row.host=host;
   diagnosticEvents.push(row);diagnosticEvents=diagnosticEvents.slice(-80);
@@ -66,7 +68,7 @@ async function presentAttention(p, signals) {
     if(current && current.url===item.url)await chrome.windows.update(item.windowId,{state:'minimized'});
     return {action:'none'};
   }
-  await chrome.alarms.create('attention:'+p.platform,{when:Date.now()+300000});
+  if(!decision.manual)await chrome.alarms.create('attention:'+p.platform,{when:Date.now()+300000});
   record(p,'attention_presented',{code:decision.reason});
   return decision;
 }
@@ -100,7 +102,6 @@ async function release(platform,force=false,reason='idle_cleanup',requestOwnsLoc
   try {
     const tab=await ownedTab(item);if(!tab){owned.delete(platform);await persist();
       return {work_page_closed:false,ownership_relinquished:true,cleanup_reason:'ownership_not_proven'};}
-    if(item.retainUntil && Date.now()>item.retainUntil){item.retained=false;item.observed=false;item.manual=false;}
     if((item.manual || item.retained || item.observed) && !force)return {work_page_closed:false,cleanup_reason:'interaction_retained'};
     // URL equality plus session ownership: never close a user-navigated tab.
     if(tab.url===item.url || tab.url==='about:blank'){
@@ -129,7 +130,7 @@ function finish(p,ok,data={},code='',notify=true) {
   if(notify)post(p.port,{type:'result',request_id:p.id,platform:p.platform,generation:p.generation,ok,
     data:{...data,browser_diagnostics:{last_stage:p.lastStage || 'command_received',tab_id:p.tabId,retained:!!item?.retained}},
     code,request_executed:!!p.dispatched || !!p.navigated});
-  if(['cancelled','browser_disconnected','native_command_timeout'].includes(code))void backgroundAttention(p.platform).catch(()=>{});
+  if(code==='cancelled')void backgroundAttention(p.platform).catch(()=>{});
   if(reloadPending && !pending.size)void finishUpdate();
 }
 async function finishUpdate() {
@@ -178,7 +179,7 @@ async function dispatch(p) {
   if(pending.get(p.id)!==p || p.dispatched)return;
   p.dispatched=true;
   p.lastStage='extract_dispatched';record(p,p.lastStage);
-  try{await chrome.tabs.sendMessage(p.tabId,{kind:'extract',request_id:p.id,generation:p.generation,platform:p.platform,operation:p.operation,payload:p.payload,timeout_ms:p.timeout},{frameId:0});}
+  try{await chrome.tabs.sendMessage(p.tabId,{kind:'extract',request_id:p.id,generation:p.generation,platform:p.platform,operation:p.operation,payload:p.payload,timeout_ms:p.timeout},p.documentId?{documentId:p.documentId}:{frameId:0});}
   catch{finish(p,false,{},'content_unavailable');}
 }
 async function tabFor(p,existingOnly=false) {
@@ -244,7 +245,7 @@ async function execute(message,port) {
       const cleanup=await release(platform,p.payload.preserve_interaction!==true,'explicit_release',true);
       finish(p,true,{...cleanup,interaction_retained:owned.has(platform)});return;
     }
-    const passive=['probe','attention'].includes(p.operation);
+    const passive=['probe','attention','auth_verify'].includes(p.operation);
     const tab=await tabFor(p,passive);
     if(pending.get(id)!==p)return;
     if(!tab)return finish(p,false,{},'work_tab_unavailable');
@@ -301,6 +302,10 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message?.kind==='content-ready' && sender.frameId===0){
     for(const p of pending.values()){
       if(p.tabId!==sender.tab?.id || p.platform!==message.platform || !target(p.platform,message.url))continue;
+      if(p.dispatched && p.documentId && sender.documentId && p.documentId!==sender.documentId){
+        finish(p,false,{},'COMMAND_RESULT_UNKNOWN');continue;
+      }
+      p.documentId=sender.documentId || p.documentId;
       p.lastStage='content_ready';record(p,p.lastStage);
       let expected=false;
       try{const actual=new URL(message.url),expectedUrl=new URL(p.target);expected=actual.pathname===expectedUrl.pathname && actual.search===expectedUrl.search;}catch{}
@@ -311,12 +316,15 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message?.kind==='content-started'){
     const p=pending.get(message.request_id);
     if(p && sender.tab?.id===p.tabId && sender.frameId===0 && message.platform===p.platform && message.generation===p.generation){
+      if(p.documentId && sender.documentId && p.documentId!==sender.documentId)return;
+      p.documentId=sender.documentId || p.documentId;
       p.lastStage='content_started';record(p,p.lastStage);
     }
   }
   if(message?.kind==='content-result'){
     const p=pending.get(message.request_id);
     if(!p || sender.tab?.id!==p.tabId || sender.frameId!==0 || message.platform!==p.platform || message.generation!==p.generation)return;
+    if(p.documentId && sender.documentId && p.documentId!==sender.documentId)return;
     p.lastStage='content_result';record(p,p.lastStage);
     const item=owned.get(p.platform);if(item && target(p.platform,message.data?.url))item.url=message.data.url;
     const done=()=>finish(p,!!message.ok,message.data || {},message.code || '');
@@ -330,6 +338,7 @@ chrome.tabs.onUpdated.addListener((id,change,tab)=>{
   for(const p of pending.values())if(p.tabId===id && change.status){
     let host='';try{host=new URL(tab.url).hostname;}catch{}
     record(p,change.status==='complete'?'navigation_complete':'navigation_loading',{host});
+    if(change.status==='loading' && p.dispatched)finish(p,false,{},'COMMAND_RESULT_UNKNOWN');
   }
 });
 chrome.windows.onFocusChanged.addListener(id=>{
@@ -347,12 +356,11 @@ chrome.tabs.onRemoved.addListener(id=>{
 chrome.alarms.onAlarm.addListener(alarm=>{
   if(alarm.name.startsWith('attention:')){
     const platform=alarm.name.slice(10),item=owned.get(platform);
-    if(item?.autoAttention && Date.now()>=item.autoAttention.until)void backgroundAttention(platform);
+    if(item?.autoAttention && !item.autoAttention.manual && Date.now()>=item.autoAttention.until)void backgroundAttention(platform);
     return;
   }
   if(alarm.name==='reconnect')void connect();
   if(alarm.name==='idle')for(const [platform,item] of owned){
-    if(item.manualUntil && Date.now()>item.manualUntil)item.manual=false;
     if(Date.now()-item.lastUsed>60000)void release(platform);
   }
 });
