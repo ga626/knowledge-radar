@@ -230,14 +230,29 @@ def test_pending_manual_page_is_not_probed_in_background(monkeypatch):
     assert boss.request_login()['status']=='waiting_for_user'
 
 
-def test_failed_manual_hold_release_never_marks_account_ready(monkeypatch):
+def test_failed_manual_hold_release_persists_auth_but_blocks_until_cleanup(monkeypatch):
     native_site.write_state(boss.state_path(), {'expires_at': 1})
+    calls = []
+    release_ok = False
     def invoke(**kw):
-        return {'ok':False,'code':'browser_session_busy'} if kw['operation']=='release_login' else {'ok':True,'data':{'authenticated_ui':True}}
+        calls.append(kw['operation'])
+        return {'ok':False,'code':'browser_session_busy'} if kw['operation']=='release_login' and not release_ok else {'ok':True,'data':{'authenticated_ui':True}}
     patch_native(monkeypatch,invoke)
     assert boss.complete_login()['status']=='not_verified'
-    assert not boss._site().state().get('verified_at')
+    pending = boss._site().state()
+    assert pending['verified_at'] and pending['auth_generation']
+    assert pending['cleanup_intent']['status'] == 'pending'
+    assert boss.admission()['reason'] == 'pending_manual_interaction'
+    assert not boss.admission()['allowed']
+    assert calls == ['auth_verify', 'release_login']
     assert not boss.state_path().with_name('auth-generation.json').exists()
+    release_ok = True
+    assert boss._site().invoke('search', keyword='Python')['ok']
+    assert calls == ['auth_verify', 'release_login', 'auth_verify', 'release_login', 'search']
+    completed = boss._site().state()
+    assert completed['cleanup_intent']['status'] == 'completed'
+    assert completed['cleanup_intent']['id'] == pending['cleanup_intent']['id']
+    assert boss.admission()['allowed']
 
 
 @pytest.mark.parametrize('change',[{'cancelled':True},{'risk':True},{'expires_at':999},{'navigation_loop':True}])

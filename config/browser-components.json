@@ -4,16 +4,16 @@
     "browser_link": {
       "source": "browser_link/extension",
       "extension_id": "gjpefddhmkinebmgfblaidofllfckhbi",
-      "version": "0.3.15",
+      "version": "0.3.16",
       "files": {
-        "background.js": "1cd3e3e8bd5866225b98ff4015e5765eb025a0643c250d624a43f82288416b4f",
-        "content.js": "73e5a9c3e694c78261ab64937e5f6a8a941f8d5646ecfe17665917c38d693df6",
+        "background.js": "a4a7ce5dc442dde6d43a8e470dd64cb1fc895068a74e4b122d65ac339a96ccae",
+        "content.js": "54f09af2946ea445c3b8e0545bf7fc15de6dc745569a2930dbb6ab1f9b72116f",
         "icons/radar-128.png": "4e47be2c2e3315370136cbe020ee3237dffe05427819b241d824f4860ac23317",
         "icons/radar-16.png": "ee9b8a6e27fdfe4090bcc9da3ecf4d9c0d6f024a3b50c60053300a3953f92ee5",
         "icons/radar-32.png": "e197bbea7e9f89096905b4c758fcdceb4c6f6d0099b8c466b88c326039b373d8",
         "icons/radar-48.png": "4454cd66fa16719ee98cb29bdf91419d3bc95db69db18d65048be6d2aeb9c554",
         "icons/radar.svg": "23dc90c31a63ae9cfd2e128d41b714a69bb9986501dd3c449e473a332bd3882b",
-        "manifest.json": "66089496f34b84a9d0fbc45b05b22b254f9ab1a8fd8b647cd2e73fa49b4f324b",
+        "manifest.json": "924f0289add900cb8a2b05dd51f9121d7673e4c907754ab2bcc9c49aea6e6846",
         "sites/liepin.js": "71af855844a6445ec559fceccd18c397bd80fc3d35f52a177e61dbc20cef7667",
         "sites/maimai.js": "1e14e9caf834af010c7ff961b1a9630bfb19cb18b5beeacf2b7b8e03a0b1c7fe",
         "sites/registry.js": "d5c69c45ce3340fa06b04f3b37e75a8feaea6fd760cbf4187eaafcb679d5373f",
@@ -24,7 +24,7 @@
         "status.js": "f384022a0e4bb0153b82ac3bff09507dfd0f320ff448b9d6447f6baf977d7c2d",
         "visibility.js": "74f631c6bf737cd65c0320d7638a74cd821a1a9d50939ba1d0e92159f6c0c227"
       },
-      "tree_sha256": "64ea9b015049763b5c9f56a845ecabd2291a6e767fab7c1a0eeeff66938b3a16",
+      "tree_sha256": "d0aeff81b1ac72c9af996f8b5115a0823acb113bc5d9a049b149c9c1ead4bab3",
       "distribution": "bundled_unpacked"
     },
     "opencli": {
