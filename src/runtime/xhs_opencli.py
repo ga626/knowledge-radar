@@ -138,6 +138,7 @@ def _observe_account(state, reason=""):
 def connection_status():
     """无副作用检查；在线扩展不等于账号已登录。"""
     import httpx
+    from runtime.opencli_bridge import extension_supported
     context = setting("KR_XHS_OPENCLI_CONTEXT_ID")
     root = Path(setting("KR_XHS_OPENCLI_ROOT") or ".")
     configured = bool(context and (root / "package.json").is_file())
@@ -151,7 +152,7 @@ def connection_status():
         except (httpx.HTTPError, ValueError):
             pass
     connected = bool(status.get("extensionConnected") and not status.get("profileDisconnected")
-        and status.get("daemonVersion") == "2.0.2" and status.get("extensionVersion") in {"1.0.26"})
+        and status.get("daemonVersion") == "2.0.2" and extension_supported(status.get("extensionVersion")))
     reason = ('ready' if connected else 'binding_missing' if not configured else
         'daemon_not_running_or_unreachable' if not status else
         'daemon_identity_mismatch' if status.get('daemonVersion') != '2.0.2' else

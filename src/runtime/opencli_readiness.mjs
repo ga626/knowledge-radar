@@ -3,7 +3,11 @@ import '../../browser_link/extension/visibility.js';
 import {execFile} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {randomUUID} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 export const visibilityPolicy = globalThis.KRVisibilityPolicy;
+const compatibility=JSON.parse(readFileSync(new URL('../../config/browser-components.json',import.meta.url),'utf8'))
+  .components.opencli.runtime_compatibility;
+export function extensionSupported(version){return compatibility.extension_versions.includes(version);}
 
 // 只导航已绑定工作页；不注入上游goto的页面全局补丁，不重放丢失target。
 export async function navigateOwnedPage(page, client, options) {
@@ -158,8 +162,8 @@ export async function presentOwnedPage(load, page, runId) {
 // 保留官方扩展。窗口策略由KR承担，不再要求派生扩展或私有CDP命令。
 export function requireOfficialExtension(status, operation) {
   if (['inventory','release','release_login'].includes(operation)) return;
-  if (status.extensionVersion !== '1.0.26') {
-    throw Object.assign(new Error('Use the official OpenCLI extension 1.0.26'),
+  if (!extensionSupported(status.extensionVersion)) {
+    throw Object.assign(new Error('Use a supported official OpenCLI extension: '+compatibility.extension_versions.join(', ')),
       {code:'opencli_official_extension_required'});
   }
 }
@@ -199,7 +203,15 @@ export async function officialWindowController(load,page,pythonExecutable,{helpe
     // 每次收起/前置之前重核归属：用户加页、移动页面后放弃窗口控制。
     const tabs=await native('tabs.query',[{windowId:tab.windowId}]);
     if(tabs.length!==1 || tabs[0].id!==tab.id)return {skipped:true,reason:'kr_work_window_ownership_changed'};
-    return helper(pythonExecutable,{action:'present',identity,title:tabs[0].title,foreground});
+    // 导航/站点渲染可异步改标题；不能用上一次tabs快照匹配Windows标题。
+    // 每次展示都重新用随机标识核对同一HWND/PID，结束立即恢复站点标题。
+    const previous=await page.evaluate(`(() => {const title=document.title;document.title=${JSON.stringify(marker)};return title;})()`);
+    try{
+      const rebound=await helper(pythonExecutable,{action:'bind',marker});
+      if(rebound.handle!==identity.handle || rebound.pid!==identity.pid)
+        return {skipped:true,reason:'kr_work_window_identity_changed'};
+      return await helper(pythonExecutable,{action:'present',identity,title:marker,foreground});
+    }finally{await page.evaluate(`document.title=${JSON.stringify(previous)}`);}
   };
   return control;
 }

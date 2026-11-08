@@ -320,8 +320,15 @@ def install_component(component, spec):
             if old.get('schema') != 'knowledgeradar-optional-install/v1' or old.get('component') != component:
                 raise ValueError('invalid_optional_install_receipt')
             if old.get('weight_revision') == COMPONENTS[component]['weight_revision']:
-                validate_receipt(component)
-                return {'status': 'installed_identity_verified', 'component': component, 'already_installed': True}
+                try:
+                    validate_receipt(component)
+                except ValueError as error:
+                    # 模型相同仍可能需要新依赖；损坏或身份异常不作为自动替换理由。
+                    if str(error) not in {'optional_component_locked_dependency_mismatch',
+                                         'optional_component_role_package_mismatch'}:
+                        raise
+                else:
+                    return {'status': 'installed_identity_verified', 'component': component, 'already_installed': True}
         try:
             result = _install_component(component, spec, target=target, publish=False)
             candidate = result.pop('candidate_receipt')

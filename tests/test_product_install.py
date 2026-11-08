@@ -208,6 +208,56 @@ def test_upgrade_restores_only_previously_selected_components(tmp_path, monkeypa
     assert not any("whisper" in arg or "playwright" == arg for command in calls for arg in command)
 
 
+@pytest.mark.parametrize('ready', [True, False])
+def test_upgrade_verifies_selected_component_in_real_data_root(tmp_path, monkeypatch, ready):
+    data_root = tmp_path/'data'
+    receipts = data_root/'state/optional_components'
+    receipts.mkdir(parents=True)
+    (receipts/'docling.json').write_text('{}', encoding='utf-8')
+    monkeypatch.setenv('KR_OPTIONAL_COMPONENT_RECEIPTS_DIR', str(tmp_path/'isolated-candidate'))
+    calls = []
+    def run(command, **kwargs):
+        calls.append((command, kwargs))
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps([{
+            'component': 'docling', 'ready': ready, 'failure_type': '' if ready else 'optional_component_locked_dependency_mismatch'}]))
+    monkeypatch.setattr(installer.subprocess, 'run', run)
+    if ready:
+        assert installer.restore_selected_runtime_components(tmp_path, Path('staged-python.exe'), data_root) == ['docling']
+    else:
+        with pytest.raises(RuntimeError, match='selected_optional_component_not_ready:docling'):
+            installer.restore_selected_runtime_components(tmp_path, Path('staged-python.exe'), data_root)
+    assert len(calls) == 1
+    assert calls[0][0][0] == 'staged-python.exe'
+    assert calls[0][1]['env']['KR_OPTIONAL_COMPONENT_RECEIPTS_DIR'] == str(receipts.resolve())
+    assert calls[0][1]['env']['KR_STATE_DIR'] == str((data_root/'state').resolve())
+
+
+def test_failed_selected_component_handoff_preserves_active_and_mcp_registration(tmp_path, monkeypatch):
+    codex_home = tmp_path/'codex'
+    monkeypatch.setenv('CODEX_HOME', str(codex_home))
+    install_root, data_root = tmp_path/'install', tmp_path/'data'
+    first = package_fixture(tmp_path/'first', '0.1.0')
+    archive, receipt = artifact_fixture(tmp_path/'first', first)
+    installer.apply_install(first, install_root, data_root, Path(sys.executable), channel='maintainer-main', archive=archive, receipt_path=receipt)
+    active_before = (install_root/'active.json').read_bytes()
+    config_before = (codex_home/'config.toml').read_bytes()
+    runtime_config = data_root/'config/runtime.env'
+    runtime_config.write_text('KR_ASR_MODELS=preserved-old-role\n', encoding='utf-8')
+    runtime_before = runtime_config.read_bytes()
+    selected = data_root/'state/optional_components/docling.json'
+    selected.parent.mkdir(parents=True, exist_ok=True)
+    selected.write_text('{}', encoding='utf-8')
+    monkeypatch.setattr(installer.subprocess, 'run', lambda *a, **k: types.SimpleNamespace(returncode=0, stdout=json.dumps([
+        {'component':'docling', 'ready':False, 'failure_type':'optional_component_locked_dependency_mismatch'}])))
+    second = package_fixture(tmp_path/'second', '0.1.1')
+    archive, receipt = artifact_fixture(tmp_path/'second', second)
+    with pytest.raises(RuntimeError, match='selected_optional_component_not_ready:docling'):
+        installer.apply_install(second, install_root, data_root, Path(sys.executable), channel='maintainer-main', archive=archive, receipt_path=receipt)
+    assert (install_root/'active.json').read_bytes() == active_before
+    assert (codex_home/'config.toml').read_bytes() == config_before
+    assert runtime_config.read_bytes() == runtime_before
+
+
 @pytest.fixture(autouse=True)
 def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:

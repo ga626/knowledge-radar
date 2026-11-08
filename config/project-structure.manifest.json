@@ -11,6 +11,7 @@
     "installation": "Verified snapshots under the chosen install root; stable loaded directory, browser consent and live protocol verification remain separate.",
     "state": "Component choices and receipts remain in the selected data root; incompatible or unowned existing assets require explicit handoff.",
     "asr_preparation": "optional_components/artifacts/<component>/<role-and-lock-revision>/ holds independent verified downloads; failed preparation does not modify the active component receipt or model.",
+    "upgrade_readiness": "Before activation, selected optional components are verified by the staged product interpreter against receipts in the chosen data root. Incompatible components stop activation; isolated candidate receipts cannot substitute for installed readiness.",
     "manual_wait": "Manual browser pages stay retained until verified completion or explicit cancellation; no login polling. A new related business request may perform one passive authentication check. Unknown operations are reconciled by request identity without replay."
   },
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",

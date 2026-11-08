@@ -705,6 +705,35 @@ def restore_selected_runtime_components(program: Path, runtime: Path, data_root:
                 action="restoring the selected Playwright browser",
             )
         restored.append("browser")
+    # 组件目录随数据保留；存在旧receipt不能证明它符合新版职责/依赖。
+    # 必须在写active/MCP注册之前，用新产品解释器核验真实数据根。
+    receipts = (data_root / "state" / "optional_components").resolve()
+    selected = sorted(component for capability, component in MODEL_CAPABILITIES.items()
+                      if _capability_enabled(data_root, capability) or (receipts / (component + ".json")).is_file())
+    if selected:
+        check_env = dict(env, KR_PROJECT_ROOT=str(program.resolve()),
+                         KR_SOURCE_ROOT=str((program / "src").resolve()),
+                         PYTHONPATH=str((program / "src").resolve()),
+                         KR_DATA_ROOT=str(data_root.resolve()), KR_STATE_DIR=str((data_root / "state").resolve()),
+                         KR_OPTIONAL_COMPONENT_RECEIPTS_DIR=str(receipts))
+        code = ("import json,sys\nfrom runtime.optional_media import component_plan\n"
+                "print(json.dumps([{k:p.get(k) for k in ('component','ready','failure_type')} "
+                "for p in (component_plan(c) for c in json.loads(sys.argv[1]))]))")
+        try:
+            check = subprocess.run([str(runtime), "-c", code, json.dumps(selected)], cwd=program,
+                                   env=check_env, capture_output=True, text=True, encoding="utf-8", timeout=90,
+                                   creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+            plans = json.loads(check.stdout) if check.returncode == 0 else None
+        except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+            raise RuntimeError("selected_optional_component_probe_failed") from error
+        if (not isinstance(plans, list) or len(plans) != len(selected)
+                or any(not isinstance(row, dict) for row in plans)
+                or sorted(row.get("component", "") for row in plans) != selected):
+            raise RuntimeError("selected_optional_component_probe_failed")
+        for row in plans:
+            if row.get("ready") is not True:
+                raise RuntimeError("selected_optional_component_not_ready:" + row["component"])
+        restored.extend(selected)
     return restored
 
 
@@ -1563,8 +1592,8 @@ def apply_install(
     app_root.mkdir(parents=True, exist_ok=True)
     staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
     product_python = Path(staged["runtime_python"])
-    model_configuration = migrate_model_configuration(data_root, program_root)
     restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
+    model_configuration = migrate_model_configuration(data_root, program_root)
     browser_components={}
     if (program_root/'config/browser-components.json').is_file():
         sys.path.insert(0,str(program_root/'src'))

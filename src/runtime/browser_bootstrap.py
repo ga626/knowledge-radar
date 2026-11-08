@@ -173,7 +173,8 @@ def window_presentation(request, *, windows=None):
     identity = request.get('identity') or {}
     current = next((r for r in rows if r['handle'] == identity.get('handle') and r['pid'] == identity.get('pid')), None)
     title = request.get('title')
-    if not current or not title or not (current['title'] == title or current['title'].startswith(title + ' - ')):
+    current_title = current['title'].lstrip('\u200e\u200f') if current else ''
+    if not current or not title or not (current_title == title or current_title.startswith(title + ' - ')):
         raise ValueError('work_window_identity_changed')
     if request.get('action') != 'present' or not isinstance(request.get('foreground'), bool):
         raise ValueError('invalid_window_presentation')

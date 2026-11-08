@@ -136,7 +136,9 @@ test('manual content handoff stays idle and resolves on the next explicit authen
 import {officialWindowController,requireOfficialExtension} from '../src/runtime/opencli_readiness.mjs';
 test('official extension accepted and derivative no longer required',()=>{
   assert.doesNotThrow(()=>requireOfficialExtension({extensionVersion:'1.0.26'},'search'));
+  assert.doesNotThrow(()=>requireOfficialExtension({extensionVersion:'1.0.27'},'search'));
   assert.throws(()=>requireOfficialExtension({extensionVersion:'1.0.26.2'},'search'),/official/);
+  assert.throws(()=>requireOfficialExtension({extensionVersion:'1.0.28'},'search'),/official/);
 });
 test('official controller restores title, minimizes only owned window and relinquishes after user adds tab',async()=>{
   let title='Research',tabs=[{id:2,windowId:5,title}],calls=[];
@@ -162,4 +164,27 @@ test('shared window is never minimized or focused by official controller',async(
   const control=await officialWindowController(load,page,'python',{helper:async()=>assert.fail('must not touch shared window')});
   assert.equal((await control(false)).reason,'kr_work_window_shared');
   assert.equal(calls.length,2);
+});
+
+for(const moved of [false,true])test(`window presentation rebinds after navigation without controlling a moved window: ${moved}`,async()=>{
+  let title='Before navigation',binds=0;const requests=[];
+  const page={contextId:'daily',evaluate:async code=>{
+    if(code.includes('const title=document.title')){
+      const prior=title;title=JSON.parse(code.match(/document.title=(".*?");/)[1]);return prior;
+    }
+    title=JSON.parse(code.split('document.title=')[1]);
+  }};
+  const load=async()=>({sendCommand:async()=>[{id:1,windowId:3,title:'stale native title'}]});
+  const helper=async(p,r)=>{
+    requests.push(r);
+    if(r.action==='bind'){assert.match(title,/^KR-work-/);return {handle:++binds>1&&moved?99:9,pid:10};}
+    assert.equal(r.title,title);return {};
+  };
+  const control=await officialWindowController(load,page,'python',{helper,initialBackground:false});
+  title='Changed by navigation';
+  const result=await control(true);
+  assert.equal(title,'Changed by navigation');
+  assert.equal(binds,2);
+  assert.equal(requests.filter(r=>r.action==='present').length,moved?0:1);
+  if(moved)assert.equal(result.reason,'kr_work_window_identity_changed');
 });

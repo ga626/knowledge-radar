@@ -12,6 +12,13 @@ import hashlib
 from runtime.paths import runtime_state_dir
 
 
+def extension_supported(version):
+    """复用已验证的用户扩展；包内分发版本不等于唯一运行版本。"""
+    catalog = Path(__file__).resolve().parents[2] / "config/browser-components.json"
+    compatible = json.loads(catalog.read_text(encoding="utf-8"))["components"]["opencli"]["runtime_compatibility"]
+    return version in compatible["extension_versions"]
+
+
 def write_state(path, data):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix("." + uuid.uuid4().hex + ".pending")
