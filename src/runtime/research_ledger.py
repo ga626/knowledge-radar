@@ -199,6 +199,9 @@ def record_tool_receipt(
         if isinstance(elapsed_s, (int, float)) and elapsed_s >= 0:
             receipt["elapsed_s"] = round(float(elapsed_s), 3)
         if isinstance(result, dict):
+            from generic_web.url_policy import canonical_url
+            receipt['source_keys'] = sorted({hashlib.sha256(canonical_url(str(result[key])).encode()).hexdigest()
+                for key in ('url', 'source_url') if result.get(key)})
             # Only preserve server-produced fixed asset identities and task IDs;
             # raw queries, source text and account data remain outside the ledger.
             receipt["evidence_versions"] = [
@@ -608,6 +611,23 @@ def update_candidate_stage(
         valid = len(receipts) == len(set(receipt_ids)) and bool(receipts)
         if stage == "cross_checked" and len(receipts) < 2 and not _safe_label(independence_rationale):
             valid = False
+        if stage in {'cross_checked', 'identity_checked'}:
+            # 发现回执只能证明执行过搜索；不能冒充已取得正文或核实主张。
+            valid = valid and all(row.get('evidence_versions') and row.get('status') in {'ok', 'partial'}
+                                  and not str(row.get('tool', '')).startswith(('search_', 'kr_web_search'))
+                                  for row in receipts)
+            valid = valid and any(candidate.get('source_key') in row.get('source_keys', [])
+                                  or (row.get('candidate_association') or {}).get('candidate_id') == candidate_id
+                                  for row in receipts)
+            if valid:
+                from kr_core.evidence_assets import EvidenceAssets
+                try:
+                    for version in {v for row in receipts for v in row['evidence_versions']}:
+                        EvidenceAssets(read_only=True).fetch(version, max_chars=1)
+                except (OSError, ValueError):
+                    valid = False
+            if stage == 'cross_checked' and not _safe_label(independence_rationale):
+                valid = False
         if stage == "degraded_or_blocked" and receipts and not any(str(item.get("status")) in {"failed", "degraded", "partial"} for item in receipts):
             valid = False
         verified = not requires_receipt or valid
@@ -618,6 +638,8 @@ def update_candidate_stage(
         candidate["last_outcome"] = _safe_label(outcome)
         candidate["receipt_ids"] = receipt_ids
         candidate["verification"] = "receipt_verified" if verified else "declared"
+        candidate['claim_verification'] = 'agent_assessed' if stage == 'cross_checked' and verified else 'unverified'
+        candidate['source_independence'] = 'agent_declared' if independence_rationale else 'unknown'
         kind = stage_map.get(stage, "candidate_deferred")
         event = _append_event(payload, kind, source_ecology=str(candidate.get("source_ecology") or ""), tool=tool, parent_event_id=parent_event_id, metadata={"candidate_id": candidate_id, "stage": stored_stage, "outcome": outcome, "receipt_count": len(receipts), "verification": candidate["verification"]})
         _write(payload)

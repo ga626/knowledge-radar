@@ -202,6 +202,7 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         raise GenericWebError("unsupported_content_type", f"Unsupported content-type: {content_type}", collector=collector, status_code=response.status_code)
     if 'html' in content_type.lower():
         soup = BeautifulSoup(response.text, 'lxml')
+        _check_page_body(soup, collector=collector, status_code=response.status_code)
         if soup.select('script[src], #app, #root, #__next'):
             for node in soup(['script','style','noscript','head']):
                 node.decompose()
@@ -209,6 +210,19 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
             if not text or text.lower() in {'loading','please wait','正在加载','加载中','enable javascript','please enable javascript'}:
                 raise GenericWebError('requires_dynamic_render', 'Application shell has no readable content', collector=collector)
     return response, content_type
+
+
+def _check_page_body(soup, *, collector, status_code):
+    """强访问壳信号先于解析器检查；正文中的普通登录/验证码讨论不阻断。"""
+    from kr_core.evidence_coverage import body_observation
+    observation = body_observation({'title': soup.title.get_text(' ', strip=True) if soup.title else '',
+                                    'content': soup.get_text(' ', strip=True)})
+    reason = observation['missing_reason']
+    if not reason and soup.select_one('meta[http-equiv="refresh" i]') and not soup.select_one('article,main'):
+        reason = 'redirect_shell'
+    if reason:
+        raise GenericWebError('requires_dynamic_render' if reason == 'navigation_shell' else reason, 'Page contains an access or navigation shell, not the requested body',
+                              collector=collector, status_code=status_code)
 
 
 def _collect_via_trafilatura(request: GenericWebRequest, *, artifact=None) -> GenericWebResponse:
@@ -376,6 +390,7 @@ def _collect_from_html(
     if article_url(request.url) or article_url(final_url):
         return _wechat_response(request, parse_html(html, final_url, transport=collector), final_url)
     soup = BeautifulSoup(html or "", "lxml")
+    _check_page_body(soup, collector=collector, status_code=status_code)
     has_client_scripts = bool(soup.select('script[src], #app, #root, #__next'))
     for node in soup(["script", "style", "noscript", "svg", "canvas", "form", "nav", "footer", "aside"]):
         node.decompose()
@@ -479,7 +494,18 @@ def _html_to_markdown(node) -> str:
         if name in {'script', 'style', 'noscript', 'svg', 'canvas', 'nav', 'footer', 'aside', 'form'}:
             return ''
         if name == 'pre':
-            code = element.get_text().replace('\r\n', '\n').replace('\r', '\n').strip('\n')
+            def code_text(item):
+                if isinstance(item, NavigableString):
+                    return str(item)
+                if item.name == 'br':
+                    return '\n'
+                if 'code-snippet__line-index' in (item.get('class') or []):
+                    return ''
+                text = ''.join(code_text(child) for child in item.children)
+                if item.name in {'div', 'li'} or 'code-snippet__line' in (item.get('class') or []):
+                    return text + ('\n' if not text.endswith('\n') else '')
+                return text
+            code = code_text(element).replace('\r\n', '\n').replace('\r', '\n').strip('\n')
             runs = [len(x) for x in re.findall(r'`+', code)]
             fence = '`' * max(3, max(runs, default=0) + 1)
             return '\n\n' + fence + '\n' + code + '\n' + fence + '\n\n'

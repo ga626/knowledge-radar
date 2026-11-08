@@ -1,9 +1,32 @@
 """请求、清单、原文和可查询活任务分别表达；零条不是不存在的证明。"""
 from __future__ import annotations
+import re
+
+
+def body_observation(response):
+    """只识别获取形态和明确的访问壳，不判相关性、可信度或语义充分。"""
+    metadata = response.get('detail_metadata') or response.get('metadata') or {}
+    text = str(response.get('content') or response.get('text') or '').strip()
+    normalized = re.sub(r'\s+', ' ', text).strip(' .!…\n').casefold()
+    title = str(response.get('title') or '').strip().casefold()
+    declared = response.get('body_state') or metadata.get('body_state')
+    state = declared or ('description' if response.get('video_description') is not None else 'body' if text else 'unknown')
+    if (title in {'client challenge', 'just a moment...', 'verify you are human'}
+            or normalized.startswith(('client challenge ', 'please enable javascript to continue', 'enable javascript and cookies to continue'))):
+        state = 'access_challenge'
+    elif normalized in {'redirecting', 'redirecting you', '正在跳转', '跳转中'}:
+        state = 'redirect_shell'
+    elif normalized in {'loading', 'please wait', '加载中', '正在加载', 'please enable javascript'}:
+        state = 'navigation_shell'
+    return {'body_state': state, 'asset_kind': response.get('asset_kind') or state,
+            'source_role': response.get('source_role') or state,
+            'actual_scope': response.get('actual_scope') or state,
+            'missing_reason': state if state in {'access_challenge', 'redirect_shell', 'navigation_shell'} else ''}
 
 
 def content_coverage(response, requested=None, *, task_lookup=None):
     requested = dict(requested or {})
+    body = body_observation(response)
     metadata = response.get('detail_metadata') or response.get('metadata') or {}
     rows = []
     for container in (response, metadata):
@@ -48,6 +71,8 @@ def content_coverage(response, requested=None, *, task_lookup=None):
             acquired = False
         if part == 'content' and (response.get('failure_type') in {'empty_detail', 'insufficient_content'} or metadata.get('content_quality') in {'empty', 'insufficient', 'metadata_only'}):
             acquired = False
+        if part == 'content' and body['missing_reason']:
+            acquired = False
         state = 'acquired' if acquired else 'not_requested' if asked is False else 'pending' if part_tasks and asked is True else 'blocked' if asked and response.get('manual_action_required') else 'missing' if asked is True else 'unknown'
         if not acquired and asked is True and part in {'ocr', 'transcript'} and response.get('enhancement_status') == 'queued':
             state = 'pending'
@@ -60,6 +85,13 @@ def content_coverage(response, requested=None, *, task_lookup=None):
         if observed_empty_text:
             coverage = 'observed_empty_original_text'
         result[part] = {'requested': asked, 'state': state, 'coverage': coverage, 'pending_task_ids': sorted(set(part_tasks)) if state == 'pending' else [], 'missing_reason': '' if acquired else 'not_requested' if state == 'not_requested' else str(response.get('failure_type') or 'not_acquired_or_not_proven')}
+        if part == 'content':
+            result[part].update({k: v for k, v in body.items() if k != 'missing_reason'})
+            result[part]['requested_scope'] = requested.get('content_scope') or response.get('requested_scope') or 'source_text'
+            if body['missing_reason']:
+                result[part]['missing_reason'] = body['missing_reason']
+            elif result[part]['requested_scope'] in {'body', 'fulltext', 'article_body'} and body['body_state'] in {'description', 'abstract', 'index'}:
+                result[part].update(state='missing', missing_reason='requested_body_not_acquired')
         if state == 'not_applicable':
             result[part].update(coverage='not_applicable', missing_reason=enhancement.get('reason', 'not_applicable'))
     gaps = [k for k, v in result.items() if v['requested'] is True and v['state'] not in {'acquired', 'not_applicable'}]

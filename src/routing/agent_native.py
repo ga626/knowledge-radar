@@ -53,6 +53,9 @@ def _recommended_next_action(data: Dict[str, Any], decision: Dict[str, Any], ret
         return "manual_platform_verification"
     if data.get("error"):
         return "retry_or_use_alternate_source" if retry_history else "inspect_error"
+    coverage = data.get('content_coverage') or {}
+    if coverage.get('required_gaps') or coverage.get('request_satisfied') is False:
+        return 'resolve_requested_content_gaps_or_limit_evidence_scope'
     if decision.get("recommended_path") == "recommend_l2_video" and not data.get("deep_analysis"):
         return "run_detail_with_auto_multimodal"
     if decision.get("recommended_path") == "need_more_probe":

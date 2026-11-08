@@ -61,16 +61,12 @@ def build_detail_evidence(url: str, platform: str, result: Dict[str, Any], *, no
 
     has_error = bool(result.get("error") or result.get("failure_type")) or result.get("status") in {"failed", "error", "empty", "needs_interaction"}
     body = re.sub(r"\s+", " ", str(result.get("content") or result.get("transcript") or "")).strip()
-    extracted = not has_error and len(body) >= 80
+    from kr_core.evidence_coverage import body_observation
+    observation = body_observation(result)
+    extracted = not has_error and bool(body) and not observation['missing_reason']
     # 正文成功提取不代表主张已核实；旧中文字段只作兼容展示。
     verification_status = "待核验" if extracted else "待验证"
-    credibility = {
-        "B站": "medium（平台元数据、转写和评论来自实时详情链路）",
-        "知乎": "medium-high（正文来自登录态页面/API提取）",
-        "小红书": "medium（正文、评论和媒体来自实时采集，具体渠道见出处记录）",
-    }.get(platform, "medium")
-    if not extracted:
-        credibility = "low（详情失败或有效正文不足，不能支持结论）"
+    credibility = 'unverified（采集状态不证明主张可信度，需Agent按具体问题评审）'
     published_at = str(
         result.get("published_at")
         or result.get("publish_time")
@@ -91,6 +87,7 @@ def build_detail_evidence(url: str, platform: str, result: Dict[str, Any], *, no
         verification_status=verification_status,
         metadata={
             "schema": "knowledgeradar-evidence/v2",
+            **observation,
             "extraction_status": "extracted" if extracted else "failed" if has_error else "insufficient_content",
             "retrieval_status": "failed" if has_error else "received",
             "identity_status": "unverified",

@@ -200,6 +200,7 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
         if time.monotonic() >= deadline:
             return provider_name, [], {'provider':provider_name, 'type':'deadline_exceeded', 'retryable':False}
         with sending_provider(provider_name, deadline):
+            request.options.setdefault('_sent_providers', []).append(provider_name)
             items = provider.search(request)
         check_execution()
         from .constraints import filter_results
@@ -423,7 +424,7 @@ def search_web(request: WebSearchRequest) -> WebSearchResponse:
             '_deadline': time.monotonic()+min(120,max(1,float(request.options.get('timeout_s') or 30)))})
         response = _search_web(request)
         response.metadata['configuration_generation'] = config.generation
-        response.metadata['constraint_application'] = {name: __import__('search_providers.constraints', fromlist=['constraint_report']).constraint_report(request,name) for name in response.attempted_providers}
+        response.metadata['constraint_application'] = {name: __import__('search_providers.constraints', fromlist=['constraint_report']).constraint_report(request,name,sent=name in request.options.get('_sent_providers', [])) for name in response.attempted_providers}
         return response
 
 

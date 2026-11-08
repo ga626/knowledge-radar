@@ -37,6 +37,42 @@ def test_identity_cross_ecology_tracking():
     assert identity({'url':'https://a.test/x?utm_source=a'},'web')==identity({'url':'https://a.test/x'},'github')
 
 
+def test_query_ecology_alias_is_normalized_and_unknown_remains_visible():
+    from runtime.research_queries import query_families
+    rows = query_families('topic', [{'query':'中文实践', 'intent':'experience', 'source_ecology':'知乎'},
+                                  {'query':'topic', 'intent':'discovery', 'source_ecology':'future_platform'}])
+    assert rows[0]['source_ecology'] == 'zhihu_discussion_ecology'
+    assert rows[1]['ecology_resolution'] == 'unsupported'
+    assert rows[1]['source_ecology'] == 'future_platform'
+
+
+def test_first_wave_explains_unselected_and_unknown_queries(research):
+    from runtime import composition
+    from runtime.research_queries import query_families
+    tid, index, _ = research
+    families = query_families('topic', [{'query':'q', 'intent':'experience', 'source_ecology':'知乎'},
+                                      {'query':'q', 'intent':'discovery', 'source_ecology':'future_platform'}])
+    result = composition._research_first_wave({'selected_source_ecologies':['generic_web_ecology'], 'query_families':families}, 1, tid)
+    assert {r['reason'] for r in result} == {'ecology_not_selected', 'unsupported_ecology'}
+    assert len(index.read(tid, view='queries')['items']) == 2
+
+
+def test_research_query_preserves_language_and_failure_outcome(research, monkeypatch):
+    from runtime import composition
+    tid, index, _ = research
+    sent = []
+    monkeypatch.setattr(composition, 'kr_web_search', lambda **kw: sent.append(kw) or {'items':[]})
+    family = {'family_id':'zh', 'source_ecology':'generic_web_ecology', 'query':'中文实践', 'language':'zh'}
+    composition.execute_research_query({'family':family, 'research_task_id':tid, 'limit':1})
+    assert sent[0]['language'] == 'zh'
+    def fail(**kw):
+        raise RuntimeError('adapter failed')
+    monkeypatch.setattr(composition, 'kr_web_search', fail)
+    with pytest.raises(RuntimeError):
+        composition.execute_research_query({'family':family, 'research_task_id':tid, 'limit':1})
+    assert index.read(tid, view='queries')['items'][0]['status'] == 'failed'
+
+
 def test_candidate_catalog_stable_and_reversible(research):
     tid,index,assets=research
     items=[{'url':f'https://a.test/{i}','title':str(i)} for i in range(6)]

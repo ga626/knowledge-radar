@@ -959,6 +959,8 @@ def _research_ecology_cards(ecology_ids: list[str]) -> list[Dict]:
                 "evidence_role": item.get("evidence_role"),
                 "known_limits": item.get("known_limits", []),
                 "reveals": item.get("reveals", [])[:2],
+                **{key: item.get(key, []) for key in ('not_limited_to', 'content_forms', 'query_archetypes')},
+                "declared_boundary": item.get('declared_boundary', ''),
             }
         )
     return cards
@@ -994,6 +996,8 @@ def _research_ecology_consideration_map(task: str, hints: list[str], evidence_ne
                 "detail_affordance": detail_tools,
                 "unique_information_value": list(ecology.get("reveals") or [])[:2],
                 "known_limits": list(ecology.get("known_limits") or []),
+                **{key: ecology.get(key, []) for key in ('not_limited_to', 'content_forms', 'query_archetypes')},
+                "declared_boundary": ecology.get('declared_boundary', ''),
                 "next_candidate_action": "Agent decides whether to discover, extract detail, cross-check, seek counterevidence, or record a justified skip.",
             }
         )
@@ -1123,6 +1127,12 @@ def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> 
     families = plan.get("query_families") or query_families(plan.get("query") or "")
     index, service = ResearchIndex(), TaskService()
     results = []
+    selected = plan.get('selected_source_ecologies') or []
+    for family in families:
+        if family.get('ecology_resolution') == 'unsupported' or family['source_ecology'] not in ['*', *selected]:
+            reason = 'unsupported_ecology' if family.get('ecology_resolution') == 'unsupported' else 'ecology_not_selected'
+            index.query(research_task_id, {**family, 'reason': reason}, status='skipped')
+            results.append({'family_id': family['family_id'], 'source_ecology': family['source_ecology'], 'status':'skipped', 'reason':reason})
     for ecology in plan.get("selected_source_ecologies") or []:
         for family in families:
             if family["source_ecology"] not in {"*", ecology}:
@@ -1150,20 +1160,24 @@ def execute_research_query(payload):
     ecology, query, limit = family["source_ecology"], family["query"], payload["limit"]
     index = ResearchIndex()
     index.query(tid,family,status="running")
-    check_execution()
-    if ecology == "academic_literature_ecology":
-        result = search_academic(query=query,limit=min(limit,5),provider="auto",research_task_id=tid)
-    elif ecology == "github_repository_ecology":
-        result = search_github_repositories(query=query,limit=limit,research_task_id=tid)
-    elif ecology == "youtube_video_ecology":
-        result = search_youtube(keyword=query,limit=limit,research_task_id=tid)
-    elif ecology == "wechat_public_article_ecology":
-        result = search_wechat_articles(query=query,limit=limit,research_task_id=tid)
-    elif ecology == "generic_web_ecology":
-        result = kr_web_search(query=query,limit=limit,provider="auto",research_task_id=tid)
-    else:
-        raise ValueError("unsupported_research_query_ecology")
-    check_execution()
+    try:
+        check_execution()
+        if ecology == "academic_literature_ecology":
+            result = search_academic(query=query,limit=min(limit,5),provider="auto",research_task_id=tid)
+        elif ecology == "github_repository_ecology":
+            result = search_github_repositories(query=query,limit=limit,research_task_id=tid)
+        elif ecology == "youtube_video_ecology":
+            result = search_youtube(keyword=query,limit=limit,research_task_id=tid)
+        elif ecology == "wechat_public_article_ecology":
+            result = search_wechat_articles(query=query,limit=limit,research_task_id=tid)
+        elif ecology == "generic_web_ecology":
+            result = kr_web_search(query=query,limit=limit,provider="auto",language='' if family.get('language') == 'unknown' else family.get('language', ''),research_task_id=tid)
+        else:
+            raise ValueError("unsupported_research_query_ecology")
+        check_execution()
+    except BaseException as exc:
+        index.query(tid, family, status='failed', result={'error': {'type': type(exc).__name__}})
+        raise
     from runtime.research_index import query_outcome
     index.query(tid,family,status=query_outcome(result),result=result)
     return result

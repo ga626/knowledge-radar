@@ -23,7 +23,7 @@ def prepare_request(request):
     return replace(request, query=request.query.strip(), limit=max(1,min(20,request.limit)), options=options)
 
 
-def constraint_report(request, provider):
+def constraint_report(request, provider, *, sent=False):
     capabilities = SEARCH_CATALOG.get(provider.split(':')[0], {}).get('capabilities', {})
     out = {}
     for name, value in [('language', request.language), ('freshness', request.freshness),
@@ -31,7 +31,9 @@ def constraint_report(request, provider):
         if value:
             support = capabilities.get(name, 'unsupported')
             out[name] = {'requested': value, 'method': support,
-                'recall_guaranteed': False, 'hard_constraint_satisfied': support == 'native'}
+                'sent': value if sent and support not in {'unsupported', 'post_filter'} else None,
+                'provider_supported': support, 'observed': 'not_evaluated', 'verified': False,
+                'recall_guaranteed': False, 'hard_constraint_satisfied': False}
     return out
 
 

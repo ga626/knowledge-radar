@@ -73,3 +73,14 @@ def test_candidate_ledger_deduplicates_and_never_persists_raw_query_or_url(monke
     assert "detail_extracted" in serialized
     assert "candidate_page_received" in serialized
     assert "hmac-sha256:" in serialized
+
+
+
+def test_search_receipts_cannot_verify_a_cross_checked_claim(monkeypatch, tmp_path):
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    tid = open_task(objective="check claim", budget="balanced", considered=[])["research_task_id"]
+    refs = [record_tool_receipt(task_id=tid, trace_id=str(i), tool="kr_web_search", status="ok")["receipt"]["receipt_id"] for i in range(2)]
+    candidate = record_candidates(task_id=tid, source_ecology="generic_web_ecology", tool="kr_web_search", query="claim", items=[{"url": "https://example.org/claim"}], receipt_id=refs[0])["candidates"][0]
+    result = update_candidate_stage(task_id=tid, candidate_id=candidate["candidate_id"], stage="cross_checked", evidence_receipt_ids=refs)
+    assert result["status"] == "declared_only"
+    assert result["candidate"]["verification"] != "receipt_verified"

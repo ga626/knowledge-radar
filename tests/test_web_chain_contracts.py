@@ -288,6 +288,16 @@ def test_strict_unsupported_constraint_does_not_send(monkeypatch):
     assert not items and error['type']=='unsupported_constraint'
 
 
+def test_native_capability_does_not_verify_a_language_constraint():
+    from search_providers.constraints import constraint_report
+    from search_providers.models import WebSearchRequest
+    request = WebSearchRequest('技术实践', language='zh')
+    planned = constraint_report(request, 'anysearch')['language']
+    observed = constraint_report(request, 'anysearch', sent=True)['language']
+    assert planned['sent'] is None and not planned['verified']
+    assert observed['sent'] == 'zh' and not observed['hard_constraint_satisfied']
+
+
 def test_domain_filter_is_enforced_and_reported():
     from search_providers.constraints import filter_results, constraint_report
     request=WebSearchRequest('q',options={'include_domains':['example.com']})
