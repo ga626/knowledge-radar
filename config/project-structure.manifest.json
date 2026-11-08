@@ -2,14 +2,16 @@
   "schema": "knowledgeradar-project-structure/v1",
   "updated_at": "2026-11-07",
   "research_archive_contract": {
-    "new_task_layout": "<project>/<year>年/<month>月<day>日 <hour>：<minute> <task>/",
+    "new_task_layout": "<project>/<year>年/<month>.<day> <hour>：<minute> <task>/",
     "history_migration": "Explicit identity and hash checked plan/apply; preserve source versions and user changes.",
     "delivery_progress": "Evidence retention and Vault delivery have independent completion; late Vault binding replays fixed historical rounds."
   },
   "browser_component_contract": {
     "sources": "browser_link/extension and browser_link/opencli_bridge (Apache-2.0 upstream source plus audited extension build)",
     "installation": "Verified snapshots under the chosen install root; stable loaded directory, browser consent and live protocol verification remain separate.",
-    "state": "Component choices and receipts remain in the selected data root; incompatible or unowned existing assets require explicit handoff."
+    "state": "Component choices and receipts remain in the selected data root; incompatible or unowned existing assets require explicit handoff.",
+    "asr_preparation": "optional_components/artifacts/<component>/<role-and-lock-revision>/ holds independent verified downloads; failed preparation does not modify the active component receipt or model.",
+    "manual_wait": "Manual browser pages stay retained until verified completion or explicit cancellation; no login polling. A new related business request may perform one passive authentication check. Unknown operations are reconciled by request identity without replay."
   },
   "single_source_of_truth": "D:/Projects/KnowledgeRadar",
   "generated_marker": "KR-GENERATED",

@@ -167,6 +167,7 @@ def record_tool_receipt(
     elapsed_s: float | None = None,
     receipt_kind: str = "tool_call",
     submission_sha256: str = "",
+    research_action: dict | None = None,
 ) -> dict[str, Any]:
     """Bind a completed, privacy-safe tool trace to an explicit research task.
 
@@ -196,9 +197,14 @@ def record_tool_receipt(
         }
         if submission_sha256:
             receipt['submission_sha256'] = submission_sha256
+        receipt['research_action'] = ({key:_safe_label(research_action.get(key,'')) for key in ('family_id','action_id','attempt_id','question_id','parent_event_id')}
+                                      if research_action else {'association':'unplanned'})
         if isinstance(elapsed_s, (int, float)) and elapsed_s >= 0:
             receipt["elapsed_s"] = round(float(elapsed_s), 3)
         if isinstance(result, dict):
+            from generic_web.url_policy import canonical_url
+            receipt['source_keys'] = sorted({hashlib.sha256(canonical_url(str(result[key])).encode()).hexdigest()
+                for key in ('url', 'source_url') if result.get(key)})
             # Only preserve server-produced fixed asset identities and task IDs;
             # raw queries, source text and account data remain outside the ledger.
             receipt["evidence_versions"] = [
@@ -589,6 +595,32 @@ def record_candidates(
         return {"schema": SCHEMA, "status": "recorded", "research_task_id": task_id, "candidates": received}
 
 
+def _candidate_receipt_source_matches(candidate, receipt, fixed):
+    if candidate.get('source_key') in receipt.get('source_keys', []):
+        return True
+    association = receipt.get('candidate_association') or {}
+    if association.get('candidate_id') == candidate.get('candidate_id') and association.get('status') == 'recorded':
+        return True
+    # 固定README的URL是blob/commit/path，仓库候选的URL是仓库根。
+    # 只按固定资产中的采集器身份关联，不改写旧回执或凭标题猜测。
+    from urllib.parse import urlsplit
+    from generic_web.url_policy import canonical_url
+    for version in receipt.get('evidence_versions', []):
+        asset = fixed.get(version, {})
+        github = (asset.get('provenance') or {}).get('github') or {}
+        repo, commit = str(github.get('repository') or ''), str(github.get('commit') or '')
+        if (github.get('public_only') is not True or github.get('object_kind') not in {'readme','file','tree','overview'}
+                or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo) or not re.fullmatch(r'[a-f0-9]{40}', commit)):
+            continue
+        parsed = urlsplit(asset.get('source_url') or '')
+        if parsed.hostname != 'github.com' or not any(parsed.path.startswith('/'+repo+'/'+kind+'/'+commit+'/') for kind in ('blob','tree')):
+            continue
+        key = hashlib.sha256(canonical_url('https://github.com/'+repo).encode()).hexdigest()
+        if key == candidate.get('source_key'):
+            return True
+    return False
+
+
 def update_candidate_stage(
     *, task_id: str, candidate_id: str, stage: str, tool: str = "", outcome: str = "", parent_event_id: str = "",
     evidence_receipt_ids: list[str] | None = None, independence_rationale: str = "",
@@ -608,6 +640,22 @@ def update_candidate_stage(
         valid = len(receipts) == len(set(receipt_ids)) and bool(receipts)
         if stage == "cross_checked" and len(receipts) < 2 and not _safe_label(independence_rationale):
             valid = False
+        if stage in {'detail_extracted', 'counterevidence', 'cross_checked', 'identity_checked'}:
+            # 发现回执只能证明执行过搜索；不能冒充已取得正文或核实主张。
+            valid = valid and all(row.get('evidence_versions') and row.get('status') in {'ok', 'partial'}
+                                  and not str(row.get('tool', '')).startswith(('search_', 'kr_web_search'))
+                                  for row in receipts)
+            if valid:
+                from kr_core.evidence_assets import EvidenceAssets
+                try:
+                    fixed = {}
+                    for version in {v for row in receipts for v in row['evidence_versions']}:
+                        fixed[version] = EvidenceAssets(read_only=True).fetch(version, max_chars=1)['asset']
+                    valid = any(_candidate_receipt_source_matches(candidate, row, fixed) for row in receipts)
+                except (OSError, ValueError):
+                    valid = False
+            if stage == 'cross_checked' and not _safe_label(independence_rationale):
+                valid = False
         if stage == "degraded_or_blocked" and receipts and not any(str(item.get("status")) in {"failed", "degraded", "partial"} for item in receipts):
             valid = False
         verified = not requires_receipt or valid
@@ -618,6 +666,8 @@ def update_candidate_stage(
         candidate["last_outcome"] = _safe_label(outcome)
         candidate["receipt_ids"] = receipt_ids
         candidate["verification"] = "receipt_verified" if verified else "declared"
+        candidate['claim_verification'] = 'agent_assessed' if stage == 'cross_checked' and verified else 'unverified'
+        candidate['source_independence'] = 'agent_declared' if independence_rationale else 'unknown'
         kind = stage_map.get(stage, "candidate_deferred")
         event = _append_event(payload, kind, source_ecology=str(candidate.get("source_ecology") or ""), tool=tool, parent_event_id=parent_event_id, metadata={"candidate_id": candidate_id, "stage": stored_stage, "outcome": outcome, "receipt_count": len(receipts), "verification": candidate["verification"]})
         _write(payload)
@@ -934,7 +984,11 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
                     assets.fetch(version, max_chars=1)
                 except (ValueError, OSError):
                     unavailable_versions.append(version)
-        has_gaps = bool(missing or critical_without_support or critical_without_receipts or pending_tasks or required_failures or pending_submissions or unavailable_versions)
+        from runtime.research_index import ResearchIndex
+        research_feedback = ResearchIndex().read(task_id, view='feedback', max_chars=24000)
+        has_gaps = bool(missing or critical_without_support or critical_without_receipts or pending_tasks or required_failures or pending_submissions or unavailable_versions
+                        or any(research_feedback.get(key+'_count',len(research_feedback.get(key,[])))
+                               for key in ('scope_gaps','questions_without_reviewed_support','unresolved_counterevidence','assessments_requiring_review')))
         status = "recorded_with_gaps" if has_gaps else "recorded"
 
         payload["status"] = status
@@ -956,7 +1010,7 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
                 "research_decision": "agent_owned",
                 "delivery_read_tool": "manage_research_artifacts.archive_status",
                 **delivery_observation,
-                "evidence_validation": "gaps" if critical_without_support or critical_without_receipts or unavailable_versions else "verified_registered_claims_only",
+                "evidence_validation": "gaps" if critical_without_support or critical_without_receipts or unavailable_versions else "registered_receipt_integrity_only",
                 "report_check": "verified_pass" if quality_status == "pass" and quality_receipt_valid else "unverified",
                 "stop_authority": "agent",
             },
@@ -968,6 +1022,7 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
             "quality_receipt_path": str(quality_receipt_path or ""),
             "transcript_status": transcript_status or "unavailable",
             "stop_rationale": str(stop_rationale or ""),
+            "research_feedback": research_feedback,
             "host_boundary": "Standard MCP does not receive Codex host call IDs; transcript association remains post-hoc and may be ambiguous under concurrency.",
         }
         payload.setdefault("events", []).append({"at": _now(), "kind": "closeout", "detail": status})

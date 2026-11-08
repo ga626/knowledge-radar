@@ -241,16 +241,20 @@ def test_component_upgrade_is_explicit_and_rolls_back_on_failure(monkeypatch, tm
     receipt.write_text(json.dumps(old))
     before = receipt.read_bytes()
 
-    def install(component, spec):
-        assert not target.exists() and not receipt.exists()
+    candidates = []
+    def install(component, spec, *, target: object, publish):
+        assert receipt.read_bytes() == before and not publish
         target.mkdir()
+        candidates.append(target)
         (target / "new.txt").write_text("current environment")
         if fail:
             raise RuntimeError("offline_install_failed")
-        receipt.write_text('{"candidate":"verified"}')
-        return {"status": "installed_identity_verified"}
+        return {"status": "installed_identity_verified", 'candidate_receipt':{'schema':'knowledgeradar-optional-install/v1', 'component':component,'weight_revision':'new-role'}}
 
     monkeypatch.setattr(optional_media, "_install_component", install)
+    monkeypatch.setattr(optional_media, 'validate_receipt', lambda component, **kw: kw['receipt_value'])
+    from runtime import component_environment
+    monkeypatch.setattr(component_environment, 'component_environment', lambda *a, **kw: {'status':'ready'})
     with pytest.raises(ValueError, match="reviewed_installation_required"):
         optional_media.install_component(ASR_COMPONENT, {})
     assert receipt.read_bytes() == before and (target / "old.txt").is_file()
@@ -267,7 +271,8 @@ def test_component_upgrade_is_explicit_and_rolls_back_on_failure(monkeypatch, tm
             )["status"]
             == "installed_identity_verified"
         )
-        assert (target / "new.txt").is_file() and not (target / "old.txt").exists()
+        assert (candidates[0] / "new.txt").is_file() and (target / "old.txt").is_file()
+        assert json.loads(receipt.read_text())['previous_receipt'] == old
     assert not list(root.glob(".replacing-*"))
 
 

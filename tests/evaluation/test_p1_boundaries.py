@@ -89,12 +89,19 @@ def test_dates_use_clock_not_literal_year():
     assert freshness_for_platform("web", {"published_at": "2099-01-01"}, now=clock) == "future"
 
 
-@pytest.mark.parametrize("data", [{}, {"title": "only title"}, {"comments": [{"text": "comment"}]}, {"content": "short"}])
+@pytest.mark.parametrize("data", [{}, {"title": "only title"}, {"comments": [{"text": "comment"}]}])
 def test_extraction_is_not_claim_verification(data):
     evidence = build_detail_evidence("https://example.org/", "web", data)
     assert evidence.verification_status != "已验证"
     assert evidence.metadata["claim_verification"] == "unverified"
     assert evidence.metadata["extraction_status"] == "insufficient_content"
+
+
+def test_short_body_is_extracted_without_claim_verification():
+    evidence = build_detail_evidence("https://example.org/", "web", {"content": "short"})
+    assert evidence.metadata["extraction_status"] == "extracted"
+    assert evidence.metadata["claim_verification"] == "unverified"
+    assert evidence.verification_status != "已验证"
 
 
 def test_candidate_strength_not_counted_as_verified():

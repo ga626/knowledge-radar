@@ -142,7 +142,7 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
             'retryable':False,'expected_degraded':True}
     from .constraints import constraint_report
     constraints = constraint_report(request, provider_name)
-    if request.options.get('require_constraints') and any(not x['hard_constraint_satisfied'] for x in constraints.values()):
+    if request.options.get('require_constraints') and any(not x['hard_constraint_satisfied'] and not x['locally_enforceable'] for x in constraints.values()):
         return provider_name, [], {'provider':provider_name,'type':'unsupported_constraint',
             'constraints':constraints,'message':'Choose another authorized provider or explicitly relax the constraint.',
             'retryable':False,'expected_degraded':True}
@@ -200,10 +200,12 @@ def _search_provider(request: WebSearchRequest, provider: BaseSearchProvider) ->
         if time.monotonic() >= deadline:
             return provider_name, [], {'provider':provider_name, 'type':'deadline_exceeded', 'retryable':False}
         with sending_provider(provider_name, deadline):
+            request.options.setdefault('_sent_providers', []).append(provider_name)
             items = provider.search(request)
         check_execution()
         from .constraints import filter_results
         items = filter_results(request, items)
+        request.options.setdefault('_filtered_providers', []).append(provider_name)
     except SearchProviderError as exc:
         policy.record_degradation(
             "search_provider",
@@ -423,7 +425,7 @@ def search_web(request: WebSearchRequest) -> WebSearchResponse:
             '_deadline': time.monotonic()+min(120,max(1,float(request.options.get('timeout_s') or 30)))})
         response = _search_web(request)
         response.metadata['configuration_generation'] = config.generation
-        response.metadata['constraint_application'] = {name: __import__('search_providers.constraints', fromlist=['constraint_report']).constraint_report(request,name) for name in response.attempted_providers}
+        response.metadata['constraint_application'] = {name: __import__('search_providers.constraints', fromlist=['constraint_report']).constraint_report(request,name,sent=name in request.options.get('_sent_providers', []),filtered=name in request.options.get('_filtered_providers', [])) for name in response.attempted_providers}
         return response
 
 

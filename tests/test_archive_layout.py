@@ -51,6 +51,26 @@ def test_migration_preserves_fixed_sources_and_future_incremental_delivery(archi
     assert not old.exists()
 
 
+@pytest.mark.parametrize('layout,title',[
+    ('project-year-task-v1','11月07日 01：24 完整测试'),
+    ('project-year-task-v2','11-07 01-24 完整测试'),
+    ('project-year-task-v2','11.07 01：24 完整测试'),
+])
+def test_naming_migration_keeps_bound_calendar_time_and_is_idempotent(archive,layout,title):
+    engine,*_=archive
+    context=engine._context('task-a');folder=engine._task_directory(context)
+    old=folder.with_name(title);folder.rename(old)
+    context.update(directory_layout=layout,directory_title=title)
+    engine._save(context)
+    # fixture ledger是11月2日；迁移必须保留绑定的11月7日01：24，不重算时区。
+    candidate=plan(engine,request())
+    assert Path(candidate['destination']).name=='11.07 01：24 完整测试'
+    receipt=apply(engine,apply_request(candidate))
+    assert engine._context('task-a')['directory_title']=='11.07 01：24 完整测试'
+    assert apply(engine,apply_request(candidate))==receipt
+    assert plan(engine,request())['source']==plan(engine,request())['destination']
+
+
 def test_stale_plan_preserves_human_edit(archive):
     engine,*_=archive;old=legacy(engine);evidence(engine);submit(engine)
     candidate=plan(engine,request())

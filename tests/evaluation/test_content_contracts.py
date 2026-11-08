@@ -68,3 +68,74 @@ def test_natural_speech_requires_bound_gold_and_critical_review():
 def test_empty_speech_evaluation_cannot_pass():
     from kr_core.content_contracts import natural_speech_assessment
     assert natural_speech_assessment([], {"samples": []})["status"] == "INCOMPLETE"
+
+
+@pytest.mark.parametrize("text", ["Client Challenge\nPlease enable JavaScript to continue", "Redirecting..."])
+def test_shell_is_not_requested_article_body(text):
+    from kr_core.evidence_coverage import content_coverage
+    result = content_coverage({"content": text})
+    assert result["request_satisfied"] is False
+    assert "content" in result["required_gaps"]
+
+
+def test_partial_transcript_is_not_recommended_as_complete_evidence():
+    from routing.agent_native import build_agent_native_fields
+    data = {"content": "video description", "content_coverage": {"request_satisfied": False, "required_gaps": ["transcript"]}}
+    assert build_agent_native_fields(data)["recommended_next_action"] != "use_as_evidence"
+
+
+def test_wechat_code_preserves_br_and_indentation():
+    from generic_web.collector import html_fragment_to_markdown
+    result = html_fragment_to_markdown("<pre><code>if ok:<br>    alpha()<br><br>    beta()</code></pre>")
+    assert "if ok:\n    alpha()\n\n    beta()" in result
+
+
+def test_platform_cannot_supply_claim_credibility():
+    from understanding.evidence import build_detail_evidence
+    item = build_detail_evidence("https://www.zhihu.com/question/123", "知乎", {"content": "a source assertion " * 15})
+    assert item.credibility.startswith("unverified")
+
+
+def test_short_substantive_notice_not_rejected_by_length():
+    from understanding.evidence import build_detail_evidence
+    item = build_detail_evidence("https://example.org/notice", "web", {"content": "Service discontinued on November 1, 2026."})
+    assert item.metadata["extraction_status"] == "extracted"
+
+
+def test_video_description_has_its_own_content_role():
+    from kr_core.evidence_coverage import content_coverage
+    result = content_coverage({"content": "Learn the basics", "video_description": "Learn the basics"})
+    assert result["parts"]["content"]["body_state"] == "description"
+    assert result["request_satisfied"] is True
+
+
+def test_challenge_html_cannot_become_an_article():
+    from generic_web.collector import collect_rendered_html
+    from generic_web.models import GenericWebRequest
+    result = collect_rendered_html(GenericWebRequest("https://example.org/paper"), html="<html><title>Client Challenge</title><body>Please enable JavaScript to continue</body></html>")
+    assert result.error and result.error["type"] == "access_challenge"
+
+
+def test_local_asr_and_abstract_cannot_claim_original_article_body():
+    from kr_core.evidence_coverage import content_coverage
+    asr = content_coverage({'content':'Actual spoken words','source_kind':'asr'})
+    assert asr['parts']['content']['source_role'] == 'transcript'
+    abstract = content_coverage({'content':'Summary only','source_kind':'abstract'},{'content_scope':'fulltext'})
+    assert not abstract['request_satisfied']
+
+
+@pytest.mark.parametrize('html,blocked',[
+    ('<body><main><h1>验证码实现</h1><p>Client challenge pages can be diagnosed. This article describes login security.</p></main></body>',False),
+    ('<body><aside>Please enable JavaScript to continue</aside><article><h1>公告</h1><p>服务将于下周停止。</p></article></body>',False),
+    ('<body><article><h1>公告</h1><p>服务将于下周停止。</p></article></body>',False),
+    ('<body><div id="app"></div><script>location.replace("/target")</script></body>',True),
+    ('<head><meta http-equiv="refresh" content="0;url=/target"></head><body>Redirecting...</body>',True),
+])
+def test_access_shell_recognition_preserves_real_short_articles(html,blocked):
+    from bs4 import BeautifulSoup
+    from generic_web.collector import _check_page_body, GenericWebError
+    soup=BeautifulSoup(html,'html.parser')
+    if blocked:
+        with pytest.raises(GenericWebError):_check_page_body(soup,collector='fixture',status_code=200)
+    else:
+        _check_page_body(soup,collector='fixture',status_code=200)

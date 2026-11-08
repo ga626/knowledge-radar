@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`770af084874528d6cb2b017df63e16d2d566b069b71794a3a7b481ddc621f1f1`
+合同指纹：`26f133d64cca2686f9f26666dac9694aed48343dbf03aabe8bfeb8c216a41714`
 
 ## advance_research_candidate
 
@@ -2760,7 +2760,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "properties": {
       "mode": {
         "default": "summary",
-        "description": "默认summary为声明/任务摘要；诊断用diagnostic_summary，完整探活用full；微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
+        "description": "默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
         "title": "Mode",
         "type": "string"
       },
@@ -2887,6 +2887,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "additionalProperties": false,
         "description": "执行者查询族；枚举和约束直接投影到MCP/CLI同源合同。",
         "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
           "family_id": {
             "default": "",
             "title": "Family Id",
@@ -2926,6 +2932,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "minLength": 1,
             "pattern": "\\S",
             "title": "Query",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
             "type": "string"
           },
           "source_ecology": {
@@ -5026,7 +5038,11 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
               "relations",
               "feedback",
               "duplicates",
-              "host_batches"
+              "host_batches",
+              "scopes",
+              "assessments",
+              "decisions",
+              "actions"
             ],
             "title": "View",
             "type": "string"
@@ -7000,7 +7016,7 @@ YouTube 公开视频搜索。
 
 ## update_research
 
-记录Agent的问题、固定证据关联、来源关系或可撤销折叠；不判定研究饱和。
+记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。
 
 ```json
 {
@@ -7094,6 +7110,39 @@ YouTube 公开视频搜索。
   },
   "input": {
     "$defs": {
+      "EvidenceRef": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "role": {
+            "default": "source_text",
+            "maxLength": 80,
+            "title": "Role",
+            "type": "string"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "version_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "start",
+          "end"
+        ],
+        "title": "EvidenceRef",
+        "type": "object"
+      },
       "ResearchWrite": {
         "additionalProperties": false,
         "properties": {
@@ -7104,15 +7153,49 @@ YouTube 公开视频搜索。
               "relation",
               "fold",
               "repair",
-              "host_request"
+              "host_request",
+              "scope",
+              "assessment",
+              "decision",
+              "action"
             ],
             "title": "Action",
+            "type": "string"
+          },
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "applicability": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Applicability",
+            "type": "string"
+          },
+          "attempt_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Attempt Id",
+            "type": "string"
+          },
+          "basis": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Basis",
             "type": "string"
           },
           "candidate_id": {
             "default": "",
             "maxLength": 128,
             "title": "Candidate Id",
+            "type": "string"
+          },
+          "claim_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Claim Id",
             "type": "string"
           },
           "closed": {
@@ -7130,10 +7213,73 @@ YouTube 公开视频搜索。
             "title": "Confidence",
             "type": "string"
           },
+          "content_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "counterevidence_refs": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "maxItems": 40,
+            "title": "Counterevidence Refs",
+            "type": "array"
+          },
+          "decision": {
+            "default": "",
+            "enum": [
+              "",
+              "continue",
+              "stop",
+              "defer"
+            ],
+            "title": "Decision",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/EvidenceRef"
+            },
+            "maxItems": 40,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "family_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Family Id",
+            "type": "string"
+          },
           "folded": {
             "default": false,
             "title": "Folded",
             "type": "boolean"
+          },
+          "information_roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Information Roles",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Languages",
+            "type": "array"
+          },
+          "populations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Populations",
+            "type": "array"
           },
           "question_id": {
             "default": "",
@@ -7141,10 +7287,22 @@ YouTube 公开视频搜索。
             "title": "Question Id",
             "type": "string"
           },
+          "question_revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Question Revision",
+            "type": "integer"
+          },
           "rationale": {
             "default": "",
             "maxLength": 2000,
             "title": "Rationale",
+            "type": "string"
+          },
+          "receipt_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Receipt Id",
             "type": "string"
           },
           "record_id": {
@@ -7152,6 +7310,14 @@ YouTube 公开视频搜索。
             "maxLength": 128,
             "title": "Record Id",
             "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Regions",
+            "type": "array"
           },
           "related_candidate_id": {
             "default": "",
@@ -7164,6 +7330,7 @@ YouTube 公开视频搜索。
             "enum": [
               "background",
               "supports",
+              "supports_with_limits",
               "contradicts",
               "uncertain",
               "same_origin",
@@ -7171,6 +7338,29 @@ YouTube 公开视频搜索。
               "independent"
             ],
             "title": "Relation",
+            "type": "string"
+          },
+          "reopen_conditions": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Reopen Conditions",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "revision": {
+            "default": 1,
+            "minimum": 1,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "supersedes": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Supersedes",
             "type": "string"
           },
           "task_id": {
@@ -7185,6 +7375,26 @@ YouTube 公开视频搜索。
             "maxLength": 2000,
             "title": "Text",
             "type": "string"
+          },
+          "time_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Time Scope",
+            "type": "string"
+          },
+          "uncertainty": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Uncertainty",
+            "type": "string"
+          },
+          "unresolved_questions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Unresolved Questions",
+            "type": "array"
           },
           "version_id": {
             "default": "",

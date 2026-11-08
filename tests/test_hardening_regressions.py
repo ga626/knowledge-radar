@@ -30,12 +30,18 @@ def site(monkeypatch, tmp_path):
     return NativeSite("boss", "BOSS", "https://www.zhipin.com/", "https://www.zhipin.com/", lambda data: data.get("authenticated"))
 
 
-def test_expired_login_wait_is_read_only_and_does_not_block(monkeypatch, tmp_path):
+def test_elapsed_login_wait_stays_pending_and_status_queries_are_read_only(monkeypatch, tmp_path):
     from runtime.state_file import write_state
     s = site(monkeypatch, tmp_path)
     write_state(s.state_path(), {"expires_at": 1, "interaction_id": "expired"})
     before = s.state_path().read_bytes()
-    assert s.admission()["allowed"]
+    monkeypatch.setattr(type(s), 'bridge', lambda _: pytest.fail('status query must not probe browser'))
+    for _ in range(2):
+        gate = s.admission()
+        assert not gate["allowed"]
+        assert gate["reason"] == "pending_manual_interaction"
+        assert gate["manual_action_required"]
+        assert s.interaction_status() == "waiting"
     assert s.state_path().read_bytes() == before
 
 

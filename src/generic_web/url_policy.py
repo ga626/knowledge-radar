@@ -161,6 +161,7 @@ class _TargetTLSContext(ssl.SSLContext):
 def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None, follow_redirects=True,
                   readonly_post=None, form=None):
     original = url
+    redirect_chain = []
     headers = dict(headers or {})
     method, body = 'GET', None
     if readonly_post is not None or form is not None:
@@ -212,6 +213,7 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
                     if not location:
                         raise URLPolicyError("redirect without location")
                     target = urljoin(url, location)
+                    redirect_chain.append({'from':redact_url(url), 'to':redact_url(target), 'status':response.status_code})
                     public_addresses(target)
                     if urlsplit(url).scheme == "https" and urlsplit(target).scheme == "http":
                         raise URLPolicyError("HTTPS downgrade redirect forbidden")
@@ -232,5 +234,5 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
                         raise URLPolicyError("response exceeds bounded extraction size")
                 decoded_headers = {k: v for k, v in response.headers.items() if k.lower() not in {"content-encoding", "content-length"}}
                 return httpx.Response(response.status_code, headers=decoded_headers, content=bytes(body),
-                                      request=httpx.Request(method, url), extensions={"original_url": redact_url(original)})
+                                      request=httpx.Request(method, url), extensions={"original_url": redact_url(original), 'redirect_chain':redirect_chain})
     raise URLPolicyError("redirect limit exceeded")

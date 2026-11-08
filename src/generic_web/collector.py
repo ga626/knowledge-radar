@@ -160,6 +160,10 @@ def _collect_via_jina(request: GenericWebRequest) -> GenericWebResponse:
         raise GenericWebError("parse_failed", "Jina Reader returned too little content", collector="jina_reader", status_code=response.status_code)
 
     title = _extract_markdown_title(text)
+    from kr_core.evidence_coverage import body_observation
+    observation = body_observation({'title': title, 'content': re.split(r'^Markdown Content:\s*',text,flags=re.M)[-1]})
+    if observation['missing_reason']:
+        raise GenericWebError(observation['missing_reason'], 'Reader returned an access or navigation shell', collector='jina_reader', status_code=response.status_code)
     return GenericWebResponse(
         url=request.url,
         final_url=request.url,
@@ -202,6 +206,13 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         raise GenericWebError("unsupported_content_type", f"Unsupported content-type: {content_type}", collector=collector, status_code=response.status_code)
     if 'html' in content_type.lower():
         soup = BeautifulSoup(response.text, 'lxml')
+        try:
+            _check_page_body(soup, collector=collector, status_code=response.status_code)
+        except GenericWebError as exc:
+            from .url_policy import redact_url
+            exc.final_url = redact_url(str(response.url))
+            exc.redirect_chain = response.extensions.get('redirect_chain', [])
+            raise
         if soup.select('script[src], #app, #root, #__next'):
             for node in soup(['script','style','noscript','head']):
                 node.decompose()
@@ -209,6 +220,29 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
             if not text or text.lower() in {'loading','please wait','正在加载','加载中','enable javascript','please enable javascript'}:
                 raise GenericWebError('requires_dynamic_render', 'Application shell has no readable content', collector=collector)
     return response, content_type
+
+
+def _check_page_body(soup, *, collector, status_code):
+    """强访问壳信号先于解析器检查；正文中的普通登录/验证码讨论不阻断。"""
+    from kr_core.evidence_coverage import body_observation
+    body = soup.body or soup
+    observation = body_observation({'title': soup.title.get_text(' ', strip=True) if soup.title else '',
+                                    'content': body.get_text(' ', strip=True)})
+    reason = observation['missing_reason']
+    article = soup.select_one('article,main')
+    if reason and article and article.get_text(' ',strip=True):
+        # 旁栏的JS/登录提示不应截断已经存在的正文；强挑战标题仍会被拒绝。
+        reason = body_observation({'title':soup.title.get_text(' ',strip=True) if soup.title else '',
+                                   'content':article.get_text(' ',strip=True)})['missing_reason']
+    if not reason and soup.select_one('meta[http-equiv="refresh" i]') and not soup.select_one('article,main'):
+        reason = 'redirect_shell'
+    if not reason and not body.get_text(' ', strip=True) and any(re.search(r'(?:location\.(?:replace|assign)\s*\(|location(?:\.href)?\s*=)', node.get_text()) for node in soup.find_all('script')):
+        reason = 'redirect_shell'
+    if not reason and soup.select_one('input[type="password"]') and not soup.select_one('article,main'):
+        reason = 'authentication_required'
+    if reason:
+        raise GenericWebError('requires_dynamic_render' if reason == 'navigation_shell' else reason, 'Page contains an access or navigation shell, not the requested body',
+                              collector=collector, status_code=status_code)
 
 
 def _collect_via_trafilatura(request: GenericWebRequest, *, artifact=None) -> GenericWebResponse:
@@ -255,6 +289,7 @@ def _collect_via_trafilatura(request: GenericWebRequest, *, artifact=None) -> Ge
             include_tables=True,
             include_formatting=True,
             favor_precision=False,
+            favor_recall=True,
         )
     except Exception as exc:
         raise GenericWebError("parse_failed", str(exc), collector="trafilatura", status_code=response.status_code) from exc
@@ -277,6 +312,7 @@ def _collect_via_trafilatura(request: GenericWebRequest, *, artifact=None) -> Ge
             "status_code": response.status_code,
             "content_type": content_type,
             "content_chars": len(markdown),
+            "extraction_policy": "favor_recall_preserve_body_structures",
         },
     )
 
@@ -376,6 +412,7 @@ def _collect_from_html(
     if article_url(request.url) or article_url(final_url):
         return _wechat_response(request, parse_html(html, final_url, transport=collector), final_url)
     soup = BeautifulSoup(html or "", "lxml")
+    _check_page_body(soup, collector=collector, status_code=status_code)
     has_client_scripts = bool(soup.select('script[src], #app, #root, #__next'))
     for node in soup(["script", "style", "noscript", "svg", "canvas", "form", "nav", "footer", "aside"]):
         node.decompose()
@@ -479,7 +516,18 @@ def _html_to_markdown(node) -> str:
         if name in {'script', 'style', 'noscript', 'svg', 'canvas', 'nav', 'footer', 'aside', 'form'}:
             return ''
         if name == 'pre':
-            code = element.get_text().replace('\r\n', '\n').replace('\r', '\n').strip('\n')
+            def code_text(item):
+                if isinstance(item, NavigableString):
+                    return str(item)
+                if item.name == 'br':
+                    return '\n'
+                if 'code-snippet__line-index' in (item.get('class') or []):
+                    return ''
+                text = ''.join(code_text(child) for child in item.children)
+                if item.name in {'div', 'li'} or 'code-snippet__line' in (item.get('class') or []):
+                    return text + ('\n' if not text.endswith('\n') else '')
+                return text
+            code = code_text(element).replace('\r\n', '\n').replace('\r', '\n').strip('\n')
             runs = [len(x) for x in re.findall(r'`+', code)]
             fence = '`' * max(3, max(runs, default=0) + 1)
             return '\n\n' + fence + '\n' + code + '\n' + fence + '\n\n'
@@ -626,7 +674,7 @@ def _error_response(
     errors: Optional[list] = None,
     strategy: Optional[Dict[str, object]] = None,
 ) -> GenericWebResponse:
-    metadata = {"fallback_errors": errors or [error.to_dict()]}
+    metadata = {"fallback_errors": errors or [error.to_dict()], 'redirect_chain':getattr(error, 'redirect_chain', [])}
     if strategy:
         metadata["strategy"] = strategy
         metadata["selected_node"] = ""
@@ -644,7 +692,7 @@ def _error_response(
         metadata["failure_taxonomy"] = strategy.get("error_taxonomy", {})
     return GenericWebResponse(
         url=request.url,
-        final_url=request.url,
+        final_url=getattr(error, 'final_url', request.url),
         content_format=request.preferred_format,
         collector=error.collector,
         fetched_at=utc_now_iso(),

@@ -173,6 +173,8 @@ def execute_detail_request(request: DetailRequest, *, failure_cache, handle, bin
     result = bind_tasks(result, session_id, scope_data)
     from kr_core.evidence_coverage import content_coverage
     result["content_coverage"] = content_coverage(result, request.options)
+    from routing import build_agent_native_fields
+    result.update(build_agent_native_fields(result))
     if isinstance(result, dict) and result.get("error"):
         failure_type = str(result.get("failure_type") or result.get("error_type") or "")
         cacheable_failures = {"empty_detail", "dead_link", "unsupported_url", "anti_bot_verification", "login_required"}

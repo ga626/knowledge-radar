@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import time
 from pathlib import Path
 from functools import lru_cache
@@ -40,19 +41,22 @@ def component_plan(component):
     except (OSError, ValueError):
         receipt = None
     ready = False
+    failure = ''
     if receipt:
         try:
             validated = validate_receipt(component)
             from runtime.component_environment import component_environment
             component_environment(component, validated)
             ready = True
-        except (ValueError, OSError, KeyError):
-            pass
+        except (ValueError, OSError, KeyError) as exc:
+            failure = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
     return {
         "schema": "knowledgeradar-optional-media/v1",
         "component": component,
         **COMPONENTS[component],
-        "status": "ready" if ready else "not_installed",
+        "status": "ready" if ready else "incompatible" if path.is_file() else "not_installed",
+        "failure_type": failure,
+        "next_action": 'prepare_verified_replacement' if path.is_file() and not ready else 'none' if ready else 'prepare_component',
         "ready": ready,
         "receipt_present": path.is_file(),
         "automatic_install": False,
@@ -60,13 +64,13 @@ def component_plan(component):
     }
 
 
-def validate_receipt(component):
+def validate_receipt(component, *, receipt_value=None):
     if component not in COMPONENTS:
         raise ValueError("unsupported_optional_component")
     path = receipt_root() / (component + ".json")
-    if not path.is_file():
+    if receipt_value is None and not path.is_file():
         raise ValueError("optional_component_not_installed_and_approved")
-    receipt = json.loads(path.read_text(encoding="utf-8"))
+    receipt = receipt_value if receipt_value is not None else json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(receipt, dict):
         raise ValueError("invalid_optional_install_receipt")
     if receipt.get("weight_revision") != COMPONENTS[component]["weight_revision"]:
@@ -274,6 +278,8 @@ def uninstall_component(component, *, purge_downloads=False):
         raise ValueError("unsupported_optional_component")
     base = receipt_root().resolve()
     targets = [base / "environments" / component, base / "cache" / component]
+    targets.extend(path for path in (base / 'environments').glob(component + '-*')
+                   if re.fullmatch(re.escape(component) + r'-[0-9a-f]{32}', path.name))
     if purge_downloads:
         targets.append(base / "artifacts" / component)
     for target in targets:
@@ -301,51 +307,61 @@ def install_component(component, spec):
     if spec.get('installation_acknowledged') is not True or spec.get('license_review') != 'APPROVED':
         raise ValueError('reviewed_installation_required')
     base = receipt_root().resolve()
-    target, receipt = base / 'environments' / component, base / (component + '.json')
-    backup = base / ('.replacing-' + component + '-' + uuid.uuid4().hex)
-    for path in (target, receipt, backup):
+    target, receipt = base / 'environments' / (component + '-' + uuid.uuid4().hex), base / (component + '.json')
+    for path in (target, receipt):
         if not path.resolve().is_relative_to(base) or any(p.is_symlink() or p.is_junction() for p in (path, *path.parents)):
             raise ValueError('unsafe_optional_component_directory')
     base.mkdir(parents=True, exist_ok=True)
     with acquire_resource('local_heavy'), file_write_lock(base / (component + '.install')):
-        replacing = target.exists() or receipt.exists()
+        replacing = receipt.exists()
+        old = None
         if replacing:
-            if not target.is_dir() or not receipt.is_file():
-                raise ValueError('optional_install_incomplete_requires_review')
             old = json.loads(receipt.read_text(encoding='utf-8'))
             if old.get('schema') != 'knowledgeradar-optional-install/v1' or old.get('component') != component:
                 raise ValueError('invalid_optional_install_receipt')
             if old.get('weight_revision') == COMPONENTS[component]['weight_revision']:
                 validate_receipt(component)
                 return {'status': 'installed_identity_verified', 'component': component, 'already_installed': True}
-            backup.mkdir()
-            target.rename(backup / 'environment')
-            try:
-                receipt.rename(backup / 'receipt.json')
-            except BaseException:
-                (backup / 'environment').rename(target)
-                backup.rmdir()
-                raise
         try:
-            result = _install_component(component, spec)
+            result = _install_component(component, spec, target=target, publish=False)
+            candidate = result.pop('candidate_receipt')
+            validate_receipt(component, receipt_value=candidate)
+            from runtime.component_environment import component_environment
+            component_environment(component, candidate)
+            if old:
+                candidate['previous_receipt'] = {k:v for k,v in old.items() if k != 'previous_receipt'}
+            from runtime.state_file import write_state
+            write_state(receipt, candidate)
         except BaseException:
             if target.exists():
                 shutil.rmtree(target)
-            receipt.unlink(missing_ok=True)
-            if replacing:
-                (backup / 'environment').rename(target)
-                (backup / 'receipt.json').rename(receipt)
-                backup.rmdir()
             raise
-        if replacing:
-            try:
-                shutil.rmtree(backup)
-            except OSError:
-                result['retired_environment_cleanup_pending'] = backup.name
-        return result
+        return {**result, 'receipt_sha256':file_sha(receipt), 'previous_environment_retained':replacing,
+                'activation':'atomic_receipt_switch'}
 
 
-def _install_component(component, spec):
+def rollback_component(component):
+    """显式回退上次固定组件；旧职责不兼容时保留真实状态，不伪造新身份。"""
+    from runtime.file_write_lock import file_write_lock
+    from runtime.resource_concurrency import acquire_resource
+    from runtime.state_file import write_state
+    if component not in COMPONENTS:
+        raise ValueError('unsupported_optional_component')
+    base = receipt_root().resolve()
+    with acquire_resource('local_heavy'), file_write_lock(base / (component + '.install')):
+        path = base / (component + '.json')
+        current = json.loads(path.read_text(encoding='utf-8'))
+        previous = current.get('previous_receipt')
+        if not isinstance(previous, dict) or previous.get('component') != component:
+            raise ValueError('previous_component_receipt_unavailable')
+        python = Path(previous.get('python') or '').resolve()
+        if not python.is_relative_to(base / 'environments') or not python.is_file() or file_sha(python) != previous.get('python_sha256'):
+            raise ValueError('previous_component_identity_mismatch')
+        write_state(path, previous)
+    return {'status':'rolled_back', 'component':component, 'readiness':component_plan(component), 'automatic_retry':False}
+
+
+def _install_component(component, spec, *, target=None, publish=True):
     """把经过审阅的离线 wheel/模型集合安装到独立环境，不修改核心 Python。"""
     import sys
     import tempfile
@@ -370,8 +386,8 @@ def _install_component(component, spec):
     if file_sha(lock) != spec["requirements_sha256"] or not wheels.is_dir():
         raise ValueError("optional_lock_identity_mismatch")
     base = receipt_root()
-    target = base / "environments" / component
-    if target.exists() or (base / (component + ".json")).exists():
+    target = target or base / "environments" / component
+    if target.exists() or publish and (base / (component + ".json")).exists():
         raise ValueError("optional_install_exists")
     model_root = Path(spec["model_root"]).resolve()
     for relative, expected in spec["model_files"].items():
@@ -443,6 +459,9 @@ def _install_component(component, spec):
         "model_root": str(model_root),
         **{key: spec[key] for key in ("upstream_revision", "weight_revision", "model_files")},
     }
+    if not publish:
+        return {'status':'installed_identity_verified', 'component':component, 'candidate_receipt':receipt,
+                'quality_status':'not_measured', 'core_environment_modified':False}
     base.mkdir(parents=True, exist_ok=True)
     destination = base / (component + ".json")
     with tempfile.NamedTemporaryFile(dir=base, suffix=".pending", delete=False, mode="w", encoding="utf-8") as handle:

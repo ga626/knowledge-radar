@@ -14,7 +14,7 @@ _RESPONSES = OrderedDict()
 _PARSED = OrderedDict()
 MAX_CACHE_BYTES = 16 * 1024 * 1024
 MAX_CACHE_ENTRIES = 32
-PARSER_CONTRACT = 'local-html-pdf-page-ocr-wechat-v4'
+PARSER_CONTRACT = 'local-html-pdf-page-ocr-wechat-v6-body-recall'
 
 
 def _eligible(url, headers):
@@ -74,7 +74,7 @@ def fetch(request, headers, fetcher):
     if response.status_code == 304 and row:
         merged = dict(row['response'].headers)
         merged.update(response.headers)
-        response = httpx.Response(200,headers=merged,content=row['response'].content,request=row['response'].request)
+        response = httpx.Response(200,headers=merged,content=row['response'].content,request=row['response'].request,extensions=dict(row['response'].extensions))
         cache_status = 'revalidated'
         if len(response.content) > request.max_bytes:
             from .url_policy import URLPolicyError

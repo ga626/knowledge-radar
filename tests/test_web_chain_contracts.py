@@ -288,6 +288,16 @@ def test_strict_unsupported_constraint_does_not_send(monkeypatch):
     assert not items and error['type']=='unsupported_constraint'
 
 
+def test_native_capability_does_not_verify_a_language_constraint():
+    from search_providers.constraints import constraint_report
+    from search_providers.models import WebSearchRequest
+    request = WebSearchRequest('技术实践', language='zh')
+    planned = constraint_report(request, 'anysearch')['language']
+    observed = constraint_report(request, 'anysearch', sent=True)['language']
+    assert planned['sent'] is None and not planned['verified']
+    assert observed['sent'] == 'zh' and not observed['hard_constraint_satisfied']
+
+
 def test_domain_filter_is_enforced_and_reported():
     from search_providers.constraints import filter_results, constraint_report
     request=WebSearchRequest('q',options={'include_domains':['example.com']})
@@ -295,6 +305,23 @@ def test_domain_filter_is_enforced_and_reported():
     bad=SearchProviderResult('bad','https://example.com.evil.test/a')
     assert filter_results(request,[good,bad])==[good]
     assert constraint_report(request,'anysearch')['domains']['method']=='post_filter'
+    assert constraint_report(request,'anysearch')['domains']['locally_enforceable'] is True
+    checked=constraint_report(request,'anysearch',sent=True,filtered=True)['domains']
+    assert checked['verified'] and checked['hard_constraint_satisfied']
+    assert checked['verification_scope']=='returned_urls_only' and not checked['recall_guaranteed']
+
+
+def test_strict_domains_allow_search_and_filter_without_claiming_recall(monkeypatch):
+    from search_providers.service import _search_provider
+    class Provider:
+        name='anysearch'
+        def status(self): return {}
+        def available(self): return True
+        def search(self,request):
+            return [SearchProviderResult('ok','https://example.com/a'),SearchProviderResult('wrong','https://other.test/a')]
+    request=WebSearchRequest('q',options={'include_domains':['example.com'],'require_constraints':True})
+    _,items,error=_search_provider(request,Provider())
+    assert not error and [x.url for x in items]==['https://example.com/a']
 
 
 def test_duplicate_upstreams_do_not_multiply_ranking_votes():
@@ -319,6 +346,17 @@ def test_one_download_even_when_local_parsers_fallback(monkeypatch):
     result=collector.collect_url(collector.GenericWebRequest(url='https://example.com/a',use_jina=False))
     assert not result.error and '今晚维护' in result.content
     assert len(calls)==1 and result.metadata['acquisition']['fetch_count']==1
+
+
+def test_primary_extractor_keeps_substantive_limitations_in_lists():
+    from generic_web.collector import _collect_via_trafilatura
+    from generic_web.models import GenericWebRequest
+    html='<html><title>WAL notes</title><body><p>'+('Transaction model explanation. '*60)+'</p><ol><li>WAL permits only one writer at a time.</li><li>Readers and a writer may run concurrently.</li></ol><p>'+('Read the limitations before deployment. '*60)+'</p></body></html>'
+    request=GenericWebRequest(url='https://example.org/wal')
+    artifact=(httpx.Response(200,text=html,request=httpx.Request('GET',request.url)),'text/html')
+    result=_collect_via_trafilatura(request,artifact=artifact)
+    assert 'WAL permits only one writer at a time.' in result.content
+    assert 'Readers and a writer may run concurrently.' in result.content
 
 
 @pytest.mark.parametrize('status,kind',[(401,'authentication_required'),(403,'access_forbidden'),(404,'not_found'),(429,'rate_limited'),(451,'legal_restriction')])

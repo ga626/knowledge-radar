@@ -18,6 +18,39 @@ TASK_STAMP = calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'完整�
 TASK_RELATIVE = Path('2026年') / TASK_STAMP
 
 
+def test_github_same_readme_names_keep_repository_and_object_identity():
+    from runtime.research_archive import display_subject
+    def row(repo, kind='readme', path='README.md'):
+        return {'source_url':'https://github.com/'+repo,'title':'README.md','kind':'content',
+                'metadata':json.dumps({'provenance':{'github':{'repository':repo,'object_kind':kind,'path':path}}})}
+    assert display_subject(row('org/first')) == 'org first 说明 README.md'
+    assert display_subject(row('org/second')) != display_subject(row('org/first'))
+    assert '目录' in display_subject(row('org/first','tree','src'))
+
+
+def test_asr_content_is_presented_as_transcription_not_article():
+    from runtime.research_archive import asset_header
+    row={'kind':'content','title':'ASR','source_url':'https://local-evidence.invalid/sha256/test',
+         'metadata':json.dumps({'source_role':'transcript','source_kind':'asr','extractor':'qwen3-asr-0.6b'})}
+    text=asset_header(row)
+    assert '资料内容：转写或字幕' in text and '音频语音转写' in text
+
+
+def test_source_markdown_links_resolve_in_derived_archive_and_raw_version_stays_fixed(archive):
+    from runtime.research_archive import readable_asset
+    engine,*_=archive
+    raw='[安全说明](SECURITY.md)\n\n`[示例](local.md)`\n\n```python\n[x](code.md)\n```\n'
+    url='https://github.com/org/repo/blob/'+'a'*40+'/README.md'
+    ref=engine.assets.put(url,raw,metadata={'content_format':'markdown'})
+    with engine.assets.connection() as c:row=dict(c.execute('SELECT * FROM assets WHERE version_id=?',(ref['version_id'],)).fetchone())
+    derived,reason=readable_asset(engine.assets,row)
+    text=engine.assets.fetch(derived['version_id'],max_chars=2000)['text']
+    assert not reason and '[安全说明]('+url.rsplit('/',1)[0]+'/SECURITY.md)' in text
+    assert '`[示例](local.md)`' in text and '[x](code.md)' in text
+    assert engine.assets.fetch(ref['version_id'])['text']==raw
+    assert json.loads(derived['metadata'])['parent_version_id']==ref['version_id']
+
+
 @pytest.fixture
 def archive(tmp_path,monkeypatch):
     monkeypatch.setattr(ledger,'_now',lambda:'2026-11-02T00:00:00+00:00')
@@ -45,6 +78,20 @@ def evidence(engine, text='证据原文。\r\n😀\n反证不删除',url='https:
     ref=engine.assets.put(url,text,title='原始资料',metadata={'coverage':'complete'})
     engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
     return ref
+
+
+def test_challenge_is_retained_as_diagnostic_and_not_exported_as_body(archive):
+    engine, _, _, vault = archive
+    ref = engine.assets.put('https://example.org/challenge','Client Challenge\nPlease enable JavaScript to continue.',title='Client Challenge')
+    engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
+    valid = evidence(engine, '很短但真实的版本公告。',url='https://example.org/announcement')
+    result = engine.run('task-a')
+    assert not result['error_code']
+    assert engine.assets.fetch(ref['version_id'])['text'].startswith('Client Challenge')
+    files = [p.read_text(encoding='utf-8') for p in vault.rglob('*.md')]
+    assert any('诊断页面（非正文）' in text for text in files)
+    assert not any('Please enable JavaScript' in text for text in files)
+    assert any('很短但真实的版本公告。' in text for text in files)
 
 
 def test_late_vault_binding_replays_all_fixed_local_rounds(archive):
@@ -786,7 +833,7 @@ def test_calendar_layout_uses_same_windows_safe_title_for_obsidian_and_physical_
     from runtime.research_archive import calendar_layout
     layout = calendar_layout({'created_at': '2026-11-07T01:44:00-04:00'}, '连续探索 / 首轮:回归')
     assert layout['directory_year'] == '2026年'
-    assert re.match(r'^11-07 \d{2}-\d{2} ', layout['directory_title'])
+    assert re.match(r'^11\.07 \d{2}：\d{2} ', layout['directory_title'])
     assert '/' not in layout['directory_title'] and ':' not in layout['directory_title']
 
 

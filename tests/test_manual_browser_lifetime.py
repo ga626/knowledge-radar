@@ -182,3 +182,94 @@ def test_borrowed_manual_window_hold_ends_only_after_verified_completion(monkeyp
     assert calls[0]['operation']=='auth_verify'
     assert calls[-1]['operation']=='release_login'
     assert boss.interaction_status()=='ready' and boss.admission()['allowed']
+
+
+def test_new_related_request_checks_login_once_and_preserves_unknown_operation(monkeypatch,tmp_path):
+    from collectors.platform import zhihu
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    site=zhihu._site()
+    write_state(site.state_path(),{'expires_at':1})
+    calls=[]
+    patch_native(monkeypatch,lambda **kw:calls.append(kw['operation']) or {'ok':True,'data':{'authenticated_api':True,'authenticated_ui':True}})
+    assert site.invoke('search',url=site.home)['ok']
+    assert calls == ['auth_verify','release_login','search']
+    write_state(site.state_path(),{'expires_at':1,'unknown_outcome':True,'operation_id':'original-op'})
+    assert site.complete_login()['status']=='ok'
+    assert site.state()['unknown_outcome'] and site.state()['operation_id']=='original-op'
+
+
+def test_login_verification_is_durable_before_release_and_failed_cleanup_can_resume(monkeypatch,tmp_path):
+    from collectors.platform import zhihu
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    site=zhihu._site()
+    write_state(site.state_path(),{'expires_at':1,'interaction_id':'scan-one'})
+    releases=[]
+    def invoke(**kw):
+        if kw['operation']=='release_login':
+            state=site.state()
+            assert state.get('verified_at') and state.get('auth_generation')
+            assert state['cleanup_intent']['status']=='pending'
+            assert state['expires_at']==1, '失败清理不能提前移除人工等待记录'
+            releases.append(state['cleanup_intent']['id'])
+            return {'ok':len(releases)>1,'failure_type':'temporary_release_failure'}
+        return {'ok':True,'data':{'authenticated_api':True,'authenticated_ui':True}}
+    patch_native(monkeypatch,invoke)
+    assert site.complete_login()['status']=='not_verified'
+    assert site.state()['cleanup_intent']['status']=='pending'
+    assert not site.admission()['allowed']
+    assert site.complete_login()['status']=='ok'
+    assert len(releases)==2
+    assert site.state()['cleanup_intent']['status']=='completed'
+    assert site.admission()['allowed']
+
+
+def test_login_cleanup_late_success_cannot_overwrite_cancellation(monkeypatch,tmp_path):
+    from collectors.platform import zhihu
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    site=zhihu._site()
+    write_state(site.state_path(),{'expires_at':1,'interaction_id':'scan-one'})
+    def invoke(**kw):
+        if kw['operation']=='release_login':
+            write_state(site.state_path(),{**site.state(),'cancelled':True,'interaction_id':'newer'})
+        return {'ok':True,'data':{'authenticated_api':True,'authenticated_ui':True}}
+    patch_native(monkeypatch,invoke)
+    assert site.complete_login()['status']=='not_verified'
+    assert site.state()['cancelled'] and site.state()['interaction_id']=='newer'
+
+
+def test_unknown_operation_resolution_is_explicit_and_does_not_replay(monkeypatch,tmp_path):
+    from collectors.platform import zhihu
+    from types import SimpleNamespace
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    site=zhihu._site()
+    write_state(site.state_path(),{'unknown_outcome':True,'operation_id':'original-op','operation':'search'})
+    reads=[]
+    monkeypatch.setattr(type(site),'bridge',lambda _:SimpleNamespace(receipt=lambda op:reads.append(op) or
+        {'status':'recorded','result':{'ok':True,'data':{'items':[]},'request_id':op}}))
+    assert site.reconcile_outcome()['status']=='recorded'
+    assert site.state()['unknown_outcome'], '读取回执不能自动解锁或重放'
+    assert site.reconcile_outcome(operation_id='wrong',resolution='accept_result')['status']=='conflict'
+    assert site.reconcile_outcome(operation_id='original-op',resolution='accept_result')['status']=='resolved'
+    assert site.admission()['allowed'] and reads==['original-op','original-op']
+    assert site.state()['operation_resolutions'][-1]['resolution']=='accept_result'
+
+
+def test_pending_cannot_be_abandoned_and_newer_latch_cannot_be_cleared(monkeypatch,tmp_path):
+    from collectors.platform import zhihu
+    from types import SimpleNamespace
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    site=zhihu._site()
+    original={'unknown_outcome':True,'operation_id':'original-op'}
+    write_state(site.state_path(),original)
+    def receipt(op):
+        write_state(site.state_path(),{**original,'operation_id':'new-op'})
+        return {'status':'recorded','result':{'ok':True}}
+    monkeypatch.setattr(type(site),'bridge',lambda _:SimpleNamespace(receipt=receipt))
+    assert site.reconcile_outcome(operation_id='original-op',resolution='accept_result')['status']=='conflict'
+    assert site.state()['operation_id']=='new-op'
+    monkeypatch.setattr(type(site),'bridge',lambda _:SimpleNamespace(receipt=lambda _: {'status':'pending'}))
+    assert site.reconcile_outcome(operation_id='new-op',resolution='abandon')['status']=='pending'
+    assert site.state()['unknown_outcome']
+    monkeypatch.setattr(type(site),'bridge',lambda _:SimpleNamespace(receipt=lambda _: {'status':'unknown'}))
+    assert site.reconcile_outcome(operation_id='new-op',resolution='abandon')['status']=='resolved'
+    assert site.admission()['allowed']

@@ -162,11 +162,11 @@ def test_optional_install_failure_does_not_block_retry(tmp_path,monkeypatch):
     from runtime import optional_media
     root=tmp_path/'components'
     monkeypatch.setenv('KR_OPTIONAL_COMPONENT_RECEIPTS_DIR',str(root))
-    def fail(component,spec):
-        (root/'environments'/component).mkdir(parents=True)
+    def fail(component,spec,*,target,publish):
+        target.mkdir(parents=True)
         raise RuntimeError('offline_install_failed')
     monkeypatch.setattr(optional_media,'_install_component',fail)
     for _ in range(2):
         with pytest.raises(RuntimeError,match='offline_install_failed'):
             optional_media.install_component('qwen3-asr-0.6b',{'installation_acknowledged':True,'license_review':'APPROVED'})
-    assert not (root/'environments/qwen3-asr-0.6b').exists()
+    assert not list((root/'environments').iterdir())

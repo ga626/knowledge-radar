@@ -19,6 +19,7 @@ internal static class BrowserLinkHost
     private static readonly ConcurrentDictionary<string, PendingRequest> Pending = new ConcurrentDictionary<string, PendingRequest>();
     private static readonly ConcurrentDictionary<string, long> CancelledTasks = new ConcurrentDictionary<string, long>();
     private static readonly ConcurrentDictionary<string, long> Seen = new ConcurrentDictionary<string, long>();
+    private static readonly ConcurrentDictionary<string, Dictionary<string, object>> Receipts = new ConcurrentDictionary<string, Dictionary<string, object>>();
     private static readonly HashSet<string> Operations = new HashSet<string> { "search", "detail", "comments", "login", "attention", "probe", "auth_verify", "release", "release_login" };
     private static HttpListener Listener;
     private static int Port;
@@ -145,6 +146,13 @@ internal static class BrowserLinkHost
                 Reply(context, 200, new Dictionary<string, object> { { "ok", Connected }, { "connected", Connected }, { "protocol", Protocol }, { "generation", Generation }, { "profile_id", ProfileId }, { "pending", Pending.Count }, { "draining", Draining }, { "extension_version", ExtensionVersion } }); return;
             }
             if (context.Request.HttpMethod != "POST") { context.Response.StatusCode = 405; context.Response.Close(); return; }
+            if (path == "/receipt") {
+                var body = ReadBody(context); string id = Text(body, "request_id");
+                PendingRequest active; Dictionary<string, object> completed;
+                if (Receipts.TryGetValue(id, out completed)) Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "status", "recorded" }, { "request_id", id }, { "generation", Generation }, { "result", completed } });
+                else Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "status", Pending.TryGetValue(id, out active) ? "pending" : "unknown" }, { "request_id", id }, { "generation", Generation } });
+                return;
+            }
             if (path == "/drain") { lock (AdmissionLock) { Draining = true; Send(new Dictionary<string, object> { { "type", "drain" } }); Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "pending", Pending.Count } }); } return; }
             if (path == "/resume") { lock (AdmissionLock) { Draining = false; Send(new Dictionary<string, object> { { "type", "resume" } }); Reply(context, 200, new Dictionary<string, object> { { "ok", true } }); } return; }
             if (path == "/shutdown") {
@@ -168,7 +176,7 @@ internal static class BrowserLinkHost
             lock (AdmissionLock) {
                 if (!Connected || Draining) { Reply(context, 409, Failure(Draining ? "channel_draining" : "browser_disconnected", requestId, false)); return; }
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), removed;
-                foreach (var pair in Seen) if (now - pair.Value > 600) Seen.TryRemove(pair.Key, out removed);
+                foreach (var pair in Seen) if (now - pair.Value > 600) { Seen.TryRemove(pair.Key, out removed); Dictionary<string, object> expired; Receipts.TryRemove(pair.Key, out expired); }
                 foreach (var pair in CancelledTasks) if (now - pair.Value > 600) CancelledTasks.TryRemove(pair.Key, out removed);
                 if (requestId == "" || Seen.ContainsKey(requestId)) { Reply(context, 409, Failure("duplicate_request", requestId, false)); return; }
                 if (Pending.Count >= 2) { Reply(context, 409, Failure("browser_busy", requestId, false)); return; }
@@ -184,6 +192,8 @@ internal static class BrowserLinkHost
                 }
                 if (!request.Done.Wait(timeout + 300)) Cancel(requestId, "native_command_timeout");
                 var result = request.Result ?? Failure("native_command_timeout", requestId, true);
+                Receipts[requestId] = result;
+                if (Receipts.Count > 80) foreach (var pair in Receipts) { if (pair.Key != requestId) { Dictionary<string, object> expired; Receipts.TryRemove(pair.Key, out expired); break; } }
                 bool ok = result.ContainsKey("ok") && Convert.ToBoolean(result["ok"]);
                 Reply(context, ok ? 200 : 502, result);
             } finally { PendingRequest removed; Pending.TryRemove(requestId, out removed); }

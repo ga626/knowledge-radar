@@ -26,19 +26,6 @@
     return await chrome.runtime.sendMessage({kind:'content-attention',request_id:message.request_id,
       generation:message.generation,platform,signals:observed}).catch(()=>({action:'none'}));
   }
-  async function watchInteraction(message) {
-    const control=new AbortController(),until=Date.now()+300000;
-    let clearSince=0;
-    while(Date.now()<until){
-      const observation=KRVisibilityPolicy.observe();
-      if(observation.interaction.visible)clearSince=0;
-      else if(!clearSince)clearSince=Date.now();
-      else if(Date.now()-clearSince>=600){
-        await send({kind:'content-attention-resolved',request_id:message.request_id,generation:message.generation,platform});return;
-      }
-      await change(control.signal,300);
-    }
-  }
   async function extract(message, controller) {
     void send({kind:'content-started',request_id:message.request_id,generation:message.generation,platform});
     const signal=controller.signal;
@@ -81,7 +68,6 @@
       const payload={kind:'content-result', request_id:message.request_id, generation:message.generation, platform, ok:true,data};
       if(new TextEncoder().encode(JSON.stringify(payload)).length>900000) throw new Error('content_payload_too_large');
       await send(payload);
-      if(manualAttention)void watchInteraction(message);
     } catch(error) {
       if(!signal.aborted) await send({kind:'content-result',request_id:message.request_id,generation:message.generation,platform,ok:false,code:error.message || 'content_failed'});
     } finally {clearTimeout(timer);if(requests.get(message.request_id)===controller)requests.delete(message.request_id);}

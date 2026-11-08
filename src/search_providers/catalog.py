@@ -59,7 +59,7 @@ def public_catalog():
 
 
 SEARCH_GUIDES = {'anysearch': {'purpose': '默认优先的网页发现来源；按实际结果与额度使用。',
-               'official_url': 'https://www.anysearch.ai/',
+               'official_url': 'https://anysearch.com/',
                'official_label': 'AnySearch 官网',
                'prerequisite': 'AnySearch 账号',
                'tier': '默认优先',

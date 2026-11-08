@@ -10,7 +10,6 @@ if str(ROOT) not in sys.path:
 
 import server
 from runtime.research_ledger import record_tool_receipt
-from scripts.review_research_state import review_research_state
 
 
 def test_route_plan_keeps_all_ecologies_available_when_only_one_is_hint() -> None:
@@ -37,7 +36,7 @@ def test_candidate_records_are_upgradeable_without_exposing_query_text() -> None
 
     assert records[0]["candidate_id"].startswith("candidate-")
     assert records[0]["stage"] == "discovered_candidate"
-    assert "get_content_detail" not in records[0]["detail_affordance"]
+    assert "get_content_detail" in records[0]["detail_affordance"]
 
 
 def test_kr_research_records_query_family_as_fingerprint(monkeypatch, tmp_path: Path) -> None:
@@ -88,43 +87,18 @@ def test_mcp_research_ledger_tools_share_one_task_receipt(monkeypatch, tmp_path:
     )
     reviewed = server.review_research_progress(research_task_id=task_id, phase="before_delivery")
 
-    assert advanced["status"] == "recorded"
+    assert advanced["status"] == "declared_only", '没有固定原文的空详情回执不能核验身份'
     assert reviewed["status"] == "reviewed"
     persisted = (tmp_path / "research_tasks" / "ledger-mcp-test.json").read_text(encoding="utf-8")
     assert "不应写入账本的原查询" not in persisted
 
 
-def test_research_state_review_marks_candidate_only_high_claim_as_draft(tmp_path: Path) -> None:
-    report = tmp_path / "report.md"
-    report.write_text("# 真实调研", encoding="utf-8")
-    evidence = tmp_path / "report.evidence.json"
-    evidence.write_text(
-        json.dumps(
-            {
-                "research_task": {"task_id": "t", "objective": "真实调研"},
-                "evidence_items": [{"id": "E1", "type": "web", "evidence_stage": "discovered_candidate"}],
-                "claims": [{"id": "C1", "importance": "critical", "supporting_evidence_ids": ["E1"]}],
-            },
-            ensure_ascii=False,
-        ),
-        encoding="utf-8",
-    )
 
-    result = review_research_state(report=report, evidence=evidence)
-
-    assert result["research_state"] == "research_draft"
-    assert {item["code"] for item in result["repair_requests"]} >= {"candidate_only_high_claim", "independence_not_established"}
-
-
-def test_research_state_review_uses_optional_runtime_ledger_without_tool_prescription(tmp_path: Path) -> None:
-    report = tmp_path / "report.md"
-    report.write_text("# 真实调研", encoding="utf-8")
-    evidence = tmp_path / "report.evidence.json"
-    evidence.write_text(json.dumps({"schema": "knowledgeradar-research-evidence/v1", "claims": [], "evidence_items": []}), encoding="utf-8")
-    ledger = tmp_path / "ledger.json"
-    ledger.write_text(json.dumps({"candidate_pool": [{"candidate_id": "candidate-1", "stage": "discovered_candidate"}], "events": []}), encoding="utf-8")
-
-    result = review_research_state(report=report, evidence=evidence, ledger=ledger)
-
-    assert result["research_state"] == "research_draft"
-    assert {item["code"] for item in result["repair_requests"]} >= {"ledger_candidate_only", "ledger_stop_review_missing"}
+def test_candidate_only_claims_remain_gaps_at_product_closeout(monkeypatch, tmp_path):
+    from runtime.research_ledger import open_task, close_task
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path/'state'))
+    tid=open_task(objective='候选不能支持关键结论',budget='fast',considered=[])['research_task_id']
+    result=close_task(task_id=tid,ecology_outcomes=[],stop_rationale='带缺口暂缓',
+        key_claims=[{'claim_id':'c','importance':'critical','supporting_receipt_ids':[]}])
+    assert result['status']=='recorded_with_gaps'
+    assert result['closeout']['completion_facts']['evidence_validation']=='gaps'

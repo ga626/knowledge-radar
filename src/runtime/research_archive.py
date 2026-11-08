@@ -11,7 +11,7 @@ import sqlite3
 import tempfile
 import time
 from datetime import datetime, timezone
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, urlsplit, urljoin
 from typing import Literal
 from pydantic import Field
 from runtime.execution_context import check_execution
@@ -183,6 +183,14 @@ def display_subject(row):
     title = next((str(meta[key]) for key in ('display_title_zh','title_zh','display_title')
                   if isinstance(meta.get(key),str) and meta[key].strip()), row['title'])
     host = (urlsplit(row['source_url']).hostname or '').lower()
+    github = (meta.get('provenance') or {}).get('github') or {}
+    if github.get('repository'):
+        subject = str(github['repository'])
+        kind = github.get('object_kind') or github.get('kind') or github.get('object_type') or ''
+        path = str(github.get('path') or '')
+        label = {'readme':'说明','repository':'说明','overview':'仓库概览','tree':'目录','file':'文件','issue':'议题','pull_request':'拉取请求','pull':'拉取请求'}.get(kind,'资料')
+        suffix = path or ('#'+str(github['number']) if github.get('number') else '')
+        return _safe_name(subject+' '+label+(' '+suffix if suffix else ''))
     presentation = meta.get('source_presentation') or {}
     sites = ['Obsidian Help','Developer Documentation','哔哩哔哩_bilibili','哔哩哔哩','小红书','YouTube','BOSS直聘','猎聘','脉脉',
              meta.get('site_name'), presentation.get('site'), source_label(row)]
@@ -212,16 +220,15 @@ def calendar_layout(metadata, title):
     """按首次创建时间固定本地日历，并使用物理层安全的展示标题。
 
     目录名同时出现在 Windows 文件系统和 Obsidian 的展示树中，因此两者
-    必须共享同一套可移植命名合同。半角 ``/`` 和 ``:`` 会分别被解释成
-    路径分隔符或被 Windows 拒绝，不能再用中文日期和全角时间分隔符制造
-    两套看起来不同的标题。
+    必须共享同一套命名合同：日期用点号，时间用全角冒号。半角 ``/`` 和
+    ``:`` 会分别被解释成路径分隔符或被 Windows 拒绝，不用于物理名称。
     """
     try:
         created=datetime.fromisoformat(str(metadata.get('created_at')).replace('Z','+00:00')).astimezone()
     except (ValueError,TypeError):
         created=datetime.now().astimezone()
     return {'directory_layout':'project-year-task-v2', 'directory_year':f'{created.year}年',
-        'directory_title':f'{created:%m-%d %H-%M} '+_safe_name(title,'未命名调研')}
+        'directory_title':f'{created:%m.%d %H}：{created:%M} '+_safe_name(title,'未命名调研')}
 
 
 def _readable_structure(kind, text, meta):
@@ -272,9 +279,43 @@ def _readable_structure(kind, text, meta):
     return '\n'.join(output).strip()
 
 
+def _source_markdown_links(text, source_url):
+    """只修人读派生件的链接基址，原始版本和代码示例保持原样。"""
+    if urlsplit(source_url).scheme not in {'https','http'}:
+        return text
+    def absolute(target):
+        try:return target if urlsplit(target).scheme else urljoin(source_url,target)
+        except ValueError:return target
+    pattern=re.compile(r'(\[[^\]\n]*\]\()(<[^>\n]+>|[^\s)]+)([^\n)]*\))')
+    lines=[];fence=''
+    for line in text.splitlines(keepends=True):
+        marker=re.match(r'^\s*(`{3,}|~{3,})',line)
+        if marker:
+            if not fence:fence=marker[1]
+            elif marker[1][0]==fence[0] and len(marker[1])>=len(fence):fence=''
+            lines.append(line);continue
+        if fence:
+            lines.append(line);continue
+        def rewrite(match):
+            target=match[2]
+            resolved='<'+absolute(target[1:-1])+'>' if target.startswith('<') else absolute(target)
+            return match[1]+resolved+match[3]
+        parts=re.split(r'(`+[^`\n]*`+)',line)
+        for i in range(0,len(parts),2):
+            parts[i]=pattern.sub(rewrite,parts[i])
+            parts[i]=re.sub(r'^(\s*\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)',
+                lambda m:m[1]+('<'+absolute(m[2][1:-1])+'>' if m[2].startswith('<') else absolute(m[2])),parts[i])
+        lines.append(''.join(parts))
+    return ''.join(lines)
+
+
 def readable_asset(assets, row):
     """人读派生件保留父版本；机器资产从展示排除，不能改扩展名冒充正文。"""
     kind=row['kind'];meta=json.loads(row['metadata']);text=assets._verified_text(row)
+    from kr_core.evidence_coverage import body_observation
+    observation = body_observation({'title':row['title'], 'content':text, 'metadata':meta})
+    if observation['missing_reason']:
+        return None, '诊断页面（非正文）：' + observation['missing_reason']
     if kind in {'transcript_map','images','media_manifest'}:
         return None, '仅供机器定位或媒体引用'
     if kind not in {'content','video_description','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
@@ -289,24 +330,34 @@ def readable_asset(assets, row):
             rendered=_collect_from_html(GenericWebRequest(url=row['source_url']),html=text,final_url=row['source_url'],status_code=200,content_type='text/html',collector='archive_html').content
         except GenericWebError as exc:
             raise ValueError('html_body_unavailable') from exc
+    github=(meta.get('provenance') or {}).get('github') or {}
+    if kind!='report' and (meta.get('content_format')=='markdown' or github.get('object_kind')=='readme' or rendered!=text):
+        rendered=_source_markdown_links(rendered,row['source_url'])
     if rendered==text:return row, ''
     derived=assets.put(row['source_url'],rendered,kind='readable_text',title=row['title'],metadata={
         **{k:v for k,v in meta.items() if k!='locators'},'parent_version_id':row['version_id'],
         'original_kind':kind,'original_captured_at':meta.get('original_captured_at') or meta.get('read_at') or row['captured_at'],
         'source_extractor':meta.get('source_extractor') or meta.get('extractor',''),
-        'extractor':'readable-archive/v2','derived_from':[row['version_id']]})
+        'extractor':'readable-archive/v3-source-links','derived_from':[row['version_id']]})
     with assets.connection() as c:
         return dict(c.execute('SELECT * FROM assets WHERE version_id=?',(derived['version_id'],)).fetchone()), ''
 
 
-def processing_description(row, meta):
+def _presentation_kind(row, meta):
     kind=meta.get('original_kind') or row['kind']
+    return meta.get('source_role') if kind=='content' and meta.get('source_role') in {'transcript','ocr_text','abstract','index','description'} else kind
+
+
+def processing_description(row, meta):
+    kind=_presentation_kind(row, meta)
     if kind == 'video_description':
         return '视频平台简介（元数据层）'
+    if kind in {'description','abstract','index'}:
+        return {'description':'简介提取（非正文）','abstract':'摘要提取（非全文）','index':'目录提取（非正文）'}[kind]
     method=meta.get('processing_method')
     if method:return str(method).replace('\n',' ')[:160]
     if kind=='transcript':
-        source=str(meta.get('transcript_source') or '')
+        source=str(meta.get('transcript_source') or meta.get('source_kind') or meta.get('extractor') or '')
         if source in {'bilibili_subtitle','youtube_transcript_api','youtube_transcript_api_fallback','youtube_captions'}:
             return '读取平台字幕（'+source+'）'
         if any(word in source.lower() for word in ('asr','sherpa','whisper','qwen3')):
@@ -323,8 +374,8 @@ def asset_header(row, *, include_title=False):
     original=meta.get('original_captured_at') or meta.get('fetched_at') or meta.get('read_at')
     if isinstance(original,(int,float)):
         original=datetime.fromtimestamp(original,timezone.utc).isoformat()
-    kind=meta.get('original_kind') or row['kind']
-    labels={'content':'正文','video_description':'视频简介','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
+    kind=_presentation_kind(row,meta)
+    labels={'content':'正文','video_description':'视频简介','description':'简介','abstract':'摘要','index':'目录','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
     coverage={'complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
     observed_coverage=meta.get('coverage')
     if isinstance(observed_coverage,dict):

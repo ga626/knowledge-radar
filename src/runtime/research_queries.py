@@ -2,8 +2,11 @@
 from __future__ import annotations
 import hashlib
 import re
+from contextvars import ContextVar
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
+
+CURRENT_RESEARCH_ACTION = ContextVar('kr_research_action', default=None)
 
 
 class ResearchQuery(BaseModel):
@@ -17,6 +20,17 @@ class ResearchQuery(BaseModel):
     family_id: str = ''
     parent_event_id: str = ''
     gap_id: str = ''
+    question_id: str = Field(default='', max_length=128)
+    action_id: str = Field(default='', max_length=200)
+
+
+def normalize_ecology(value):
+    from capability_manifest.ecologies import source_ecology_manifest, ecology_for_platform
+    value = str(value or '*').strip()
+    if value == '*' or value in source_ecology_manifest()['ecologies']:
+        return value, 'known'
+    mapped = ecology_for_platform(value)
+    return (mapped, 'alias') if mapped != 'unmapped' else (value, 'unsupported')
 
 
 def query_families(objective, supplied=None):
@@ -37,9 +51,11 @@ def query_families(objective, supplied=None):
             raise ValueError('query_must_be_1_to_500_characters')
         if row.get('intent') not in {'discovery', 'counterevidence', 'implementation', 'experience', 'citation_follow', 'gap_follow', 'pagination'}:
             raise ValueError('query_intent_required')
-        result.append({'family_id': str(row.get('family_id') or 'query-' + hashlib.sha256((query+'|'+str(row.get('source_ecology'))+'|'+str(row.get('intent'))).encode()).hexdigest()[:16]), 'query': query, 'intent': row['intent'], 'language': str(row.get('language') or 'unknown')[:24], 'source_ecology': str(row.get('source_ecology') or '*'), 'parent_event_id': str(row.get('parent_event_id') or ''), 'gap_id': str(row.get('gap_id') or ''), 'origin': 'executor_supplied', 'translation_verified': False})
+        ecology, resolution = normalize_ecology(row.get('source_ecology'))
+        result.append({'family_id': str(row.get('family_id') or 'query-' + hashlib.sha256((query+'|'+ecology+'|'+str(row.get('intent'))).encode()).hexdigest()[:16]), 'query': query, 'intent': row['intent'], 'language': str(row.get('language') or 'unknown')[:24], 'source_ecology': ecology, 'ecology_resolution': resolution, 'parent_event_id': str(row.get('parent_event_id') or ''), 'gap_id': str(row.get('gap_id') or ''), 'origin': 'executor_supplied', 'translation_verified': False})
+        result[-1].update(question_id=str(row.get('question_id') or ''), action_id=str(row.get('action_id') or ''))
     return result
 
 
 def query_for_ecology(families, ecology):
-    return next((row for row in families if row['source_ecology'] == ecology), next((row for row in families if row['source_ecology'] == '*'), families[0]))
+    return next((row for row in families if row['source_ecology'] == ecology), next((row for row in families if row['source_ecology'] == '*'), None))

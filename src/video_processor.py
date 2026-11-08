@@ -75,6 +75,10 @@ class ProcessingResult:
 
     def to_dict(self) -> Dict:
         d = asdict(self)
+        d['assessment_scope'] = 'derived_media_description_and_processing_priority_only'
+        d['claim_verification'] = 'unverified'
+        d['research_relevance'] = 'agent_owned'
+        d['research_sufficiency'] = 'agent_owned'
         # 移除冗余的 stages（打印时已有）
         if not d.get("deep_analysis"):
             d.pop("deep_analysis", None)

@@ -35,6 +35,22 @@ def test_github_discovery_records_structured_provenance_and_upgrades_repository_
     assert issue['candidate_association']['candidate_id'] != detail['candidate_association']['candidate_id']
 
 
+def test_fixed_github_readme_can_upgrade_repository_and_finish_recording(monkeypatch,tmp_path):
+    from kr_core.evidence_assets import EvidenceAssets
+    from runtime.research_ledger import submit_tool_result
+    monkeypatch.setenv('KR_STATE_DIR',str(tmp_path))
+    tid=open_task(objective='fixed object',budget='balanced',considered=[])['research_task_id']
+    repo='https://github.com/org/project';commit='a'*40;url=repo+'/blob/'+commit+'/README.md'
+    submit_tool_result(task_id=tid,trace_id='search',tool='search_github_repositories',status='ok',result={'items':[{'url':repo}]})
+    provenance={'github':{'repository':'org/project','public_only':True,'object_kind':'readme','commit':commit,'path':'README.md'}}
+    ref=EvidenceAssets().put(url,'Real fixed README',metadata={'provenance':provenance})
+    result={'platform':'GitHub','url':url,'source_url':url,'provenance':provenance,'evidence_assets':[ref]}
+    receipt=submit_tool_result(task_id=tid,trace_id='background:result',tool='get_content_detail',status='ok',result=result)
+    assert receipt['status']=='recorded' and receipt['candidate_association']['status']=='recorded'
+    again=submit_tool_result(task_id=tid,trace_id='background:result',tool='get_content_detail',status='ok',result=result)
+    assert again['receipt']['receipt_id']==receipt['receipt']['receipt_id'] and again['status']=='recorded'
+
+
 def test_candidate_ledger_deduplicates_and_never_persists_raw_query_or_url(monkeypatch, tmp_path) -> None:
     monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
     task = open_task(objective="真实调研", budget="deep", task_id="candidate-ledger", considered=[])
@@ -64,7 +80,7 @@ def test_candidate_ledger_deduplicates_and_never_persists_raw_query_or_url(monke
         tool="get_content_detail",
         evidence_receipt_ids=[detail["receipt_id"]],
     )
-    assert updated["status"] == "recorded"
+    assert updated["status"] == "declared_only", 'an empty detail receipt cannot prove extraction'
 
     persisted = json.loads((tmp_path / "research_tasks" / "candidate-ledger.json").read_text(encoding="utf-8"))
     serialized = json.dumps(persisted, ensure_ascii=False)
@@ -73,3 +89,14 @@ def test_candidate_ledger_deduplicates_and_never_persists_raw_query_or_url(monke
     assert "detail_extracted" in serialized
     assert "candidate_page_received" in serialized
     assert "hmac-sha256:" in serialized
+
+
+
+def test_search_receipts_cannot_verify_a_cross_checked_claim(monkeypatch, tmp_path):
+    monkeypatch.setenv("KR_STATE_DIR", str(tmp_path))
+    tid = open_task(objective="check claim", budget="balanced", considered=[])["research_task_id"]
+    refs = [record_tool_receipt(task_id=tid, trace_id=str(i), tool="kr_web_search", status="ok")["receipt"]["receipt_id"] for i in range(2)]
+    candidate = record_candidates(task_id=tid, source_ecology="generic_web_ecology", tool="kr_web_search", query="claim", items=[{"url": "https://example.org/claim"}], receipt_id=refs[0])["candidates"][0]
+    result = update_candidate_stage(task_id=tid, candidate_id=candidate["candidate_id"], stage="cross_checked", evidence_receipt_ids=refs)
+    assert result["status"] == "declared_only"
+    assert result["candidate"]["verification"] != "receipt_verified"

@@ -959,6 +959,8 @@ def _research_ecology_cards(ecology_ids: list[str]) -> list[Dict]:
                 "evidence_role": item.get("evidence_role"),
                 "known_limits": item.get("known_limits", []),
                 "reveals": item.get("reveals", [])[:2],
+                **{key: item.get(key, []) for key in ('not_limited_to', 'content_forms', 'query_archetypes')},
+                "declared_boundary": item.get('declared_boundary', ''),
             }
         )
     return cards
@@ -994,6 +996,8 @@ def _research_ecology_consideration_map(task: str, hints: list[str], evidence_ne
                 "detail_affordance": detail_tools,
                 "unique_information_value": list(ecology.get("reveals") or [])[:2],
                 "known_limits": list(ecology.get("known_limits") or []),
+                **{key: ecology.get(key, []) for key in ('not_limited_to', 'content_forms', 'query_archetypes')},
+                "declared_boundary": ecology.get('declared_boundary', ''),
                 "next_candidate_action": "Agent decides whether to discover, extract detail, cross-check, seek counterevidence, or record a justified skip.",
             }
         )
@@ -1123,11 +1127,17 @@ def _research_first_wave(plan: Dict, limit: int, research_task_id: str = "") -> 
     families = plan.get("query_families") or query_families(plan.get("query") or "")
     index, service = ResearchIndex(), TaskService()
     results = []
+    selected = plan.get('selected_source_ecologies') or []
+    for family in families:
+        if family.get('ecology_resolution') == 'unsupported' or family['source_ecology'] not in ['*', *selected]:
+            reason = 'unsupported_ecology' if family.get('ecology_resolution') == 'unsupported' else 'ecology_not_selected'
+            index.query(research_task_id, {**family, 'reason': reason}, status='skipped')
+            results.append({'family_id': family['family_id'], 'source_ecology': family['source_ecology'], 'status':'skipped', 'reason':reason})
     for ecology in plan.get("selected_source_ecologies") or []:
         for family in families:
             if family["source_ecology"] not in {"*", ecology}:
                 continue
-            family = {**family, "source_ecology": ecology, "family_id": family["family_id"] + ":" + ecology}
+            family = {**family, "source_ecology": ecology, 'parent_family_id':family['family_id'], "family_id": family["family_id"] + ":" + ecology}
             if ecology not in _FIRST_WAVE_SAFE_ECOLOGIES:
                 index.query(research_task_id, family, status="skipped")
                 results.append({"source_ecology":ecology,"status":"skipped","reason":"explicit_platform_action_required","family_id":family["family_id"]})
@@ -1147,23 +1157,33 @@ def execute_research_query(payload):
     from runtime.research_index import ResearchIndex
     from runtime.execution_context import check_execution
     family, tid = payload["family"], payload["research_task_id"]
+    from runtime.research_queries import CURRENT_RESEARCH_ACTION
+    import uuid
+    family = {**family, 'action_id':family.get('action_id') or family['family_id'], 'attempt_id':uuid.uuid4().hex}
     ecology, query, limit = family["source_ecology"], family["query"], payload["limit"]
     index = ResearchIndex()
     index.query(tid,family,status="running")
-    check_execution()
-    if ecology == "academic_literature_ecology":
-        result = search_academic(query=query,limit=min(limit,5),provider="auto",research_task_id=tid)
-    elif ecology == "github_repository_ecology":
-        result = search_github_repositories(query=query,limit=limit,research_task_id=tid)
-    elif ecology == "youtube_video_ecology":
-        result = search_youtube(keyword=query,limit=limit,research_task_id=tid)
-    elif ecology == "wechat_public_article_ecology":
-        result = search_wechat_articles(query=query,limit=limit,research_task_id=tid)
-    elif ecology == "generic_web_ecology":
-        result = kr_web_search(query=query,limit=limit,provider="auto",research_task_id=tid)
-    else:
-        raise ValueError("unsupported_research_query_ecology")
-    check_execution()
+    token = CURRENT_RESEARCH_ACTION.set({k:family.get(k, '') for k in ('family_id','action_id','attempt_id','question_id','parent_event_id')})
+    try:
+        check_execution()
+        if ecology == "academic_literature_ecology":
+            result = search_academic(query=query,limit=min(limit,5),provider="auto",research_task_id=tid)
+        elif ecology == "github_repository_ecology":
+            result = search_github_repositories(query=query,limit=limit,research_task_id=tid)
+        elif ecology == "youtube_video_ecology":
+            result = search_youtube(keyword=query,limit=limit,research_task_id=tid)
+        elif ecology == "wechat_public_article_ecology":
+            result = search_wechat_articles(query=query,limit=limit,research_task_id=tid)
+        elif ecology == "generic_web_ecology":
+            result = kr_web_search(query=query,limit=limit,provider="auto",language='' if family.get('language') == 'unknown' else family.get('language', ''),research_task_id=tid)
+        else:
+            raise ValueError("unsupported_research_query_ecology")
+        check_execution()
+    except BaseException as exc:
+        index.query(tid, family, status='failed', result={'error': {'type': type(exc).__name__}})
+        raise
+    finally:
+        CURRENT_RESEARCH_ACTION.reset(token)
     from runtime.research_index import query_outcome
     index.query(tid,family,status=query_outcome(result),result=result)
     return result
@@ -2236,7 +2256,7 @@ def manage_xiaohongshu_accounts(
 @application_tool()
 @traced_tool("health_check", strategy="layered_runtime_diagnostics")
 def health_check(
-    mode: Annotated[str, Field(description="默认summary为声明/任务摘要；诊断用diagnostic_summary，完整探活用full；微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。")] = "summary",
+    mode: Annotated[str, Field(description="默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。")] = "summary",
 ) -> Dict:
     """检查 KnowledgeRadar 的关键平台和运行依赖状态。
 
@@ -2244,6 +2264,20 @@ def health_check(
     full 可能较慢；summary/light/lite 返回轻量摘要。
     """
     normalized_mode = str(mode or "full").strip().lower()
+    if normalized_mode.startswith(('reconcile_browser_operation:', 'resolve_browser_operation:')):
+        parts = str(mode).strip().split(':')
+        platform = parts[1].lower() if len(parts)>1 else ''
+        if platform not in {'zhihu','boss','liepin','maimai'}:
+            return {'status':'invalid_request','failure_type':'unsupported_native_platform'}
+        from collectors.platform import zhihu, boss, liepin, maimai
+        site = {'zhihu':zhihu,'boss':boss,'liepin':liepin,'maimai':maimai}[platform]._site()
+        if normalized_mode.startswith('resolve_browser_operation:'):
+            if len(parts)!=4:
+                return {'status':'invalid_request','failure_type':'resolution_and_original_operation_id_required'}
+            interaction = site.reconcile_outcome(resolution=parts[2],operation_id=parts[3])
+        else:
+            interaction = site.reconcile_outcome()
+        return {'status':interaction.get('status','unknown'),'platform':platform,'interaction':interaction,'automatic_replay':False}
     if normalized_mode in {"probe_browser_auth:weread", "request_browser_interaction:weread:login", "release_browser_interaction:weread"}:
         from collectors.platform import weread
         if normalized_mode == "probe_browser_auth:weread":
@@ -2838,7 +2872,7 @@ from runtime.research_index import ResearchWrite
 
 @application_tool(group="research")
 def update_research(request: ResearchWrite) -> Dict:
-    """记录Agent的问题、固定证据关联、来源关系或可撤销折叠；不判定研究饱和。"""
+    """记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)
 

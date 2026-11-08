@@ -117,6 +117,12 @@ class EvidenceStore:
                         'source_platform':platform,'content_format':response.get('content_format','text'),
                         'original_captured_at':response.get('fetched_at') or response.get('captured_at') or utc_now_iso(),
                         **{key:response[key] for key in ('display_title_zh','title_zh','display_title','language','source_presentation','site_name','processing_method') if response.get(key)}}
+                    if kind == 'content':
+                        metadata.update({key:part.get(key, 'unknown') for key in ('body_state','asset_kind','source_role','requested_scope','actual_scope')})
+                        metadata['missing_reason'] = part.get('missing_reason', '')
+                        metadata['evidence_identity'] = 'body-observation/v1'
+                        if response.get('source_kind'):
+                            metadata['source_kind'] = response['source_kind']
                     if kind == 'video_description':
                         metadata.update(coverage='metadata_description', source_layer='video_metadata')
                     if kind == 'transcript':
@@ -127,7 +133,7 @@ class EvidenceStore:
                     if isinstance(response.get('provenance'), dict):
                         metadata['provenance'] = dict(response['provenance'])
                         if response['provenance'].get('processing_key'):
-                            metadata['evidence_identity'] = response['provenance']['processing_key']
+                            metadata['evidence_identity'] = ':'.join(filter(None, (metadata.get('evidence_identity', ''), response['provenance']['processing_key'])))
                     if processing.get('ocr_status'):
                         metadata['provenance'] = {**metadata.get('provenance', {}), 'pdf_processing':{k:processing.get(k) for k in
                             ('processing_method','ocr_status','ocr_pages','missing_text_pages','ocr_errors','ocr_model')}}

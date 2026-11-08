@@ -338,12 +338,15 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             # ordinary tools, and only an explicit task scope may create one.
             try:
                 from .research_ledger import submit_tool_result
+                from .research_queries import CURRENT_RESEARCH_ACTION
+                action = CURRENT_RESEARCH_ACTION.get() or {}
                 receipt_result = submit_tool_result(
                     task_id=research_task_id, trace_id=trace_id, tool=tool_name, status=status,
                     failure_code=failure_code,
                     source_ecology=str((metadata or {}).get("source_ecology") or ""),
                     association="explicit_task_scope", result=result,
                     elapsed_s=elapsed,
+                    research_action=action,
                     _record_pending=True,
                 )
                 receipt = receipt_result.get("receipt") if isinstance(receipt_result, dict) else None
@@ -357,7 +360,7 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
                     result["research_receipt"] = {
                         'research_task_id':research_task_id,
                         'candidate_association':association,
-                        **{key: receipt[key] for key in ("task_id", "run_id", "operation_id", "evidence_versions") if key in receipt},
+                        **{key: receipt[key] for key in ("task_id", "run_id", "operation_id", "evidence_versions", "research_action") if key in receipt},
                         "receipt_id": receipt.get("receipt_id"),
                         "trace_id": receipt.get("trace_id"),
                         "status": receipt.get("status"),
