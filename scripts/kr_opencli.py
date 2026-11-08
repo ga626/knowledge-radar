@@ -82,6 +82,7 @@ def start_daemon():
 
 
 def bind(context_id, browser):
+    from runtime.opencli_bridge import extension_supported
     if browser != "chrome": raise ValueError("daily_chrome_confirmation_required")
     import httpx
     with httpx.Client(timeout=3,trust_env=False) as client:
@@ -89,7 +90,7 @@ def bind(context_id, browser):
         response.raise_for_status()
         state = response.json()
     if not (state.get("extensionConnected") and not state.get("profileDisconnected")
-        and state.get("daemonVersion") == "2.0.2" and state.get("extensionVersion") in {"1.0.26"}
+        and state.get("daemonVersion") == "2.0.2" and extension_supported(state.get("extensionVersion"))
         and state.get("contextId") == context_id):
         raise ValueError("selected_browser_not_connected_or_version_mismatch")
     old = oc.setting("KR_XHS_OPENCLI_CONTEXT_ID")

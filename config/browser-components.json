@@ -31,6 +31,10 @@
       "source": "browser_link/opencli_bridge",
       "extension_id": "gjkpdamiogbchidhcgpmjkfdncdhnnff",
       "version": "1.0.26",
+      "runtime_compatibility": {
+        "daemon_version": "2.0.2",
+        "extension_versions": ["1.0.26", "1.0.27"]
+      },
       "files": {
         "bundle/background.js": "fbc25d22e5f81b809ee0ab04170ad4291687eb2a375c55ca6cf1f7fbe2807f9d",
         "icons/icon-128.png": "4b146c873a1f6e21f129e9d9ad7a6e56d48f64f536ef160468e967f265c424a4",

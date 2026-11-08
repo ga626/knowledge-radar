@@ -2,7 +2,7 @@
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController} from './opencli_readiness.mjs';
+import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,extensionSupported,attentionController,officialWindowController} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
@@ -37,7 +37,7 @@ const ensureViewport = async () => {
 };
 try {
   const status = await waitForBoundBrowser(load, request.contextId);
-  if (status.daemonVersion !== '2.0.2' || !['1.0.26'].includes(status.extensionVersion)) stop('opencli_identity_mismatch');
+  if (status.daemonVersion !== '2.0.2' || !extensionSupported(status.extensionVersion)) stop('opencli_identity_mismatch');
   if (request.operation === 'inventory') {
     output = {ok:true, data:{connected:true}};
   } else {

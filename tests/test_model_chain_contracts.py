@@ -11,6 +11,81 @@ from runtime.leases import RuntimeLeaseCoordinator
 from runtime.resource_concurrency import acquire_resource
 
 
+@pytest.mark.parametrize('tampered', [False, True])
+def test_component_preparation_checks_wheel_identity_independent_of_listing_order(tmp_path, monkeypatch, tampered):
+    import hashlib
+    import zipfile
+    from runtime import optional_install
+    base = tmp_path/'components'
+    lock = tmp_path/'config/fixture.lock'
+    lock.parent.mkdir()
+    role = dict(optional_install.COMPONENTS['docling'], weight_revision='fixture', requirements_lock='config/fixture.lock')
+    rows = []
+    # Wheel filenames and METADATA project names need not have the same sort order.
+    wheels = []
+    for filename, name in [('a_pkg', 'Z-pkg'), ('z_pkg', 'A-pkg')]:
+        wheel = tmp_path/(filename+'-1.0-py3-none-any.whl')
+        with zipfile.ZipFile(wheel, 'w') as archive:
+            archive.writestr(filename+'.dist-info/METADATA', f'Name: {name}\nVersion: 1.0\n')
+        wheels.append(wheel)
+        digest = optional_media.file_sha(wheel)
+        rows.append(f'{name}==1.0 --hash=sha256:{digest}')
+    if tampered:
+        rows[0] = rows[0].split('--hash=')[0]+'--hash=sha256:'+'0'*64
+    frozen = ('\n'.join(sorted(rows))+'\n').encode()
+    lock.write_bytes(frozen)
+    role['requirements_sha256'] = hashlib.sha256(frozen).hexdigest()
+    revision = hashlib.sha256((role['weight_revision']+'|'+role['requirements_sha256']).encode()).hexdigest()[:16]
+    root = base/'artifacts/docling'/revision
+    (root/'wheels').mkdir(parents=True)
+    for wheel in wheels:
+        (root/'wheels'/wheel.name).write_bytes(wheel.read_bytes())
+    monkeypatch.setattr(optional_install, '__file__', str(tmp_path/'src/runtime/optional_install.py'))
+    monkeypatch.setattr(optional_install, 'COMPONENTS', {'docling': role})
+    monkeypatch.setattr(optional_install, 'receipt_root', lambda: base)
+    monkeypatch.setattr(optional_install, 'silent_subprocess_run', lambda *a, **k: None)
+    if tampered:
+        with pytest.raises(ValueError, match='prepared_wheels_do_not_match_frozen_lock'):
+            optional_install.prepare_component('docling', acknowledged=True)
+        assert not (root/'install-spec.json').exists()
+    else:
+        result = optional_install.prepare_component('docling', acknowledged=True)
+        assert Path(result['spec_path']).is_file()
+        assert (root/'requirements.lock').read_bytes() == frozen
+
+
+@pytest.mark.parametrize('failure', ['optional_component_locked_dependency_mismatch', 'optional_model_identity_mismatch'])
+def test_same_model_revision_with_changed_dependencies_replaces_only_obsolete_component(tmp_path, monkeypatch, failure):
+    from contextlib import nullcontext
+    from runtime import component_environment
+    monkeypatch.setattr(optional_media, 'receipt_root', lambda: tmp_path)
+    monkeypatch.setattr(resource_concurrency, 'acquire_resource', lambda *a, **k: nullcontext())
+    old = {'schema': 'knowledgeradar-optional-install/v1', 'component': 'docling',
+           'weight_revision': optional_media.COMPONENTS['docling']['weight_revision'], 'old_marker': True}
+    receipt = tmp_path/'docling.json'
+    receipt.write_text(json.dumps(old), encoding='utf-8')
+    prior = receipt.read_bytes()
+    candidate = dict(old, old_marker=False)
+    calls = []
+    def validate(component, *, receipt_value=None):
+        if receipt_value is None:
+            raise ValueError(failure)
+        return receipt_value
+    monkeypatch.setattr(optional_media, 'validate_receipt', validate)
+    monkeypatch.setattr(optional_media, '_install_component', lambda *a, **k:
+                        calls.append(k) or {'status':'installed_identity_verified', 'candidate_receipt': candidate})
+    monkeypatch.setattr(component_environment, 'component_environment', lambda *a, **k: {})
+    spec = {'installation_acknowledged': True, 'license_review': 'APPROVED'}
+    if failure == 'optional_model_identity_mismatch':
+        with pytest.raises(ValueError, match=failure):
+            optional_media.install_component('docling', spec)
+        assert not calls and receipt.read_bytes() == prior
+    else:
+        result = optional_media.install_component('docling', spec)
+        assert result['previous_environment_retained'] and len(calls) == 1
+        assert json.loads(receipt.read_text(encoding='utf-8'))['previous_receipt'] == old
+
+
 def request(path):
     return {"input_path": str(path), "approved_input_root": str(path.parent),
             "input_sha256": optional_media.file_sha(path), "component": "auto"}

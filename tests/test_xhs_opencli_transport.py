@@ -650,6 +650,27 @@ def test_connection_diagnostic_does_not_blame_running_chrome_when_daemon_is_down
     assert list(tmp_path.iterdir())==before
 
 
+@pytest.mark.parametrize('version,connected', [('1.0.26', True), ('1.0.27', True),
+                                             ('1.0.26.2', False), ('1.0.28', False)])
+def test_connection_accepts_supported_existing_extension_without_reinstall(monkeypatch, tmp_path, version, connected):
+    import httpx
+    monkeypatch.setattr(oc, 'setting', lambda name: 'daily' if 'CONTEXT' in name else str(tmp_path))
+    (tmp_path/'package.json').write_text('{}', encoding='utf-8')
+    class Client:
+        def __init__(self, **kwargs): pass
+        def __enter__(self): return self
+        def __exit__(self, *args): pass
+        def get(self, url, **kwargs):
+            assert kwargs['params'] == {'contextId': 'daily'}
+            return httpx.Response(200, request=httpx.Request('GET', url), json={
+                'daemonVersion': '2.0.2', 'extensionVersion': version,
+                'extensionConnected': True, 'profileDisconnected': False})
+    monkeypatch.setattr(httpx, 'Client', Client)
+    result = oc.connection_status()
+    assert result['connected'] is connected
+    assert result['connection_reason'] == ('ready' if connected else 'extension_identity_mismatch')
+
+
 def test_xhs_public_request_reaches_durable_input_without_losing_window(monkeypatch):
     import server
     from runtime import task_service

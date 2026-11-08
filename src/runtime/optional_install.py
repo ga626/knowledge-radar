@@ -129,10 +129,11 @@ def prepare_component(component, *, acknowledged=False):
             }
         )
     lock = root / "requirements.lock"
-    resolved = ("\n".join(requirements) + "\n").encode("utf-8")
-    if resolved != frozen.read_bytes():
+    # 文件名排序与包METADATA名称排序不同；逐项精确比较版本和SHA，保留原锁字节。
+    expected = frozen.read_bytes()
+    if sorted(requirements) != sorted(expected.decode("utf-8").splitlines()):
         raise ValueError("prepared_wheels_do_not_match_frozen_lock")
-    lock.write_bytes(resolved)
+    lock.write_bytes(expected)
     model_root = root / "model"
     model_root.mkdir(exist_ok=True)
     files = _download_asr_model(role, model_root) if role["model_required"] else {}

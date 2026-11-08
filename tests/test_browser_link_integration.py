@@ -521,12 +521,13 @@ def test_bootstrap_transient_activation_is_not_assumed_user_takeover(monkeypatch
     assert result['bootstrap_window_closed']
 
 
-def test_official_window_helper_checks_marker_pid_and_title():
+@pytest.mark.parametrize('direction', ['', '\u200e', '\u200f'])
+def test_official_window_helper_checks_marker_pid_and_title(direction):
     from runtime.browser_bootstrap import window_presentation
     import pytest
     marker = 'KR-work-' + 'a' * 32
     class WindowList:
-        rows = [{'handle': 12, 'pid': 34, 'title': marker + ' - Google Chrome'}]
+        rows = [{'handle': 12, 'pid': 34, 'title': direction + marker + ' - Google Chrome'}]
         calls = []
         def list(self): return self.rows
         def present(self, identity, foreground): self.calls.append((identity, foreground))

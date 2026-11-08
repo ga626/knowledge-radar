@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import {repairFilterEvaluation,evaluateSearchNavigation} from './xhs_search_filters.mjs';
-import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
+import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,extensionSupported,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
 const request = JSON.parse(input);
@@ -34,7 +34,7 @@ try {
   } else {
     const status = await waitForBoundBrowser(load, request.contextId);
     if (status.daemonVersion !== '2.0.2') stop('opencli_daemon_identity_mismatch');
-    if (!['1.0.26'].includes(status.extensionVersion)) stop('opencli_extension_identity_mismatch');
+    if (!extensionSupported(status.extensionVersion)) stop('opencli_extension_identity_mismatch');
     requireOfficialExtension(status, request.operation);
     const risk = await readFile(path.join(request.root, 'clis/xiaohongshu/risk-control.js'), 'utf8');
     if (!/retryOnBlock\s*=\s*false/.test(risk)) stop('opencli_fail_fast_patch_missing');
