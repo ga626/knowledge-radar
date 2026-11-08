@@ -69,7 +69,13 @@ test('timeouts and broad risk classification do not cause a foreground fallback'
 
 async function contentScenario(manual) {
   const messages=[],listeners=[],changes=[];
-  let hidden=true,challenge=manual,extractions=0;
+  const activeTimers=new Set();
+  let hidden=true,challenge=manual,extractions=0,observers=0;
+  const schedule=(fn,delay)=>{
+    const timer=setTimeout(()=>{activeTimers.delete(timer);fn();},delay);
+    activeTimers.add(timer);return timer;
+  };
+  const unschedule=timer=>{activeTimers.delete(timer);clearTimeout(timer);};
   const dialog={innerText:'请拖动滑块完成验证',matches:()=>false,querySelector:()=>null,
     getBoundingClientRect:()=>({width:300,height:100})};
   const document={readyState:'complete',documentElement:{},body:{innerText:''},
@@ -79,7 +85,7 @@ async function contentScenario(manual) {
     messages.push(message);
     if(message.kind==='content-attention'){
       hidden=false;changes.push('foreground');
-      if(manual)setTimeout(()=>{challenge=false;},20);
+      if(manual)schedule(()=>{challenge=false;},20);
       return {action:'foreground',manual};
     }
   }}};
@@ -87,15 +93,28 @@ async function contentScenario(manual) {
     getComputedStyle:()=>({display:'block',visibility:'visible'}),
     get innerWidth(){return hidden?0:1280;},get innerHeight(){return hidden?0:800;},
     KRSiteRoutes:{boss:['www.zhipin.com']},KRSites:{boss:{extract:async()=>{
-      extractions++;return challenge?{risk:true}:hidden?{}:{content:'same document'};
-    }}},AbortController,TextEncoder,setTimeout,clearTimeout,console,
-    MutationObserver:class{observe(){}disconnect(){}}});
+      extractions++;return challenge?{risk:true}:hidden?{}:{content:'same document',authenticated_ui:manual};
+    }}},AbortController,TextEncoder,setTimeout:schedule,clearTimeout:unschedule,console,
+    MutationObserver:class{observe(){observers++;}disconnect(){observers--;}}});
   vm.runInContext(readFileSync(new URL('../browser_link/extension/visibility.js',import.meta.url),'utf8'),context);
   vm.runInContext(readFileSync(new URL('../browser_link/extension/content.js',import.meta.url),'utf8'),context);
   for(const listener of listeners)listener({kind:'extract',request_id:'test',generation:'g',platform:'boss',operation:'detail',timeout_ms:3000,payload:{}},{id:'ext'});
-  const until=Date.now()+4000;
-  while(Date.now()<until && !messages.some(m=>m.kind===(manual?'content-attention-resolved':'content-result')))await new Promise(r=>setTimeout(r,20));
-  return {messages,changes,extractions};
+  const dispatch=id=>{
+    for(const listener of listeners)listener({kind:'extract',request_id:id,generation:'g',platform:'boss',operation:'detail',timeout_ms:3000,payload:{}},{id:'ext'});
+  };
+  const waitResult=async id=>{
+    const until=Date.now()+4000;
+    while(Date.now()<until && !messages.some(m=>m.kind==='content-result' && m.request_id===id))await new Promise(r=>setTimeout(r,20));
+    assert.ok(messages.some(m=>m.kind==='content-result' && m.request_id===id));
+  };
+  await waitResult('test');
+  if(!manual)return {messages,changes,extractions};
+  // 模拟人已解除验证；等待本身不应保留扩展定时器、观察器或重做提取。
+  await new Promise(r=>setTimeout(r,40));
+  const waiting={extractions,timers:activeTimers.size,observers};
+  assert.equal(challenge,false);
+  dispatch('next-related-request');await waitResult('next-related-request');
+  return {messages,changes,extractions,waiting};
 }
 test('actual content loop continues the same DOM after confirmed hidden rendering failure',async()=>{
   const r=await contentScenario(false);
@@ -103,11 +122,14 @@ test('actual content loop continues the same DOM after confirmed hidden renderin
   assert.equal(r.messages.find(m=>m.kind==='content-result')?.data?.content,'same document');
   assert.ok(r.extractions>=2);
 });
-test('actual content loop hands over a slider and reports its disappearance without re-extraction',async()=>{
+test('manual content handoff stays idle and resolves on the next explicit authenticated request',async()=>{
   const r=await contentScenario(true);
   assert.equal(r.messages.filter(m=>m.kind==='content-attention').length,1);
-  assert.equal(r.messages.filter(m=>m.kind==='content-attention-resolved').length,1);
-  assert.equal(r.extractions,1);
+  assert.equal(r.messages.filter(m=>m.kind==='content-attention-resolved').length,0);
+  assert.deepEqual(r.waiting,{extractions:1,timers:0,observers:0});
+  assert.equal(r.messages.find(m=>m.kind==='content-result' && m.request_id==='test')?.data?.risk,true);
+  assert.equal(r.messages.find(m=>m.kind==='content-result' && m.request_id==='next-related-request')?.data?.attention_resolved,true);
+  assert.equal(r.extractions,2);
 });
 
 // 官方扩展与KR窗口管理之间的归属边界；不需要私有扩展命令。
