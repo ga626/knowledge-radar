@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from urllib.parse import quote
 
@@ -44,9 +45,13 @@ def _plan(engine, request):
     if not metadata.get('created_at') and context.get('directory_layout')!='project-year-task-v1':
         raise ValueError('archive_original_creation_time_required')
     layout=calendar_layout(metadata,context['task_title'])
-    # 首次创建时间缺失时固定绑定时的时间，不能让稍后重试产生另一目标。
-    if context.get('directory_layout')=='project-year-task-v1':
-        layout.update({key:context[key] for key in layout})
+    # 命名迁移保持已经绑定的本地日历值，不随机器时区变化改写历史时间。
+    if context.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:
+        stamp=re.fullmatch(r'(\d{2})[月.\-](\d{2})日? (\d{2})[：\-](\d{2}) (.+)',context['directory_title'])
+        if not stamp:raise ValueError('archive_original_creation_time_required')
+        month,day,hour,minute,subject=stamp.groups()
+        layout.update(directory_year=context['directory_year'],
+            directory_title=f'{month}.{day} {hour}：{minute} {subject}')
     year=project/layout['directory_year']
     if year.exists():
         _,owned_year=_binding(engine,root,['year',request.project_id,layout['directory_year']])

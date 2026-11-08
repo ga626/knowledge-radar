@@ -220,16 +220,15 @@ def calendar_layout(metadata, title):
     """按首次创建时间固定本地日历，并使用物理层安全的展示标题。
 
     目录名同时出现在 Windows 文件系统和 Obsidian 的展示树中，因此两者
-    必须共享同一套可移植命名合同。半角 ``/`` 和 ``:`` 会分别被解释成
-    路径分隔符或被 Windows 拒绝，不能再用中文日期和全角时间分隔符制造
-    两套看起来不同的标题。
+    必须共享同一套命名合同：日期用点号，时间用全角冒号。半角 ``/`` 和
+    ``:`` 会分别被解释成路径分隔符或被 Windows 拒绝，不用于物理名称。
     """
     try:
         created=datetime.fromisoformat(str(metadata.get('created_at')).replace('Z','+00:00')).astimezone()
     except (ValueError,TypeError):
         created=datetime.now().astimezone()
     return {'directory_layout':'project-year-task-v2', 'directory_year':f'{created.year}年',
-        'directory_title':f'{created:%m-%d %H-%M} '+_safe_name(title,'未命名调研')}
+        'directory_title':f'{created:%m.%d %H}：{created:%M} '+_safe_name(title,'未命名调研')}
 
 
 def _readable_structure(kind, text, meta):

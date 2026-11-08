@@ -833,7 +833,7 @@ def test_calendar_layout_uses_same_windows_safe_title_for_obsidian_and_physical_
     from runtime.research_archive import calendar_layout
     layout = calendar_layout({'created_at': '2026-11-07T01:44:00-04:00'}, '连续探索 / 首轮:回归')
     assert layout['directory_year'] == '2026年'
-    assert re.match(r'^11-07 \d{2}-\d{2} ', layout['directory_title'])
+    assert re.match(r'^11\.07 \d{2}：\d{2} ', layout['directory_title'])
     assert '/' not in layout['directory_title'] and ':' not in layout['directory_title']
 
 
