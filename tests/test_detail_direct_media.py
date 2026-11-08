@@ -17,6 +17,17 @@ def test_video_collection_hands_off_without_downloading(monkeypatch,tmp_path,pla
     assert result['_enhancement_pending'] and result['content']=='intro'
     assert result['media_manifest'] and result['enhancement_status']=='queued'
 
+
+def test_video_description_is_separate_archive_asset(monkeypatch, tmp_path):
+    from kr_core.evidence_store import EvidenceStore
+    monkeypatch.setenv('KR_DATA_ROOT', str(tmp_path))
+    store = EvidenceStore(str(tmp_path / 'records.jsonl'))
+    response = {'title': '视频标题', 'desc': '这是平台简介', 'content': '这是平台简介',
+                'video_description': '这是平台简介', 'transcript': '真正的字幕内容'}
+    store.append_detail(platform='B站', url='https://www.bilibili.com/video/BV1ELGY6sExb', response=response)
+    kinds = {row['kind'] for row in response['evidence_assets']}
+    assert 'video_description' in kinds and 'content' not in kinds and 'transcript' in kinds
+
 def test_missing_asr_is_explicit_and_keeps_collected_text(monkeypatch,tmp_path):
     monkeypatch.setenv('KR_DATA_ROOT',str(tmp_path))
     from runtime import media_acquisition, optional_media

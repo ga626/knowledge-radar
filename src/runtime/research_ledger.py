@@ -823,17 +823,26 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
         archive=tracker.status(task_id)
         if archive.get('status')=='context_pending':archive=None
         delivery_error = archive.get("error_code", "") if archive else ""
+        archive_source_delivery = archive.get('source_delivery', {}) if archive else {}
+        archive_delivery_ready = bool(archive and archive.get('local', {}).get('status') == 'local_committed'
+                                      and archive.get('vault', {}).get('status') in {'local_committed', 'not_configured'}
+                                      and archive_source_delivery.get('status') not in {'pending', 'incomplete'})
+        observed_summary = archive.get("summary", "unknown") if archive else "summary_pending"
+        # 完成事实只能沿用已固定且已交付的归档状态。旧账本可能在
+        # report 已注册时仍留下 summary_pending，不能把它投影成已完成。
+        if delivery_error:
+            observed_summary = "registered" if archive and archive.get("report") else "summary_pending"
+        elif observed_summary == "delivered" and not archive_delivery_ready:
+            observed_summary = "registered" if archive and archive.get("report") else "summary_pending"
         delivery_observation = {
-            "summary": ("registered" if archive.get("report") else "summary_pending") if delivery_error else
-                       archive.get("summary", "unknown") if archive else "summary_pending",
+            "summary": observed_summary,
             "summary_version_id": (archive.get("report") or {}).get("version_id", "") if archive else "",
             "delivery": ("conflict" if archive.get("failure_kind") == "conflict" else "pending") if delivery_error else
-                        ("delivered" if archive.get("local", {}).get("status") == "local_committed"
-                         and archive.get("vault", {}).get("status") in {"local_committed", "not_configured"}
+                        ("delivered" if archive_delivery_ready
                          else "pending") if archive else "not_configured",
             "delivery_error_code": delivery_error,
             "delivery_observed_at": _now(),
-            "source_delivery": archive.get('source_delivery',{}) if archive else {},
+            "source_delivery": archive_source_delivery,
         }
         if archive and archive.get('source_delivery',{}).get('status') in {'pending','incomplete'} and delivery_observation['delivery']=='delivered':
             delivery_observation['delivery']='pending'

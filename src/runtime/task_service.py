@@ -489,7 +489,9 @@ class TaskService:
             'document_password_required', 'document_password_incorrect', 'document_corrupt'}:
             from runtime.pdf_text import DocumentError
             code = task['error_code']
-            response['error'] = {'type': code, 'next_action': DocumentError(code).next_action,
+            response['failure_type'] = code
+            response['next_action'] = DocumentError(code).next_action
+            response['error'] = {'type': code, 'failure_type': code, 'next_action': DocumentError(code).next_action,
                                  'ocr_attempted': False, 'retryable': False, 'automatic_retry': False}
         if (task.get('metadata') or {}).get('failure_context'):
             response['failure_context'] = task['metadata']['failure_context']

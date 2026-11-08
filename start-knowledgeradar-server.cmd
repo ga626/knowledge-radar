@@ -16,4 +16,10 @@ if exist "%KR_ROOT%.python312\python.exe" (
   set "PYTHON_EXE=python"
 )
 
+rem Prefer the GUI interpreter for the short launcher itself. The detached
+rem server also uses CREATE_NO_WINDOW, but using pythonw here prevents a
+rem console window when this file is opened from Explorer or a shortcut.
+set "PYTHON_GUI=%PYTHON_EXE:python.exe=pythonw.exe%"
+if exist "%PYTHON_GUI%" set "PYTHON_EXE=%PYTHON_GUI%"
+
 "%PYTHON_EXE%" -X utf8 "%KR_ROOT%start-knowledgeradar-server-detached.py"

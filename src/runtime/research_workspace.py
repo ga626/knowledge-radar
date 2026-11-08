@@ -102,6 +102,12 @@ _TOOL_ROUNDS = {
     'finalize_research_task': 'closeout', 'get_task_status': 'closeout',
 }
 _INTERNAL_ECOLOGIES = {'research_route', 'unclassified', '_'}
+_NON_SOURCE_TOOL_PREFIXES = (
+    'kr_research', 'finalize_research_task', 'get_task_status',
+    # 候选登记本身承载真实来源生态，不能用 ``record_research_*``
+    # 一刀切掉；仅过滤事件记录和管理/检查工具。
+    'record_research_event', 'inspect_research', 'manage_research_artifacts',
+)
 _TOOL_ECOLOGIES = {
     'kr_web_search': 'generic_web_ecology',
     'extract_web_page': 'generic_web_ecology',
@@ -142,9 +148,12 @@ def _items(payload, key):
 
 
 def _source_ecology(item):
+    tool = str(item.get('tool') or '').strip()
+    if any(tool == prefix or tool.startswith(prefix) for prefix in _NON_SOURCE_TOOL_PREFIXES):
+        return ''
     ecology = str(item.get('source_ecology') or '').strip()
     if not ecology or ecology in _INTERNAL_ECOLOGIES:
-        ecology = _ecology_for_tool(item.get('tool'))
+        ecology = _ecology_for_tool(tool)
     return ecology if ecology not in _INTERNAL_ECOLOGIES else ''
 
 
