@@ -25,3 +25,12 @@ def test_nested_payload_still_strips_credentials_and_signed_query_parameters():
 
 def test_balanced_parentheses_in_bare_url_are_preserved():
     assert public_evidence_payload('链接 (https://example.org/a_(b)?q=x) 后续')=='链接 (https://example.org/a_(b)?q=x) 后续'
+
+
+def test_readable_document_projection_keeps_locations_and_redacts_only_protected_links():
+    from kr_core.source_urls import public_document_text
+    normal='[源码](https://github.com/example/repo/blob/main/a.py#L12-L18)'
+    assert public_document_text(normal)==normal
+    protected='[资料](https://user:password@example.org/a?token=synthetic-private&q=AI#paragraph-2)'
+    assert public_document_text(protected)=='[资料](https://example.org/a?q=AI#paragraph-2)'
+    assert 'synthetic-private' not in public_document_text('https://example.org/a#token=synthetic-private')

@@ -10,6 +10,9 @@ from runtime.research_ledger import open_task, record_tool_receipt
 @pytest.fixture
 def research(monkeypatch, tmp_path):
     monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('KR_TASK_DB_PATH', str(tmp_path / 'tasks.sqlite3'))
+    monkeypatch.setenv('KR_LOG_DIR', str(tmp_path / 'logs'))
+    monkeypatch.setenv('KR_EVIDENCE_ROOT', str(tmp_path / 'evidence'))
     tid = open_task(objective='开发者研究', budget='fast', considered=[], task_id='exam-custom-id')['research_task_id']
     index = ResearchIndex()
     index.annotate(ResearchWrite(action='question', task_id=tid, question_id='q1', text='开发者的真实问题'))
@@ -162,3 +165,92 @@ def test_durable_job_persists_action_scope_before_worker_starts(research,monkeyp
     job=json.loads((service.root/task['task_id']/'input.json').read_text(encoding='utf-8'))
     assert job['scope']['research_action']['action_id']=='async-action'
     assert service.store.get_task(task['task_id'])['metadata']['research_action']['question_id']=='q1'
+
+
+def test_nested_trace_never_inherits_another_research_tasks_action(research):
+    from runtime.research_contracts import context_scope
+    from runtime.tool_trace import traced_tool
+    tid,index=research
+    other=open_task(objective='另一个任务',budget='fast',considered=[],task_id='other-task')['research_task_id']
+    @traced_tool('nested_probe')
+    def nested(research_task_id=''):return {'status':'ok'}
+    with context_scope(tid,{'action_id':'only-first-task','question_id':'q1'}):
+        result=nested(research_task_id=other)
+    assert not result['research_receipt']['research_action'].get('action_id')
+    assert index.read(other,view='feedback')['unplanned_receipts_count']==1
+
+
+def test_worker_restores_task_bound_action_and_records_completion_without_replay(research,monkeypatch):
+    from runtime.task_service import TaskService
+    from runtime import task_service
+    from runtime.research_contracts import context_scope
+    from runtime.research_queries import CURRENT_RESEARCH_ACTION
+    from runtime.tasks import get_task_store
+    from runtime.task_process import execute_job
+    from pathlib import Path
+    monkeypatch.setenv('KR_TASK_TEST_MODE','1')
+    monkeypatch.setattr(task_service,'source_identity',lambda:'test-source')
+    monkeypatch.setattr(task_service._MONITORS,'submit',lambda *a,**k:None)
+    monkeypatch.setattr(TaskService,'start_maintenance',lambda self:None)
+    tid,index=research;service=TaskService(get_task_store())
+    with context_scope(tid,{'action_id':'worker-action','question_id':'q1'}):
+        row=service.submit('fixture_echo',{},scope={'research_task_id':tid})
+    seen=[]
+    monkeypatch.setattr('runtime.execution_context.check_execution',lambda:seen.append(dict(CURRENT_RESEARCH_ACTION.get() or {})))
+    execute_job(service.root/row['task_id']/'input.json')
+    assert seen and all(a.get('_task_id')==tid for a in seen)
+    assert not CURRENT_RESEARCH_ACTION.get()
+    assert service.store.get_task(row['task_id'])['status']=='completed'
+    first=service.record_completion(row['task_id']);second=service.record_completion(row['task_id'])
+    assert first['status']==second['status']=='completed'
+    actions=[x.get('research_action') or {} for x in __import__('runtime.research_ledger',fromlist=['read_task']).read_task(task_id=tid)['tool_receipts']]
+    assert any(a.get('action_id')=='worker-action' for a in actions)
+
+
+def test_planned_query_also_sets_task_identity(research,monkeypatch):
+    from runtime import composition
+    from runtime.research_queries import CURRENT_RESEARCH_ACTION
+    tid,_=research;seen=[]
+    monkeypatch.setattr(composition,'kr_web_search',lambda **kw:seen.append(dict(CURRENT_RESEARCH_ACTION.get() or {})) or {'items':[]})
+    composition.execute_research_query({'research_task_id':tid,'limit':1,'family':{
+        'family_id':'fixture-family','query':'isolated','source_ecology':'generic_web_ecology','question_id':'q1'}})
+    assert seen[0]['_task_id']==tid
+    assert not CURRENT_RESEARCH_ACTION.get()
+
+
+def test_requirement_pages_do_not_drop_later_items(research):
+    tid,index=research
+    for number in range(3):
+        write(index,tid,action='requirement',record_id='r'+str(number),question_id='q1',text='产物'+str(number),required_parts=['body'])
+    first=index.read(tid,view='requirements',limit=1)
+    second=index.read(tid,view='requirements',limit=1,after_seq=first['next_after_seq'],before_seq=first['watermark'])
+    assert first['items'][0]['record_id']!=second['items'][0]['record_id']
+
+
+def test_closeout_replacement_uses_requirements_beyond_response_budget(research,monkeypatch):
+    from runtime.research_ledger import close_task
+    from kr_core.evidence_assets import EvidenceAssets
+    from types import SimpleNamespace
+    tid,index=research
+    for number in range(8):
+        write(index,tid,action='requirement',record_id='r'+str(number),question_id='q1',
+              text='背景范围'*400,semantic_condition='边界说明'*400,required_parts=['body'],required=False)
+    write(index,tid,action='requirement',record_id='r-last',question_id='q1',text='必须取得正文',required_parts=['body'])
+    failed=record_tool_receipt(task_id=tid,trace_id='failed-bg',tool='get_content_detail',status='failed',
+        result={'task':{'task_id':'failed-bg-job'}})['receipt']
+    assert failed['background_task_ids']==['failed-bg-job']
+    monkeypatch.setattr('runtime.tasks.get_task_store',lambda:SimpleNamespace(
+        get_task=lambda job:{'status':'failed','metadata':{},'error_code':'deadline'}))
+    write(index,tid,action='attempt',record_id='failed-attempt',requirement_id='r-last',requirement_revision=1,
+        receipt_id=failed['receipt_id'],rationale='原后台尝试失败')
+    assets=EvidenceAssets();ref=assets.put('https://example.org/replaced','替代成功取得完整正文。')
+    assets.reference_many([ref['version_id']],tid,task_id=tid)
+    ok=record_tool_receipt(task_id=tid,trace_id='replacement',tool='get_content_detail',status='ok',result={'evidence_assets':[ref]})['receipt']
+    write(index,tid,action='coverage',record_id='full',requirement_id='r-last',requirement_revision=1,
+        receipt_id=ok['receipt_id'],evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':8}],
+        covered_parts=['body'],rationale='同一需求完整替代')
+    assert index.read(tid,view='requirements',limit=100,max_chars=24000)['truncated']
+    result=close_task(task_id=tid,ecology_outcomes=[],stop_rationale='保留历史失败并确认替代',key_claims=[])
+    assert result['closeout']['completion_facts']['required_execution']=='completed'
+    assert result['closeout']['required_failed_tasks']==[]
+    assert result['closeout']['unsuccessful_background_tasks'][0]['task_id']=='failed-bg-job'

@@ -46,7 +46,8 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
     origin = request_scope(job.get('origin_request_id', ''))
     origin.__enter__()
     from runtime.research_queries import CURRENT_RESEARCH_ACTION
-    research_token = CURRENT_RESEARCH_ACTION.set((job.get('scope') or {}).get('research_action') or {})
+    action=(job.get('scope') or {}).get('research_action') or {}
+    research_token = CURRENT_RESEARCH_ACTION.set({**action,'_task_id':(job.get('scope') or {}).get('research_task_id','')} if action else {})
     try:
         check_execution()
         phase("worker_imports_begin")

@@ -333,12 +333,16 @@ def readable_asset(assets, row):
     github=(meta.get('provenance') or {}).get('github') or {}
     if kind!='report' and (meta.get('content_format')=='markdown' or github.get('object_kind')=='readme' or rendered!=text):
         rendered=_source_markdown_links(rendered,row['source_url'])
+    from kr_core.source_urls import public_document_text
+    projected=public_document_text(rendered)
+    projection_transforms=['protected_source_urls_redacted'] if projected!=rendered else []
+    rendered=projected
     if rendered==text:return row, ''
     derived=assets.put(row['source_url'],rendered,kind='readable_text',title=row['title'],metadata={
         **{k:v for k,v in meta.items() if k!='locators'},'parent_version_id':row['version_id'],
         'original_kind':kind,'original_captured_at':meta.get('original_captured_at') or meta.get('read_at') or row['captured_at'],
         'source_extractor':meta.get('source_extractor') or meta.get('extractor',''),
-        'extractor':'readable-archive/v3-source-links','derived_from':[row['version_id']]})
+        'projection_transforms':projection_transforms,'extractor':'readable-archive/v4-public-projection','derived_from':[row['version_id']]})
     with assets.connection() as c:
         return dict(c.execute('SELECT * FROM assets WHERE version_id=?',(derived['version_id'],)).fetchone()), ''
 

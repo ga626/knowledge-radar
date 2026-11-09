@@ -1163,7 +1163,7 @@ def execute_research_query(payload):
     ecology, query, limit = family["source_ecology"], family["query"], payload["limit"]
     index = ResearchIndex()
     index.query(tid,family,status="running")
-    token = CURRENT_RESEARCH_ACTION.set({k:family.get(k, '') for k in ('family_id','action_id','attempt_id','question_id','parent_event_id')})
+    token = CURRENT_RESEARCH_ACTION.set({'_task_id':tid,**{k:family.get(k, '') for k in ('family_id','action_id','attempt_id','question_id','parent_event_id')}})
     try:
         check_execution()
         if ecology == "academic_literature_ecology":

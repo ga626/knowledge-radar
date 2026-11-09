@@ -46,7 +46,7 @@
     },
     {
       "capability_id": "mcp.extract_web_page",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "extract_web_page"
@@ -389,7 +389,7 @@
     },
     {
       "capability_id": "mcp.read_knowledge",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "read_knowledge"
@@ -403,7 +403,7 @@
     },
     {
       "capability_id": "mcp.manage_research_artifacts",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "manage_research_artifacts"
@@ -462,7 +462,7 @@
     },
     {
       "capability_id": "mcp.update_research",
-      "version": 2,
+      "version": 3,
       "lifecycle": "active",
       "entries": [
         "update_research"
@@ -479,7 +479,7 @@
     },
     {
       "capability_id": "research.incremental_evidence",
-      "version": 2,
+      "version": 3,
       "lifecycle": "active",
       "entries": [],
       "aliases": [],

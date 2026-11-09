@@ -130,6 +130,20 @@ def test_navigation_replace_crash_recovers_and_user_edit_is_preserved(archive,mo
     assert nav.read_text(encoding='utf-8')=='USER NAVIGATION'
 
 
+def test_public_archive_removes_temporary_link_parameters_without_rewriting_raw(archive):
+    engine,_,_,vault=archive
+    text='有效评论正文：[资料](https://example.org/detail?id=7&xsec_token=synthetic-temporary-marker)；继续保留原文。'
+    ref=evidence(engine,text)
+    result=engine.run('task-a');assert not result['error_code']
+    exported='\n'.join(p.read_text(encoding='utf-8') for p in vault.rglob('*.md'))
+    assert 'synthetic-temporary-marker' not in exported
+    assert 'id=7' in exported
+    assert engine.assets.fetch(ref['version_id'])['text']==text
+    with engine.assets.connection() as c:
+        projected=c.execute("SELECT metadata FROM assets WHERE kind='readable_text'").fetchall()
+    assert any('protected_source_urls_redacted' in row[0] for row in projected)
+
+
 def test_challenge_is_retained_as_diagnostic_and_not_exported_as_body(archive):
     engine, _, _, vault = archive
     ref = engine.assets.put('https://example.org/challenge','Client Challenge\nPlease enable JavaScript to continue.',title='Client Challenge')

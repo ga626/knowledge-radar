@@ -286,3 +286,40 @@ def test_public_application_dispatch_updates_reads_and_delivers_same_review(revi
         'project_id':'project-a','title':'应用入口交付','content':'# 结论\n建议仍有条件。'}})
     assert delivered['summary']=='delivered'
     assert '直接替代比较推迟' in Path(delivered['vault']['path']).read_text(encoding='utf-8')
+
+
+def test_report_and_review_excerpts_do_not_export_temporary_link_tokens(review):
+    engine,index,refs,claim=review
+    raw='访谈全文：[链接](https://example.org/?q=AI&token=synthetic-review-token)'
+    ref=evidence(engine,raw,'https://example.org/private-parameters')
+    write(index,**{**claim,'expected_revision':1,'dependencies':[{'group_id':'g','role':'support',
+        'evidence_refs':[{'version_id':ref['version_id'],'start':0,'end':len(raw)}],'basis':'保留正文与定位'}]})
+    content='# 报告\n[链接](https://example.org/?q=AI&token=synthetic-report-token)'
+    result=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='投影边界',content=content))
+    text=Path(result['local']['path']).read_text(encoding='utf-8')
+    assert 'synthetic-review-token' not in text and 'synthetic-report-token' not in text
+    assert engine.assets.fetch(ref['version_id'])['text']==raw
+    assert '链接投影已移除临时访问参数' in text
+
+
+def test_report_projection_preserves_public_source_line_locations(review):
+    engine,index,_,_=review
+    content='# 原文定位\n[源码](https://github.com/example/repo/blob/main/a.py#L12-L18)'
+    result=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='定位保留',content=content))
+    text=Path(result['local']['path']).read_text(encoding='utf-8')
+    assert '#L12-L18)' in text
+    assert not result['report']['review_snapshot']['projection_transforms']
+
+
+def test_readable_audit_exposes_actual_alternatives_and_permitted_remaining_support(review):
+    engine,index,refs,_=review
+    write(index,action='alternatives_review',record_id='readable-alternatives',claim_id='c1',claim_revision=1,
+        disposition='compared',rationale='只有访谈声明，尚无真实任务效果',search_scope='同一研究者任务',
+        options=['维持现状：人工整理','现成工具：只验证宣称，适用性与效果未验证'],evidence_refs=[refs[1]])
+    for scenario in projection(index,engine)['claims'][0]['scenarios']:withdrawal(index,scenario)
+    result=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='可读审阅',content='# 有条件建议'))
+    text=Path(result['local']['path']).read_text(encoding='utf-8')
+    assert '维持现状：人工整理' in text and '适用性与效果未验证' in text
+    assert '比较依据：' in text
+    assert '撤后可用依据：' in text
+    assert '撤后实际引用：未引用固定证据' in text

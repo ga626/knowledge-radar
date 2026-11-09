@@ -318,14 +318,20 @@ def report_appendix(index,task_id,content,assets=None):
             if dep['role']=='background':continue
             deps.append((refs_text(dep['evidence_refs']) if dep['evidence_refs'] else '依赖上游结论 '+dep['upstream_claim_id'])+'；作用：'+dep['basis'])
         alt=claim['alternatives'];counter=refs_text(claim['counterevidence_refs'])
-        if alt:counter+='；直接替代：'+dispositions[alt['disposition']]+'；'+alt['rationale']+'；范围：'+alt['search_scope']
+        if alt:
+            counter+='；直接替代：'+dispositions[alt['disposition']]+'；'+alt['rationale']+'；范围：'+alt['search_scope']
+            if alt['options']:counter+='；对比选项及结果：'+'；'.join(alt['options'])
+            counter+='；比较依据：'+refs_text(alt['evidence_refs'])
+            if alt['reopen_conditions']:counter+='；重新检查条件：'+alt['reopen_conditions']
         elif claim['alternatives_required']:counter+='；直接替代尚未审阅'
         outcomes=[]
         for s in claim['scenarios']:
             r=s['review'];dep=next(d for d in claim['dependencies'] if d['group_id']==s['group_id'])
             excluded=refs_text(dep['evidence_refs']) if dep['evidence_refs'] else '上游结论 '+dep['upstream_claim_id']
-            remaining=refs_text(r['remaining_refs']) if r else '尚未声明'
-            outcomes.append('撤去 '+excluded+' → '+(changes[r['change']]+'：'+r['conclusion']+'；理由：'+r['rationale']+'；撤后实际引用：'+remaining if r else '尚未审阅'))
+            allowed=[ref for d in claim['dependencies'] if d['role']!='background' for ref in d['evidence_refs'] if ref['version_id'] in s['remaining_versions']]
+            remaining=(refs_text(r['remaining_refs']) if r['remaining_refs'] else '未引用固定证据') if r else '尚未声明'
+            outcomes.append('撤去 '+excluded+' → '+(changes[r['change']]+'：'+r['conclusion']+'；理由：'+r['rationale'] if r else '尚未审阅')
+                +'；撤后可用依据：'+(refs_text(allowed) if allowed else '无剩余固定证据')+'；撤后实际引用：'+remaining)
         unresolved=[gap_label(g) for g in snap['gaps'] if g.endswith(':'+claim['record_id']) or ':'+claim['record_id']+':' in g]
         unresolved.append('语义判断理由：'+claim['basis'])
         lines.append('| '+' | '.join(map(cell,[claim['text']+'；适用范围：'+claim['applicability'],'；'.join(deps) or '未登记核心依据',counter,'<br>'.join(outcomes) or '没有可审的核心依赖','；'.join([claim['uncertainty'] or '未声明',*unresolved])]))+' |')
@@ -333,7 +339,17 @@ def report_appendix(index,task_id,content,assets=None):
     if snap['gaps']:
         lines+=['','仍有审阅缺口：'+'；'.join(dict.fromkeys(gap_label(g) for g in snap['gaps']))+'。不据此自动宣布饱和。']
     lines+=['','审阅快照：`'+snap['baseline']+'`。上述记录由 Agent 声明；来源与结论可能仍存在语义错误。','']
-    return content.rstrip()+'\n'+'\n'.join(lines),{'baseline':snap['baseline'],'body_sha256':body_hash,'full_text_review':'recorded' if reviews else 'unreviewed_or_stale','gaps':snap['gaps']}
+    from kr_core.source_urls import public_document_text
+    report=content.rstrip()+'\n'+'\n'.join(lines)
+    projected=public_document_text(report)
+    transforms=[]
+    if projected!=report:
+        transforms=['protected_source_urls_redacted']
+        projected+='\n链接投影已移除临时访问参数；原固定资料及定位未改写。\n'
+    versions={r['version_id'] for c in snap['claims'] for d in c['dependencies'] for r in d['evidence_refs']}
+    versions.update(r['version_id'] for c in snap['claims'] for r in c['counterevidence_refs'])
+    return projected,{'baseline':snap['baseline'],'body_sha256':body_hash,'full_text_review':'recorded' if reviews else 'unreviewed_or_stale','gaps':snap['gaps'],
+        'projection_transforms':transforms,'dependency_versions':sorted(versions)}
 
 
 def gap_label(gap):

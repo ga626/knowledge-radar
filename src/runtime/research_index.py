@@ -361,9 +361,18 @@ class ResearchIndex:
             # 不用OFFSET；续页只跳过已经读过的序号，撤回或折叠不移动其他行。
             clause = "" if view == "changes" else " AND kind=? AND NOT EXISTS(SELECT 1 FROM changes n WHERE n.task_id=c.task_id AND n.kind=c.kind AND n.object_id=c.object_id AND n.seq>c.seq AND n.seq<=?)"
             if view == 'requirements':
-                from runtime.research_contracts import requirement_projection
+                from runtime.research_contracts import requirement_projection, rows_at
                 items = requirement_projection(self, conn, task_id, high, assets)
-                return {**base, 'items':items[:limit], 'truncated':len(items)>limit}
+                sequences={r['record_id']:r['_seq'] for r in rows_at(conn,task_id,high,include_seq=True) if r['_kind']=='requirement'}
+                pending=sorted((item for item in items if sequences[item['record_id']]>after_seq),key=lambda r:sequences[r['record_id']])
+                for item in pending[:limit]:
+                    base['items'].append(item)
+                    if len(encoded(base))>max_chars:
+                        base['items'].pop()
+                        if not base['items']:raise ValueError('budget_too_small_increase_max_chars')
+                        break
+                    base['next_after_seq']=sequences[item['record_id']]
+                return {**base,'truncated':len(base['items'])<len(pending)}
             kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition', 'claims':'claim','purposes':'task_purpose','alternatives_reviews':'alternatives_review','withdrawal_reviews':'withdrawal_review','report_reviews':'report_review','local_observations':'local_observation'}
             if view != "changes" and view not in kinds:
                 raise ValueError("invalid_research_view")

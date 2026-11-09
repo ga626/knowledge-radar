@@ -991,15 +991,18 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
         from runtime.research_index import ResearchIndex
         research_feedback = ResearchIndex().read(task_id, view='feedback', max_chars=24000)
         requirements = ResearchIndex().read(task_id, view='requirements', limit=100, max_chars=24000)
-        with ResearchIndex().connection() as conn:
-            from runtime.research_contracts import rows_at
+        index = ResearchIndex()
+        with index.connection() as conn:
+            from runtime.research_contracts import rows_at, requirement_projection
             contract_rows = rows_at(conn, task_id) if conn is not None else []
+            complete_requirements = requirement_projection(index, conn, task_id) if conn is not None else []
         # 只消除已显式关联同一需求且确实取得完整产物的旧尝试阻断；历史失败保留。
-        fulfilled = {r['record_id'] for r in requirements.get('items',[]) if r['acquisition']=='fulfilled'}
+        # 对外需求摘要可以分页；内部完成判断不能被响应预算截断。
+        fulfilled = {r['record_id'] for r in complete_requirements if r['acquisition']=='fulfilled'}
         attempts = [r for r in contract_rows if r['_kind']=='attempt']
         satisfied_receipts = {r['receipt_id'] for r in attempts if all(
             a['requirement_id'] in fulfilled and any(q['record_id']==a['requirement_id'] and q['revision']==a['requirement_revision']
-                for q in requirements.get('items',[])) for a in attempts if a['receipt_id']==r['receipt_id'])}
+                for q in complete_requirements) for a in attempts if a['receipt_id']==r['receipt_id'])}
         satisfied_tasks = {bg for r in payload.get('tool_receipts',[]) if r['receipt_id'] in satisfied_receipts for bg in r.get('background_task_ids',[])}
         required_failures = [r for r in required_failures if r['task_id'] not in satisfied_tasks]
         has_gaps = bool(missing or critical_without_support or critical_without_receipts or pending_tasks or required_failures or pending_submissions or unavailable_versions
