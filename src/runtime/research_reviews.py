@@ -295,49 +295,85 @@ def report_appendix(index,task_id,content,assets=None):
     with index.connection() as conn:snap=state(index,conn,task_id,assets)
     body_hash=hashlib.sha256(content.encode()).hexdigest()
     reviews=[r for r in snap['records'] if r['_kind']=='report_review' and r['report_sha256']==body_hash and r['baseline']==snap['baseline']]
-    def cell(text):return str(text).replace('|',r'\|').replace('\r','').replace('\n','<br>')
-    def refs_text(refs):
-        parts=[]
-        for ref in refs:
+    def cell(text):return ' '.join(str(text).replace('|',r'\|').splitlines())
+    # 编号按固定版本和摘录范围去重，仅改变展示，不改账本和原始资料。
+    references={}
+    synthetic_marker='【合成数据，非真实市场证据】'
+    def reference(ref):
+        key=(ref['version_id'],ref['start'],ref['end'])
+        if key not in references:
+            title,excerpt,synthetic='原依据当前不可用','原文当前不可用',False
             try:
                 from kr_core.evidence_assets import EvidenceAssets
-                fetched=(assets or EvidenceAssets(read_only=True)).fetch(ref['version_id'],start=ref['start'],max_chars=min(120,ref['end']-ref['start']))
-                parts.append(f"{fetched['asset']['title'] or '固定原文'}：{fetched['text']}（kr:{ref['version_id']}#chars={ref['start']}-{ref['end']}）")
-            except (ValueError,OSError):parts.append('原依据当前不可用')
-        return '；'.join(parts) or '未登记'
+                store=assets or EvidenceAssets(read_only=True)
+                fetched=store.fetch(ref['version_id'],start=ref['start'],max_chars=min(120,ref['end']-ref['start']))
+                title=fetched['asset']['title'] or '固定原文'
+                excerpt=fetched['text']
+                synthetic=store.fetch(ref['version_id'],start=0,max_chars=len(synthetic_marker))['text']==synthetic_marker
+                if synthetic and excerpt.startswith(synthetic_marker):excerpt=excerpt[len(synthetic_marker):]
+                if ref['end']-ref['start']>120:excerpt+='…（摘录）'
+            except (ValueError,OSError):pass
+            references[key]={'number':len(references)+1,'title':title,'excerpt':excerpt,'synthetic':synthetic}
+        return references[key]['number']
+    def refs_text(refs):
+        numbers=dict.fromkeys(reference(ref) for ref in refs)
+        return '、'.join(f'[{number}](#资料{number})' for number in numbers) or '未登记'
+    claim_numbers={c['record_id']:n for n,c in enumerate(snap['claims'],1)}
+    def upstream(dep):return '上游结论'+str(claim_numbers.get(dep['upstream_claim_id'],'（未列出）'))
+    def row(values):return '| '+' | '.join(map(cell,values))+' |'
     lines=['','---','','## 关键结论与撤证审阅','',
+        '先看每条建议依赖什么、还缺什么，再看撤去关键资料后是否仍能成立。请据此判断建议是否值得采纳，以及投入行动前还需要补哪些验证。','',
         '全文关键结论核对：'+('已记录' if reviews else '未审阅或已失效')+'。',
         '语义正确性：由 Codex 声明，程序未判真。带缺口交付不等于审阅完成。','',
-        '| 关键结论 | 核心依据 | 最强反证／直接替代 | 撤除后的判断与理由 | 尚未解决事项 |',
-        '| --- | --- | --- | --- | --- |']
+        '| 关键结论 | 核心依据 | 最强反证／直接替代 | 尚未解决事项 |',
+        '| --- | --- | --- | --- |']
     changes={'changed':'改变','unchanged':'保留','weakened':'降级','reversed':'反转','unknown':'未知'}
     dispositions={'compared':'已比较','reused':'复用旧比较','not_found':'在所查范围未确认，不能证明不存在','blocked':'比较受阻','deferred':'比较推迟','not_applicable':'声明不适用'}
-    for claim in snap['claims']:
+    details=[];scenario_rows=[]
+    for number,claim in enumerate(snap['claims'],1):
         deps=[]
         for dep in claim['dependencies']:
             if dep['role']=='background':continue
-            deps.append((refs_text(dep['evidence_refs']) if dep['evidence_refs'] else '依赖上游结论 '+dep['upstream_claim_id'])+'；作用：'+dep['basis'])
+            deps.append((refs_text(dep['evidence_refs']) if dep['evidence_refs'] else upstream(dep))+'：'+dep['basis'])
         alt=claim['alternatives'];counter=refs_text(claim['counterevidence_refs'])
+        details+=['',f'### 结论{number}','',f"适用范围：{claim['applicability']}",'',f"判断理由：{claim['basis']}"]
         if alt:
-            counter+='；直接替代：'+dispositions[alt['disposition']]+'；'+alt['rationale']+'；范围：'+alt['search_scope']
-            if alt['options']:counter+='；对比选项及结果：'+'；'.join(alt['options'])
-            counter+='；比较依据：'+refs_text(alt['evidence_refs'])
-            if alt['reopen_conditions']:counter+='；重新检查条件：'+alt['reopen_conditions']
+            counter+='；直接替代：'+dispositions[alt['disposition']]
+            details+=['','替代比较：'+alt['rationale']+'；检索范围：'+alt['search_scope']]
+            if alt['options']:details+=['','对比选项及结果：',*['- '+option for option in alt['options']]]
+            details+=['','比较依据：'+refs_text(alt['evidence_refs'])]
+            if alt['reopen_conditions']:details+=['','重新检查条件：'+alt['reopen_conditions']]
         elif claim['alternatives_required']:counter+='；直接替代尚未审阅'
-        outcomes=[]
         for s in claim['scenarios']:
             r=s['review'];dep=next(d for d in claim['dependencies'] if d['group_id']==s['group_id'])
-            excluded=refs_text(dep['evidence_refs']) if dep['evidence_refs'] else '上游结论 '+dep['upstream_claim_id']
+            excluded='资料 '+refs_text(dep['evidence_refs']) if dep['evidence_refs'] else upstream(dep)
             allowed=[ref for d in claim['dependencies'] if d['role']!='background' for ref in d['evidence_refs'] if ref['version_id'] in s['remaining_versions']]
             remaining=(refs_text(r['remaining_refs']) if r['remaining_refs'] else '未引用固定证据') if r else '尚未声明'
-            outcomes.append('撤去 '+excluded+' → '+(changes[r['change']]+'：'+r['conclusion']+'；理由：'+r['rationale'] if r else '尚未审阅')
-                +'；撤后可用依据：'+(refs_text(allowed) if allowed else '无剩余固定证据')+'；撤后实际引用：'+remaining)
+            scenario_rows.append(row([f'结论{number}','撤去'+excluded,
+                refs_text(allowed) if allowed else '无剩余固定证据',
+                changes[r['change']]+'：'+r['conclusion'] if r else '尚未审阅',
+                (r['rationale'] if r else '尚未声明理由')+'；实际引用：'+remaining]))
         unresolved=[gap_label(g) for g in snap['gaps'] if g.endswith(':'+claim['record_id']) or ':'+claim['record_id']+':' in g]
-        unresolved.append('语义判断理由：'+claim['basis'])
-        lines.append('| '+' | '.join(map(cell,[claim['text']+'；适用范围：'+claim['applicability'],'；'.join(deps) or '未登记核心依据',counter,'<br>'.join(outcomes) or '没有可审的核心依赖','；'.join([claim['uncertainty'] or '未声明',*unresolved])]))+' |')
-    if not snap['claims']:lines.append('| 未登记关键结论 | 无法核对 | 尚未审阅 | 尚未审阅 | 不能视为全部通过 |')
+        lines.append(row([claim['text'],'；'.join(deps) or '未登记核心依据',counter,
+            '；'.join(dict.fromkeys([claim['uncertainty'] or '未声明',*unresolved]))]))
+    if not snap['claims']:lines.append('| 未登记关键结论 | 无法核对 | 尚未审阅 | 不能视为全部通过 |')
+    lines+=['','## 撤证情景','',
+        '每行只撤去一组核心依据。“仍可用资料”是允许引用的范围；“实际引用”是本次判断真正使用的资料，两者不等于结论已经得到支持。','',
+        '| 对应结论 | 撤去资料 | 仍可用资料 | 撤后判断 | 判断理由与实际引用 |',
+        '| --- | --- | --- | --- | --- |',
+        *(scenario_rows or ['| 暂无 | 没有可审的核心依赖 | 无 | 尚未审阅 | 不能视为通过 |']),
+        '','## 适用范围与替代比较',*details]
     if snap['gaps']:
         lines+=['','仍有审阅缺口：'+'；'.join(dict.fromkeys(gap_label(g) for g in snap['gaps']))+'。不据此自动宣布饱和。']
+    synthetic_numbers=[str(r['number']) for r in references.values() if r['synthetic']]
+    if synthetic_numbers:
+        lines[5:5]=['','**示例说明：合成数据，非真实市场证据。合成资料编号：'+
+            '、'.join('资料'+number for number in synthetic_numbers)+'。**','']
+    lines+=['','## 资料附录','', '编号指向固定原文摘录；版本与字符范围供核验使用。']
+    for (version,start,end),ref in references.items():
+        lines+=['',f"### 资料{ref['number']}",'',ref['title'],'',
+            '> '+ref['excerpt'].replace('\r','').replace('\n','\n> '),'',
+            f'固定版本：`{version}`；字符范围：{start}–{end}（左闭右开）。']
     lines+=['','审阅快照：`'+snap['baseline']+'`。上述记录由 Agent 声明；来源与结论可能仍存在语义错误。','']
     from kr_core.source_urls import public_document_text
     report=content.rstrip()+'\n'+'\n'.join(lines)

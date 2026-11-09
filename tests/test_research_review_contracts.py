@@ -348,5 +348,78 @@ def test_readable_audit_exposes_actual_alternatives_and_permitted_remaining_supp
     text=Path(result['local']['path']).read_text(encoding='utf-8')
     assert '维持现状：人工整理' in text and '适用性与效果未验证' in text
     assert '比较依据：' in text
-    assert '撤后可用依据：' in text
-    assert '撤后实际引用：未引用固定证据' in text
+    assert '| 仍可用资料 |' in text
+    assert '实际引用：未引用固定证据' in text
+
+
+def test_readable_audit_separates_withdrawal_scenarios_and_uses_numbered_appendix(review):
+    """人读总览不应把多个撤证情景塞进同一格，也不应泄漏机器定位。"""
+    engine, index, refs, _ = review
+    alternative(index, options=['维持现状：人工整理'])
+    scenarios = projection(index, engine)['claims'][0]['scenarios']
+    for scenario in scenarios:
+        withdrawal(index, scenario)
+    body = '# 结论\n建议先验证付费意愿，再决定开发。'
+    p = projection(index, engine)
+    write(index, action='report_review', record_id='readable-v2',
+          report_sha256=hashlib.sha256(body.encode()).hexdigest(),
+          baseline=p['baseline'], claim_ids=['c1'], coverage_statement='已核对')
+    result = engine.submit(SubmitReport(action='submit_report', task_id='task-a',
+                                        project_id='project-a', title='可读审阅新版', content=body))
+    text = Path(result['local']['path']).read_text(encoding='utf-8')
+    overview = text.split('## 撤证情景', 1)[0]
+    assert overview.count('| 应先验证付费意愿，再决定开发 |') == 1
+    assert '<br>' not in overview
+    assert '## 撤证情景' in text
+    scenario_section = text.split('## 撤证情景', 1)[1]
+    assert scenario_section.count('| 结论1 |') == 2
+    assert '撤去资料 [1]' in scenario_section
+    assert '撤去资料 [2]' in scenario_section
+    main, appendix = text.split('## 资料附录', 1)
+    assert 'kr:' not in main
+    assert refs[0]['version_id'] not in main
+    assert refs[0]['version_id'] in appendix
+    assert '## 资料附录' in text
+    assert '资料1' in text and '资料2' in text
+    assert appendix.count(refs[0]['version_id']) == 1
+    assert appendix.count(refs[1]['version_id']) == 1
+    assert Path(result['vault']['path']).read_bytes() == text.encode('utf-8')
+    assert engine.assets.fetch(result['report']['version_id'])['text'] == text
+
+
+@pytest.mark.parametrize('all_synthetic', [False, True])
+def test_readable_audit_deduplicates_mixed_synthetic_disclosures_and_keeps_scope(review, all_synthetic):
+    """合成声明统一披露，真实与合成资料不能被错误地整体标记。"""
+    engine, index, refs, claim = review
+    marker = '【合成数据，非真实市场证据】'
+    synthetic_raw = marker + '偏好不能证明付费。'
+    synthetic = evidence(engine, synthetic_raw, 'https://example.org/synthetic')
+    other_raw = (marker if all_synthetic else '') + '另一来源摘录。'
+    real = evidence(engine, other_raw, 'https://example.org/real')
+    record_tool_receipt(task_id='task-a', trace_id='real-1', tool='get_content_detail', status='ok',
+                        result={'evidence_assets': [real]})
+    write(index, **{**claim, 'expected_revision': 1,
+                    'dependencies': [
+                        {'group_id': 'g1', 'role': 'necessary',
+                         'evidence_refs': [{'version_id': synthetic['version_id'], 'start': 0, 'end': len(synthetic_raw)}], 'basis': '首份材料'},
+                        {'group_id': 'g2', 'role': 'support',
+                         'evidence_refs': [{'version_id': real['version_id'], 'start': 0, 'end': len(other_raw)}],
+                         'basis': '另一份材料'}], 'counterevidence_refs': []})
+    p = projection(index, engine)
+    body = '# 结论\n仍需验证。'
+    write(index, action='report_review', record_id='mixed-v2',
+          report_sha256=hashlib.sha256(body.encode()).hexdigest(), baseline=p['baseline'],
+          claim_ids=['c1'], coverage_statement='已核对')
+    result = engine.submit(SubmitReport(action='submit_report', task_id='task-a', project_id='project-a',
+                                        title='混合资料审阅', content=body))
+    text = Path(result['local']['path']).read_text(encoding='utf-8')
+    assert text.count('合成资料编号：') == 1
+    assert '资料1' in text
+    assert '资料2' in text
+    assert '合成资料编号：资料1' in text
+    assert ('合成资料编号：资料1、资料2。' in text) == all_synthetic
+    assert text.count('合成数据，非真实市场证据') == 1
+    assert engine.assets.fetch(synthetic['version_id'])['text'] == synthetic_raw
+    assert '资料2（合成）' not in text
+    assert '适用范围：个人研究者；尚未验证付费' in text
+    assert '语义正确性：由 Codex 声明，程序未判真' in text

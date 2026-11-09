@@ -479,7 +479,7 @@
     },
     {
       "capability_id": "research.incremental_evidence",
-      "version": 4,
+      "version": 5,
       "lifecycle": "active",
       "entries": [],
       "aliases": [],
