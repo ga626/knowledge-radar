@@ -8,7 +8,6 @@ import time
 import threading
 import ssl
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
-from urllib.request import proxy_bypass_environment
 from dataclasses import dataclass
 
 import httpx
@@ -20,7 +19,7 @@ _DNS_LOCK = threading.Lock()
 
 def _public_dns_for_fake_ip(host):
     """仅Fake-IP域名走固定HTTPS解析器；绝不直接放行保留地址。"""
-    from runtime.proxy_config import get_httpx_proxy
+    from runtime.proxy_config import httpx_options
     with _DNS_LOCK:
         old = _DNS_CACHE.get(host)
         if old and old[0] > time.monotonic():
@@ -30,7 +29,7 @@ def _public_dns_for_fake_ip(host):
     # 任一解析器返回私网或明确NXDOMAIN仍立即拒绝，不能挑一个方便的答案放行。
     for endpoint in ("https://cloudflare-dns.com/dns-query", "https://dns.alidns.com/resolve"):
         try:
-            with httpx.Client(proxy=get_httpx_proxy(), trust_env=False, timeout=5, follow_redirects=False) as client:
+            with httpx.Client(**httpx_options(endpoint, adapter="fake-ip-dns"), timeout=5, follow_redirects=False) as client:
                 response = client.get(endpoint, params={"name": host, "type": "A"}, headers={"Accept": "application/dns-json"})
                 response.raise_for_status()
                 body = response.json()
@@ -173,7 +172,7 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
         headers['Content-Type'] = 'application/x-www-form-urlencoded'
     deadline = time.monotonic() + float(timeout)
     from runtime.execution_context import check_execution
-    from runtime.proxy_config import get_httpx_proxy
+    from runtime.proxy_config import httpx_options
     for _ in range(6):
         check_execution()
         remaining = deadline-time.monotonic()
@@ -195,8 +194,8 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
         # URL使用已验IP，TLS SNI与证书校验仍使用原主机名。
         # 代理选择按原域名处理 NO_PROXY，再连接已验证 IP；每次重定向都重算，
         # 不能因为固定 IP 而丢失域名的直连声明，也不放宽 DNS/重定向护栏。
-        proxy = None if proxy_bypass_environment(authority) else get_httpx_proxy()
-        with httpx.Client(timeout=remaining, follow_redirects=False, headers=headers, proxy=proxy, trust_env=False, verify=_TargetTLSContext(host)) as client:
+        route = httpx_options(url, adapter="guarded-web")
+        with httpx.Client(timeout=remaining, follow_redirects=False, headers=headers, **route, verify=_TargetTLSContext(host)) as client:
             with client.stream(method, pinned, content=body, headers={"Host": authority}, extensions={"sni_hostname": host}) as response:
                 if response.status_code in {301, 302, 303, 307, 308}:
                     if method == 'POST':

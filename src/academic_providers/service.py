@@ -82,6 +82,8 @@ def _enrich_provider_status(name: str, raw_status: Dict[str, object]) -> Dict[st
     status["validation_reason"] = classification["validation_reason"]
     status["blocks_overall_pass"] = classification["blocks_overall_pass"]
     status['live_verification'] = 'not_checked_by_status_query'
+    status['validation_scope'] = 'configuration_and_declared_capability'
+    status['article_entitlement'] = 'not_checked'
     return status
 
 
@@ -109,6 +111,7 @@ def _search_status(providers, names):
     keys = {'configured','available','auto_enabled','requires_api_key','requires_login',
             'daily_exhausted','monthly_exhausted','degraded_reason','validation_status',
             'status_class','live_verification'}
+    keys.update({'validation_scope', 'article_entitlement'})
     for name in dict.fromkeys(names):
         try:
             method = getattr(providers[name], 'status', None)
@@ -194,13 +197,13 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
             errors.extend({'provider': name, **diagnostic} for diagnostic in exc.diagnostics)
             continue
         except (SemanticScholarRateLimitError, ArxivRateLimitError, SerpApiScholarRateLimitError, CoreRateLimitError) as exc:
-            errors.append({"provider": name, "type": "rate_limited", "message": type(exc).__name__, "retryable": True, "backoff_suggested": True})
+            errors.append({"provider": name, **_provider_error_diagnostic(exc, 'rate_limited')})
             continue
         except (SerpApiScholarAuthError, CoreAuthError, UnpaywallAuthError, SemanticScholarAuthError) as exc:
-            errors.append({"provider": name, "type": "auth_required", "message": type(exc).__name__, "retryable": False})
+            errors.append({"provider": name, **_provider_error_diagnostic(exc, 'auth_required')})
             continue
         except (OpenAlexError, CrossrefError, SemanticScholarError, ArxivError, Ar5ivError, SerpApiScholarError, CoreError, UnpaywallError) as exc:
-            errors.append({"provider": name, "type": _classify_provider_error(exc), "message": type(exc).__name__, "retryable": True})
+            errors.append({"provider": name, **_provider_error_diagnostic(exc)})
             continue
         except CitationImportError as exc:
             errors.append({"provider": name, "type": "invalid_user_import", "message": type(exc).__name__, "retryable": False})
@@ -209,10 +212,10 @@ def search_academic_metadata(request: AcademicSearchRequest) -> AcademicSearchRe
             errors.append({"provider": name, "type": "budget_blocked", "message": exc.error_code, "retryable": False})
             continue
         except httpx.HTTPError as exc:
-            errors.append({'provider': name, **_fetch_diagnostic(exc)})
+            errors.append({'provider': name, **_provider_error_diagnostic(exc)})
             continue
         except Exception as exc:
-            errors.append({"provider": name, "type": _classify_provider_error(exc), "message": type(exc).__name__, "retryable": True})
+            errors.append({"provider": name, **_provider_error_diagnostic(exc)})
             continue
         completed.append(name)
         candidate_count = len(items)
@@ -518,6 +521,22 @@ def _rate_limit(provider_name: str) -> None:
     wait_interval(provider_name, _MIN_INTERVAL_S)
 
 
+def _provider_error_diagnostic(exc: Exception, fallback: str = '') -> Dict[str, Any]:
+    cause, seen = exc, set()
+    for _ in range(5):
+        if id(cause) in seen:
+            break
+        seen.add(id(cause))
+        if isinstance(cause, httpx.HTTPError):
+            return {**_fetch_diagnostic(cause), 'request_stage': 'search', 'wrapper': type(exc).__name__}
+        cause = cause.__cause__ or cause.__context__
+        if cause is None:
+            break
+    kind = fallback or _classify_provider_error(exc)
+    return {'type': kind, 'message': type(exc).__name__, 'request_stage': 'search',
+            'retryable': kind not in {'auth_required', 'budget_blocked'}, 'backoff_suggested': kind == 'rate_limited'}
+
+
 def _classify_provider_error(exc: Exception) -> str:
     if isinstance(exc, PaidAdmissionError):
         return "budget_blocked"
@@ -552,6 +571,8 @@ def _dedupe(items: List[AcademicWork]) -> List[AcademicWork]:
     seen = {}
     deduped = []
     for item in items:
+        from .identity import normalized_permissions
+        item = replace(item, raw=normalized_permissions(item.raw))
         doi = normalize_doi(item.doi)
         key = (doi or _metadata_key(item)) + '|edition:' + str(item.version or 'unknown') + '|type:' + (item.document_type if item.document_type not in {'unknown', 'journal-article', 'article'} else 'article')
         if not key:

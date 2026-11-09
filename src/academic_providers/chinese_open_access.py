@@ -40,8 +40,32 @@ def _fetch_diagnostic(exc):
     kind = ('rate_limited' if status == 429 else 'access_denied' if status in {401, 403}
             else 'provider_http_error' if status else 'timeout' if isinstance(exc, httpx.TimeoutException)
             else 'transport_error' if isinstance(exc, httpx.RequestError) else 'parse_error')
-    return {'type': kind, 'http_status': status, 'message': type(exc).__name__,
-            'retryable': status not in {400, 401, 403, 404}, 'backoff_suggested': status == 429}
+    diagnostic = {'type': kind, 'http_status': status, 'message': type(exc).__name__,
+                  'retryable': status not in {400, 401, 402, 403, 404}, 'backoff_suggested': status == 429}
+    if isinstance(exc, httpx.HTTPStatusError):
+        response = exc.response
+        # 不保留query、Authorization、响应全文或任意上游message。
+        diagnostic['request_origin'] = str(response.request.url.copy_with(username='', password='', path='/', query=None, fragment=None))
+        retry = response.headers.get('Retry-After', '').strip()
+        if retry.isdigit() and len(retry) <= 10:
+            diagnostic['retry_after_seconds'] = int(retry)
+        elif retry:
+            from email.utils import parsedate_to_datetime
+            from datetime import datetime, timezone
+            try:
+                deadline = parsedate_to_datetime(retry)
+                if deadline.tzinfo is not None:
+                    diagnostic['retry_after_seconds'] = max(0, int((deadline - datetime.now(timezone.utc)).total_seconds()))
+            except (ValueError, TypeError, OverflowError):
+                pass
+        try:
+            payload = response.json() if len(response.content) <= 65536 else {}
+        except (ValueError, httpx.ResponseNotRead):
+            payload = {}
+        code = str(payload.get('code') or payload.get('error_code') or '') if isinstance(payload, dict) else ''
+        if re.fullmatch(r'[A-Z0-9_.:-]{1,80}', code):
+            diagnostic['provider_code'] = code
+    return diagnostic
 
 
 def public_json_search(provider, request, fetch_records, make_work):

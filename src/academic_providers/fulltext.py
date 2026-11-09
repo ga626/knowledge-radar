@@ -82,7 +82,8 @@ def extract_academic_fulltext(
 
     provider_key = str(provider_id or "").strip()
     source_url = str(url or "").strip()
-    permissions = getattr(work, 'raw', {}) or {}
+    from .identity import normalized_permissions
+    permissions = normalized_permissions(getattr(work, 'raw', {}))
     if permissions.get('read_allowed') is False or permissions.get('download_allowed') is False:
         return _degraded(provider_key, source_url, 'academic_fulltext_permission_denied')
     if permissions.get('evidence_storage_allowed') is False:

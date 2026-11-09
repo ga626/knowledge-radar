@@ -43,7 +43,7 @@ def discovery_url(url: str) -> str:
         return safe
 
 
-def _public_text_url(match):
+def _public_text_url(match, *, preserve_location=False):
     """Keep Markdown/prose delimiters out of a URL before query redaction."""
     candidate = match.group()
     depths = {'(': 0, '[': 0, '{': 0}
@@ -59,7 +59,24 @@ def _public_text_url(match):
                 break
             depths[opening] -= 1
     url = candidate[:end].rstrip('.,;!，。；！')
+    if preserve_location:
+        try:
+            parsed = urlsplit(url)
+            protected_query = any(SENSITIVE.search(k) for k, _ in parse_qsl(parsed.query, keep_blank_values=True))
+            protected_fragment = any(SENSITIVE.search(k) for k, _ in parse_qsl(parsed.fragment, keep_blank_values=True))
+            if not (parsed.username or parsed.password or protected_query or protected_fragment):
+                return url + candidate[len(url):]
+            safe = urlsplit(canonical_url(url))
+            projected = urlunsplit((*safe[:4], '' if protected_fragment else parsed.fragment))
+            return projected + candidate[len(url):]
+        except ValueError:
+            return '[invalid_url]' + candidate[len(url):]
     return canonical_url(url) + candidate[len(url):]
+
+
+def public_document_text(text):
+    """可读正文投影：保留公开链接及段落/源码定位，只清理受保护的访问参数。"""
+    return re.sub(r"https?://[^\s<>\"']+", lambda match: _public_text_url(match, preserve_location=True), text)
 
 
 def public_evidence_payload(value):

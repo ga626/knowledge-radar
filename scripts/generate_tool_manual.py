@@ -40,6 +40,8 @@ def generate(check=False):
     from runtime.application import catalog
     from capability_manifest.ecologies import source_ecology_manifest
     data = catalog(full=True)
+    # Runtime artifact identity is observed from installed bytes, not a portable schema.
+    data.pop("research_workflow", None)
     base = ROOT / 'config/codex-product'
     artifacts = {base / 'tool-contracts.json': json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2) + '\n',
                  base / 'TOOL_REFERENCE.md': render_manual(data),

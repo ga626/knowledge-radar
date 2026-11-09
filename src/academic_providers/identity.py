@@ -6,6 +6,14 @@ import re
 from .models import AcademicWork, normalize_doi, normalize_title
 
 
+def normalized_permissions(raw):
+    """兼容旧卡片禁下载字段；显式拒绝优先，不改写原始固定资产。"""
+    result = dict(raw or {})
+    if result.get('fulltext_download_allowed') is False:
+        result['download_allowed'] = False
+    return result
+
+
 def arxiv_identifier(value):
     match = re.search(r'(?<![\w.])((?:\d{4}\.\d{4,5}|[a-zA-Z-]+(?:\.[A-Z]{2})?/\d{7})(?:v\d+)?)(?!\w)', str(value or ''))
     return match.group(1) if match else ''
@@ -43,7 +51,10 @@ def save_work(work):
     from kr_core.source_urls import public_evidence_payload
     assets = EvidenceAssets()
     data = _stable(asdict(work))
+    data['raw'] = normalized_permissions(data['raw'])
     inline = data['raw'].pop('fulltext_text', None)
+    if any(data['raw'].get(key) is False for key in ('read_allowed', 'download_allowed', 'evidence_storage_allowed')):
+        data['raw'].pop('fulltext_inline_ref', None)
     if isinstance(inline, str) and inline.strip() and not any(
             data['raw'].get(key) is False for key in ('read_allowed','download_allowed','evidence_storage_allowed')):
         inline_ref = assets.put(work.url, inline, kind='academic_inline', title=work.title,
@@ -72,4 +83,5 @@ def load_work(reference):
         first = assets.fetch(version, start=first['next_start'], max_chars=24000)
         text += first['text']
     row = json.loads(text)
+    row['raw'] = normalized_permissions(row.get('raw'))
     return AcademicWork(**{k:v for k,v in row.items() if k in {f.name for f in fields(AcademicWork)}})

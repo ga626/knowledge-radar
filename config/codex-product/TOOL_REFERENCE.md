@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`26f133d64cca2686f9f26666dac9694aed48343dbf03aabe8bfeb8c216a41714`
+合同指纹：`f7f210e1e79f071d8ccbe5194f4bf8a8e24fc976960741e24b1ae7a503b74605`
 
 ## advance_research_candidate
 
@@ -100,6 +100,39 @@
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "candidate_id": {
@@ -135,6 +168,18 @@
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "description": "kr_research 返回的研究任务 ID。",
@@ -751,6 +796,39 @@
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "request_id": {
@@ -760,6 +838,18 @@
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -901,6 +991,39 @@
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "request_id": {
@@ -910,6 +1033,18 @@
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -1661,6 +1796,37 @@
         "title": "GitHubReadOptions",
         "type": "object"
       },
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      },
       "WechatReadOptions": {
         "additionalProperties": false,
         "properties": {
@@ -1909,6 +2075,18 @@
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_session_id": {
         "default": "",
@@ -2952,6 +3130,81 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         ],
         "title": "ResearchQuery",
         "type": "object"
+      },
+      "ResearchQuestion": {
+        "additionalProperties": false,
+        "description": "Agent-declared scope; absence never means universal coverage.",
+        "properties": {
+          "content_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "information_roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Information Roles",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Languages",
+            "type": "array"
+          },
+          "populations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Populations",
+            "type": "array"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Question Id",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Regions",
+            "type": "array"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Text",
+            "type": "string"
+          },
+          "time_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Time Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "text"
+        ],
+        "title": "ResearchQuestion",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -3031,6 +3284,24 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "default": null,
         "description": "执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。",
         "title": "Queries"
+      },
+      "questions": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/ResearchQuestion"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Codex显式选择的必要问题与范围；先登记后搜索，不提供时保留既有范围或标记未知。",
+        "title": "Questions"
       },
       "request_id": {
         "default": "",
@@ -3345,6 +3616,39 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "complementary_providers": {
@@ -3445,6 +3749,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "description": "为真时，不支持严格约束的来源在发送前跳过。",
         "title": "Require Constraints",
         "type": "boolean"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -4540,6 +4856,37 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         },
         "title": "DocumentReadOptions",
         "type": "object"
+      },
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -4593,6 +4940,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -4951,6 +5310,7 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
           },
           "max_chars": {
             "default": 8000,
+            "description": "正文 Unicode 字符预算；不含信封和定位信息。locators最多100项，截断明确标记；next_start连续续读正文。",
             "maximum": 24000,
             "minimum": 2000,
             "title": "Max Chars",
@@ -5042,7 +5402,20 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
               "scopes",
               "assessments",
               "decisions",
-              "actions"
+              "actions",
+              "requirements",
+              "attempts",
+              "coverages",
+              "explorations",
+              "exploration_dispositions",
+              "review",
+              "withdrawal_scenarios",
+              "claims",
+              "purposes",
+              "alternatives_reviews",
+              "withdrawal_reviews",
+              "report_reviews",
+              "local_observations"
             ],
             "title": "View",
             "type": "string"
@@ -5545,6 +5918,39 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "candidates": {
@@ -5605,6 +6011,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "description": "kr_research 返回的研究任务 ID。",
@@ -5871,6 +6289,39 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "limit": {
@@ -5913,6 +6364,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6032,6 +6495,39 @@ B站视频搜索。
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "keyword": {
@@ -6054,6 +6550,18 @@ B站视频搜索。
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6173,6 +6681,39 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "limit": {
@@ -6209,6 +6750,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6330,6 +6883,39 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "city": {
@@ -6369,6 +6955,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6489,6 +7087,39 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "account_hint": {
@@ -6538,6 +7169,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6676,6 +7319,39 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "keyword": {
@@ -6698,6 +7374,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6830,6 +7518,39 @@ YouTube 公开视频搜索。
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "keyword": {
@@ -6852,6 +7573,18 @@ YouTube 公开视频搜索。
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
       },
       "research_task_id": {
         "default": "",
@@ -6971,6 +7704,39 @@ YouTube 公开视频搜索。
     "type": "object"
   },
   "input": {
+    "$defs": {
+      "ResearchContext": {
+        "additionalProperties": false,
+        "properties": {
+          "action_id": {
+            "default": "",
+            "maxLength": 200,
+            "title": "Action Id",
+            "type": "string"
+          },
+          "exploration_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Requirement Id",
+            "type": "string"
+          }
+        },
+        "title": "ResearchContext",
+        "type": "object"
+      }
+    },
     "additionalProperties": false,
     "properties": {
       "keyword": {
@@ -6994,6 +7760,18 @@ YouTube 公开视频搜索。
         "title": "Request Id",
         "type": "string"
       },
+      "research_context": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/ResearchContext"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。"
+      },
       "research_task_id": {
         "default": "",
         "description": "可选的 kr_research 任务 ID；提供后返回 research_receipt。",
@@ -7016,7 +7794,7 @@ YouTube 公开视频搜索。
 
 ## update_research
 
-记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。
+记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
 
 ```json
 {
@@ -7110,6 +7888,455 @@ YouTube 公开视频搜索。
   },
   "input": {
     "$defs": {
+      "AlternativesWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "alternatives_review",
+            "title": "Action",
+            "type": "string"
+          },
+          "claim_id": {
+            "default": "",
+            "description": "空值审阅任务级替代问题；否则绑定当前关键命题。",
+            "maxLength": 128,
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "claim_revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Claim Revision",
+            "type": "integer"
+          },
+          "disposition": {
+            "enum": [
+              "compared",
+              "reused",
+              "not_found",
+              "blocked",
+              "deferred",
+              "not_applicable"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "options": {
+            "description": "同一任务上的替代方案及结果：区分宣称、适用性、实测。",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Options",
+            "type": "array"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "reopen_conditions": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Reopen Conditions",
+            "type": "string"
+          },
+          "reuse_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Reuse Id",
+            "type": "string"
+          },
+          "search_scope": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Search Scope",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "disposition",
+          "rationale",
+          "search_scope"
+        ],
+        "title": "AlternativesWrite",
+        "type": "object"
+      },
+      "AttemptWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "attempt",
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "receipt_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Requirement Id",
+            "type": "string"
+          },
+          "requirement_revision": {
+            "minimum": 1,
+            "title": "Requirement Revision",
+            "type": "integer"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "requirement_id",
+          "requirement_revision",
+          "receipt_id",
+          "rationale"
+        ],
+        "title": "AttemptWrite",
+        "type": "object"
+      },
+      "ClaimWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "claim",
+            "title": "Action",
+            "type": "string"
+          },
+          "applicability": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Applicability",
+            "type": "string"
+          },
+          "basis": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Basis",
+            "type": "string"
+          },
+          "claim_type": {
+            "enum": [
+              "fact",
+              "explanation",
+              "recommendation",
+              "hypothesis",
+              "comparison",
+              "novelty"
+            ],
+            "title": "Claim Type",
+            "type": "string"
+          },
+          "counterevidence_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "title": "Counterevidence Refs",
+            "type": "array"
+          },
+          "dependencies": {
+            "items": {
+              "$ref": "#/$defs/Dependency"
+            },
+            "maxItems": 40,
+            "title": "Dependencies",
+            "type": "array"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "importance": {
+            "default": "high",
+            "enum": [
+              "high",
+              "normal"
+            ],
+            "title": "Importance",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "support_assessment": {
+            "default": "unreviewed",
+            "description": "Codex对相关性、可信度及交叉验证的声明；basis说明理由，程序不判真。",
+            "enum": [
+              "unreviewed",
+              "supports",
+              "supports_with_limits",
+              "insufficient"
+            ],
+            "title": "Support Assessment",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "uncertainty": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Uncertainty",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "question_id",
+          "text",
+          "claim_type",
+          "applicability",
+          "basis"
+        ],
+        "title": "ClaimWrite",
+        "type": "object"
+      },
+      "CoverageWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "coverage",
+            "title": "Action",
+            "type": "string"
+          },
+          "covered_parts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "title": "Covered Parts",
+            "type": "array"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "partial": {
+            "default": false,
+            "title": "Partial",
+            "type": "boolean"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "receipt_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Receipt Id",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "requirement_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Requirement Id",
+            "type": "string"
+          },
+          "requirement_revision": {
+            "minimum": 1,
+            "title": "Requirement Revision",
+            "type": "integer"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "requirement_id",
+          "requirement_revision",
+          "receipt_id",
+          "rationale",
+          "evidence_refs",
+          "covered_parts"
+        ],
+        "title": "CoverageWrite",
+        "type": "object"
+      },
+      "Dependency": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Basis",
+            "type": "string"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "group_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Group Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "necessary",
+              "support",
+              "background"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "upstream_claim_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Upstream Claim Id",
+            "type": "string"
+          },
+          "upstream_revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Upstream Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "group_id",
+          "role",
+          "basis"
+        ],
+        "title": "Dependency",
+        "type": "object"
+      },
       "EvidenceRef": {
         "additionalProperties": false,
         "properties": {
@@ -7141,6 +8368,457 @@ YouTube 公开视频搜索。
           "end"
         ],
         "title": "EvidenceRef",
+        "type": "object"
+      },
+      "ExplorationDisposition": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "exploration_disposition",
+            "title": "Action",
+            "type": "string"
+          },
+          "disposition": {
+            "enum": [
+              "linked",
+              "background",
+              "discarded",
+              "blocked"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "exploration_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Exploration Id",
+            "type": "string"
+          },
+          "question_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "receipt_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Receipt Ids",
+            "type": "array"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "exploration_id",
+          "receipt_ids",
+          "disposition",
+          "rationale"
+        ],
+        "title": "ExplorationDisposition",
+        "type": "object"
+      },
+      "ExplorationWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "exploration",
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "purpose": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Purpose",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "purpose"
+        ],
+        "title": "ExplorationWrite",
+        "type": "object"
+      },
+      "LocalObservationWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "local_observation",
+            "title": "Action",
+            "type": "string"
+          },
+          "approved_input_root": {
+            "title": "Approved Input Root",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "input_path": {
+            "title": "Input Path",
+            "type": "string"
+          },
+          "input_sha256": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Input Sha256",
+            "type": "string"
+          },
+          "method": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Method",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "input_path",
+          "approved_input_root",
+          "input_sha256",
+          "title",
+          "method"
+        ],
+        "title": "LocalObservationWrite",
+        "type": "object"
+      },
+      "Locator": {
+        "additionalProperties": false,
+        "properties": {
+          "end": {
+            "exclusiveMinimum": 0,
+            "title": "End",
+            "type": "integer"
+          },
+          "start": {
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "version_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Version Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_id",
+          "start",
+          "end"
+        ],
+        "title": "Locator",
+        "type": "object"
+      },
+      "PurposeWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "task_purpose",
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "purposes": {
+            "items": {
+              "enum": [
+                "explanation",
+                "comparison",
+                "decision",
+                "causal"
+              ],
+              "type": "string"
+            },
+            "maxItems": 4,
+            "minItems": 1,
+            "title": "Purposes",
+            "type": "array"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "task_card": {
+            "description": "同一目标任务：使用者、输入、期望结果、必要限制。",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Task Card",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "purposes",
+          "task_card"
+        ],
+        "title": "PurposeWrite",
+        "type": "object"
+      },
+      "ReportReviewWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "report_review",
+            "title": "Action",
+            "type": "string"
+          },
+          "baseline": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Baseline",
+            "type": "string"
+          },
+          "claim_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "title": "Claim Ids",
+            "type": "array"
+          },
+          "coverage_statement": {
+            "description": "Codex反向核对报告关键结论覆盖的范围与限制。",
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Coverage Statement",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "report_sha256": {
+            "description": "未附程序投影前的报告正文 UTF-8 SHA256。",
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Report Sha256",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "report_sha256",
+          "baseline",
+          "claim_ids",
+          "coverage_statement"
+        ],
+        "title": "ReportReviewWrite",
+        "type": "object"
+      },
+      "RequirementWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "requirement",
+            "title": "Action",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "rationale": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "required_parts": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "minItems": 1,
+            "title": "Required Parts",
+            "type": "array"
+          },
+          "semantic_condition": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Semantic Condition",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          },
+          "waived": {
+            "default": false,
+            "title": "Waived",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "question_id",
+          "text",
+          "required_parts"
+        ],
+        "title": "RequirementWrite",
         "type": "object"
       },
       "ResearchWrite": {
@@ -7409,12 +9087,188 @@ YouTube 公开视频搜索。
         ],
         "title": "ResearchWrite",
         "type": "object"
+      },
+      "WithdrawalWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "withdrawal_review",
+            "title": "Action",
+            "type": "string"
+          },
+          "baseline": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Baseline",
+            "type": "string"
+          },
+          "change": {
+            "enum": [
+              "changed",
+              "unchanged",
+              "weakened",
+              "reversed",
+              "unknown"
+            ],
+            "title": "Change",
+            "type": "string"
+          },
+          "claim_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Claim Id",
+            "type": "string"
+          },
+          "claim_revision": {
+            "minimum": 1,
+            "title": "Claim Revision",
+            "type": "integer"
+          },
+          "conclusion": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Conclusion",
+            "type": "string"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "remaining_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "title": "Remaining Refs",
+            "type": "array"
+          },
+          "result_kind": {
+            "enum": [
+              "empirical",
+              "hypothesis",
+              "value",
+              "unknown"
+            ],
+            "title": "Result Kind",
+            "type": "string"
+          },
+          "scenario_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "claim_id",
+          "claim_revision",
+          "scenario_id",
+          "baseline",
+          "conclusion",
+          "change",
+          "rationale",
+          "result_kind"
+        ],
+        "title": "WithdrawalWrite",
+        "type": "object"
       }
     },
     "additionalProperties": false,
     "properties": {
       "request": {
-        "$ref": "#/$defs/ResearchWrite"
+        "discriminator": {
+          "mapping": {
+            "action": "#/$defs/ResearchWrite",
+            "alternatives_review": "#/$defs/AlternativesWrite",
+            "assessment": "#/$defs/ResearchWrite",
+            "attempt": "#/$defs/AttemptWrite",
+            "claim": "#/$defs/ClaimWrite",
+            "coverage": "#/$defs/CoverageWrite",
+            "decision": "#/$defs/ResearchWrite",
+            "exploration": "#/$defs/ExplorationWrite",
+            "exploration_disposition": "#/$defs/ExplorationDisposition",
+            "fold": "#/$defs/ResearchWrite",
+            "host_request": "#/$defs/ResearchWrite",
+            "link": "#/$defs/ResearchWrite",
+            "local_observation": "#/$defs/LocalObservationWrite",
+            "question": "#/$defs/ResearchWrite",
+            "relation": "#/$defs/ResearchWrite",
+            "repair": "#/$defs/ResearchWrite",
+            "report_review": "#/$defs/ReportReviewWrite",
+            "requirement": "#/$defs/RequirementWrite",
+            "scope": "#/$defs/ResearchWrite",
+            "task_purpose": "#/$defs/PurposeWrite",
+            "withdrawal_review": "#/$defs/WithdrawalWrite"
+          },
+          "propertyName": "action"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/$defs/ResearchWrite"
+          },
+          {
+            "$ref": "#/$defs/RequirementWrite"
+          },
+          {
+            "$ref": "#/$defs/AttemptWrite"
+          },
+          {
+            "$ref": "#/$defs/CoverageWrite"
+          },
+          {
+            "$ref": "#/$defs/ExplorationWrite"
+          },
+          {
+            "$ref": "#/$defs/ExplorationDisposition"
+          },
+          {
+            "$ref": "#/$defs/PurposeWrite"
+          },
+          {
+            "$ref": "#/$defs/ClaimWrite"
+          },
+          {
+            "$ref": "#/$defs/AlternativesWrite"
+          },
+          {
+            "$ref": "#/$defs/WithdrawalWrite"
+          },
+          {
+            "$ref": "#/$defs/ReportReviewWrite"
+          },
+          {
+            "$ref": "#/$defs/LocalObservationWrite"
+          }
+        ],
+        "title": "Request"
       },
       "request_id": {
         "default": "",

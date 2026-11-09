@@ -3,6 +3,28 @@ from __future__ import annotations
 import re
 
 
+def boilerplate_only(text):
+    """Conservative structural observation, never a relevance classifier."""
+    lines = [line.strip() for line in str(text).splitlines() if line.strip()]
+    if not lines or '```' in str(text):
+        return False
+    signals = set()
+    for line in lines:
+        if re.fullmatch(r'(?:©|copyright\b).*?(?:all rights reserved)[. ]*', line, re.I):
+            signals.add('copyright')
+        elif re.fullmatch(r'This site is protected by reCAPTCHA.*Terms of Service apply[. ]*', line, re.I):
+            signals.add('legal')
+        elif re.fullmatch(r'Select topic of interest(?: \(you can select more than one\))?[. ]*', line, re.I):
+            signals.add('form')
+        elif re.fullmatch(r'[\w .,&-]+, (?:Inc|LLC|Ltd)\.?', line, re.I):
+            continue
+        elif re.fullmatch(r'\d+ [\w ,.-]+\b\d{5}(?:-\d{4})?,? (?:USA|United States)', line, re.I):
+            continue
+        else:
+            return False
+    return len(signals) >= 2
+
+
 def body_observation(response):
     """只识别获取形态和明确的访问壳，不判相关性、可信度或语义充分。"""
     metadata = response.get('detail_metadata') or response.get('metadata') or {}
@@ -22,10 +44,12 @@ def body_observation(response):
         state = 'redirect_shell'
     elif normalized in {'loading', 'please wait', '加载中', '正在加载', 'please enable javascript'}:
         state = 'navigation_shell'
+    elif boilerplate_only(text):
+        state = 'boilerplate_only'
     return {'body_state': state, 'asset_kind': response.get('asset_kind') or metadata.get('asset_kind') or state,
             'source_role': response.get('source_role') or metadata.get('source_role') or state,
             'actual_scope': response.get('actual_scope') or metadata.get('actual_scope') or state,
-            'missing_reason': state if state in {'access_challenge', 'redirect_shell', 'navigation_shell'} else ''}
+            'missing_reason': state if state in {'access_challenge', 'redirect_shell', 'navigation_shell', 'boilerplate_only'} else ''}
 
 
 def content_coverage(response, requested=None, *, task_lookup=None):

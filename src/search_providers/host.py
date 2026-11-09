@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import httpx
+from runtime.proxy_config import http_client
 
 from runtime.paths import runtime_state_dir
 
@@ -230,7 +231,7 @@ class HostSearchProvider(BaseSearchProvider):
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
         try:
-            with httpx.Client(timeout=self.timeout, headers=headers) as client:
+            with http_client(timeout=self.timeout, headers=headers) as client:
                 response = client.post(self.endpoint, json=payload)
                 response.raise_for_status()
                 data = response.json()

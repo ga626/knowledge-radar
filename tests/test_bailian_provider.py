@@ -88,7 +88,8 @@ def test_call_video_url_model_records_usage_and_cached_tokens(monkeypatch, tmp_p
                 },
             }
 
-    def fake_post(url, *, headers, json, timeout):
+    def fake_post(url, *, headers, json, timeout, **route):
+        assert route.get("trust_env") is False
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
@@ -136,7 +137,7 @@ def test_omni_default_disables_thinking_and_records_reasoning_usage(monkeypatch)
     monkeypatch.setattr(bailian, "get_usage_tracker", lambda: tracker)
     monkeypatch.setattr(bailian, "get_monitor_tracker", lambda: FakeMonitorTracker())
 
-    def post(url, *, headers, json, timeout):
+    def post(url, *, headers, json, timeout, **route):
         captured.update(json)
         class Response:
             status_code = 200
@@ -221,7 +222,8 @@ def test_call_text_model_uses_openai_compatible_endpoint(monkeypatch) -> None:
                 },
             }
 
-    def fake_post(url, *, headers, json, timeout):
+    def fake_post(url, *, headers, json, timeout, **route):
+        assert route.get("trust_env") is False
         captured["url"] = url
         captured["headers"] = headers
         captured["json"] = json
@@ -261,7 +263,8 @@ def test_call_frame_images_model_wraps_base64_as_data_url(monkeypatch) -> None:
                 "usage": {"input_tokens": 10, "output_tokens": 3},
             }
 
-    def fake_post(url, *, headers, json, timeout):
+    def fake_post(url, *, headers, json, timeout, **route):
+        assert route.get("trust_env") is False
         captured["json"] = json
         return FakeResponse()
 

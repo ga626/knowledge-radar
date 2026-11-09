@@ -15,6 +15,7 @@ from typing import Any, Iterable
 from urllib.parse import urlparse
 
 import httpx
+from runtime.proxy_config import http_client
 
 
 BILIBILI_HEADERS = {
@@ -88,7 +89,7 @@ def probe_direct_url_reachability(
     if range_bytes > 0:
         request_headers.setdefault("Range", f"bytes=0-{range_bytes - 1}")
     try:
-        with httpx.Client(follow_redirects=True, timeout=timeout, headers=request_headers) as client:
+        with http_client(follow_redirects=True, timeout=timeout, headers=request_headers) as client:
             head = client.head(url)
             if head.status_code in {200, 206}:
                 response = head

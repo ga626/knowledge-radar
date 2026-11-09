@@ -137,9 +137,9 @@ def test_rest_redirect_and_body_budget_are_enforced(monkeypatch):
         return httpx.Response(302, headers={'location':'https://outside.invalid/secret'})
     import httpx
     original = httpx.Client
-    monkeypatch.setattr(api.httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(api, 'http_client', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
     with pytest.raises(api.GitHubError) as failure: client.json('repos/o/r')
     assert failure.value.code == 'UNSAFE_REDIRECT'
-    monkeypatch.setattr(api.httpx, 'Client', lambda **kw: original(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b'123456789')), **kw))
+    monkeypatch.setattr(api, 'http_client', lambda **kw: original(transport=httpx.MockTransport(lambda r: httpx.Response(200, content=b'123456789')), **kw))
     with pytest.raises(api.GitHubError) as failure: client.get('repos/o/r', max_bytes=4)
     assert failure.value.code == 'CONTENT_TOO_LARGE'

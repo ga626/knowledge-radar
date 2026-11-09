@@ -19,8 +19,8 @@ class ResearchRecords:
         self.assets = assets if assets is not None else EvidenceAssets(read_only=True)
 
     def snapshot(self, task_id):
-        if not isinstance(task_id, str) or not task_id.startswith('kr-research-') or not all(c.isalnum() or c in '-_' for c in task_id) or len(task_id) > 96:
-            raise ValueError('invalid_research_task_id')
+        from runtime.research_contracts import validate_task_id
+        validate_task_id(task_id)
         path = self.root / 'research_tasks' / (task_id + '.json')
         try:
             payload = json.loads(read_observed(path).decode('utf-8'))
@@ -37,19 +37,21 @@ class ResearchRecords:
             payload['claim_gaps'] = [gap for gap in payload.get('claim_gaps', []) if gap.get('reason') != 'initial_research_question'] + [
                 {'claim_gap_id': row['record_id'], 'reason': row.get('text') or 'registered_question',
                  'status': 'closed' if row.get('closed') else 'open', 'origin': 'research_index'} for row in questions]
+        from runtime.research_ledger import project_context
+        payload['project_context'] = project_context(payload)
         return payload
 
     def recent(self, limit=20):
         limit = max(1, min(int(limit), 100))
         directory = self.root / 'research_tasks'
-        paths = sorted(directory.glob('kr-research-*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+        paths = sorted(directory.glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
         rows, unreadable = [], 0
         for path in paths[:limit]:
             try:
                 row = self.snapshot(path.stem)
                 rows.append({
                     key: row.get(key)
-                    for key in ('research_task_id', 'objective', 'budget', 'status', 'project_name', 'created_at', 'updated_at')
+                    for key in ('research_task_id', 'objective', 'budget', 'status', 'project_name', 'project_id', 'project_context', 'created_at', 'updated_at')
                 } | {'readable_summary': summarize_task(row), 'metrics': task_metrics(row)})
             except (ValueError, OSError):
                 unreadable += 1

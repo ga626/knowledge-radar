@@ -39,7 +39,8 @@ def _now() -> str:
 
 
 def _path(task_id: str) -> Path:
-    safe = "".join(char for char in str(task_id) if char.isalnum() or char in {"-", "_"})[:96]
+    from runtime.research_contracts import validate_task_id
+    safe = validate_task_id(task_id)
     return runtime_state_dir() / "research_tasks" / f"{safe}.json"
 
 
@@ -197,7 +198,7 @@ def record_tool_receipt(
         }
         if submission_sha256:
             receipt['submission_sha256'] = submission_sha256
-        receipt['research_action'] = ({key:_safe_label(research_action.get(key,'')) for key in ('family_id','action_id','attempt_id','question_id','parent_event_id')}
+        receipt['research_action'] = ({key:_safe_label(research_action.get(key,''), limit=200) for key in ('family_id','action_id','attempt_id','question_id','parent_event_id','requirement_id','exploration_id')}
                                       if research_action else {'association':'unplanned'})
         if isinstance(elapsed_s, (int, float)) and elapsed_s >= 0:
             receipt["elapsed_s"] = round(float(elapsed_s), 3)
@@ -779,6 +780,9 @@ def _write(payload: dict[str, Any]) -> dict[str, Any]:
 
 def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], task_id: str = "", display_title: str = "", project_name: str = "", project_id: str = "") -> dict[str, Any]:
     """Create or retrieve the auditable research state for one user delivery."""
+    if task_id:
+        from runtime.research_contracts import validate_task_id
+        validate_task_id(task_id)
     title = ' '.join(str(display_title or '').split())
     if len(title) > 80:
         raise ValueError('research_title_too_long')
@@ -833,6 +837,17 @@ def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], 
                 "closeout": {},
             }
         )
+
+
+def project_context(payload):
+    """只读身份投影；归档授权另查，不由目录或显示名推断。"""
+    pid = str(payload.get('project_id') or '').strip()
+    status = 'identified' if pid else ('legacy_adoption_pending' if 'project_id' not in payload else 'unclassified')
+    return {'status': status, 'project_id': pid, 'project_name': payload.get('project_name', ''),
+            'identity_source': 'explicit' if pid else 'missing', 'archive_ready': None,
+            'archive_status': 'not_checked',
+            'next_action': 'manage_research_artifacts.archive_status' if pid else
+                           'choose explicit project_id and bind_context; never infer from KR cwd'}
 
 
 def read_task(*, task_id: str) -> dict[str, Any]:
@@ -986,7 +1001,23 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
                     unavailable_versions.append(version)
         from runtime.research_index import ResearchIndex
         research_feedback = ResearchIndex().read(task_id, view='feedback', max_chars=24000)
+        requirements = ResearchIndex().read(task_id, view='requirements', limit=100, max_chars=24000)
+        index = ResearchIndex()
+        with index.connection() as conn:
+            from runtime.research_contracts import rows_at, requirement_projection
+            contract_rows = rows_at(conn, task_id) if conn is not None else []
+            complete_requirements = requirement_projection(index, conn, task_id) if conn is not None else []
+        # 只消除已显式关联同一需求且确实取得完整产物的旧尝试阻断；历史失败保留。
+        # 对外需求摘要可以分页；内部完成判断不能被响应预算截断。
+        fulfilled = {r['record_id'] for r in complete_requirements if r['acquisition']=='fulfilled'}
+        attempts = [r for r in contract_rows if r['_kind']=='attempt']
+        satisfied_receipts = {r['receipt_id'] for r in attempts if all(
+            a['requirement_id'] in fulfilled and any(q['record_id']==a['requirement_id'] and q['revision']==a['requirement_revision']
+                for q in complete_requirements) for a in attempts if a['receipt_id']==r['receipt_id'])}
+        satisfied_tasks = {bg for r in payload.get('tool_receipts',[]) if r['receipt_id'] in satisfied_receipts for bg in r.get('background_task_ids',[])}
+        required_failures = [r for r in required_failures if r['task_id'] not in satisfied_tasks]
         has_gaps = bool(missing or critical_without_support or critical_without_receipts or pending_tasks or required_failures or pending_submissions or unavailable_versions
+                        or research_feedback.get('requirement_gaps_count') or research_feedback.get('exploration_pending_receipts_count')
                         or any(research_feedback.get(key+'_count',len(research_feedback.get(key,[])))
                                for key in ('scope_gaps','questions_without_reviewed_support','unresolved_counterevidence','assessments_requiring_review')))
         status = "recorded_with_gaps" if has_gaps else "recorded"
@@ -1002,10 +1033,12 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
             "pending_background_tasks": pending_tasks,
             "unsuccessful_background_tasks": failed_tasks,
             "required_failed_tasks": required_failures,
+            "requirements": requirements,
+            "claim_review": ResearchIndex().read(task_id,view='review',limit=100,max_chars=24000),
             "optional_background_tasks": optional_tasks,
             "pending_submission_ids": pending_submissions,
             "completion_facts": {
-                "required_execution": "failed" if required_failures else "pending" if pending_tasks else "completed",
+                "required_execution": "failed" if required_failures else "pending" if pending_tasks else "incomplete" if research_feedback.get('requirement_gaps_count') else "completed",
                 "research_recording": "pending" if pending_submissions else "recorded",
                 "research_decision": "agent_owned",
                 "delivery_read_tool": "manage_research_artifacts.archive_status",

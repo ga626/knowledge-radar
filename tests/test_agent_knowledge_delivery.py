@@ -65,6 +65,23 @@ def test_fixed_fetch_entire_response_budget(corpus):
     with pytest.raises(ValueError,match='withdrawn'):read(Fetch(action='fetch',version_id=old['version_id']),assets)
 
 
+@pytest.mark.parametrize('body',['中文😀ABC\n'*2000,'x\n'*12000],ids=['mixed','dense-locators'])
+def test_fetch_budget_is_body_characters_with_contiguous_continuation(tmp_path,body):
+    assets=EvidenceAssets(tmp_path/'assets')
+    ref=assets.put('https://example.org/long',body)
+    pieces=[];start=0
+    while True:
+        page=read(Fetch(action='fetch',version_id=ref['version_id'],start=start,max_chars=6500),assets)
+        assert len(page['text'])==min(6500,len(body)-start)
+        assert page['locator']['start']==start
+        assert page['body_budget_chars']==6500
+        pieces.append(page['text'])
+        if page['next_start'] is None:break
+        assert page['next_start']==start+len(page['text'])
+        start=page['next_start']
+    assert ''.join(pieces)==body
+
+
 @pytest.fixture
 def delivery(tmp_path,corpus):
     assets,_,new,_=corpus
@@ -382,3 +399,18 @@ def test_new_capture_elsewhere_does_not_hide_task_fixed_version(corpus):
     assert [hit['asset']['version_id'] for hit in result['items']]==[old['version_id']]
     before=read(Search(action='search',query='薪资',captured_before=old['captured_at']),assets)
     assert [hit['asset']['version_id'] for hit in before['items']]==[old['version_id']]
+
+
+def test_generated_contract_is_independent_of_runtime_skill_bytes(tmp_path, monkeypatch):
+    from scripts import generate_tool_manual as manual
+    from runtime import application
+    (tmp_path/'config/codex-product').mkdir(parents=True)
+    (tmp_path/'docs').mkdir()
+    monkeypatch.setattr(manual, 'ROOT', tmp_path)
+    monkeypatch.setattr(application, 'research_workflow_identity', lambda: {'skill_sha256':'a'*64, 'host_loaded_skill':'unverified'})
+    manual.generate()
+    monkeypatch.setattr(application, 'research_workflow_identity', lambda: {'skill_sha256':'b'*64, 'host_loaded_skill':'unverified'})
+    assert manual.generate(check=True)['status']=='PASS'
+    assert application.catalog()['research_workflow']['skill_sha256']=='b'*64
+    generated=json.loads((tmp_path/'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))
+    assert 'research_workflow' not in generated

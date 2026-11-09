@@ -32,6 +32,75 @@ def apply_request(candidate):
     return ApplyArchiveLayout(action='apply_archive_layout',task_id='task-a',project_id='project-a',plan_id=candidate['plan_id'])
 
 
+def old_relative_source(archive, monkeypatch):
+    import runtime.research_archive as module
+    engine,*_=archive
+    original = module._source_markdown_links
+    monkeypatch.setattr(module, '_source_markdown_links', lambda text, url: text)
+    raw='[文档](docs/start.md)\n\n`[例子](example.md)`\n'
+    ref=engine.assets.put('https://github.com/org/repo/blob/'+'a'*40+'/README.md', raw,
+                         title='旧说明', metadata={'content_format':'markdown'})
+    engine.assets.reference_many([ref['version_id']], 'task-a', project_id='project-a', task_id='task-a')
+    submit(engine)
+    monkeypatch.setattr(module, '_source_markdown_links', original)
+    round_id=engine.status('task-a')['rounds'][0]['round_id']
+    record=engine._round_get(round_id)
+    with engine._connection() as c:
+        part=json.loads(c.execute('SELECT payload FROM archive_parts WHERE round_id=? AND json_extract(payload,\'$.version_id\')=?',
+                                  (round_id,ref['version_id'])).fetchone()[0])
+    path=Path(record['path'])/part['file']
+    return engine,ref,path,raw
+
+
+def test_source_link_projection_keeps_inline_code_label_and_resolves_its_target():
+    from runtime.research_archive import _source_markdown_links
+    source='https://github.com/org/repo/blob/main/README.md'
+    text='See [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md). Keep `[demo](sample.md)` literal.\n'
+    expected='See [`.github/CONTRIBUTING.md`](https://github.com/org/repo/blob/main/.github/CONTRIBUTING.md). Keep `[demo](sample.md)` literal.\n'
+    assert _source_markdown_links(text, source)==expected
+
+
+def test_source_link_repair_is_explicit_fixed_version_safe_and_idempotent(archive,monkeypatch):
+    from runtime.archive_layout import plan_source_links, apply_source_links
+    engine,ref,path,raw=old_relative_source(archive,monkeypatch)
+    before=path.read_bytes()
+    candidate=plan_source_links(engine,request())
+    assert len(candidate['updates'])==1 and path.read_bytes()==before
+    result=apply_source_links(engine,apply_request(candidate))
+    assert result['repaired_count']==1
+    assert 'blob/'+('a'*40)+'/docs/start.md' in path.read_text(encoding='utf-8')
+    assert '`[例子](example.md)`' in path.read_text(encoding='utf-8')
+    assert engine.assets.fetch(ref['version_id'])['text']==raw
+    assert not engine.run('task-a',retry=True)['error_code']
+    assert apply_source_links(engine,apply_request(candidate))==result
+    assert not plan_source_links(engine,request())['updates']
+
+
+def test_source_link_repair_rejects_post_plan_edit(archive,monkeypatch):
+    from runtime.archive_layout import plan_source_links, apply_source_links
+    engine,ref,path,raw=old_relative_source(archive,monkeypatch)
+    candidate=plan_source_links(engine,request())
+    path.write_text('用户自己修改',encoding='utf-8')
+    with pytest.raises(ValueError,match='plan_stale'):
+        apply_source_links(engine,apply_request(candidate))
+    assert path.read_text(encoding='utf-8')=='用户自己修改'
+
+
+def test_source_link_repair_recovers_after_file_replace(archive,monkeypatch):
+    import runtime.archive_layout as module
+    engine,ref,path,raw=old_relative_source(archive,monkeypatch)
+    candidate=module.plan_source_links(engine,request());replace=module.os.replace
+    def crash(source,target):
+        replace(source,target)
+        raise OSError('after source replace')
+    monkeypatch.setattr(module.os,'replace',crash)
+    with pytest.raises(OSError,match='source replace'):
+        module.apply_source_links(engine,apply_request(candidate))
+    monkeypatch.setattr(module.os,'replace',replace)
+    assert module.apply_source_links(engine,apply_request(candidate))['repaired_count']==1
+    assert not engine.run('task-a',retry=True)['error_code']
+
+
 def test_migration_preserves_fixed_sources_and_future_incremental_delivery(archive):
     engine,_,_,vault=archive
     old=legacy(engine);first=evidence(engine);result=submit(engine)

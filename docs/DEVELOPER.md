@@ -2,6 +2,24 @@
 
 本页仅面向源码 checkout。普通用户请从 [首次成功](FIRST_SUCCESS.md) 开始。
 
+## 研究审阅合同的实际调用顺序
+
+沿用 `update_research`、`read_knowledge`、`manage_research_artifacts`，没有第二个研究执行器。旧任务可读，但未声明不等于已审阅。
+
+1. 创建研究任务和 question 后，用 `task_purpose`（固定 `record_id=purpose`）声明任务目的及同一任务卡：谁使用、输入、期望结果、必要限制。Codex决定关键命题的拆分，不逐句建账。
+2. `requirement` 定义可独立验收的产物及部分；`attempt` 绑定真实 receipt；`coverage` 只覆盖该需求当前 revision 的明确部分。失败历史不改写，取得正文不能顶替评论。必要项 waived 仍是缺口。
+3. 普通工具调用可传 `research_context`，提供 action 加 question/requirement，或显式 exploration。异步作业持久化意图；无关联仍记未分配，补关联标事后，不能改写成事前探索。
+4. 用 `claim` 声明关键判断、类型、重要性、适用范围、语义支持判断与理由。平面 dependencies 记录固定原文范围或上游命题 revision；同源材料放同一 group。背景不构成核心支持。直接本地观察走 `local_observation`，显式批准根、文件 SHA256 与方法；不伪造原生采集回执。
+5. `read_knowledge` 的 research/review 是有界摘要；research/withdrawal_scenarios 给出默认撤证情景及 baseline。两者通过 `next_after_seq` 和首次 `watermark` 续页，情景游标只用于该视图。全文关系仍可从 claims、changes、withdrawal_reviews 等视图回读。
+6. 决策、推荐、比较和新颖性触发替代问题处置。`alternatives_review` 记录同任务比较、有效旧快照复用、范围内未找到、受阻、推迟或不适用。受阻与推迟保留缺口，不强迫联网；未找到不等于没有。
+7. 对默认情景提交 `withdrawal_review`：引用情景 baseline、写撤后结论、变化、理由和实际剩余原文引用。程序拒绝被撤证据、越界支持、旧版本和空泛“通过”；不判断理由的语义真假。
+8. 对未附自动摘要前的 UTF-8 报告正文计算 SHA256，提交 `report_review`，绑定当前 review baseline 和非空完整关键命题列表。报告、范围、命题、核心依赖或来源版本改变后复核；相关历史保留。
+9. 最终用 `submit_report` 提交正文。程序把已保存审阅投影为中文“关键结论与撤证审阅”表，再固定报告版本，沿既有本地/Vault同版交付。总览每个关键结论一行，撤证情景另表每种情景一行；正文只用资料编号，原文摘录、固定版本及字符范围置于资料附录，相同版本和范围复用编号。适用范围、替代比较及重开条件单独展开。原文带明确合成前缀时，展示统一注明对应合成资料编号，不逐句重复；固定原文保持不变，不因其他资料没有标记便断言其真实。重复请求读回同一版本，不重新生成旧报告。`register_report` 保留用户现有文件字节，不偷偷加表；需自动摘要时使用 `submit_report`。
+
+正文 fetch 的 `max_chars` 是正文 Unicode 字符预算；信封独立，定位摘要最多100项并明确标截断。来源原件保持固定；可读归档使用资料类型和短标识消歧。新任务只维持一份当前导航，历史导航快照留在私密任务账本；人改、移动、删除仍受保护，旧任务文件不批量迁移。
+
+执行、结构、语义声明与交付分轴；任何字段齐全都不构成程序判真或全语言/全平台证据饱和。语义挑战夹具的判据可直接读原文，自动测试只验证拒用理由与缺口是否传到交付，不能替代语义审阅。
+
 ## 本地开发
 
 执行内核独立于 MCP/CLI 会话存活。runtime/application.py 是入口中立合同与执行边界，execution_owner.py 只在本机回环传小请求，媒体仍留本地；MCP/CLI 不另建执行器。安装根 knowledgeradar.cmd 每次解析 active.json；capabilities、runtime status/receipt 不启动或恢复工作，runtime start 显式启动。knowledge batch/compare 将结果写新文件并返回哈希回执，拒绝覆盖。未知执行先查回执；进程崩溃标 interrupted，显式恢复沿原费用范围。安装、回滚和数据迁移与启动共享锁，只停空闲内核，忙时拒绝切换。此为候选代码合同，隔离进程测试不代表当前安装已升级。
@@ -99,3 +117,11 @@ scripts/kr_workspace.py提供list/inspect/search/fetch、与 MCP 同源的 artif
 运行 scripts/generate_tool_manual.py 生成工具合同、展开说明和来源指南；--check只读检查。scripts/check_mcp_tool_schema.py比对实际MCP和业务schema，验证目录引用及学术全文示例。纯文档CI运行scripts/check_current_docs.py，不执行平台业务；完整值约束由现有schema合同测试验证。脚本清单使用内容指纹，不使用本机文件时间。
 
 官方OpenCLI用于已接入的对应适配器，KR Browser Link用于其对应的原生站点通道，两者职责不同。无需安装KR修改版OpenCLI。日常Chrome默认独立工作窗口、后台最小化；有明确人工交互或已观察可见性阻断信号才前置，解除后回后台。窗口创建到最小化仍可能短暂可见；不得宣传绝对零闪现。后台流程的限定成功不代替冷启动、真实验证码和长期并发验收。
+# 研究责任合同（2026-11-09）
+
+1. 关键命题由Agent按可独立改变决策的粒度声明；程序校验身份、定位和修订，不裁定真假或语义饱和。
+2. 推荐、比较与新颖性判断须处置直接替代问题；允许复用适用的旧比较，受阻/推迟明确保留，不强迫无限搜索。
+3. 交付时给出可读的“关键结论与撤证审阅”：结论、核心依据、最强反证或替代、撤后变化和限制。用户无需阅读JSON字段。记录绑定报告和命题版本；缺审阅不冒充完成。
+4. 问题、需求、尝试分离。失败尝试保留，产物按需求版本和范围贡献；未关联调用不自动变成探索，事后关联保留标记。
+
+开发按批次先写能暴露旧错误的测试，实际确认红灯，再修改实现；该批定向检查全绿才进入下一批。现有评测库增量维护，源码、候选、原生/安装及用户验收分别记录。

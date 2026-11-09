@@ -425,10 +425,12 @@ def bundled_component_prepare(component):
 def browser_host_console_action(confirmation=''):
     if confirmation:
         payload=_run_product_installer(['browser-host-apply','--confirmation',confirmation],timeout=180)
-        return {'status':payload['status'],'next_step':'Host已交接。请在Chrome重新加载Browser Link，再刷新检测；已有账号与配对记录保留。'}
+        return {'status':payload['status'],'handoff_state':'applied',
+            'next_step':'Host注册交接已完成。这一步只更新本机注册，不代表扩展或站点已连接；请在Chrome重新加载Browser Link后刷新检测，已有账号与配对记录保留。'}
     payload=_run_product_installer(['browser-host-plan'],timeout=30)
     return {'status':payload['status'],'confirmation_token':payload.get('confirmation_token'),
-        'next_step':'将切换本机Browser Link的Host注册，保留旧Host文件；确认接管后生效。' if payload.get('confirmation_token') else '未发现需要接管的Host注册；准备扩展并完成浏览器加载。'}
+        'handoff_state':'awaiting_confirmation' if payload.get('confirmation_token') else 'no_change',
+        'next_step':'当前只是交接预览，尚未修改注册。点击“确认接管Host”才会切换本机注册，保留旧Host文件；此操作不影响账号登录态。' if payload.get('confirmation_token') else 'Host注册无需接管。此检查不验证扩展或站点连接；已有扩展保留，按实际通道检测结果使用。'}
 
 
 def _run_product_installer(arguments: list[str], *, timeout: int) -> dict[str, Any]:

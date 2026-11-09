@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from .chinese_open_access import ChineseOpenAccessProvider, OpenAccessPlatformConfig, public_json_search, json_response
 from .models import AcademicSearchRequest, AcademicWork
@@ -41,7 +41,11 @@ class NturProvider(ChineseOpenAccessProvider):
             metadata = item.get('metadata') or {}
             def values(key):
                 return [str(v['value']) for v in metadata.get(key, []) if isinstance(v, dict) and v.get('value')]
-            url = ((row.get('_links') or {}).get('indexableObject') or {}).get('href', '')
+            api_url = ((row.get('_links') or {}).get('indexableObject') or {}).get('href', '')
+            # HAL indexableObject指向REST资源；dc.identifier.uri才是记录公开标识。
+            url = next((value for value in values('dc.identifier.uri')
+                        if urlsplit(value).scheme in {'http', 'https'} and urlsplit(value).hostname
+                        and '/server/api/' not in urlsplit(value).path), '')
             if not item.get('name') or not url:
                 return None
             year = ''.join(values('dc.date.issued'))[:4]
@@ -49,5 +53,6 @@ class NturProvider(ChineseOpenAccessProvider):
                 abstract='\n'.join(values('dc.description.abstract')), year=int(year) if year.isdigit() else None,
                 source=self.config.display_name, source_database=self.name, access_mode='public_repository_api',
                 document_type=next(iter(values('dc.type')), 'unknown'),
-                full_text_status='metadata_only', verification_status='public_search_record', raw={'query': request.query, 'uuid': item.get('uuid')})
+                full_text_status='metadata_only', verification_status='public_search_record',
+                raw={'query': request.query, 'uuid': item.get('uuid'), 'source_api_url': api_url})
         return public_json_search(self, request, fetch, work)

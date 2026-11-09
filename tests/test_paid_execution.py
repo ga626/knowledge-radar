@@ -309,7 +309,7 @@ def test_openalex_http_boundary_uses_anonymous_quota(monkeypatch):
     monkeypatch.setattr("academic_providers.openalex.httpx.Client", Client)
     monkeypatch.delenv("OPENALEX_API_KEY", raising=False)
     provider = OpenAlexProvider()
-    assert provider.status()["quota"]["free_credit_per_day_usd"] == .10
+    assert provider.status()["quota"]["policy_status"] == "not_verified_current"
     assert provider.search(AcademicSearchRequest(query="quota wiring")) == []
     assert rows()[0]["provider"] == "openalex" and Decimal(rows()[0]["quota_units"]) == Decimal(".001")
 

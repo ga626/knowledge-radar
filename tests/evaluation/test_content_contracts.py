@@ -139,3 +139,56 @@ def test_access_shell_recognition_preserves_real_short_articles(html,blocked):
         with pytest.raises(GenericWebError):_check_page_body(soup,collector='fixture',status_code=200)
     else:
         _check_page_body(soup,collector='fixture',status_code=200)
+
+
+FOOTER_SAMPLE = """Select topic of interest (you can select more than one)
+
+Example Science, Inc.
+
+1216 Broadway, 2nd Floor, New York, NY 10001, USA
+
+© 2026 Example - All rights reserved
+
+This site is protected by reCAPTCHA and the Google Privacy Policy and Terms of Service apply."""
+
+
+def test_effectiveness_footer_only_cannot_satisfy_requested_body():
+    from kr_core.evidence_coverage import content_coverage
+    result=content_coverage({'title':'A technical research paper','content':FOOTER_SAMPLE})
+    assert result['request_satisfied'] is False
+    assert result['parts']['content']['missing_reason']=='boilerplate_only'
+
+
+@pytest.mark.parametrize('body',[
+    '服务将于明日停止。',
+    'This tutorial explains reCAPTCHA, Privacy Policy and Terms of Service.',
+    '```python\nprint("All rights reserved")\n```',
+    'Our experiments found expansion harms stronger retrievers.'])
+def test_effectiveness_footer_signals_do_not_delete_real_content(body):
+    from kr_core.evidence_coverage import content_coverage
+    result=content_coverage({'content':body+'\n\n'+FOOTER_SAMPLE})
+    assert result['request_satisfied'] is True
+
+
+def test_effectiveness_parser_falls_through_wrong_nonempty_result(monkeypatch):
+    import httpx
+    from generic_web import collector as c
+    from generic_web.models import GenericWebRequest,GenericWebResponse
+    monkeypatch.setattr("generic_web.acquisition.get_parsed",lambda key:None)
+    html='<article><h1>真实研究</h1><p>Our research measures retrieval accuracy.</p></article><footer>Copyright</footer>'
+    response=httpx.Response(200,text=html,request=httpx.Request('GET','https://example.org/regression'))
+    monkeypatch.setattr(c,'public_addresses',lambda *a,**k:None)
+    monkeypatch.setattr(c,'_fetch_html',lambda *a,**k:(response,'text/html'))
+    monkeypatch.setattr(c,'_collect_via_trafilatura',lambda req,**k:GenericWebResponse(url=req.url,content=FOOTER_SAMPLE,collector='fixture-first'))
+    monkeypatch.setattr(c,'_collect_via_readability',lambda req,**k:GenericWebResponse(url=req.url,content='Our research measures retrieval accuracy.',collector='fixture-second'))
+    result=c.collect_url(GenericWebRequest('https://example.org/regression',use_jina=False))
+    assert not result.error and result.collector=='fixture-second'
+    assert result.metadata['extraction_observation']['semantic_relevance']=='not_evaluated'
+
+
+def test_effectiveness_rendered_footer_is_not_body(monkeypatch):
+    from generic_web import collector as c
+    from generic_web.models import GenericWebRequest, GenericWebResponse
+    monkeypatch.setattr(c, '_collect_from_html', lambda req, **kw: GenericWebResponse(url=req.url, content=FOOTER_SAMPLE, collector='dynamic_playwright'))
+    result = c.collect_rendered_html(GenericWebRequest('https://example.org/footer'), html='<body>fixture</body>')
+    assert result.error and result.error['message'] == 'boilerplate_only'

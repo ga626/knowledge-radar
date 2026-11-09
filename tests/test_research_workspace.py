@@ -92,7 +92,9 @@ def test_projection_reads_original_ledger_and_does_not_create_files(tmp_path, mo
     path = tmp_path / 'research_tasks' / (task['research_task_id'] + '.json')
     before = path.read_bytes()
     assert view.recent()['tasks'][0]['research_task_id'] == task['research_task_id']
-    assert view.snapshot(task['research_task_id']) == task
+    projected = view.snapshot(task['research_task_id'])
+    assert projected.pop('project_context')['status'] == 'unclassified'
+    assert projected == task
     assert path.read_bytes() == before
     assert not (tmp_path / 'tasks.sqlite3').exists()
     assert not (tmp_path / 'evidence_assets').exists()
@@ -128,6 +130,8 @@ def test_ledger_readers_share_delete_during_atomic_replacement(tmp_path,monkeypa
             from runtime.research_archive import ResearchArchive
             from types import SimpleNamespace
             actual=ResearchArchive._ledger(SimpleNamespace(root=tmp_path/'knowledge_delivery'),task_id)
+        if reader=='workspace':
+            assert actual.pop('project_context')['status']=='legacy_adoption_pending'
         assert actual==payload
     finally:
         api.CloseHandle(handle)
@@ -141,7 +145,7 @@ def test_projection_rejects_second_lifecycle(tmp_path, action):
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize('task_id', ['../secret','research-old','kr-research-../../secret','kr-research-'+'a'*100])
+@pytest.mark.parametrize('task_id', ['../secret','research/old','kr-research-../../secret','kr-research-'+'a'*100])
 def test_projection_rejects_invalid_identity(tmp_path, task_id):
     with pytest.raises(ValueError, match='invalid_research_task_id'):
         ResearchRecords(tmp_path).snapshot(task_id)

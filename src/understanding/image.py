@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
+from runtime.proxy_config import http_client
 from generic_web.url_policy import guarded_fetch
 
 from runtime.cost_latency import TTLCache, attach_runtime_metadata, budget_envelope, stable_key
@@ -41,7 +42,7 @@ def call_multimodal_models(
     texts = []
     usage = {}
     started = time.monotonic()
-    with acquire_resource('provider_siliconflow'), httpx.Client(follow_redirects=False) as client:
+    with acquire_resource('provider_siliconflow'), http_client(follow_redirects=False) as client:
         for encoded in images_base64:
             remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:

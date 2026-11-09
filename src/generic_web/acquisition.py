@@ -14,7 +14,7 @@ _RESPONSES = OrderedDict()
 _PARSED = OrderedDict()
 MAX_CACHE_BYTES = 16 * 1024 * 1024
 MAX_CACHE_ENTRIES = 32
-PARSER_CONTRACT = 'local-html-pdf-page-ocr-wechat-v6-body-recall'
+PARSER_CONTRACT = 'local-html-pdf-page-ocr-wechat-v7-body-observation'
 
 
 def _eligible(url, headers):

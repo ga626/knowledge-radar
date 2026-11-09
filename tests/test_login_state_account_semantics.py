@@ -486,8 +486,10 @@ def test_search_recruitment_rejects_busy_platform_lease(monkeypatch) -> None:
     assert result["market_claim_allowed"] is False
 
 
-def test_recruitment_admission_blocks_existing_manual_session(monkeypatch):
-    monkeypatch.setattr(liepin,'admission',lambda:{'allowed':False,'reason':'pending_manual_interaction'})
+def test_recruitment_admission_blocks_existing_manual_session(monkeypatch, tmp_path):
+    from runtime.state_file import write_state
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    write_state(liepin._site().state_path(), {'expires_at': time.time()+300})
     result=recruitment_governance.check_platform_admission('liepin',keyword='Python',city='杭州')
     assert not result['allowed'] and result['manual_action_required']
     assert result['reason_code']=='pending_manual_interaction'
@@ -686,7 +688,7 @@ def test_search_error_preserves_ambiguous_page_state() -> None:
     assert result["error"]["manual_confidence"] == "suspected"
 
 
-def test_boss_failure_budget_is_scoped_by_keyword_and_city(monkeypatch, tmp_path: Path) -> None:
+def test_boss_failure_diagnostics_are_scoped_without_implicit_hour_lock(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setenv("KR_TASK_DB_PATH", str(tmp_path / "gate.sqlite3"))
     monkeypatch.setitem(
         recruitment_governance.PLATFORM_CONFIG,
@@ -705,9 +707,10 @@ def test_boss_failure_budget_is_scoped_by_keyword_and_city(monkeypatch, tmp_path
     same_scope = recruitment_governance.check_search_gate("boss", keyword="Python", city="北京")
     other_city = recruitment_governance.check_search_gate("boss", keyword="Python", city="杭州")
 
-    assert same_scope["allowed"] is False
-    assert "失败次数已达上限" in same_scope["reason"]
+    assert same_scope["allowed"] is True
+    assert same_scope["failures_this_hour"] == 3
     assert other_city["allowed"] is True
+    assert other_city["failures_this_hour"] == 0
 
 
 def test_boss_login_failure_does_not_hard_cooldown_recovery(monkeypatch, tmp_path: Path) -> None:

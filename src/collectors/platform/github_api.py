@@ -16,6 +16,7 @@ import time
 from urllib.parse import urlencode, urlsplit
 
 import httpx
+from runtime.proxy_config import http_client
 
 from runtime.execution_context import check_execution, current_execution, execution_value
 from runtime.file_write_lock import file_write_lock
@@ -83,6 +84,14 @@ def _run_gh(args, *, timeout=20, max_bytes=4 * 1024 * 1024, auth_env=None):
             else: env[key] = value
     env.update(GH_PROMPT_DISABLED='1', GH_PAGER='cat', GH_NO_UPDATE_NOTIFIER='1', NO_COLOR='1')
     env.pop('GH_DEBUG', None)
+    from runtime.proxy_config import httpx_options
+    route = httpx_options('https://api.github.com', adapter='gh-child')
+    # 仅本次子进程继承同一路线；不改全局环境/gh账号或代理配置。
+    for key in ('HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'http_proxy', 'https_proxy', 'all_proxy'):
+        env.pop(key, None)
+    if route['proxy']:
+        env['HTTPS_PROXY'] = route['proxy']
+        env['HTTP_PROXY'] = route['proxy']
     deadline = _deadline(timeout)
     with tempfile.TemporaryFile() as stdout, tempfile.TemporaryFile() as stderr:
         try:
@@ -354,7 +363,7 @@ class GitHubClient:
         deadline = _deadline(self.timeout)
         url = 'https://api.github.com/' + path
         try:
-            with httpx.Client(follow_redirects=False, trust_env=True) as client:
+            with http_client(follow_redirects=False) as client:
                 for _ in range(4):
                     remaining = _remaining(deadline)
                     with client.stream('GET', url, headers=headers, timeout=httpx.Timeout(min(remaining, 2), connect=min(remaining, 5))) as response:

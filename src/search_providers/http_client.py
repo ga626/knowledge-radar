@@ -6,7 +6,6 @@ from contextlib import contextmanager
 from http.cookiejar import CookieJar, DefaultCookiePolicy
 import threading
 from urllib.parse import urlsplit
-from urllib.request import proxy_bypass_environment
 import httpx
 
 _CLIENTS = OrderedDict()
@@ -20,9 +19,9 @@ class _RejectCookies(DefaultCookiePolicy):
 @contextmanager
 def _lease(url):
     from runtime.search_configuration import current_configuration
-    from runtime.proxy_config import get_httpx_proxy
+    from runtime.proxy_config import httpx_options
     parsed = urlsplit(url)
-    proxy = None if proxy_bypass_environment(parsed.netloc) else get_httpx_proxy()
+    proxy = httpx_options(url, adapter="search-provider")["proxy"]
     key = (current_configuration().generation, parsed.scheme, parsed.hostname, parsed.port, proxy)
     temporary = False
     with _LOCK:

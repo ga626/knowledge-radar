@@ -117,7 +117,7 @@ def _safe_name(value, fallback='未命名资料'):
     value=re.sub(r'\s+',' ',value).strip(' ._-')[:48].rstrip(' .')
     if re.fullmatch(r'(?i)(?:index|final[-_]report|round[-_]?\d*|texts?[-_]?\d*|manifest|sources)(?:\.md)?',value):value=''
     # 来源标题也可能带脚本式标签；不能借标题把机器词重新带进展示路径。
-    for pattern,label in ((r'(?i)\bfinal[-_]report\b','总报告'),(r'(?i)\bround[-_]\d*','资料'),(r'(?i)\bindex\b','目录')):
+    for pattern,label in ((r'(?i)\bfinal[-_]report\b','总报告'),(r'(?i)\bround[-_]\d*','资料'),(r'(?i)(?<=调研 )index(?= 汇总)','目录')):
         value=re.sub(pattern,label,value)
     if not value or value.upper().split('.')[0] in {'CON','PRN','AUX','NUL',*(f'COM{i}' for i in range(1,10)),*(f'LPT{i}' for i in range(1,10))}:
         value = fallback
@@ -300,12 +300,21 @@ def _source_markdown_links(text, source_url):
             target=match[2]
             resolved='<'+absolute(target[1:-1])+'>' if target.startswith('<') else absolute(target)
             return match[1]+resolved+match[3]
-        parts=re.split(r'(`+[^`\n]*`+)',line)
-        for i in range(0,len(parts),2):
-            parts[i]=pattern.sub(rewrite,parts[i])
-            parts[i]=re.sub(r'^(\s*\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)',
-                lambda m:m[1]+('<'+absolute(m[2][1:-1])+'>' if m[2].startswith('<') else absolute(m[2])),parts[i])
-        lines.append(''.join(parts))
+        # 保护代码内容但保留其所在链接的语法；按代码段直接切断整行
+        # 会漏掉 [代码格式文件名](相对路径) 这种常见 README 链接。
+        prefix='\x00kr-inline-'
+        while prefix in line:prefix+='-'
+        codes={}
+        def protect(match):
+            token=prefix+str(len(codes))+'\x00'
+            codes[token]=match[0]
+            return token
+        protected=re.sub(r'`+[^`\n]*`+',protect,line)
+        protected=pattern.sub(rewrite,protected)
+        protected=re.sub(r'^(\s*\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)',
+            lambda m:m[1]+('<'+absolute(m[2][1:-1])+'>' if m[2].startswith('<') else absolute(m[2])),protected)
+        for token,code in codes.items():protected=protected.replace(token,code)
+        lines.append(protected)
     return ''.join(lines)
 
 
@@ -333,12 +342,16 @@ def readable_asset(assets, row):
     github=(meta.get('provenance') or {}).get('github') or {}
     if kind!='report' and (meta.get('content_format')=='markdown' or github.get('object_kind')=='readme' or rendered!=text):
         rendered=_source_markdown_links(rendered,row['source_url'])
+    from kr_core.source_urls import public_document_text
+    projected=public_document_text(rendered)
+    projection_transforms=['protected_source_urls_redacted'] if projected!=rendered else []
+    rendered=projected
     if rendered==text:return row, ''
     derived=assets.put(row['source_url'],rendered,kind='readable_text',title=row['title'],metadata={
         **{k:v for k,v in meta.items() if k!='locators'},'parent_version_id':row['version_id'],
         'original_kind':kind,'original_captured_at':meta.get('original_captured_at') or meta.get('read_at') or row['captured_at'],
         'source_extractor':meta.get('source_extractor') or meta.get('extractor',''),
-        'extractor':'readable-archive/v3-source-links','derived_from':[row['version_id']]})
+        'projection_transforms':projection_transforms,'extractor':'readable-archive/v4-public-projection','derived_from':[row['version_id']]})
     with assets.connection() as c:
         return dict(c.execute('SELECT * FROM assets WHERE version_id=?',(derived['version_id'],)).fetchone()), ''
 
@@ -670,7 +683,15 @@ class ResearchArchive:
                 raise ValueError('bind_archive_context_first')
             if context['project_id']!=request.project_id:
                 raise ValueError('research_project_mismatch_use_new_task')
-            raw=request.content.encode('utf-8')
+            input_sha=sha(request.content.encode('utf-8'))
+            if context.get('report') and context['report']['report_id']==request.report_id:
+                if context['report'].get('body_sha256',context['report']['sha256'])!=input_sha:
+                    raise ValueError('report_id_already_fixed_use_new_report_id_and_explicit_path')
+                return self.status(request.task_id)
+            from runtime.research_reviews import report_appendix
+            from runtime.research_index import ResearchIndex
+            content,review_snapshot=report_appendix(ResearchIndex(),request.task_id,request.content,self.assets)
+            raw=content.encode('utf-8')
             if len(raw)>2*1024*1024:
                 raise ValueError('report_too_large')
             parents=[]
@@ -698,9 +719,9 @@ class ResearchArchive:
                 history.append({key:context[key] for key in ('report','local','vault')})
                 context['report_history']=history
                 context.update(local={'status':'pending'},vault={'status':'pending' if context['vault_grant_id'] else 'not_configured'})
-            ref=self.assets.put('kr-report:'+sha(encoded([request.project_id,request.task_id,request.report_id]).encode()),request.content,kind='report',title=request.title,
+            ref=self.assets.put('kr-report:'+sha(encoded([request.project_id,request.task_id,request.report_id]).encode()),content,kind='report',title=request.title,
                 metadata={'project_id':request.project_id,'task_id':request.task_id,'report_id':request.report_id,'derived_from':parents,
-                    'source_round':request.source_round,'extractor':'research-summary/v1:'+sha(encoded(parents).encode()),'coverage':'agent_summary'})
+                    'source_round':request.source_round,'review_snapshot':review_snapshot,'extractor':'research-summary/v2:'+sha(encoded(parents).encode()),'coverage':'agent_summary'})
             self.assets.reference_many([ref['version_id']],request.task_id,project_id=request.project_id,task_id=request.task_id)
             vault_name='总报告.md'
             if context.get('vault_grant_id'):
@@ -708,7 +729,7 @@ class ResearchArchive:
                 parent=self._task_directory(context)
                 title='总报告' if request.report_role=='final' else '阶段报告 - '+_safe_name(request.title,'调研小结')
                 vault_name=self._display_path(root,parent,['report',request.project_id,request.task_id,request.report_id],title,suffix='.md').name
-            context.update(report={'version_id':ref['version_id'],'sha256':sha(raw),'report_id':request.report_id,'role':request.report_role,
+            context.update(report={'version_id':ref['version_id'],'sha256':sha(raw),'body_sha256':input_sha,'review_snapshot':review_snapshot,'report_id':request.report_id,'role':request.report_role,
                 'local_report_path':str(Path(local_path).resolve()),'source_watermark':self._round_get(request.source_round)['watermark'] if request.source_round else self._content_watermark(context),'vault_name':vault_name},summary='registered',retry_at=0)
             self._save(context)
         self._wake()
@@ -844,6 +865,21 @@ class ResearchArchive:
         from runtime.knowledge_delivery import identity
         folder=self._find_committed(root,record)
         for name,item in record.get('file_records',{}).items():
+            if name==record.get('navigation') and record.get('navigation_text'):
+                # 当前导航是有日志的派生投影；历史正文和导航快照保持固定。
+                with self._connection() as c:
+                    newest=c.execute("SELECT payload FROM archive_rounds WHERE task_id=? AND json_extract(payload,'$.navigation')=? AND json_extract(payload,'$.navigation_text') IS NOT NULL AND json_extract(payload,'$.status') IN ('publishing','local_committed') ORDER BY rowid DESC LIMIT 1",(record['task_id'],name)).fetchone() if record.get('task_id') else None
+                latest=json.loads(newest[0]) if newest else record
+                latest_item=latest.get('file_records',{}).get(name)
+                if not latest_item and latest.get('navigation_update'):
+                    journal=latest['navigation_update']
+                    actual=guarded_path(root,journal['path'],require_file=True)
+                    observed=sha(_read_safe(root,actual))
+                    if observed==latest['file_hashes'][name]:continue
+                if latest_item:
+                    actual=self._find_committed(root,latest_item)
+                    if sha(_read_safe(root,actual))!=latest['file_hashes'][name]:raise ValueError('destination_modified_preserved')
+                    continue
             candidate=folder/name
             if candidate.exists() and identity(candidate)==item.get('identity'):
                 item['path']=str(candidate)
@@ -923,7 +959,12 @@ class ResearchArchive:
                 if not batch or (buffer and (buffer_label!=label or parts>=100 or len(buffer)>=2*1024*1024-4096)):flush()
                 if not buffer_name:
                     volume+=1
-                    title=(label+' - 资料汇编') if batch else ('总报告' if row['kind']=='report' else label+' - '+display_subject(readable))
+                    subject=display_subject(readable)
+                    presentation=_presentation_kind(readable,json.loads(readable['metadata']))
+                    type_label={'transcript':'转写','comments':'评论','description':'简介','video_description':'视频简介','index':'目录','abstract':'摘要','content':'正文','document_text':'文档正文','pdf_text':'PDF正文','academic_fulltext':'论文正文','readable_text':'整理正文','ocr_text':'画面文字','tables':'表格'}.get(presentation,'资料')
+                    detailed=len(row['title'])>48 or presentation not in {'content','report'}
+                    name_subject=(type_label+' '+subject[:22]+' · '+version[:6]) if detailed else subject
+                    title=(label+' - 资料汇编') if batch else ('总报告' if row['kind']=='report' else label+' - '+name_subject)
                     owner=['source-volume',key,label,volume] if batch else ['source-text',context['project_id'],context['task_id'],version,part_number]
                     buffer_name=self._display_path(root,folder,owner,title,suffix='.md').name;buffer_label=label
                 header=b'' if row['kind']=='report' else asset_header(readable,include_title=batch).encode('utf-8')
@@ -947,7 +988,7 @@ class ResearchArchive:
         record=self._round_get(key);record['skipped_assets']=skipped;self._round_save(key,record)
         # 选取只生成链接清单，正文与全量归档共用同一份。
         nav_title='选取资料' if record.get('role')=='selection' else '资料导航'
-        nav=self._display_path(root,folder,['navigation',key],nav_title,suffix='.md').name
+        nav=self._display_path(root,folder,['selection-navigation',key] if record.get('role')=='selection' else ['current-navigation',context['project_id'],context['task_id']],nav_title,suffix='.md').name
         entries={}
         selected=set(self._members(key)) if record.get('role')=='selection' else None
         with self._connection() as c:
@@ -965,7 +1006,9 @@ class ResearchArchive:
             lines.append(f'- [{name.removesuffix(".md")}]({quote(name)})')
         if skipped:
             lines.extend(['','未进入人读正文的资产（原件仍在 KR）：']+[f'- {reason}：{number} 项' for reason,number in skipped.items()])
-        _stage_file(staging/nav,('\n'.join(lines)+'\n').encode());hashes[nav]=_hash_file(staging/nav)
+        navigation_text='\n'.join(lines)+'\n'
+        _stage_file(staging/nav,navigation_text.encode());hashes[nav]=_hash_file(staging/nav)
+        record.update(navigation_text=navigation_text,task_id=context['task_id']);self._round_save(key,record)
         return hashes,nav
 
     def _publish_flat(self, key, context):
@@ -994,6 +1037,24 @@ class ResearchArchive:
                 for name,digest in hashes.items():
                     check_execution();self._grant(context['vault_grant_id'],context['project_id'])
                     item=record.setdefault('file_records',{}).get(name)
+                    if name==nav and not item:
+                        with self._connection() as c:
+                            previous=c.execute("SELECT payload FROM archive_rounds WHERE task_id=? AND id!=? AND json_extract(payload,'$.navigation')=? AND json_extract(payload,'$.status')='local_committed' ORDER BY rowid DESC LIMIT 1",(context['task_id'],key,nav)).fetchone()
+                        previous=json.loads(previous[0]) if previous else None
+                        journal=record.get('navigation_update')
+                        if previous or journal:
+                            if journal is None:
+                                prior=previous['file_records'][nav];actual=self._find_committed(root,prior)
+                                journal={'path':str(actual),'identity':identity(actual),'old_sha256':previous['file_hashes'][nav]}
+                                record['navigation_update']=journal;self._round_save(key,record)
+                            actual=guarded_path(root,journal['path'],require_file=True)
+                            observed=sha(_read_safe(root,actual))
+                            if observed!=digest:
+                                if observed!=journal['old_sha256'] or identity(actual)!=journal['identity']:raise ValueError('destination_modified_preserved')
+                                os.replace(stage/name,actual)
+                            record['file_records'][name]={'path':str(actual),'identity':identity(actual)}
+                            self._round_save(key,record)
+                            continue
                     if item:
                         actual=self._find_committed(root,item)
                     else:

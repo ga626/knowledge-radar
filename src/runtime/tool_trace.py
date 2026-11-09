@@ -340,6 +340,8 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
                 from .research_ledger import submit_tool_result
                 from .research_queries import CURRENT_RESEARCH_ACTION
                 action = CURRENT_RESEARCH_ACTION.get() or {}
+                if action.get('_task_id',research_task_id)!=research_task_id:
+                    action = {}  # 嵌套调用属于另一任务；不伪造继承的计划。
                 receipt_result = submit_tool_result(
                     task_id=research_task_id, trace_id=trace_id, tool=tool_name, status=status,
                     failure_code=failure_code,

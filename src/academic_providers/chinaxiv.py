@@ -40,8 +40,17 @@ class ChinaXivProvider(ChineseOpenAccessProvider):
         # instead so keyword relevance does not throw away valid preprints.
         from bs4 import BeautifulSoup
         from urllib.parse import urljoin
+        import re
         soup = BeautifulSoup(text, 'html.parser')
+        links = {}
+        def label_rank(label):
+            identifier = re.fullmatch(r'(?i)(?:\d+[.、]\s*)?(?:chinaxiv[:：]\s*)?\d{6}\.\d+(?:v\d+)?',label)
+            generic = label.strip().lower() in {'pdf','下载','全文','摘要','详情'}
+            return (not identifier and not generic, len(label))
         for anchor in soup.select('a[href]'):
             href = anchor.get('href', '')
             if '/abs/' in href or 'article.htm?' in href:
-                yield urljoin(base_url, href), anchor.get_text(' ', strip=True)
+                url,label = urljoin(base_url, href), anchor.get_text(' ', strip=True)
+                if url not in links or label_rank(label)>label_rank(links[url]):
+                    links[url]=label
+        yield from links.items()

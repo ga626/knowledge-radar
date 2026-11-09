@@ -82,6 +82,7 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
         try:
             _remaining(request)
             response = parse(request, artifact=artifact)
+            _observe_extraction(response)
             _remaining(request)
             response.metadata.update(acquisition={'fetch_count': artifact[0].extensions.get('acquisition_fetch_count',1),
                 'cache':artifact[0].extensions.get('acquisition_cache','miss'), 'bytes': len(artifact[0].content),
@@ -100,11 +101,21 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
             errors.append(GenericWebError('parse_failed', type(exc).__name__, collector=parse.__name__).to_dict())
     if request.use_jina and 'pdf' not in artifact[1].lower() and reader_allowed(request.url):
         try:
-            return _with_elapsed(_collect_via_jina(request), started, errors=errors, strategy=strategy)
+            response = _collect_via_jina(request)
+            _observe_extraction(response)
+            return _with_elapsed(response, started, errors=errors, strategy=strategy)
         except GenericWebError as exc:
             errors.append(exc.to_dict())
     error = errors[-1] if errors else {'type': 'parse_failed', 'message': 'No readable content', 'collector': 'generic_web'}
     return _error_response(request, started, GenericWebError(error['type'], error['message'], collector=error['collector']), errors=errors, strategy=strategy)
+
+
+def _observe_extraction(response):
+    from kr_core.evidence_coverage import body_observation
+    observed = body_observation({'content': response.content, 'title': response.title})
+    response.metadata['extraction_observation'] = {**observed, 'semantic_relevance': 'not_evaluated'}
+    if observed['missing_reason']:
+        raise GenericWebError('parse_failed', observed['missing_reason'], collector=response.collector)
 
 
 def _check_status(status, *, collector, retry_after=''):
@@ -388,6 +399,7 @@ def collect_rendered_html(
             errors=[],
             strategy=strategy,
         )
+        _observe_extraction(response)
         if render_metadata:
             response.metadata.update({"render": dict(render_metadata)})
         return response

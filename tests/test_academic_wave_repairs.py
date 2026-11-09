@@ -36,6 +36,110 @@ def test_wanfang_other_source_authorization_never_enables_paid_search():
     assert 'wanfang' in plan.provider_order
 
 
+def test_vip_reading_candidate_never_implies_open_access_or_obtained_fulltext():
+    from academic_providers.vip_oa import VipOpenAccessProvider
+    work = VipOpenAccessProvider()._work_from_search_result(
+        {'title': '人工智能', 'detail_url': 'https://www.cqvip.com/doc/journal/7203295942'},
+        AcademicSearchRequest('人工智能'))
+    assert work.raw['reading_url']
+    assert work.oa_status != 'open'
+    assert work.full_text_status == 'online_reading_candidate'
+    assert work.raw['entitlement_status'] == 'not_checked'
+
+
+def test_wrapped_http_failure_preserves_safe_diagnostics(monkeypatch):
+    response = httpx.Response(429, headers={'Retry-After': '120'},
+        json={'code': 'RATE_LIMIT', 'token': 'never-echo-this'},
+        request=httpx.Request('GET', 'https://example.org/search?api_key=never-echo-this'))
+    def search(request):
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            from academic_providers.openalex import OpenAlexError
+            raise OpenAlexError('upstream failed') from exc
+    monkeypatch.setattr(service, '_providers', lambda: {'openalex': SimpleNamespace(search=search)})
+    result = service.search_academic_metadata(AcademicSearchRequest('cancer', provider='openalex'))
+    diagnostic = result.error['details'][0]
+    assert diagnostic['http_status'] == 429
+    assert diagnostic['retry_after_seconds'] == 120
+    assert diagnostic['provider_code'] == 'RATE_LIMIT'
+    assert diagnostic['request_stage'] == 'search'
+    assert 'never-echo-this' not in json.dumps(diagnostic)
+
+
+def test_http_diagnostic_redacts_url_userinfo_as_well_as_query():
+    from academic_providers.chinese_open_access import _fetch_diagnostic
+    response=httpx.Response(403, json={'code': 'FORBIDDEN'},
+        request=httpx.Request('GET','https://private-user:private-password@example.org/path?token=private-token'))
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        diagnostic=_fetch_diagnostic(exc)
+    assert diagnostic['request_origin']=='https://example.org/'
+    assert 'private-' not in json.dumps(diagnostic)
+
+
+def test_nstrs_explicit_restriction_uses_public_permission_fields(monkeypatch):
+    from academic_providers.nstrs import NstrsProvider
+    p = NstrsProvider()
+    monkeypatch.setattr(p, '_browser_search', lambda _: {'list': [{'id': 'r1', 'title': '人工智能'}]})
+    work = p.search(AcademicSearchRequest('人工智能'))[0]
+    assert work.raw['download_allowed'] is False
+    assert work.raw['evidence_storage_allowed'] is False
+
+
+def test_legacy_download_denial_cannot_be_lost_in_doi_merge():
+    a = AcademicWork('Paper', 'https://example.org/a', doi='10.1234/a', raw={'fulltext_download_allowed': False})
+    b = AcademicWork('Paper', 'https://example.org/b', doi=a.doi, raw={'download_allowed': True})
+    for items in ([a,b], [b,a]):
+        assert service._dedupe(items)[0].raw['download_allowed'] is False
+
+
+def test_ntur_prefers_record_handle_over_rest_resource(monkeypatch):
+    from academic_providers.ntur import NturProvider
+    client = httpx.Client
+    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: None)
+    def respond(req):
+        item = {'name': 'Machine learning', 'uuid': 'example-uuid', 'metadata': {
+            'dc.identifier.uri': [{'value': 'https://scholars.lib.ntu.edu.tw/handle/123456789/1'}]}}
+        row = {'_embedded': {'indexableObject': item}, '_links': {
+            'indexableObject': {'href': 'https://scholars.lib.ntu.edu.tw/server/api/core/items/example-uuid'}}}
+        return httpx.Response(200, json={'_embedded': {'searchResult': {'_embedded': {'objects': [row]}}}})
+    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(respond), **kw))
+    work = NturProvider().search(AcademicSearchRequest('machine learning'))[0]
+    assert work.url == 'https://scholars.lib.ntu.edu.tw/handle/123456789/1'
+    assert '/server/api/' in work.raw['source_api_url']
+    assert work.full_text_status == 'metadata_only'
+
+
+def test_ntur_missing_public_identifier_is_unparsed_not_fake_article(monkeypatch):
+    from academic_providers.ntur import NturProvider
+    client = httpx.Client
+    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: None)
+    row = {'_embedded': {'indexableObject': {'name': 'Machine learning', 'uuid': 'u1'}},
+           '_links': {'indexableObject': {'href': 'https://scholars.lib.ntu.edu.tw/server/api/core/items/u1'}}}
+    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, json={'_embedded': {'searchResult': {'_embedded': {'objects': [row]}}}})), **kw))
+    result = NturProvider().search(AcademicSearchRequest('machine learning'))
+    assert not result
+    assert result.diagnostics[0]['type'] == 'search_response_unparsed'
+
+
+def test_openalex_does_not_publish_unverified_daily_credit_as_current_policy():
+    from academic_providers.openalex import OpenAlexProvider
+    quota = OpenAlexProvider().status()['quota']
+    assert quota['policy_status'] == 'not_verified_current'
+    assert 'free_credit_per_day_usd' not in quota
+
+
+def test_chinaxiv_identifier_link_does_not_consume_title_or_result_limit():
+    from academic_providers.chinaxiv import ChinaXivProvider
+    page='<a href="/abs/202611.00064">1. ChinaXiv:202611.00064</a><a href="/abs/202611.00064">人工智能与科学研究</a>'
+    response=httpx.Response(200,text=page,request=httpx.Request('GET','https://chinaxiv.org/user/search.htm'))
+    rows=ChinaXivProvider()._collect_response(response,'https://chinaxiv.org/user/search.htm',AcademicSearchRequest('人工智能'),set(),1)
+    assert len(rows)==1 and rows[0].title=='人工智能与科学研究'
+
+
 def test_wanfang_payment_failure_is_not_login_failure_and_leaks_no_account(monkeypatch):
     monkeypatch.setenv('WFDATA_ENABLED', 'true')
     monkeypatch.setenv('WFDATA_APP_KEY', 'never-echo-this')
@@ -153,7 +257,8 @@ def test_public_reader_respects_host_specific_no_proxy_without_skipping_url_safe
     from generic_web.url_policy import guarded_fetch
     from contextlib import contextmanager
     monkeypatch.setenv('NO_PROXY', 'www.ebi.ac.uk')
-    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: 'http://127.0.0.1:7897')
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7897')
+    monkeypatch.setenv('KR_DISABLE_WINDOWS_PROXY_FALLBACK', '1')
     monkeypatch.setattr('generic_web.url_policy.socket.getaddrinfo', lambda *a, **k:
         [(2, 1, 6, '', ('193.62.193.80', 443))])
     seen = []

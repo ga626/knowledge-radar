@@ -46,7 +46,7 @@
     },
     {
       "capability_id": "mcp.extract_web_page",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "extract_web_page"
@@ -389,7 +389,7 @@
     },
     {
       "capability_id": "mcp.read_knowledge",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "read_knowledge"
@@ -403,7 +403,7 @@
     },
     {
       "capability_id": "mcp.manage_research_artifacts",
-      "version": 1,
+      "version": 2,
       "lifecycle": "active",
       "entries": [
         "manage_research_artifacts"
@@ -462,7 +462,7 @@
     },
     {
       "capability_id": "mcp.update_research",
-      "version": 1,
+      "version": 4,
       "lifecycle": "active",
       "entries": [
         "update_research"
@@ -470,21 +470,25 @@
       "aliases": [],
       "dependencies": [
         "src/runtime/research_index.py",
-        "src/runtime/composition.py"
+        "src/runtime/composition.py",
+        "src/runtime/research_contracts.py",
+        "src/runtime/research_reviews.py"
       ],
       "depends_on": [],
       "promise": "Agent声明的可逆研究关系，保持固定证据可回读；不判定充分性。"
     },
     {
       "capability_id": "research.incremental_evidence",
-      "version": 1,
+      "version": 5,
       "lifecycle": "active",
       "entries": [],
       "aliases": [],
       "dependencies": [
         "src/runtime/research_index.py",
         "src/runtime/knowledge.py",
-        "src/runtime/evidence_views.py"
+        "src/runtime/evidence_views.py",
+        "src/runtime/research_contracts.py",
+        "src/runtime/research_reviews.py"
       ],
       "depends_on": [
         "mcp.read_knowledge",
