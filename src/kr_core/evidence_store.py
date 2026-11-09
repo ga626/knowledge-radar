@@ -88,7 +88,13 @@ class EvidenceStore:
             if body:
                 response['content'] = body
                 response['content_locators'] = locations
-        response.setdefault('content_coverage', content_coverage(response))
+        coverage = response.setdefault('content_coverage', content_coverage(response))
+        from .evidence_coverage import body_observation
+        if body_observation(response)['missing_reason']:
+            # 旧缓存/适配器的 acquired 不得覆盖当前正文观察；其他请求缺口保持原样。
+            coverage.setdefault('parts', {})['content'] = content_coverage(response)['parts']['content']
+            coverage['required_gaps'] = list(dict.fromkeys([*coverage.get('required_gaps', []), 'content']))
+            coverage['request_satisfied'] = False
         parsed_coverage = (response.get('metadata') or {}).get('coverage')
         if parsed_coverage in {'complete_selectable_text', 'complete_text_and_ocr', 'partial'}:
             response['content_coverage']['parts']['content']['coverage'] = parsed_coverage

@@ -3,6 +3,24 @@ from __future__ import annotations
 import re
 
 
+def error_shell_only(text):
+    """明确错误消息加导航、且没有其他正文；不凭标题、长度或单个错误词拒绝。"""
+    text=str(text)
+    if '```' in text:
+        return False
+    text=re.sub(r'\[([^\]\n]+)\]\([^\n)]*\)',r'\1',text)
+    text=re.sub(r'^\s{0,3}#{1,6}\s+', '',text,flags=re.M)
+    text=re.sub(r'\s+',' ',text).strip(' .!?。！…').casefold()
+    errors=(r'(?:404\s+)?(?:page\s+)?not found|this page does not exist|'
+            r'the requested page could not be found|'
+            r'(?:oh no!\s*)?(?:seems like\s+)?something went wrong|'
+            r'(?:您访问的)?页面不存在|页面未找到')
+    navigation=(r'interactive graph|on this page|powered by obsidian publish|'
+                r'back to home|go back|return to home|try again|返回首页|返回上一页|重试')
+    return bool(text and re.search(errors,text) and
+                re.fullmatch(rf'(?:(?:{errors}|{navigation})[\s.!?。！…]*)+',text))
+
+
 def boilerplate_only(text):
     """Conservative structural observation, never a relevance classifier."""
     lines = [line.strip() for line in str(text).splitlines() if line.strip()]
@@ -44,12 +62,15 @@ def body_observation(response):
         state = 'redirect_shell'
     elif normalized in {'loading', 'please wait', '加载中', '正在加载', 'please enable javascript'}:
         state = 'navigation_shell'
+    elif state in {'body','unknown','error_shell'} and error_shell_only(text):
+        state = 'error_shell'
     elif boilerplate_only(text):
         state = 'boilerplate_only'
-    return {'body_state': state, 'asset_kind': response.get('asset_kind') or metadata.get('asset_kind') or state,
-            'source_role': response.get('source_role') or metadata.get('source_role') or state,
-            'actual_scope': response.get('actual_scope') or metadata.get('actual_scope') or state,
-            'missing_reason': state if state in {'access_challenge', 'redirect_shell', 'navigation_shell', 'boilerplate_only'} else ''}
+    missing = state in {'access_challenge', 'redirect_shell', 'navigation_shell', 'boilerplate_only','error_shell'}
+    return {'body_state': state, 'asset_kind': state if missing else response.get('asset_kind') or metadata.get('asset_kind') or state,
+            'source_role': state if missing else response.get('source_role') or metadata.get('source_role') or state,
+            'actual_scope': state if missing else response.get('actual_scope') or metadata.get('actual_scope') or state,
+            'missing_reason': state if missing else ''}
 
 
 def content_coverage(response, requested=None, *, task_lookup=None):
