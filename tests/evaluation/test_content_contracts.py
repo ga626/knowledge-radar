@@ -192,3 +192,79 @@ def test_effectiveness_rendered_footer_is_not_body(monkeypatch):
     monkeypatch.setattr(c, '_collect_from_html', lambda req, **kw: GenericWebResponse(url=req.url, content=FOOTER_SAMPLE, collector='dynamic_playwright'))
     result = c.collect_rendered_html(GenericWebRequest('https://example.org/footer'), html='<body>fixture</body>')
     assert result.error and result.error['message'] == 'boilerplate_only'
+
+
+# PR39 native receipt: receipt-5f4b45369990a34c; public page text, no account data.
+F39_ERROR_PAGE = """Not found
+
+This page does not exist
+
+Interactive graph
+
+On this page
+
+[Powered by Obsidian Publish](https://publish.obsidian.md)
+
+Oh no! Seems like something went wrong!"""
+
+
+@pytest.mark.parametrize('text', [F39_ERROR_PAGE, ' '.join(F39_ERROR_PAGE.split()),
+    '# 404 Not Found\nThe requested page could not be found.\nBack to home',
+    '页面不存在\n您访问的页面不存在\n返回首页'])
+def test_f39_error_only_page_never_satisfies_body_even_with_stale_body_declaration(text):
+    from kr_core.evidence_coverage import content_coverage
+    result=content_coverage({'title':'Back up your Obsidian files - Obsidian Help','content':text,
+                            'body_state':'body','asset_kind':'body','source_role':'body'})
+    part=result['parts']['content']
+    assert not result['request_satisfied'] and part['state']=='missing'
+    assert part['body_state']=='error_shell' and part['missing_reason']=='error_shell'
+    assert part['source_role']!='body' and part['asset_kind']!='body'
+
+
+@pytest.mark.parametrize('text', ['服务将于明日停止。','Not found means the server could not locate the requested resource.',
+    '```python\nraise ValueError("Not found")\n```',
+    'This page does not exist\n这是错误提示的中文翻译教程。',
+    'Not found\nThis page does not exist\nOur backup procedure is to copy the vault before upgrading.'])
+def test_f39_real_short_articles_and_code_remain_acquired(text):
+    from kr_core.evidence_coverage import content_coverage
+    assert content_coverage({'title':'Not found','content':text})['request_satisfied']
+
+
+def test_f39_rendered_error_page_returns_typed_failure(monkeypatch):
+    from generic_web import collector as c
+    from generic_web.models import GenericWebRequest,GenericWebResponse
+    monkeypatch.setattr(c,'_collect_from_html',lambda req,**kw:GenericWebResponse(url=req.url,
+        title='Back up your Obsidian files',content=F39_ERROR_PAGE,collector='dynamic_playwright'))
+    result=c.collect_rendered_html(GenericWebRequest('https://example.org/missing'),html='<main>fixture</main>')
+    assert result.error and result.error['message']=='error_shell'
+
+
+def test_f39_detail_evidence_does_not_call_error_text_extracted():
+    from understanding.evidence import build_detail_evidence
+    item=build_detail_evidence('https://example.org/missing','web',{'title':'Backup','content':F39_ERROR_PAGE})
+    assert item.metadata['extraction_status']=='insufficient_content'
+    assert item.metadata['body_state']=='error_shell'
+
+
+def test_f39_real_rendered_dom_is_rejected_but_article_with_error_sidebar_is_kept():
+    from generic_web.collector import collect_rendered_html
+    from generic_web.models import GenericWebRequest
+    request=GenericWebRequest('https://example.org/missing')
+    result=collect_rendered_html(request,html='<title>Backup</title><main><h1>Not found</h1><p>This page does not exist</p></main><nav>On this page</nav>')
+    assert result.error and not result.content
+    good=collect_rendered_html(request,html='<title>Backup</title><aside>Not found This page does not exist</aside><article><h1>备份指南</h1><p>升级前请复制整个知识库目录。</p></article>')
+    assert not good.error and '升级前请复制' in good.content
+
+
+def test_f39_stale_acquired_flag_is_reconciled_before_evidence_storage(tmp_path):
+    from kr_core.evidence_store import EvidenceStore
+    response={'content':F39_ERROR_PAGE,'title':'Backup','content_coverage':{
+        'parts':{'content':{'requested':True,'state':'acquired','body_state':'body'},
+                 'transcript':{'requested':True,'state':'missing'}},
+        'required_gaps':['transcript'],'request_satisfied':True}}
+    store=EvidenceStore(str(tmp_path/'evidence.jsonl'))
+    store.append_detail(platform='dynamic_web',url='https://example.org/missing',response=response)
+    assert not response['content_coverage']['request_satisfied']
+    assert set(response['content_coverage']['required_gaps'])=={'content','transcript'}
+    assert store.assets.fetch(response['evidence_assets'][0]['version_id'])['text']==F39_ERROR_PAGE
+    assert response['content_coverage']['parts']['content']['body_state']=='error_shell'

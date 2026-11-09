@@ -158,6 +158,22 @@ def test_challenge_is_retained_as_diagnostic_and_not_exported_as_body(archive):
     assert any('很短但真实的版本公告。' in text for text in files)
 
 
+def test_f39_old_error_asset_is_kept_but_not_reexported_as_article(archive):
+    from tests.evaluation.test_content_contracts import F39_ERROR_PAGE
+    engine,_,_,vault=archive
+    ref=engine.assets.put('https://example.org/missing',F39_ERROR_PAGE,title='Backup',
+                          metadata={'body_state':'body','source_role':'body'})
+    engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
+    evidence(engine,'很短但真实的版本公告。',url='https://example.org/announcement')
+    result=engine.run('task-a')
+    assert not result['error_code']
+    assert engine.assets.fetch(ref['version_id'])['text']==F39_ERROR_PAGE
+    files=[p.read_text(encoding='utf-8') for p in vault.rglob('*.md')]
+    assert any('诊断页面（非正文）：error_shell' in text for text in files)
+    assert not any('This page does not exist' in text for text in files)
+    assert any('很短但真实的版本公告。' in text for text in files)
+
+
 def test_late_vault_binding_replays_all_fixed_local_rounds(archive):
     engine, request, local, vault = archive
     # 模拟日用任务：原文先存入KR，完成多个本地轮次后才授权Vault。

@@ -1674,8 +1674,8 @@
     },
     {
       "case_id": "content.contracts",
-      "version": 11,
-      "oracle_version": 11,
+      "version": 12,
+      "oracle_version": 12,
       "capabilities": [
         "mcp.get_content_detail"
       ],
@@ -1758,10 +1758,13 @@
         "src/detail_strategies/wechat.py",
         "src/collectors/platform/wechat.py",
         "tests/test_maimai_csrf.py",
-        "browser_link/extension/sites/maimai.js"
+        "browser_link/extension/sites/maimai.js",
+        "src/generic_web/acquisition.py",
+        "src/generic_web/collector.py",
+        "src/understanding/evidence.py"
       ],
       "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
-      "change_reason": "2026-11-07全链修复：将脉脉动态CSRF回归接入现有内容合同。"
+      "change_reason": "2026-11-10 F39-01：错误壳不算取得正文；旧 acquired 重新核对；原件保留，归档排除诊断页；合法短文与代码反例。"
     },
     {
       "case_id": "storage.lifecycle",
@@ -1948,8 +1951,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 8,
-      "oracle_version": 8,
+      "version": 9,
+      "oracle_version": 9,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -2012,10 +2015,12 @@
         "src/runtime/research_reviews.py",
         "tests/test_research_review_contracts.py",
         "tests/fixtures/research_semantic_challenges.json",
-        "src/kr_core/source_urls.py"
+        "src/kr_core/source_urls.py",
+        "src/kr_core/evidence_coverage.py",
+        "src/kr_core/evidence_store.py"
       ],
       "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。",
-      "change_reason": "2026-11-09 R09/R10与收尾:文档投影保留定位并移除访问参数，异步动作绑定任务，需求分页与完整收口，可读替代及撤证依据。 2026-11-09历史来源相对链接显式计划修复：固定原件不变、代码格式链接标签、人改冲突和中断恢复回归。"
+      "change_reason": "2026-11-10 F39-01：错误壳不算取得正文；旧 acquired 重新核对；原件保留，归档排除诊断页；合法短文与代码反例。"
     },
     {
       "case_id": "surface.read_knowledge",
