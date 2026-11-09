@@ -101,6 +101,149 @@ def plan(engine,request):
         return _plan(engine,request)
 
 
+def _source_link_plan(engine, request):
+    """只预览完整单文件来源的基址修复；原文、报告、分卷及人改不覆盖。"""
+    from runtime.research_archive import _source_markdown_links
+    context=engine._context(request.task_id)
+    if not context or context['project_id']!=request.project_id:
+        raise ValueError('research_project_mismatch_use_new_task')
+    root=engine._grant(context['vault_grant_id'],request.project_id)
+    _,folder=_binding(engine,root,['task',request.project_id,request.task_id])
+    grouped={};conflicts=[]
+    with engine._connection() as c:
+        rows=c.execute("SELECT p.round_id,p.ordinal,p.payload,r.payload FROM archive_parts p JOIN archive_rounds r ON r.id=p.round_id WHERE r.task_id=? AND json_extract(r.payload,'$.status')='local_committed'",(request.task_id,)).fetchall()
+    for round_id,ordinal,payload,raw_round in rows:
+        part=json.loads(payload);record=json.loads(raw_round);name=part['file']
+        grouped.setdefault(name,[]).append((round_id,ordinal,part,record))
+    updates=[]
+    for name,entries in sorted(grouped.items()):
+        first=entries[0][2]
+        with engine.assets.connection() as c:
+            row=c.execute('SELECT * FROM assets WHERE version_id=?',(first['text_version_id'],)).fetchone()
+        if row is None:
+            conflicts.append({'file':name,'reason':'archive_source_missing'});continue
+        row=dict(row);meta=json.loads(row['metadata'])
+        if row['kind']=='report' or meta.get('original_kind')=='report':continue
+        text=engine.assets._verified_text(row)
+        projected=_source_markdown_links(text,first['source_url'])
+        if projected==text:continue
+        if any(part['version_id']!=first['version_id'] or part['text_version_id']!=first['text_version_id']
+               or part['raw_start']!=0 or part['raw_end']!=part['raw_bytes'] for _,_,part,_ in entries):
+            conflicts.append({'file':name,'reason':'source_volume_requires_separate_projection'});continue
+        try:
+            actual=engine._find_committed(root,dict(entries[0][3]['file_records'][name]))
+            if actual.parent!=folder:raise ValueError('source_relocated_preserved')
+            original=actual.read_bytes();digest=sha(original)
+            if any(record['file_hashes'][name]!=digest for _,_,_,record in entries):
+                raise ValueError('destination_modified_preserved')
+            start,end=first['export_start'],first['export_end']
+            if original[start:end]!=text.encode('utf-8'):
+                raise ValueError('archive_source_slice_mismatch')
+        except (ValueError,FileNotFoundError,KeyError) as exc:
+            conflicts.append({'file':name,'reason':str(exc) if isinstance(exc,ValueError) else type(exc).__name__});continue
+        replacement=original[:start]+projected.encode('utf-8')+original[end:]
+        updates.append({'file':name,'path':str(actual),'identity':identity(actual),'old_sha256':digest,
+            'new_sha256':sha(replacement),'original_text':original.decode('utf-8'),
+            'replacement_text':replacement.decode('utf-8'),'projected_text':projected,
+            'source_url':first['source_url'],'title':row['title'],'parent_version_id':first['version_id'],
+            'source_metadata':{k:v for k,v in meta.items() if k!='locators'},
+            'previous_text_version_id':first['text_version_id'],
+            'parts':[[rid,ordinal] for rid,ordinal,_,_ in entries]})
+    payload={'task_id':request.task_id,'project_id':request.project_id,'root':str(root),'root_identity':identity(root),
+        'folder':str(folder),'folder_identity':identity(folder),'context_revision':context['context_revision'],
+        'updates':updates,'conflicts':conflicts,'scope':'owned_complete_source_files_only'}
+    return {'status':'planned','plan_id':sha(encoded(payload).encode()),**payload}
+
+
+def plan_source_links(engine, request):
+    with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
+        return _source_link_plan(engine,request)
+
+
+def apply_source_links(engine, request):
+    """同一计划恢复，先存原件与替换身份，最后原子提交归档映射。"""
+    from runtime.research_archive import _read_safe
+    with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
+        context=engine._context(request.task_id)
+        if not context or context['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        root=engine._grant(context['vault_grant_id'],request.project_id)
+        with engine._connection() as c:
+            c.execute('CREATE TABLE IF NOT EXISTS archive_source_link_repairs(plan_id TEXT PRIMARY KEY,task_id TEXT,payload TEXT)')
+            saved=c.execute('SELECT payload FROM archive_source_link_repairs WHERE plan_id=? AND task_id=?',(request.plan_id,request.task_id)).fetchone()
+        if saved:
+            journal=json.loads(saved[0]);candidate=journal['plan']
+        else:
+            candidate=_source_link_plan(engine,request)
+            if candidate['plan_id']!=request.plan_id:raise ValueError('archive_source_link_plan_stale')
+            journal={'status':'applying','plan':candidate,'files':{}}
+            with engine._connection() as c:c.execute('INSERT INTO archive_source_link_repairs VALUES(?,?,?)',(request.plan_id,request.task_id,encoded(journal)))
+        if identity(root)!=candidate['root_identity'] or identity(Path(candidate['folder']))!=candidate['folder_identity']:
+            raise ValueError('archive_source_link_identity_changed')
+        if context['context_revision']!=candidate['context_revision']:raise ValueError('archive_source_link_context_changed')
+        for number,change in enumerate(candidate['updates']):
+            engine._grant(context['vault_grant_id'],request.project_id)
+            target=guarded_path(root,change['path'],require_file=True)
+            observed={'identity':identity(target),'sha256':sha(_read_safe(root,target))}
+            expected=journal['files'].get(change['file'])
+            if expected and observed==expected:continue
+            if journal['status']=='committed' or observed!={'identity':change['identity'],'sha256':change['old_sha256']}:
+                raise ValueError('destination_modified_preserved')
+            staged=guarded_path(root,target.parent/('.kr-source-links-'+request.plan_id+'-'+str(number)+'.tmp'))
+            intent=journal.get('intents',{}).get(change['file'])
+            if staged.exists():
+                if intent!=str(staged) or sha(_read_safe(root,staged))!=change['new_sha256']:
+                    raise ValueError('archive_source_link_staging_changed')
+                if expected and identity(staged)!=expected['identity']:
+                    raise ValueError('archive_source_link_staging_changed')
+            else:
+                if expected:raise ValueError('archive_source_link_staging_missing')
+                journal.setdefault('intents',{})[change['file']]=str(staged)
+                with engine._connection() as c:c.execute('UPDATE archive_source_link_repairs SET payload=? WHERE plan_id=?',(encoded(journal),request.plan_id))
+                with staged.open('xb') as stream:
+                    stream.write(change['replacement_text'].encode('utf-8'));stream.flush();os.fsync(stream.fileno())
+            journal['files'][change['file']]={'identity':identity(staged),'sha256':change['new_sha256']}
+            with engine._connection() as c:c.execute('UPDATE archive_source_link_repairs SET payload=? WHERE plan_id=?',(encoded(journal),request.plan_id))
+            if {'identity':identity(target),'sha256':sha(_read_safe(root,target))}!=observed:
+                raise ValueError('destination_modified_preserved')
+            os.replace(staged,target)
+        if journal['status']=='committed':return journal['receipt']
+        # 派生资产另存版本，固定原始证据和作品/任务身份完全保留。
+        versions={}
+        for change in candidate['updates']:
+            versions[change['file']]=engine.assets.put(change['source_url'],change['projected_text'],kind='readable_text',title=change['title'],metadata={
+                **change['source_metadata'],
+                'extractor':'archive-relative-links/v1','content_format':'markdown',
+                'parent_version_id':change['parent_version_id'],'derived_from':[change['previous_text_version_id']],
+                'projection_transforms':['source_relative_links_resolved']})['version_id']
+        with engine._connection() as c:
+            changes={change['file']:change for change in candidate['updates']}
+            for rid,raw in c.execute('SELECT id,payload FROM archive_rounds WHERE task_id=?',(request.task_id,)).fetchall():
+                record=json.loads(raw)
+                for name,file in journal['files'].items():
+                    if name in record.get('file_hashes',{}):
+                        record['file_hashes'][name]=file['sha256']
+                        record['file_records'][name]={'path':changes[name]['path'],'identity':file['identity']}
+                c.execute('UPDATE archive_rounds SET payload=? WHERE id=?',(encoded(record),rid))
+            for change in candidate['updates']:
+                for rid,ordinal in change['parts']:
+                    part=json.loads(c.execute('SELECT payload FROM archive_parts WHERE round_id=? AND ordinal=?',(rid,ordinal)).fetchone()[0])
+                    size=len(change['projected_text'].encode('utf-8'))
+                    part.update(text_version_id=versions[change['file']],raw_sha256=sha(change['projected_text'].encode('utf-8')),
+                        raw_bytes=size,raw_end=size,export_end=part['export_start']+size,part_sha256=sha(change['projected_text'].encode('utf-8')))
+                    c.execute('UPDATE archive_parts SET payload=? WHERE round_id=? AND ordinal=?',(encoded(part),rid,ordinal))
+                for owner,raw in c.execute('SELECT owner,payload FROM archive_display_names WHERE parent=?',(str(Path(change['path']).parent).casefold(),)).fetchall():
+                    item=json.loads(raw)
+                    if item.get('path')==change['path']:
+                        item['identity']=journal['files'][change['file']]['identity']
+                        c.execute('UPDATE archive_display_names SET payload=? WHERE owner=?',(encoded(item),owner))
+            receipt={'status':'committed','plan_id':request.plan_id,'task_id':request.task_id,
+                     'repaired_count':len(candidate['updates']),'conflicts':candidate['conflicts'],
+                     'originals_preserved_in':'archive_source_link_repairs','fixed_versions_unchanged':True}
+            journal.update(status='committed',receipt=receipt)
+            c.execute('UPDATE archive_source_link_repairs SET payload=? WHERE plan_id=?',(encoded(journal),request.plan_id))
+        return receipt
+
+
 def _rewrite(value, source, destination, renames, field=''):
     if isinstance(value,dict):
         return {(renames.get(key,key) if field in {'file_hashes','file_records'} else key):

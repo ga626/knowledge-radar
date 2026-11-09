@@ -67,6 +67,18 @@ def test_wrapped_http_failure_preserves_safe_diagnostics(monkeypatch):
     assert 'never-echo-this' not in json.dumps(diagnostic)
 
 
+def test_http_diagnostic_redacts_url_userinfo_as_well_as_query():
+    from academic_providers.chinese_open_access import _fetch_diagnostic
+    response=httpx.Response(403, json={'code': 'FORBIDDEN'},
+        request=httpx.Request('GET','https://private-user:private-password@example.org/path?token=private-token'))
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        diagnostic=_fetch_diagnostic(exc)
+    assert diagnostic['request_origin']=='https://example.org/'
+    assert 'private-' not in json.dumps(diagnostic)
+
+
 def test_nstrs_explicit_restriction_uses_public_permission_fields(monkeypatch):
     from academic_providers.nstrs import NstrsProvider
     p = NstrsProvider()

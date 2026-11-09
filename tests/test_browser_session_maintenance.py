@@ -56,6 +56,17 @@ def test_reconciliation_rechecks_liveness_before_applying(tmp_path, monkeypatch)
     assert store.reconcile_stale_sessions()['reconciled_count'] == 0
 
 
+def test_process_observation_tracks_actual_child_exit():
+    import os,subprocess,sys
+    from runtime.process_identity import observe_process
+    current=observe_process(os.getpid())
+    assert current['status']=='alive' and current['identity'].startswith(str(os.getpid())+':')
+    child=subprocess.Popen([sys.executable,'-c','pass'],creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
+    child.wait(timeout=10)
+    assert observe_process(child.pid)['status']=='missing'
+    assert observe_process(None)['status']=='unknown'
+
+
 def test_browser_session_compaction_dry_run_does_not_delete_terminal_records(tmp_path):
     store = BrowserSessionStore(tmp_path / "sessions.json", tmp_path / "events.jsonl")
     store.upsert(platform="xhs", state="CLOSED", debug_port="101")

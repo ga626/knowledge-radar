@@ -45,7 +45,7 @@ def _fetch_diagnostic(exc):
     if isinstance(exc, httpx.HTTPStatusError):
         response = exc.response
         # 不保留query、Authorization、响应全文或任意上游message。
-        diagnostic['request_origin'] = str(response.request.url.copy_with(path='/', query=None, fragment=None))
+        diagnostic['request_origin'] = str(response.request.url.copy_with(username='', password='', path='/', query=None, fragment=None))
         retry = response.headers.get('Retry-After', '').strip()
         if retry.isdigit() and len(retry) <= 10:
             diagnostic['retry_after_seconds'] = int(retry)
