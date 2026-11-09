@@ -72,7 +72,9 @@ class NstrsProvider(ChineseOpenAccessProvider):
                 document_type='report',
                 full_text_status='delayed_publication' if row.get('publicScope') == 2 else 'registered_online_view_no_download',
                 verification_status='public_search_record',
-                raw={'query': request.query, 'id': row['id'], 'public_scope': row.get('publicScope'), 'fulltext_download_allowed': False})
+                raw={'query': request.query, 'id': row['id'], 'public_scope': row.get('publicScope'),
+                     'fulltext_download_allowed': False, 'download_allowed': False,
+                     'evidence_storage_allowed': False, 'cloud_processing_allowed': False})
         works = [work(row) for row in rows if isinstance(row, dict)]
         works = [item for item in works if item]
         return OpenAccessResults(works[:max(1, min(request.limit, 20))], [] if works else [

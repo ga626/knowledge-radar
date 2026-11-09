@@ -36,6 +36,53 @@ def test_wanfang_other_source_authorization_never_enables_paid_search():
     assert 'wanfang' in plan.provider_order
 
 
+def test_vip_reading_candidate_never_implies_open_access_or_obtained_fulltext():
+    from academic_providers.vip_oa import VipOpenAccessProvider
+    work = VipOpenAccessProvider()._work_from_search_result(
+        {'title': '人工智能', 'detail_url': 'https://www.cqvip.com/doc/journal/7203295942'},
+        AcademicSearchRequest('人工智能'))
+    assert work.raw['reading_url']
+    assert work.oa_status != 'open'
+    assert work.full_text_status == 'online_reading_candidate'
+    assert work.raw['entitlement_status'] == 'not_checked'
+
+
+def test_wrapped_http_failure_preserves_safe_diagnostics(monkeypatch):
+    response = httpx.Response(429, headers={'Retry-After': '120'},
+        json={'code': 'RATE_LIMIT', 'token': 'never-echo-this'},
+        request=httpx.Request('GET', 'https://example.org/search?api_key=never-echo-this'))
+    def search(request):
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            from academic_providers.openalex import OpenAlexError
+            raise OpenAlexError('upstream failed') from exc
+    monkeypatch.setattr(service, '_providers', lambda: {'openalex': SimpleNamespace(search=search)})
+    result = service.search_academic_metadata(AcademicSearchRequest('cancer', provider='openalex'))
+    diagnostic = result.error['details'][0]
+    assert diagnostic['http_status'] == 429
+    assert diagnostic['retry_after_seconds'] == 120
+    assert diagnostic['provider_code'] == 'RATE_LIMIT'
+    assert diagnostic['request_stage'] == 'search'
+    assert 'never-echo-this' not in json.dumps(diagnostic)
+
+
+def test_nstrs_explicit_restriction_uses_public_permission_fields(monkeypatch):
+    from academic_providers.nstrs import NstrsProvider
+    p = NstrsProvider()
+    monkeypatch.setattr(p, '_browser_search', lambda _: {'list': [{'id': 'r1', 'title': '人工智能'}]})
+    work = p.search(AcademicSearchRequest('人工智能'))[0]
+    assert work.raw['download_allowed'] is False
+    assert work.raw['evidence_storage_allowed'] is False
+
+
+def test_legacy_download_denial_cannot_be_lost_in_doi_merge():
+    a = AcademicWork('Paper', 'https://example.org/a', doi='10.1234/a', raw={'fulltext_download_allowed': False})
+    b = AcademicWork('Paper', 'https://example.org/b', doi=a.doi, raw={'download_allowed': True})
+    for items in ([a,b], [b,a]):
+        assert service._dedupe(items)[0].raw['download_allowed'] is False
+
+
 def test_wanfang_payment_failure_is_not_login_failure_and_leaks_no_account(monkeypatch):
     monkeypatch.setenv('WFDATA_ENABLED', 'true')
     monkeypatch.setenv('WFDATA_APP_KEY', 'never-echo-this')

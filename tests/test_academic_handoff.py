@@ -29,6 +29,36 @@ def test_fixed_card_excludes_observation_time_and_task_but_separates_versions():
     assert load_work(save_work(a)).version == '7'
 
 
+def test_legacy_permission_alias_blocks_inline_storage_and_cached_fulltext(monkeypatch):
+    from academic_providers.identity import save_work, load_work
+    from academic_providers.fulltext import extract_academic_fulltext
+    from use_cases.academic_fulltext import request_academic_fulltext, execute
+    work = AcademicWork('Restricted', 'https://example.org/p', source_database='nstrs',
+        raw={'fulltext_download_allowed': False, 'download_allowed': True, 'fulltext_text': 'restricted text'})
+    reference = save_work(work)
+    restored = load_work(reference)
+    assert restored.title == 'Restricted'  # Bibliographic cards remain allowed.
+    assert restored.raw['download_allowed'] is False
+    assert 'fulltext_inline_ref' not in restored.raw
+    result = extract_academic_fulltext('nstrs', work.url, work=work)
+    assert result.degraded_reason == 'academic_fulltext_permission_denied'
+    monkeypatch.setattr('use_cases.academic_fulltext._reuse', lambda _: pytest.fail('permission must precede cache'))
+    with pytest.raises(ValueError, match='permission_denied'):
+        request_academic_fulltext(reference)
+    with pytest.raises(ValueError, match='permission_denied'):
+        execute({'work_reference': reference['version_id']})
+
+
+def test_restored_old_task_checks_permissions_before_cache_lookup(monkeypatch):
+    from dataclasses import asdict
+    from use_cases.academic_fulltext import execute
+    work = AcademicWork('Restricted', 'https://example.org/p', source_database='nstrs',
+                        raw={'fulltext_download_allowed': False})
+    monkeypatch.setattr('use_cases.academic_fulltext._reuse', lambda _: pytest.fail('old payload bypassed permission gate'))
+    with pytest.raises(ValueError, match='permission_denied'):
+        execute({'work': asdict(work)})
+
+
 def test_search_cache_never_carries_another_research_task(monkeypatch):
     from academic_providers import service
     from runtime.tool_trace import current_tool_trace, set_current_tool_trace

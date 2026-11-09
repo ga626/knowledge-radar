@@ -49,13 +49,19 @@ def execute(payload):
     from runtime.leases import get_runtime_lease_coordinator, default_owner
     # 缓存复用和排队恢复都必须重新核固定卡片；已撤回来源不能凭旧正文绕过。
     from academic_providers.identity import load_work
+    from academic_providers.identity import normalized_permissions
+    from academic_providers.models import AcademicWork
     if payload.get('work_reference'):
         work = load_work(payload['work_reference'])
-        if work.raw.get('read_allowed') is False or work.raw.get('download_allowed') is False:
+    else:
+        work = AcademicWork(**{k:v for k,v in payload['work'].items() if k in {f.name for f in fields(AcademicWork)}})
+    permissions = normalized_permissions(work.raw)
+    if permissions:
+        if permissions.get('read_allowed') is False or permissions.get('download_allowed') is False:
             raise ValueError('academic_fulltext_permission_denied; metadata remains readable')
-        if work.raw.get('evidence_storage_allowed') is False:
+        if permissions.get('evidence_storage_allowed') is False:
             raise ValueError('academic_persistent_fulltext_not_authorized; metadata remains readable')
-        if work.raw.get('cloud_processing_allowed') is False:
+        if permissions.get('cloud_processing_allowed') is False:
             payload = {**payload, 'include_ocr': False,
                        'document': {**payload.get('document', {}), 'include_ocr': False}}
     key = content_hash({'reference':payload.get('work_reference') or payload.get('work'),

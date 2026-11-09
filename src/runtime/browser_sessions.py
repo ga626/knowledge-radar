@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from runtime.paths import runtime_log_dir, runtime_state_dir
+from runtime.process_identity import observe_process
 
 
 SCHEMA_VERSION = "knowledgeradar-browser-sessions/v1"
@@ -404,6 +405,10 @@ class BrowserSessionStore:
             session.last_activity_at = session.updated_at
             if metadata:
                 session.metadata.update(_sanitize_metadata(metadata))
+            if pid is not None and not (metadata or {}).get('process_identity'):
+                identity = observe_process(pid).get('identity')
+                if identity:
+                    session.metadata['process_identity'] = identity
             self._sessions[sid] = session
             self._persist()
             self._record_event(session, event, metadata)
@@ -462,6 +467,10 @@ class BrowserSessionStore:
                 session.last_probe_result = _sanitize_metadata(last_probe_result)
             if metadata:
                 session.metadata.update(_sanitize_metadata(metadata))
+            if pid is not None and not (metadata or {}).get('process_identity'):
+                identity = observe_process(pid).get('identity')
+                if identity:
+                    session.metadata['process_identity'] = identity
             if profile_id and metadata and metadata.get("account_recovery_pending") is False and last_probe_result and last_probe_result.get("status") == "ok" and not last_probe_result.get("manual_action_required"):
                 for previous in self._sessions.values():
                     if previous.profile_id == profile_id:
@@ -577,7 +586,7 @@ class BrowserSessionStore:
     def summary(self, recent_events_limit: int = 20) -> Dict[str, Any]:
         with self._lock:
             self._ensure_loaded()
-            sessions = [session.to_dict() for session in self._sessions.values()]
+            sessions = [self._observed_session(session) for session in self._sessions.values()]
         counts: Dict[str, int] = {}
         for session in sessions:
             counts[session.get("state") or "unknown"] = counts.get(session.get("state") or "unknown", 0) + 1
@@ -598,6 +607,46 @@ class BrowserSessionStore:
             "sessions": sorted(sessions, key=lambda item: item.get("updated_at") or 0, reverse=True)[:max(20, min(recent_events_limit, 200))],
             "recent_events": self.recent_events(recent_events_limit),
         }
+
+    @staticmethod
+    def _observed_session(session: BrowserSession) -> Dict[str, Any]:
+        row = session.to_dict()
+        if session.state in {'UNINITIALIZED', 'CLOSED', 'FAILED'} or not session.pid:
+            return row
+        observation = observe_process(session.pid)
+        expected = session.metadata.get('process_identity')
+        reason = ('process_missing' if observation['status'] == 'missing' else
+                  'process_generation_changed' if expected and observation.get('identity')
+                  and expected != observation['identity'] else '')
+        row['process_observation'] = observation['status']
+        if reason:
+            row.update(state='CLOSED', recorded_state=session.state, stale_reason=reason)
+            row['metadata']['account_recovery_pending'] = False
+        return row
+
+    def reconcile_stale_sessions(self, *, dry_run: bool = False) -> Dict[str, Any]:
+        """显式维护原账本；锁内重验，不关闭浏览器或触碰其他通道的交互。"""
+        with self._transaction():
+            stale = []
+            for session in self._sessions.values():
+                row = self._observed_session(session)
+                if not row.get('stale_reason'):
+                    continue
+                stale.append({'session_id': session.session_id, 'platform': session.platform,
+                              'previous_state': session.state, 'reason': row['stale_reason']})
+                if not dry_run:
+                    session.metadata.update(account_recovery_pending=False,
+                        stale_previous_state=session.state, stale_reason=row['stale_reason'])
+                    session.state = 'CLOSED'
+                    session.reason = row['stale_reason']
+                    session.deadline_at = None
+                    session.updated_at = now_ts()
+            if stale and not dry_run:
+                self._persist()
+                for row in stale:
+                    self._record_event(self._sessions[row['session_id']], 'stale_session_reconciled', row)
+            return {'action': 'dry_run' if dry_run else 'reconciled', 'stale_count': len(stale),
+                    'reconciled_count': 0 if dry_run else len(stale), 'sessions': stale}
 
 
 _STORE = BrowserSessionStore()
