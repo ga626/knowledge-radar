@@ -5,6 +5,7 @@ from contextlib import closing
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -30,6 +31,10 @@ def _connect(path):
     db.execute("CREATE TABLE IF NOT EXISTS seen_events (event_id TEXT PRIMARY KEY, at TEXT)")
     db.execute("CREATE TABLE IF NOT EXISTS observation_totals (name TEXT PRIMARY KEY, value INTEGER NOT NULL)")
     db.execute("CREATE TABLE IF NOT EXISTS task_observations (task_key TEXT PRIMARY KEY, revision INTEGER, state TEXT, project_key TEXT, updated_at TEXT)")
+    columns = {r[1] for r in db.execute('PRAGMA table_info(task_observations)')}
+    for name in ('delivery_state', 'audit_reason'):
+        if name not in columns:
+            db.execute(f"ALTER TABLE task_observations ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
     db.execute("CREATE TABLE IF NOT EXISTS candidate_members (event_id TEXT PRIMARY KEY, candidate_id TEXT, trace_id TEXT, at TEXT, task_key TEXT, semantic_classification TEXT)")
     db.execute("CREATE INDEX IF NOT EXISTS member_cluster ON candidate_members(candidate_id)")
     return db
@@ -63,12 +68,24 @@ def observe_task(payload, path=None):
     if not key:
         return
     revision = int(payload.get('revision') or 0)
-    state = payload.get('status') if payload.get('status') in {'open', 'closed', 'cancelled', 'completed', 'stopped', 'finalized'} else 'other'
+    state = payload.get('status') if payload.get('status') in {'open', 'closed', 'closed_with_gaps', 'recorded', 'recorded_with_gaps', 'cancelled', 'completed', 'stopped', 'finalized'} else 'other'
     project = _key((payload.get('project_context') or {}).get('project_id') or payload.get('project_id'))
     at = datetime.now(timezone.utc)
     with closing(_connect(path or candidate_path())) as db, db:
-        db.execute('INSERT INTO task_observations VALUES (?,?,?,?,?) ON CONFLICT(task_key) DO UPDATE SET revision=excluded.revision,state=excluded.state,project_key=CASE WHEN excluded.project_key!=\'\' THEN excluded.project_key ELSE project_key END,updated_at=excluded.updated_at WHERE excluded.revision>revision',
-                   (key, revision, state, project, at.isoformat()))
+        excluded = {s.strip() for s in os.environ.get('KR_EVALUATION_EXCLUDED_PROJECTS','').split(',') if s.strip()}
+        project_id=(payload.get('project_context') or {}).get('project_id') or payload.get('project_id')
+        if payload.get('evaluation_excluded') is True or os.environ.get('KR_EVALUATION_OBSERVATION')=='off' or project_id in excluded:
+            db.execute('DELETE FROM task_observations WHERE task_key=?',(key,))
+            _count(db,'excluded_task_updates')
+            return
+        closeout = payload.get('closeout') or {}
+        facts=closeout.get('completion_facts') or closeout
+        delivery = facts.get('delivery') if facts.get('delivery') in {'delivered','pending','conflict','unavailable','not_configured'} else 'unknown'
+        gap = state != 'open' and delivery in {'pending','conflict','unavailable'}
+        sampled = state != 'open' and int(key[:8],16)%100==0
+        reason = 'delivery_missing' if gap else 'success_semantic_sample' if sampled else ''
+        db.execute('INSERT INTO task_observations VALUES (?,?,?,?,?,?,?) ON CONFLICT(task_key) DO UPDATE SET revision=excluded.revision,state=excluded.state,project_key=CASE WHEN excluded.project_key!=\'\' THEN excluded.project_key ELSE project_key END,updated_at=excluded.updated_at,delivery_state=excluded.delivery_state,audit_reason=excluded.audit_reason WHERE excluded.revision>revision',
+                   (key, revision, state, project, at.isoformat(),delivery,reason))
         _prune(db, at)
 
 
@@ -94,8 +111,15 @@ def observation_summary(path=None):
         if 'task_observations' in tables:
             result['task_states'] = dict(db.execute('SELECT state,count(*) FROM task_observations GROUP BY state'))
             result['observed_tasks'] = sum(result['task_states'].values())
+            columns = {r[1] for r in db.execute('PRAGMA table_info(task_observations)')}
+            if 'audit_reason' in columns:
+                result['delivery_gaps'] = db.execute("SELECT count(*) FROM task_observations WHERE audit_reason='delivery_missing'").fetchone()[0]
+                result['task_audits_pending'] = db.execute("SELECT count(*) FROM task_observations WHERE audit_reason!=''").fetchone()[0]
         result['candidate_clusters'] = db.execute('SELECT count(*) FROM candidates').fetchone()[0]
-        result['pending_clusters'] = db.execute('SELECT count(*) FROM candidates WHERE review IS NULL').fetchone()[0]
+        result['pending_clusters'] = db.execute("SELECT count(*) FROM candidates WHERE review IS NULL OR json_extract(review,'$.decision') IN ('needs_evidence','disputed')").fetchone()[0]
+        oldest = db.execute('SELECT min(first_at) FROM candidates WHERE review IS NULL').fetchone()[0]
+        result['oldest_pending_at'] = oldest
+        result['expired_unreviewed_clusters'] = db.execute('SELECT count(*) FROM candidates WHERE review IS NULL AND last_at < ?', ((datetime.now(timezone.utc)-timedelta(days=RETENTION_DAYS)).isoformat(),)).fetchone()[0]
     return result
 
 
@@ -140,7 +164,9 @@ def record_candidate(event, path=None):
         # 每类一个候选；保留一个低敏trace引用，不保存输入/URL/异常文本/账号。
         db.execute("INSERT INTO candidates VALUES (?,?,?,?,?,?,1,?,NULL) ON CONFLICT(candidate_id) DO UPDATE SET first_at=min(first_at,excluded.first_at), last_at=max(last_at,excluded.last_at), occurrences=occurrences+1, trace_id=CASE WHEN excluded.last_at>=last_at THEN excluded.trace_id ELSE trace_id END",
                    (key, tool, family, "representative_sample" if success else "failure_enriched", observed.isoformat(), observed.isoformat(), trace))
-        db.execute('INSERT INTO candidate_members VALUES (?,?,?,?,?,?)', (event_id, key, trace, observed.isoformat(), _key(metadata.get('research_task_id')), 'unreviewed'))
+        task_key = str(metadata.get('research_task_key') or '')
+        task_key = task_key if re.fullmatch('[a-f0-9]{24}',task_key) else _key(metadata.get('research_task_id'))
+        db.execute('INSERT INTO candidate_members VALUES (?,?,?,?,?,?)', (event_id, key, trace, observed.isoformat(), task_key, 'unreviewed'))
         _prune(db, at)
 
 

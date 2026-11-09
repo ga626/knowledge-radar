@@ -162,7 +162,7 @@ def _handler_factory(server: WizardServer):
                     from runtime.evaluation_maintenance import Maintenance, EvaluationRead
                     try:
                         query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
-                        if set(query)-{'view','after','limit'} or any(len(v)!=1 for v in query.values()):
+                        if set(query)-{'view','after','limit','case_id','example_index','role','start','max_chars'} or any(len(v)!=1 for v in query.values()):
                             raise ValueError('invalid_pagination')
                         request = EvaluationRead(action='evaluation', **{k:v[0] for k,v in query.items()})
                         self._send_json(HTTPStatus.OK, Maintenance().read(request))

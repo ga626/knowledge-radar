@@ -27,6 +27,7 @@ def test_frontend_has_four_review_views_no_polling_or_score_edits(monkeypatch):
     page = render_console_page('token')
     for label in ['当前水平','题库与变更','抽查与纠错','趋势比较','复制纠错请求']:
         assert label in page
+    assert '生命周期分布' in page and '可运行性分布' in page
     script = (Path(__file__).resolve().parents[2]/'src/onboarding/static/evaluation_summary.js').read_text(encoding='utf-8')
     assert 'setInterval' not in script and 'setTimeout' not in script
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from .evaluation_maintenance import hashes
 
 
-def evaluate_trial(value):
+def evaluate_trial(value, *, native_run_verified=False):
     identity = value['identity']
     required = {'case_revision', 'rubric', 'judge', 'skill', 'profile', 'source_commit', 'session_id', 'trial_id', 'inputs'}
     if not required <= identity.keys() or any(not identity[k] for k in required):
@@ -25,16 +25,18 @@ def evaluate_trial(value):
     if check.get('contamination') == 'authorized_reuse' and identity['profile'] != 'knowledge_reuse':
         validity, reasons = 'INVALID', ['reuse_outside_profile']
     if not check.get('input_verified') or not check.get('oracle_verified'):
-        validity, reasons = 'UNVERIFIED', [*reasons,'input_or_oracle_unverified']
-    profile = identity['profile']
-    if profile == 'cold_replay' and check.get('isolation') != 'enforced_access_receipt':
         if validity != 'INVALID': validity = 'UNVERIFIED'
-        reasons.append('prompt_is_not_access_isolation')
+        reasons.append('input_or_oracle_unverified')
+    profile = identity['profile']
+    # 当前宿主没有可核验的工具访问隔离回执，调用者自填布尔不能提升为冷盲测。
+    if profile == 'cold_replay':
+        if validity != 'INVALID': validity = 'UNVERIFIED'
+        reasons.append('host_access_isolation_not_verified')
     if profile == 'installed_live':
         expected, observed = check.get('expected_artifact'), check.get('observed_artifact')
         if not expected or not observed or expected != observed:
             validity = 'INVALID'; reasons.append('installed_identity_mismatch')
-        elif check.get('isolation') != 'native_receipt':
+        elif check.get('isolation') != 'native_receipt' or not native_run_verified:
             if validity != 'INVALID': validity = 'UNVERIFIED'
             reasons.append('native_receipt_missing')
     applicable = [r for r in criteria if r['verdict'] != 'NOT_APPLICABLE']
@@ -50,6 +52,8 @@ def compare_trials(before, after):
     a,b = before['identity'],after['identity']
     fixed = ('case_revision','rubric','judge','skill','profile','inputs')
     changed = [k for k in fixed if a.get(k) != b.get(k)]
+    if before.get('case_id') != after.get('case_id'):
+        changed.append('case_id')
     independent = bool(a.get('session_id') and b.get('session_id') and a['session_id'] != b['session_id'])
     return {'comparable':not changed, 'changed_contracts':changed, 'independent':independent,
             'boundary':'paired_anchor_only_no_aggregate_improvement_claim',

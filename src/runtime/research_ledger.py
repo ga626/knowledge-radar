@@ -1090,3 +1090,17 @@ def repair_pending_projections(limit=20):
                 marker.unlink(missing_ok=True)
                 repaired += 1
     return repaired
+
+
+def repair_pending_evaluation_observations(limit=20):
+    """显式补索引，不重跑工具，也不后台轮询。"""
+    from .evaluation_candidates import observe_task
+    repaired=0
+    for marker in sorted((runtime_state_dir()/'research_tasks').glob('*.evaluation-pending'))[:max(0,min(20,limit))]:
+        with _ledger_guard(marker.stem):
+            payload=_read(marker.stem)
+            if payload:
+                observe_task(payload)
+                marker.unlink(missing_ok=True)
+                repaired+=1
+    return {'repaired':repaired,'remaining_visible':sum(1 for _ in (runtime_state_dir()/'research_tasks').glob('*.evaluation-pending'))}

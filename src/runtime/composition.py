@@ -2898,14 +2898,14 @@ from runtime.research_index import ResearchRequest
 
 @application_tool(group="research")
 def update_research(request: ResearchRequest) -> Dict:
-    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
+    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)
 
 
 @application_tool( group="knowledge", read_only=True)
 def read_knowledge(request: ReadRequest) -> ReadResult:
-    """检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。"""
+    """检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。action=evaluation读取评测观察、候选、维护谱系、等待Agent队列和题卡样本片段；只读，不启动评测。"""
     from runtime.knowledge import read
     return read(request)
 

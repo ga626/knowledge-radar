@@ -11,7 +11,7 @@ import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from .evaluation_candidates import (_connect, _readonly, candidate_path, list_candidates,
+from .evaluation_candidates import (_connect, _readonly, _prune, candidate_path, list_candidates,
                                     observation_summary, candidate_members)
 
 
@@ -48,8 +48,13 @@ def hashes(values):
 class EvaluationRead(BaseModel):
     model_config = ConfigDict(extra='forbid')
     action: Literal['evaluation']
-    view: Literal['overview', 'cases', 'changes', 'feedback', 'queue', 'candidates', 'members'] = 'overview'
+    view: Literal['overview', 'cases', 'changes', 'feedback', 'queue', 'candidates', 'members', 'example'] = 'overview'
     candidate_id: str = Field(default='', max_length=128)
+    case_id: str = Field(default='', max_length=128)
+    example_index: int = Field(default=0, ge=0, le=99)
+    role: Literal['input_hash', 'bad_hash', 'good_hash'] = 'input_hash'
+    start: int = Field(default=0, ge=0)
+    max_chars: int = Field(default=4000, ge=1, le=8000)
     after: int = Field(default=0, ge=0)
     limit: int = Field(default=20, ge=1, le=100)
 
@@ -57,11 +62,12 @@ class EvaluationRead(BaseModel):
 class EvaluationWrite(BaseModel):
     model_config = ConfigDict(extra='forbid')
     action: Literal['evaluation'] = 'evaluation'
-    operation: Literal['upsert', 'state', 'merge', 'compensate', 'lock', 'unlock', 'resolve_feedback', 'review_candidate']
+    operation: Literal['upsert', 'state', 'merge', 'compensate', 'lock', 'unlock', 'resolve_feedback', 'review_candidate', 'review_task_audit', 'report_signal']
     case_id: str = Field(pattern=r'^[A-Za-z0-9_.:-]{1,128}$')
     expected_revision: int = Field(ge=0)
     request_id: str = Field(pattern=r'^[A-Za-z0-9_.:-]{1,128}$')
     actor: str = Field(min_length=1, max_length=128)
+    context_id: str = Field(default='unknown', min_length=1, max_length=128)
     rule_version: str = Field(min_length=1, max_length=128)
     skill_version: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
@@ -76,6 +82,9 @@ class EvaluationWrite(BaseModel):
     change_id: str = Field(default='', max_length=128)
     feedback_id: str = Field(default='', max_length=128)
     candidate_id: str = Field(default='', max_length=128)
+    task_key: str = Field(default='', max_length=128)
+    reopen_when: str = Field(default='', max_length=2000)
+    signal: dict = Field(default_factory=dict)
     disposition: Literal['', 'linked_existing_case', 'rejected', 'needs_evidence', 'disputed'] = ''
     human: bool = False
 
@@ -116,6 +125,8 @@ def independent_review(req):
     if not review.get('reviewer') or review['reviewer'] == req.actor or review.get('verdict') != 'accepted':
         raise ValueError('independent_review_required')
     hashes(review.get('evidence'))
+    if req.context_id == 'unknown' or not review.get('context_id') or review['context_id'] == req.context_id:
+        raise ValueError('independent_context_required_not_renamed_same_session')
 
 
 class Maintenance:
@@ -127,13 +138,13 @@ class Maintenance:
         root = Path(os.environ.get('KR_PROJECT_ROOT') or Path(__file__).resolve().parents[2])
         self.asset_root = Path(asset_root or evaluation_store(root)/'assets')
 
-    def validate_assets(self, card):
+    def validate_assets(self, card, *, verify=True):
         for ex in card['examples']:
             for field in ('input_hash', 'good_hash', 'bad_hash'):
                 if not ex.get(field):
                     continue
                 path = self.asset_root / (ex[field] + '.asset')
-                if not path.is_file() or path.stat().st_size > 2*1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest() != ex[field]:
+                if not path.is_file() or path.stat().st_size > 2*1024*1024 or (verify and hashlib.sha256(path.read_bytes()).hexdigest() != ex[field]):
                     raise ValueError('fixed_asset_missing_or_corrupt')
 
     @contextmanager
@@ -201,6 +212,8 @@ class Maintenance:
                     'lifecycle': (old or {}).get('lifecycle', 'shadow'), 'frequency': (old or {}).get('frequency', 'affected'),
                     'runnability': (old or {}).get('runnability', 'ready'), 'locked': (old or {}).get('locked', False),
                     'confidence': 'agent_reviewed', 'admitted_by': req.actor, 'review': req.review}
+                if after[req.case_id]['lifecycle']=='active':
+                    self.validate_assets(after[req.case_id])
             elif op == 'state':
                 if not old or set(req.patch) - {'lifecycle', 'frequency', 'runnability'}:
                     raise ValueError('state_axes_required')
@@ -230,6 +243,8 @@ class Maintenance:
                     raise ValueError('merge_target_revision_conflict')
                 if target.get('locked') or any(c['lifecycle'] in {'merged_archive', 'retired_archive'} for c in (old, target)):
                     raise ValueError('merge_locked_or_archived')
+                if target['layer']!=old['layer']:
+                    raise ValueError('merge_cross_layer_not_supported')
                 if set(req.coverage_map) != set(old['coverage']) or not set(req.coverage_map.values()) <= set(target['coverage']):
                     raise ValueError('independent_coverage_mapping_required')
                 before[req.target_id] = target
@@ -238,6 +253,7 @@ class Maintenance:
                 after[req.target_id] = {**target, 'revision': target['revision'] + 1, 'examples': list(examples.values()),
                     'coverage': sorted(set(target['coverage']) | set(old['coverage'])),
                     'critical': old['critical'] or target['critical'],
+                    'dependencies':sorted(set(old.get('dependencies',[])) | set(target.get('dependencies',[]))),
                     'aliases': sorted(set(target.get('aliases', [])) | {old['case_id']})}
             elif op == 'compensate':
                 if not req.human:
@@ -277,10 +293,31 @@ class Maintenance:
                     raise ValueError('candidate_and_disposition_required')
                 if req.disposition == 'linked_existing_case' and not old:
                     raise ValueError('linked_case_required')
-                if row[0]:
+                prior = json.loads(row[0]) if row[0] else {}
+                if prior and prior.get('decision') not in {'needs_evidence','disputed'}:
                     raise ValueError('candidate_already_reviewed')
+                if req.disposition in {'needs_evidence','disputed','rejected'} and not req.reopen_when:
+                    raise ValueError('reopen_condition_required')
                 if req.mode == 'apply':
-                    db.execute('UPDATE candidates SET review=? WHERE candidate_id=?', (encoded({'decision':req.disposition, 'case_id':req.case_id if old else '', 'reason':req.reason, 'evidence':req.evidence, 'reviewer':req.actor, 'at':now(), 'gold_promoted':False}), req.candidate_id))
+                    db.execute('UPDATE candidates SET review=? WHERE candidate_id=?', (encoded({'decision':req.disposition, 'case_id':req.case_id if old else '', 'reason':req.reason, 'evidence':req.evidence, 'reviewer':req.actor, 'at':now(), 'gold_promoted':False, 'reopen_when':req.reopen_when, 'previous':prior}), req.candidate_id))
+            elif op == 'report_signal':
+                signal=req.signal
+                if set(signal)!={'tool','trace_id','family'} or not re.fullmatch('[a-z][a-z0-9_]{0,80}',str(signal.get('tool',''))) or not re.fullmatch('[a-f0-9]{16,64}',str(signal.get('trace_id',''))) or signal.get('family') not in {'irrelevant_content','wrong_citation','incomplete_body','missing_delivery','normal_boundary','suspected_false_success'}:
+                    raise ValueError('bounded_semantic_signal_required')
+                cid=digest(['agent_signal',signal['tool'],signal['family']])[:24]
+                stamp=now()
+                if req.mode=='apply':
+                    db.execute('INSERT INTO candidates VALUES (?,?,?,?,?,?,1,?,NULL) ON CONFLICT(candidate_id) DO UPDATE SET last_at=excluded.last_at,occurrences=occurrences+1,trace_id=excluded.trace_id',
+                               (cid,signal['tool'],signal['family'],'agent_signal',stamp,stamp,signal['trace_id']))
+                    event_id=digest(payload)
+                    db.execute('INSERT INTO seen_events VALUES (?,?)', (event_id,stamp))
+                    db.execute('INSERT INTO candidate_members VALUES (?,?,?,?,?,?)', (event_id,cid,signal['trace_id'],stamp,'','agent_reported'))
+                    _prune(db,datetime.fromisoformat(stamp))
+            elif op == 'review_task_audit':
+                if not req.reopen_when or not req.task_key or not db.execute('SELECT 1 FROM task_observations WHERE task_key=?',(req.task_key,)).fetchone():
+                    raise ValueError('task_audit_and_reopen_condition_required')
+                if req.mode == 'apply':
+                    db.execute("UPDATE task_observations SET audit_reason='' WHERE task_key=?",(req.task_key,))
             if req.mode == 'apply':
                 for row in after.values():
                     self._put(db, row)
@@ -329,23 +366,56 @@ class Maintenance:
                 result[key+'_total'] = db.execute(f'SELECT count(*) FROM {table}').fetchone()[0]
             if 'evaluation_rules' in tables:
                 result['rules'] = [dict(r) for r in db.execute('SELECT * FROM evaluation_rules ORDER BY rule_version LIMIT 100')]
-        result['health'] = {k: dict(Counter(c[k] for c in result['cases'])) for k in ('lifecycle', 'frequency', 'runnability')}
+            if 'evaluation_cards' in tables:
+                result['health']={k:dict(db.execute(f"SELECT json_extract(body,'$.{k}'),count(*) FROM evaluation_cards GROUP BY json_extract(body,'$.{k}')")) for k in ('lifecycle','frequency','runnability')}
+        result.setdefault('health',{})
+        for card in result['cases']:
+            try:
+                self.validate_assets(card,verify=False)
+                card['effective_runnability'] = card['runnability']
+            except (OSError,ValueError):
+                card['effective_runnability'] = 'input_invalid'
+            card['asset_integrity_check']='activation_and_trial_only'
         result['truncated'] = any(result.get(k+'_total',0) > after+limit for k in ('cases','changes','feedback'))
         return result
 
     def work_batch(self, *, limit=20, max_seconds=120, max_cost=0):
         limit = max(0,min(20,int(limit)))
-        view = self.view()
-        items = [{'kind':'feedback', **r} for r in view['feedback'] if r['status'] == 'waiting_for_agent']
-        items += [{'kind':'candidate', **r} for r in list_candidates(self.path) if not r['review']]
-        return {'status':'waiting_for_agent', 'items':items[:limit], 'pending_visible':len(items),
+        items, total = [], 0
+        if self.path.is_file():
+            with closing(_readonly(self.path)) as db:
+                tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+                if 'evaluation_feedback' in tables:
+                    where="json_extract(body,'$.status')='waiting_for_agent'"
+                    total += db.execute('SELECT count(*) FROM evaluation_feedback WHERE '+where).fetchone()[0]
+                    items += [{'kind':'feedback',**json.loads(r[0])} for r in db.execute('SELECT body FROM evaluation_feedback WHERE '+where+' ORDER BY rowid LIMIT 20')]
+                columns = {r[1] for r in db.execute('PRAGMA table_info(task_observations)')}
+                if 'audit_reason' in columns:
+                    total += db.execute("SELECT count(*) FROM task_observations WHERE audit_reason!=''").fetchone()[0]
+                    items += [{'kind':'task_audit',**dict(r)} for r in db.execute("SELECT * FROM task_observations WHERE audit_reason!='' ORDER BY updated_at LIMIT 20")]
+        candidate_items=[{'kind':'candidate', **r} for r in list_candidates(self.path) if not r['review'] or json.loads(r['review']).get('decision') in {'needs_evidence','disputed'}]
+        total+=len(candidate_items);items+=candidate_items
+        return {'status':'waiting_for_agent', 'items':items[:limit], 'pending_visible':total,
                 'limit':limit, 'max_seconds':max(0,min(600,int(max_seconds))), 'max_cost':max(0,float(max_cost)),
                 'checkpoint':digest([(r['kind'],r.get('candidate_id') or r.get('feedback_id')) for r in items[:limit]]),
                 'boundary':'read_only_no_claim_no_model_no_external_calls'}
 
     def read(self, request):
         req = request if isinstance(request, EvaluationRead) else EvaluationRead.model_validate(request)
-        if req.view == 'queue':
+        if req.view == 'example':
+            identifier(req.case_id)
+            if not self.path.is_file(): raise ValueError('unknown_case')
+            with closing(_readonly(self.path)) as db:
+                card=self._case(db,req.case_id)
+            if not card or req.example_index>=len(card['examples']): raise ValueError('unknown_case_example')
+            checksum=card['examples'][req.example_index].get(req.role)
+            if not checksum: raise ValueError('example_role_unavailable')
+            self.validate_assets(card)
+            text=(self.asset_root/(checksum+'.asset')).read_text(encoding='utf-8-sig')
+            excerpt=text[req.start:req.start+req.max_chars]
+            end=req.start+len(excerpt)
+            data={'text':excerpt,'sha256':checksum,'start':req.start,'next_start':end if end<len(text) else None,'total_chars':len(text)}
+        elif req.view == 'queue':
             data = self.work_batch(limit=req.limit)
         elif req.view == 'candidates':
             rows = list_candidates(self.path)

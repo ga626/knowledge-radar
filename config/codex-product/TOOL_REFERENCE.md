@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`7ff7dfae33e051fd8cccda69923579f2a193c8516f9cccd25afd688c27a0b7e0`
+合同指纹：`3927520d66818f99d58e4f94ac64dbf63f5d02d87bdb5d0789630da3c4b27a11`
 
 ## advance_research_candidate
 
@@ -6015,7 +6015,7 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
 
 ## read_knowledge
 
-检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。
+检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。action=evaluation读取评测观察、候选、维护谱系、等待Agent队列和题卡样本片段；只读，不启动评测。
 
 ```json
 {
@@ -6159,6 +6159,91 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
   },
   "input": {
     "$defs": {
+      "EvaluationRead": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "evaluation",
+            "title": "Action",
+            "type": "string"
+          },
+          "after": {
+            "default": 0,
+            "minimum": 0,
+            "title": "After",
+            "type": "integer"
+          },
+          "candidate_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "case_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Case Id",
+            "type": "string"
+          },
+          "example_index": {
+            "default": 0,
+            "maximum": 99,
+            "minimum": 0,
+            "title": "Example Index",
+            "type": "integer"
+          },
+          "limit": {
+            "default": 20,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          },
+          "max_chars": {
+            "default": 4000,
+            "maximum": 8000,
+            "minimum": 1,
+            "title": "Max Chars",
+            "type": "integer"
+          },
+          "role": {
+            "default": "input_hash",
+            "enum": [
+              "input_hash",
+              "bad_hash",
+              "good_hash"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "start": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Start",
+            "type": "integer"
+          },
+          "view": {
+            "default": "overview",
+            "enum": [
+              "overview",
+              "cases",
+              "changes",
+              "feedback",
+              "queue",
+              "candidates",
+              "members",
+              "example"
+            ],
+            "title": "View",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "EvaluationRead",
+        "type": "object"
+      },
       "Fetch": {
         "additionalProperties": false,
         "properties": {
@@ -6417,6 +6502,7 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
       "request": {
         "discriminator": {
           "mapping": {
+            "evaluation": "#/$defs/EvaluationRead",
             "fetch": "#/$defs/Fetch",
             "research": "#/$defs/ResearchRead",
             "search": "#/$defs/Search"
@@ -6432,6 +6518,9 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
           },
           {
             "$ref": "#/$defs/ResearchRead"
+          },
+          {
+            "$ref": "#/$defs/EvaluationRead"
           }
         ],
         "title": "Request"
@@ -9182,7 +9271,7 @@ YouTube 公开视频搜索。
 
 ## update_research
 
-记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
+记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
 
 ```json
 {
@@ -9866,6 +9955,194 @@ YouTube 公开视频搜索。
           "basis"
         ],
         "title": "Dependency",
+        "type": "object"
+      },
+      "EvaluationWrite": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "evaluation",
+            "default": "evaluation",
+            "title": "Action",
+            "type": "string"
+          },
+          "actor": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Actor",
+            "type": "string"
+          },
+          "candidate_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "card": {
+            "additionalProperties": true,
+            "title": "Card",
+            "type": "object"
+          },
+          "case_id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Case Id",
+            "type": "string"
+          },
+          "change_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Change Id",
+            "type": "string"
+          },
+          "context_id": {
+            "default": "unknown",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Context Id",
+            "type": "string"
+          },
+          "coverage_map": {
+            "additionalProperties": true,
+            "title": "Coverage Map",
+            "type": "object"
+          },
+          "disposition": {
+            "default": "",
+            "enum": [
+              "",
+              "linked_existing_case",
+              "rejected",
+              "needs_evidence",
+              "disputed"
+            ],
+            "title": "Disposition",
+            "type": "string"
+          },
+          "evidence": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Evidence",
+            "type": "array"
+          },
+          "expected_revision": {
+            "minimum": 0,
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "feedback_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Feedback Id",
+            "type": "string"
+          },
+          "human": {
+            "default": false,
+            "title": "Human",
+            "type": "boolean"
+          },
+          "mode": {
+            "default": "apply",
+            "enum": [
+              "apply",
+              "shadow"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "operation": {
+            "enum": [
+              "upsert",
+              "state",
+              "merge",
+              "compensate",
+              "lock",
+              "unlock",
+              "resolve_feedback",
+              "review_candidate",
+              "review_task_audit",
+              "report_signal"
+            ],
+            "title": "Operation",
+            "type": "string"
+          },
+          "patch": {
+            "additionalProperties": true,
+            "title": "Patch",
+            "type": "object"
+          },
+          "reason": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Reason",
+            "type": "string"
+          },
+          "reopen_when": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Reopen When",
+            "type": "string"
+          },
+          "request_id": {
+            "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "review": {
+            "additionalProperties": true,
+            "title": "Review",
+            "type": "object"
+          },
+          "rule_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Rule Version",
+            "type": "string"
+          },
+          "signal": {
+            "additionalProperties": true,
+            "title": "Signal",
+            "type": "object"
+          },
+          "skill_version": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Skill Version",
+            "type": "string"
+          },
+          "target_id": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Target Id",
+            "type": "string"
+          },
+          "target_revision": {
+            "default": 0,
+            "minimum": 0,
+            "title": "Target Revision",
+            "type": "integer"
+          },
+          "task_key": {
+            "default": "",
+            "maxLength": 128,
+            "title": "Task Key",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation",
+          "case_id",
+          "expected_revision",
+          "request_id",
+          "actor",
+          "rule_version",
+          "skill_version",
+          "reason",
+          "evidence"
+        ],
+        "title": "EvaluationWrite",
         "type": "object"
       },
       "EvidenceRef": {
@@ -10946,6 +11223,7 @@ YouTube 公开视频搜索。
             "claim": "#/$defs/ClaimWrite",
             "coverage": "#/$defs/CoverageWrite",
             "decision": "#/$defs/ResearchWrite",
+            "evaluation": "#/$defs/EvaluationWrite",
             "exploration": "#/$defs/ExplorationWrite",
             "exploration_disposition": "#/$defs/ExplorationDisposition",
             "fold": "#/$defs/ResearchWrite",
@@ -11003,6 +11281,9 @@ YouTube 公开视频搜索。
           },
           {
             "$ref": "#/$defs/InvestigationWrite"
+          },
+          {
+            "$ref": "#/$defs/EvaluationWrite"
           }
         ],
         "title": "Request"

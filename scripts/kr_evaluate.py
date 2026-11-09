@@ -35,6 +35,8 @@ def main(argv=None):
     trial_parser.add_argument('request', type=Path)
     feedback_parser = sub.add_parser('evaluation-feedback')
     feedback_parser.add_argument('request', type=Path)
+    maintenance_demo_parser = sub.add_parser('maintenance-demo')
+    maintenance_demo_parser.add_argument('--output',type=Path,required=True)
     history_parser = sub.add_parser("import-history")
     history_parser.add_argument("source", type=Path)
     dataset_parser = sub.add_parser("import-speech-dataset")
@@ -78,7 +80,11 @@ def main(argv=None):
     try:
         suite = load_suite(root, args.suite)
         exit_code = 0
-        if args.command in {'maintenance-status','maintenance-queue','maintain','evaluation-asset','quality-trial','evaluation-feedback'}:
+        if args.command=='maintenance-demo':
+            from scripts.kr_eval.maintenance_demo import demonstrate
+            result=demonstrate(args.output)
+            exit_code=int(result['status']!='PASS')
+        elif args.command in {'maintenance-status','maintenance-queue','maintain','evaluation-asset','quality-trial','evaluation-feedback'}:
             from runtime.evaluation_maintenance import Maintenance
             from scripts.kr_eval.maintenance import import_asset, record_trial
             manager = Maintenance(args.candidate_store, asset_root=ledger.path/'assets')
@@ -102,6 +108,10 @@ def main(argv=None):
             exit_code = 0 if result["gate"] == "PASS" else 1
         elif args.command == "plan":
             result = plan(root, suite, ledger)
+            from scripts.kr_eval.maintenance import plan_quality
+            from scripts.kr_eval.core import snapshot
+            from runtime.evaluation_maintenance import Maintenance
+            result['quality_maintenance']=plan_quality(Maintenance(args.candidate_store),ledger,snapshot(root))
         elif args.command == "history":
             result = [{"run_id": row["run_id"], "at": row["finished_at"], "counts": row["counts"], "identity": row["snapshot"]["content_hash"]} for row in ledger.history()]
         elif args.command == "compare":

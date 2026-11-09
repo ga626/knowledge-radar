@@ -2350,6 +2350,158 @@
         "tests/test_asr_language_contract.py"
       ],
       "success": "微信真实缺陷与公共合同回归：验证页不存正文、候选不丢、正文固定版本、媒体覆盖/中断恢复、附件完整性、借用浏览器所有权；不冒充真实平台或原生MCP验收。"
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "evidence.integrity"
+      ],
+      "executor": "pytest",
+      "layer": "fixture",
+      "auto": true,
+      "dependencies": [
+        "src/runtime/evaluation_*.py",
+        "src/runtime/research_ledger.py",
+        "src/runtime/tool_trace.py",
+        "src/runtime/knowledge.py",
+        "src/runtime/research_index.py",
+        "src/onboarding/static/evaluation*",
+        "src/onboarding/console_page.py",
+        "src/onboarding/setup_wizard.py",
+        "scripts/kr_eval/*.py",
+        "scripts/kr_evaluate.py",
+        "tests/evaluation/test_maintenance*.py",
+        "config/evaluation/cases.json"
+      ],
+      "case_id": "evaluation.maintenance",
+      "nodes": [
+        "tests/evaluation/test_maintenance.py"
+      ],
+      "timeout_seconds": 120,
+      "success": "Distinct task/tool/candidate/trial denominators, bounded observation, independent admission, optimistic atomic changes, reversible merges, user correction and immutable quality trials."
+    },
+    {
+      "version": 1,
+      "oracle_version": 1,
+      "capabilities": [
+        "evidence.integrity"
+      ],
+      "executor": "pytest",
+      "layer": "fixture",
+      "auto": true,
+      "dependencies": [
+        "src/runtime/evaluation_*.py",
+        "src/runtime/research_ledger.py",
+        "src/runtime/tool_trace.py",
+        "src/runtime/knowledge.py",
+        "src/runtime/research_index.py",
+        "src/onboarding/static/evaluation*",
+        "src/onboarding/console_page.py",
+        "src/onboarding/setup_wizard.py",
+        "scripts/kr_eval/*.py",
+        "scripts/kr_evaluate.py",
+        "tests/evaluation/test_maintenance*.py",
+        "config/evaluation/cases.json"
+      ],
+      "case_id": "evaluation.maintenance_ui",
+      "owned_host_process": true,
+      "nodes": [
+        "tests/evaluation/test_maintenance_web.py"
+      ],
+      "timeout_seconds": 120,
+      "success": "Four review views, authenticated durable feedback, no background dispatch, read-only projections and visible unknown quality."
+    }
+  ],
+  "research_task_families": [
+    {
+      "id": "T01",
+      "cases": [
+        "evidence.empty_detail",
+        "content.contracts"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T02",
+      "cases": [
+        "content.contracts"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T03",
+      "cases": [
+        "content.contracts",
+        "model.local_chain"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T04",
+      "cases": [
+        "content.contracts"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T05",
+      "cases": [
+        "research.incremental_evidence"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T06",
+      "cases": [
+        "research.incremental_evidence"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T07",
+      "cases": [
+        "fixture.github_objects",
+        "evidence.future_date"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T08",
+      "cases": [
+        "account.route_order",
+        "task.durable"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T09",
+      "cases": [
+        "research.incremental_evidence"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T10",
+      "cases": [
+        "knowledge.agent_delivery",
+        "delivery.identity"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T11",
+      "cases": [
+        "evaluation.maintenance"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
+    },
+    {
+      "id": "T12",
+      "cases": [
+        "evaluation.maintenance"
+      ],
+      "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
     }
   ]
 }
