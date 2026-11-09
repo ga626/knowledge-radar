@@ -11,6 +11,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from kr_core.evidence_assets import EvidenceAssets
 from runtime.project_identity import canonical_project_id
+from .evaluation_maintenance import EvaluationRead
 
 
 class Contract(BaseModel):
@@ -58,7 +59,7 @@ class ResearchRead(Contract):
     query: str = Field(default="",max_length=500)
 
 
-ReadRequest = Annotated[Search | Fetch | ResearchRead, Field(discriminator="action")]
+ReadRequest = Annotated[Search | Fetch | ResearchRead | EvaluationRead, Field(discriminator="action")]
 
 
 class AssetRef(BaseModel):
@@ -235,6 +236,9 @@ def search(assets: EvidenceAssets, request: Search):
 
 
 def read(request: ReadRequest, assets=None):
+    if isinstance(request, EvaluationRead):
+        from .evaluation_maintenance import Maintenance
+        return Maintenance().read(request)
     assets = assets or EvidenceAssets(read_only=True)
     if isinstance(request, ResearchRead):
         from runtime.research_index import ResearchIndex

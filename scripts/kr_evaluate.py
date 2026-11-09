@@ -23,8 +23,18 @@ def main(argv=None):
     parser.add_argument("--candidate-store", type=Path)
     parser.add_argument("--json", action="store_true")
     sub = parser.add_subparsers(dest="command", required=True)
-    for name in ["discover", "validate", "status", "plan", "history", "publish-summary", "candidates"]:
+    for name in ["discover", "validate", "status", "plan", "history", "publish-summary", "candidates", "maintenance-status", "maintenance-queue"]:
         sub.add_parser(name)
+    maintenance_parser = sub.add_parser('maintain')
+    maintenance_parser.add_argument('request', type=Path)
+    asset_parser = sub.add_parser('evaluation-asset')
+    asset_parser.add_argument('source', type=Path)
+    asset_parser.add_argument('--approved-root', type=Path, required=True)
+    asset_parser.add_argument('--sha256', required=True)
+    trial_parser = sub.add_parser('quality-trial')
+    trial_parser.add_argument('request', type=Path)
+    feedback_parser = sub.add_parser('evaluation-feedback')
+    feedback_parser.add_argument('request', type=Path)
     history_parser = sub.add_parser("import-history")
     history_parser.add_argument("source", type=Path)
     dataset_parser = sub.add_parser("import-speech-dataset")
@@ -68,7 +78,23 @@ def main(argv=None):
     try:
         suite = load_suite(root, args.suite)
         exit_code = 0
-        if args.command in {"discover", "validate"}:
+        if args.command in {'maintenance-status','maintenance-queue','maintain','evaluation-asset','quality-trial','evaluation-feedback'}:
+            from runtime.evaluation_maintenance import Maintenance
+            from scripts.kr_eval.maintenance import import_asset, record_trial
+            manager = Maintenance(args.candidate_store, asset_root=ledger.path/'assets')
+            if args.command == 'maintenance-status':
+                result = manager.read({'action':'evaluation'})
+            elif args.command == 'maintenance-queue':
+                result = manager.work_batch()
+            elif args.command == 'evaluation-asset':
+                result = import_asset(ledger,args.source,args.approved_root,args.sha256)
+            else:
+                if args.request.stat().st_size > 65536: raise ValueError('bounded_request_required')
+                payload = json.loads(args.request.read_text(encoding='utf-8-sig'))
+                if args.command == 'maintain': result = manager.execute(payload)
+                elif args.command == 'evaluation-feedback': result = manager.feedback(**payload)
+                else: result = record_trial(ledger,manager,payload)
+        elif args.command in {"discover", "validate"}:
             result = inventory(root, suite)
             exit_code = int(bool(result["issues"]))
         elif args.command == "status":

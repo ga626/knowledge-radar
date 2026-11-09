@@ -103,9 +103,10 @@ from runtime.research_contracts import (RequirementWrite, AttemptWrite, Coverage
     ExplorationWrite, ExplorationDisposition)
 from runtime.research_reviews import (PurposeWrite, ClaimWrite, AlternativesWrite,
     WithdrawalWrite, ReportReviewWrite, LocalObservationWrite, InvestigationWrite)
+from runtime.evaluation_maintenance import EvaluationWrite
 ResearchRequest = Annotated[ResearchWrite | RequirementWrite | AttemptWrite | CoverageWrite |
     ExplorationWrite | ExplorationDisposition | PurposeWrite | ClaimWrite | AlternativesWrite |
-    WithdrawalWrite | ReportReviewWrite | LocalObservationWrite | InvestigationWrite, Field(discriminator='action')]
+    WithdrawalWrite | ReportReviewWrite | LocalObservationWrite | InvestigationWrite | EvaluationWrite, Field(discriminator='action')]
 
 
 class ResearchIndex:
@@ -238,6 +239,9 @@ class ResearchIndex:
             self.put(conn, task_id, "query", family["family_id"], value, encoded(value))
 
     def annotate(self, req: ResearchWrite, *, assets=None):
+        if isinstance(req, EvaluationWrite):
+            from runtime.evaluation_maintenance import Maintenance
+            return Maintenance().execute(req)
         if not isinstance(req, ResearchWrite):
             from runtime.research_contracts import record
             return record(self, req, assets)

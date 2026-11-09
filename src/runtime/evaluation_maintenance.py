@@ -119,8 +119,22 @@ def independent_review(req):
 
 
 class Maintenance:
-    def __init__(self, path=None):
+    def __init__(self, path=None, asset_root=None):
+        from .evaluation_candidates import candidate_path
+        from .evaluation_view import evaluation_store
+        import os
         self.path = Path(path or candidate_path())
+        root = Path(os.environ.get('KR_PROJECT_ROOT') or Path(__file__).resolve().parents[2])
+        self.asset_root = Path(asset_root or evaluation_store(root)/'assets')
+
+    def validate_assets(self, card):
+        for ex in card['examples']:
+            for field in ('input_hash', 'good_hash', 'bad_hash'):
+                if not ex.get(field):
+                    continue
+                path = self.asset_root / (ex[field] + '.asset')
+                if not path.is_file() or path.stat().st_size > 2*1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest() != ex[field]:
+                    raise ValueError('fixed_asset_missing_or_corrupt')
 
     @contextmanager
     def connection(self):
@@ -168,6 +182,11 @@ class Maintenance:
                 raise ValueError('expected_revision_conflict')
             if old and old.get('locked') and req.operation != 'unlock':
                 raise ValueError('human_locked')
+            if req.human:
+                feedback = db.execute('SELECT body FROM evaluation_feedback WHERE feedback_id=?', (req.feedback_id,)).fetchone()
+                human = json.loads(feedback[0]) if feedback else {}
+                if human.get('case_id') != req.case_id or human.get('revision') != req.expected_revision or human.get('status') != 'waiting_for_agent':
+                    raise ValueError('human_feedback_reference_required')
             before, after = {}, {}
             if old:
                 before[req.case_id] = old
@@ -198,6 +217,7 @@ class Maintenance:
                     independent_review(req)
                 if proposed['lifecycle'] == 'active' and old['lifecycle'] != 'active':
                     independent_review(req)
+                    self.validate_assets(proposed)
                 after[req.case_id] = proposed
             elif op in {'lock', 'unlock'}:
                 if not req.human or not old:

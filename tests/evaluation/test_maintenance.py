@@ -102,7 +102,8 @@ def test_optimistic_atomic_idempotent_and_human_lock(tmp_path):
         m.execute({**command('upsert', card=card()), 'reason':'changed'})
     with pytest.raises(ValueError, match='revision'):
         m.execute(command('state', revision=0, patch={'frequency':'sample'}))
-    m.execute(command('lock', revision=1, human=True))
+    fb = m.feedback(case_id='content.shell', revision=1, text='锁定此题', request_id='lock-feedback')
+    m.execute(command('lock', revision=1, human=True, feedback_id=fb['feedback_id']))
     with pytest.raises(ValueError, match='locked'):
         m.execute(command('state', revision=2, patch={'frequency':'sample'}))
     assert m.view()['cases'][0]['revision'] == 2
@@ -127,7 +128,8 @@ def test_merge_preserves_subexamples_and_compensation_history(tmp_path):
     result = m.execute(merge)
     assert len(m.view()['cases'][1]['examples']) >= 1
     change = result['change_id']
-    restored = m.execute(command('compensate', revision=2, change_id=change, human=True))
+    fb = m.feedback(case_id='content.shell', revision=2, text='撤销错误合并', request_id='merge-feedback')
+    restored = m.execute(command('compensate', revision=2, change_id=change, human=True, feedback_id=fb['feedback_id']))
     rows = {c['case_id']:c for c in m.view()['cases']}
     assert rows['content.shell']['lifecycle'] == 'shadow'
     assert rows['content.paywall']['revision'] == 3
@@ -156,3 +158,70 @@ def test_queue_budget_no_agent_and_feedback_is_not_approval(tmp_path):
 def test_decision_reads_do_not_create_database(tmp_path):
     m = manager(tmp_path)
     assert m.view()['cases'] == [] and not m.path.exists()
+
+
+def test_native_contract_reuses_existing_tools(tmp_path, monkeypatch):
+    from pydantic import TypeAdapter
+    from runtime.knowledge import ReadRequest, read
+    from runtime.research_index import ResearchRequest, ResearchIndex
+    monkeypatch.setattr(candidates, 'candidate_path', lambda: tmp_path/'candidate.sqlite3')
+    req = TypeAdapter(ResearchRequest).validate_python({'action':'evaluation', **command('upsert', card=card(), mode='shadow')})
+    assert ResearchIndex(tmp_path).annotate(req)['status'] == 'shadow'
+    query = TypeAdapter(ReadRequest).validate_python({'action':'evaluation','view':'changes'})
+    assert read(query)['items'][0]['mode'] == 'shadow'
+
+
+def test_activation_requires_real_immutable_assets(tmp_path):
+    m = manager(tmp_path); create(m)
+    activation = command('state', revision=1, patch={'lifecycle':'active'},
+                         review={'reviewer':'other','evidence':['d'*64],'verdict':'accepted'})
+    with pytest.raises(ValueError, match='asset'):
+        m.execute(activation)
+
+
+def test_correction_requires_actual_human_feedback(tmp_path):
+    m = manager(tmp_path); create(m)
+    with pytest.raises(ValueError, match='feedback'):
+        m.execute(command('unlock', revision=1, human=True))
+
+
+def test_auto_maintenance_batch_is_readonly_and_bounded_cli(tmp_path, capsys):
+    from scripts.kr_evaluate import main
+    assert main(['--store',str(tmp_path/'runs'),'--candidate-store',str(tmp_path/'db'), '--json', 'maintenance-queue']) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result['status'] == 'waiting_for_agent' and not (tmp_path/'db').exists()
+
+
+def test_quality_gate_does_not_reward_pretty_wrong_or_punish_honest_unknown():
+    from runtime.evaluation_quality import evaluate_trial, compare_trials
+    identity = {'case_revision':1,'rubric':'v1','judge':'calibrated-v1','skill':'s1','profile':'controlled_fixture',
+                'source_commit':'a'*40,'session_id':'session-a','trial_id':'trial-a','inputs':['a'*64]}
+    base = {'identity':identity,'criteria':[{'name':'相关性','verdict':'PASS','critical':True,
+              'rationale':'短但正确，资料支持','evidence':['b'*64]}], 'validity':{'input_verified':True,'oracle_verified':True,
+              'contamination':'none','isolation':'controlled_fixture'}, 'answer_hash':'c'*64}
+    assert evaluate_trial(base)['verdict'] == 'PASS'
+    wrong = {**base,'criteria':[dict(base['criteria'][0],verdict='FAIL',rationale='漂亮但错误')]}
+    assert evaluate_trial(wrong)['verdict'] == 'FAIL'
+    unknown = {**base,'criteria':[dict(base['criteria'][0],verdict='UNKNOWN',rationale='缺证据，诚实未知')]}
+    assert evaluate_trial(unknown)['verdict'] == 'INCOMPLETE'
+    leaked = {**base,'validity':dict(base['validity'],contamination='old_obsidian_answer')}
+    assert evaluate_trial(leaked)['validity'] == 'INVALID'
+    changed = {**base,'identity':dict(identity,rubric='v2')}
+    assert compare_trials(base,changed)['comparable'] is False
+    same_session = {**base,'identity':dict(identity,trial_id='trial-b')}
+    assert compare_trials(base,same_session)['independent'] is False
+
+
+def test_live_profile_cannot_self_certify_cold_isolation_or_install_identity():
+    from runtime.evaluation_quality import evaluate_trial
+    value = {'identity':{'case_revision':1,'rubric':'v1','judge':'j','skill':'s','profile':'cold_replay',
+                         'source_commit':'a'*40,'session_id':'same','trial_id':'one','inputs':['a'*64]},
+             'criteria':[{'name':'结论','verdict':'PASS','critical':True,'rationale':'declared','evidence':['b'*64]}],
+             'validity':{'input_verified':True,'oracle_verified':True,'contamination':'none','isolation':'prompt_only'},
+             'answer_hash':'c'*64}
+    assert evaluate_trial(value)['validity'] == 'UNVERIFIED'
+    value['identity']['profile'] = 'installed_live'
+    value['validity']['isolation'] = 'native_receipt'
+    value['validity']['expected_artifact'] = 'a'*64
+    value['validity']['observed_artifact'] = 'b'*64
+    assert evaluate_trial(value)['validity'] == 'INVALID'
