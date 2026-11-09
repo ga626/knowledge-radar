@@ -29,7 +29,8 @@ class OpenAlexProvider:
             "endpoint": self.endpoint,
             "requires_api_key": False,
             "api_key_configured": bool(self.api_key),
-            "quota": {"free_credit_per_day_usd": 1.0 if self.api_key else 0.10, "source": "OpenAlex API key policy"},
+            "quota": {"policy_status": "not_verified_current", "source": "https://developers.openalex.org/api-reference/authentication",
+                      "enforcement": "upstream_headers_and_local_admission"},
             "degraded_reason": "" if self.api_key else "OPENALEX_API_KEY not configured; unauthenticated compatibility mode may still work but is not the productized stable path",
         }
 

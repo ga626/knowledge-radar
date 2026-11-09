@@ -166,7 +166,8 @@ def test_vip_maps_search_result_to_online_reading_candidate() -> None:
     )
 
     assert work.source_database == "vip_oa"
-    assert work.full_text_status == "open_access_article_detail"
+    assert work.full_text_status == "online_reading_candidate"
+    assert work.oa_status == "unknown"
     assert work.verification_status == "vip_detail_to_online_reading_candidate"
     assert work.raw["reading_url"] == "https://www.cqvip.com/onlinereading?type=1&lid=7203295942"
     assert work.raw["download_button_used"] is False
@@ -270,6 +271,8 @@ def test_pubscholar_extract_pdf_text_reads_selectable_text(monkeypatch) -> None:
             return "Artificial intelligence ocean forecasting text"
 
     class FakeReader:
+        is_encrypted = False
+
         def __init__(self, _stream):
             self.pages = [FakePage()]
 
@@ -309,6 +312,8 @@ def test_sciengine_extract_pdf_text_reads_selectable_text(monkeypatch) -> None:
             return "技术领导力视角下美国人工智能竞争战略研究"
 
     class FakeReader:
+        is_encrypted = False
+
         def __init__(self, _stream):
             self.pages = [FakePage()]
 

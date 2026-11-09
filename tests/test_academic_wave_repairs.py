@@ -83,6 +83,43 @@ def test_legacy_download_denial_cannot_be_lost_in_doi_merge():
         assert service._dedupe(items)[0].raw['download_allowed'] is False
 
 
+def test_ntur_prefers_record_handle_over_rest_resource(monkeypatch):
+    from academic_providers.ntur import NturProvider
+    client = httpx.Client
+    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: None)
+    def respond(req):
+        item = {'name': 'Machine learning', 'uuid': 'example-uuid', 'metadata': {
+            'dc.identifier.uri': [{'value': 'https://scholars.lib.ntu.edu.tw/handle/123456789/1'}]}}
+        row = {'_embedded': {'indexableObject': item}, '_links': {
+            'indexableObject': {'href': 'https://scholars.lib.ntu.edu.tw/server/api/core/items/example-uuid'}}}
+        return httpx.Response(200, json={'_embedded': {'searchResult': {'_embedded': {'objects': [row]}}}})
+    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(respond), **kw))
+    work = NturProvider().search(AcademicSearchRequest('machine learning'))[0]
+    assert work.url == 'https://scholars.lib.ntu.edu.tw/handle/123456789/1'
+    assert '/server/api/' in work.raw['source_api_url']
+    assert work.full_text_status == 'metadata_only'
+
+
+def test_ntur_missing_public_identifier_is_unparsed_not_fake_article(monkeypatch):
+    from academic_providers.ntur import NturProvider
+    client = httpx.Client
+    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: None)
+    row = {'_embedded': {'indexableObject': {'name': 'Machine learning', 'uuid': 'u1'}},
+           '_links': {'indexableObject': {'href': 'https://scholars.lib.ntu.edu.tw/server/api/core/items/u1'}}}
+    monkeypatch.setattr(httpx, 'Client', lambda **kw: client(transport=httpx.MockTransport(
+        lambda req: httpx.Response(200, json={'_embedded': {'searchResult': {'_embedded': {'objects': [row]}}}})), **kw))
+    result = NturProvider().search(AcademicSearchRequest('machine learning'))
+    assert not result
+    assert result.diagnostics[0]['type'] == 'search_response_unparsed'
+
+
+def test_openalex_does_not_publish_unverified_daily_credit_as_current_policy():
+    from academic_providers.openalex import OpenAlexProvider
+    quota = OpenAlexProvider().status()['quota']
+    assert quota['policy_status'] == 'not_verified_current'
+    assert 'free_credit_per_day_usd' not in quota
+
+
 def test_wanfang_payment_failure_is_not_login_failure_and_leaks_no_account(monkeypatch):
     monkeypatch.setenv('WFDATA_ENABLED', 'true')
     monkeypatch.setenv('WFDATA_APP_KEY', 'never-echo-this')

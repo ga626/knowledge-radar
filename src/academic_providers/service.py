@@ -82,6 +82,8 @@ def _enrich_provider_status(name: str, raw_status: Dict[str, object]) -> Dict[st
     status["validation_reason"] = classification["validation_reason"]
     status["blocks_overall_pass"] = classification["blocks_overall_pass"]
     status['live_verification'] = 'not_checked_by_status_query'
+    status['validation_scope'] = 'configuration_and_declared_capability'
+    status['article_entitlement'] = 'not_checked'
     return status
 
 
@@ -109,6 +111,7 @@ def _search_status(providers, names):
     keys = {'configured','available','auto_enabled','requires_api_key','requires_login',
             'daily_exhausted','monthly_exhausted','degraded_reason','validation_status',
             'status_class','live_verification'}
+    keys.update({'validation_scope', 'article_entitlement'})
     for name in dict.fromkeys(names):
         try:
             method = getattr(providers[name], 'status', None)

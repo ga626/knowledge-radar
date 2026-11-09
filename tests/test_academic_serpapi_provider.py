@@ -172,7 +172,7 @@ def test_openalex_status_reports_api_key(monkeypatch) -> None:
     status = academic_provider_status()["openalex"]
 
     assert status["api_key_configured"] is True
-    assert status["quota"]["free_credit_per_day_usd"] == 1.0
+    assert status["quota"]["policy_status"] == "not_verified_current"
 
 
 def test_auto_order_does_not_include_unprofiled_baidu_for_chinese_query_when_configured(monkeypatch) -> None:

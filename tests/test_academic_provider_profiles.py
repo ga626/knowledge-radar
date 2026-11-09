@@ -78,6 +78,17 @@ def test_academic_provider_status_exposes_capability_profile() -> None:
     assert profile["runtime"]["priority"]["fulltext"] >= 80
 
 
+def test_declared_capability_and_configuration_are_not_live_entitlement():
+    status = academic_provider_status()
+    for name, item in status.items():
+        assert item['validation_scope'] == 'configuration_and_declared_capability'
+        assert item['article_entitlement'] == 'not_checked'
+        assert item['live_verification'] == 'not_checked_by_status_query'
+    profile = status['pubscholar']['capability_profile']
+    assert profile['content_scope'] == 'potential_per_record'
+    assert profile['content']['pdf_fulltext'] is True
+
+
 def test_academic_strategy_samples_cover_profiled_providers() -> None:
     path = Path("tests/fixtures/academic_strategy_samples.json")
     data = json.loads(path.read_text(encoding="utf-8"))

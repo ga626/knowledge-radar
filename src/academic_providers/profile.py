@@ -187,6 +187,7 @@ class AcademicProviderProfile:
 
     def to_status_dict(self) -> Dict[str, Any]:
         return {
+            "content_scope": "potential_per_record",
             "id": self.id,
             "display_name": self.display_name,
             "enabled": self.enabled,

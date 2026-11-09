@@ -7,6 +7,23 @@ const source=readFileSync(new URL('../src/onboarding/static/console.ts',import.m
 const helpers=source.slice(source.indexOf('function openDrawer()'),source.indexOf("$('#drawer-close').onclick=closeDrawer;"));
 const template=readFileSync(new URL('../src/onboarding/static/page.html',import.meta.url),'utf8');
 
+test('Host handoff explains plan and apply without implying a failed reset',async()=>{
+  const nodes=new Map(),node=id=>{if(!nodes.has(id))nodes.set(id,{textContent:'',onclick:null});return nodes.get(id);};
+  let requests=0;
+  const context={$:node,esc:String,plans:{},api:async path=>{requests++;return path.endsWith('plan')?{confirmation_token:'fixture',next_step:'仅预览'}:{next_step:'注册已更新；站点连接另行检测'};}};
+  const start=source.indexOf('let hostHandoffPlan='),end=source.indexOf('function storage(d)',start);
+  runInNewContext(source.slice(start,end),context);
+  const button={disabled:false,textContent:'预览Host交接'};
+  const event={target:{closest:selector=>selector==='[data-host-handoff]'?button:null}};
+  await node('#component-groups').onclick(event);
+  assert.equal(requests,1);
+  assert.match(button.textContent,/确认/);
+  await node('#component-groups').onclick(event);
+  assert.equal(requests,2);
+  assert.match(button.textContent,/已完成/);
+  assert.match(node('#component-status').textContent,/站点连接另行检测/);
+});
+
 test('component cards and their guide remain usable after retiring instance settings',()=>{
   const ids=new Set([...template.matchAll(/id="([^"]+)"/g)].map(x=>'#'+x[1]));
   const nodes=new Map();
