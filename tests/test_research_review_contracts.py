@@ -368,7 +368,7 @@ def test_readable_audit_separates_withdrawal_scenarios_and_uses_numbered_appendi
                                         project_id='project-a', title='可读审阅新版', content=body))
     text = Path(result['local']['path']).read_text(encoding='utf-8')
     overview = text.split('## 撤证情景', 1)[0]
-    assert overview.count('| 应先验证付费意愿，再决定开发 |') == 1
+    assert overview.count('| 结论1：应先验证付费意愿，再决定开发 |') == 1
     assert '<br>' not in overview
     assert '## 撤证情景' in text
     scenario_section = text.split('## 撤证情景', 1)[1]

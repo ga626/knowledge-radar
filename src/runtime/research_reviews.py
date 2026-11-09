@@ -321,6 +321,7 @@ def report_appendix(index,task_id,content,assets=None):
     claim_numbers={c['record_id']:n for n,c in enumerate(snap['claims'],1)}
     def upstream(dep):return '上游结论'+str(claim_numbers.get(dep['upstream_claim_id'],'（未列出）'))
     def row(values):return '| '+' | '.join(map(cell,values))+' |'
+    def notes(parts):return '；'.join(part.rstrip('。；; ') for part in parts if part)
     lines=['','---','','## 关键结论与撤证审阅','',
         '先看每条建议依赖什么、还缺什么，再看撤去关键资料后是否仍能成立。请据此判断建议是否值得采纳，以及投入行动前还需要补哪些验证。','',
         '全文关键结论核对：'+('已记录' if reviews else '未审阅或已失效')+'。',
@@ -339,8 +340,8 @@ def report_appendix(index,task_id,content,assets=None):
         details+=['',f'### 结论{number}','',f"适用范围：{claim['applicability']}",'',f"判断理由：{claim['basis']}"]
         if alt:
             counter+='；直接替代：'+dispositions[alt['disposition']]
-            details+=['','替代比较：'+alt['rationale']+'；检索范围：'+alt['search_scope']]
-            if alt['options']:details+=['','对比选项及结果：',*['- '+option for option in alt['options']]]
+            details+=['','替代比较：'+alt['rationale'],'','检索范围：'+alt['search_scope']]
+            if alt['options']:details+=['','对比选项及结果：','',*['- '+option for option in alt['options']]]
             details+=['','比较依据：'+refs_text(alt['evidence_refs'])]
             if alt['reopen_conditions']:details+=['','重新检查条件：'+alt['reopen_conditions']]
         elif claim['alternatives_required']:counter+='；直接替代尚未审阅'
@@ -352,10 +353,10 @@ def report_appendix(index,task_id,content,assets=None):
             scenario_rows.append(row([f'结论{number}','撤去'+excluded,
                 refs_text(allowed) if allowed else '无剩余固定证据',
                 changes[r['change']]+'：'+r['conclusion'] if r else '尚未审阅',
-                (r['rationale'] if r else '尚未声明理由')+'；实际引用：'+remaining]))
+                notes([r['rationale'] if r else '尚未声明理由','实际引用：'+remaining])]))
         unresolved=[gap_label(g) for g in snap['gaps'] if g.endswith(':'+claim['record_id']) or ':'+claim['record_id']+':' in g]
-        lines.append(row([claim['text'],'；'.join(deps) or '未登记核心依据',counter,
-            '；'.join(dict.fromkeys([claim['uncertainty'] or '未声明',*unresolved]))]))
+        lines.append(row([f"结论{number}：{claim['text']}",notes(deps) or '未登记核心依据',counter,
+            notes(dict.fromkeys([claim['uncertainty'] or '未声明',*unresolved]))]))
     if not snap['claims']:lines.append('| 未登记关键结论 | 无法核对 | 尚未审阅 | 不能视为全部通过 |')
     lines+=['','## 撤证情景','',
         '每行只撤去一组核心依据。“仍可用资料”是允许引用的范围；“实际引用”是本次判断真正使用的资料，两者不等于结论已经得到支持。','',
@@ -367,7 +368,7 @@ def report_appendix(index,task_id,content,assets=None):
         lines+=['','仍有审阅缺口：'+'；'.join(dict.fromkeys(gap_label(g) for g in snap['gaps']))+'。不据此自动宣布饱和。']
     synthetic_numbers=[str(r['number']) for r in references.values() if r['synthetic']]
     if synthetic_numbers:
-        lines[5:5]=['','**示例说明：合成数据，非真实市场证据。合成资料编号：'+
+        lines[5:5]=['**示例说明：合成数据，非真实市场证据。合成资料编号：'+
             '、'.join('资料'+number for number in synthetic_numbers)+'。**','']
     lines+=['','## 资料附录','', '编号指向固定原文摘录；版本与字符范围供核验使用。']
     for (version,start,end),ref in references.items():
