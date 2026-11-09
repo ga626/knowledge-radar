@@ -6,6 +6,13 @@
     "management": "The existing OS user-session supervisor owns the kernel independently of console pages, retaining process handles, exit codes and generations. Recovery is bounded and never replays requests.",
     "handoff": "Installation drains the current kernel before switching active identity, stops the old manager and starts the registered user-session task after releasing maintenance. Activation, runtime readiness and native host binding are distinct receipts."
   },
+  "evaluation_maintenance_contract": {
+    "storage": "Extend the existing evaluation-candidates.sqlite3 and immutable evaluation run ledger; no parallel question bank or background Agent.",
+    "observation": "Bounded low-sensitivity task/tool observations, explicit retention losses and distinct denominators; semantic success remains unjudged until Agent review.",
+    "maintenance": "Versioned orthogonal lifecycle/frequency/runnability, transactional optimistic writes and idempotency; preserve aliases, examples and historical runs on merge or compensation.",
+    "review": "Read-only four-layer projection, visible Agent backlog and human correction requests; no polling, semantic verdict or score editing in the UI.",
+    "isolation": "Development source, installed native trials and research quality remain separate; comparison requires matching problem, rubric, evaluator, profile and asset identities."
+  },
   "research_review_contract": {
     "owner": "src/runtime/research_contracts.py and research_reviews.py; reuse ResearchIndex changes/current, no second lifecycle",
     "requirements": "Versioned deliverables, immutable attempts and explicit partial coverage; failed attempts are never rewritten as success.",

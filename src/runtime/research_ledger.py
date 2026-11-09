@@ -765,6 +765,14 @@ def _write(payload: dict[str, Any]) -> dict[str, Any]:
     finally:
         temporary.unlink(missing_ok=True)
     payload.update(revision=revision + 1)
+    try:
+        from .evaluation_candidates import observe_task
+        observe_task(payload)
+    except (OSError, ValueError, sqlite3.Error):
+        # 不改变已提交业务结果；留待有界补偿，不把索引失败隐藏为已覆盖。
+        path.with_suffix('.evaluation-pending').touch()
+    else:
+        path.with_suffix('.evaluation-pending').unlink(missing_ok=True)
     from .research_index import ResearchIndex
     try:
         ResearchIndex().ledger_projection(payload)
