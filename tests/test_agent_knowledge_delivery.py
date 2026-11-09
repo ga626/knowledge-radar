@@ -399,3 +399,18 @@ def test_new_capture_elsewhere_does_not_hide_task_fixed_version(corpus):
     assert [hit['asset']['version_id'] for hit in result['items']]==[old['version_id']]
     before=read(Search(action='search',query='薪资',captured_before=old['captured_at']),assets)
     assert [hit['asset']['version_id'] for hit in before['items']]==[old['version_id']]
+
+
+def test_generated_contract_is_independent_of_runtime_skill_bytes(tmp_path, monkeypatch):
+    from scripts import generate_tool_manual as manual
+    from runtime import application
+    (tmp_path/'config/codex-product').mkdir(parents=True)
+    (tmp_path/'docs').mkdir()
+    monkeypatch.setattr(manual, 'ROOT', tmp_path)
+    monkeypatch.setattr(application, 'research_workflow_identity', lambda: {'skill_sha256':'a'*64, 'host_loaded_skill':'unverified'})
+    manual.generate()
+    monkeypatch.setattr(application, 'research_workflow_identity', lambda: {'skill_sha256':'b'*64, 'host_loaded_skill':'unverified'})
+    assert manual.generate(check=True)['status']=='PASS'
+    assert application.catalog()['research_workflow']['skill_sha256']=='b'*64
+    generated=json.loads((tmp_path/'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))
+    assert 'research_workflow' not in generated

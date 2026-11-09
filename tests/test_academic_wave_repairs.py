@@ -257,7 +257,8 @@ def test_public_reader_respects_host_specific_no_proxy_without_skipping_url_safe
     from generic_web.url_policy import guarded_fetch
     from contextlib import contextmanager
     monkeypatch.setenv('NO_PROXY', 'www.ebi.ac.uk')
-    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy', lambda: 'http://127.0.0.1:7897')
+    monkeypatch.setenv('HTTPS_PROXY', 'http://127.0.0.1:7897')
+    monkeypatch.setenv('KR_DISABLE_WINDOWS_PROXY_FALLBACK', '1')
     monkeypatch.setattr('generic_web.url_policy.socket.getaddrinfo', lambda *a, **k:
         [(2, 1, 6, '', ('193.62.193.80', 443))])
     seen = []

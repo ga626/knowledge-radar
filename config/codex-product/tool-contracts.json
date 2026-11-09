@@ -7,12 +7,6 @@
     },
     "tool": "get_capabilities"
   },
-  "research_workflow": {
-    "host_loaded_skill": "unverified",
-    "packaged_skill": "present",
-    "skill_sha256": "b071e66ac71d068acfad2b64148c8e98177da4f369a5728e4c1f5bbc86cd3582",
-    "workflow": "Declare project and question scope; associate actions; read fixed evidence; assess meaning and gaps; deliver with explicit limits."
-  },
   "schema": "kr-tool-catalog/v1",
   "tool_count": 27,
   "tools": [
