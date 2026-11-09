@@ -19,8 +19,8 @@ class ResearchRecords:
         self.assets = assets if assets is not None else EvidenceAssets(read_only=True)
 
     def snapshot(self, task_id):
-        if not isinstance(task_id, str) or not task_id.startswith('kr-research-') or not all(c.isalnum() or c in '-_' for c in task_id) or len(task_id) > 96:
-            raise ValueError('invalid_research_task_id')
+        from runtime.research_contracts import validate_task_id
+        validate_task_id(task_id)
         path = self.root / 'research_tasks' / (task_id + '.json')
         try:
             payload = json.loads(read_observed(path).decode('utf-8'))
@@ -42,7 +42,7 @@ class ResearchRecords:
     def recent(self, limit=20):
         limit = max(1, min(int(limit), 100))
         directory = self.root / 'research_tasks'
-        paths = sorted(directory.glob('kr-research-*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
+        paths = sorted(directory.glob('*.json'), key=lambda p: p.stat().st_mtime, reverse=True)
         rows, unreadable = [], 0
         for path in paths[:limit]:
             try:

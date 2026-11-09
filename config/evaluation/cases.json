@@ -2116,8 +2116,8 @@
     },
     {
       "case_id": "research.incremental_evidence",
-      "version": 2,
-      "oracle_version": 2,
+      "version": 3,
+      "oracle_version": 3,
       "capabilities": [
         "research.incremental_evidence",
         "mcp.update_research"
@@ -2127,7 +2127,8 @@
         "tests/test_stage3_research.py",
         "tests/test_research_candidate_records.py",
         "tests/test_research_mechanism_verification.py",
-        "tests/test_research_state_review.py"
+        "tests/test_research_state_review.py",
+        "tests/test_research_contract_regressions.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2148,9 +2149,13 @@
         "tests/test_research_state_review.py",
         "src/runtime/research_queries.py",
         "src/runtime/tool_trace.py",
-        "src/search_providers/constraints.py"
+        "src/search_providers/constraints.py",
+        "src/runtime/research_contracts.py",
+        "src/runtime/application.py",
+        "tests/test_research_contract_regressions.py"
       ],
-      "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。"
+      "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。 合法自定义ID、需求分部覆盖、事后关联留痕、异步意图持久化和探索处置；语义保持未审阅。",
+      "change_reason": "2026-11-09: R01/R02/R03/R05 identity, association and requirement regressions"
     },
     {
       "case_id": "fixture.github_objects",

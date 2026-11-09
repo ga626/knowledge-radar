@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 import sqlite3
 import time
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from runtime.paths import runtime_state_dir
@@ -97,6 +97,12 @@ class ResearchWrite(BaseModel):
     attempt_id: str = Field(default='', max_length=200)
     receipt_id: str = Field(default='', max_length=128)
     question_revision: int = Field(default=0, ge=0)
+
+
+from runtime.research_contracts import (RequirementWrite, AttemptWrite, CoverageWrite,
+    ExplorationWrite, ExplorationDisposition)
+ResearchRequest = Annotated[ResearchWrite | RequirementWrite | AttemptWrite | CoverageWrite |
+    ExplorationWrite | ExplorationDisposition, Field(discriminator='action')]
 
 
 class ResearchIndex:
@@ -229,6 +235,9 @@ class ResearchIndex:
             self.put(conn, task_id, "query", family["family_id"], value, encoded(value))
 
     def annotate(self, req: ResearchWrite, *, assets=None):
+        if not isinstance(req, ResearchWrite):
+            from runtime.research_contracts import record
+            return record(self, req, assets)
         from runtime.research_ledger import read_task
         if read_task(task_id=req.task_id).get('status') == 'unknown_task':
             raise ValueError("unknown_research_task")
@@ -286,8 +295,12 @@ class ResearchIndex:
                         raise ValueError('action_and_receipt_required')
                     if not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='receipt' AND object_id=?",(req.task_id, req.receipt_id)).fetchone():
                         raise ValueError('unknown_receipt')
+                    if req.question_id and not self.question_at(conn, req.task_id, req.question_id):
+                        raise ValueError('unknown_question')
                 oid = req.candidate_id if req.action == "fold" else (req.record_id or hashlib.sha256(encoded([req.action, req.question_id, req.candidate_id, req.related_candidate_id, req.version_id, req.relation, req.claim_id, req.evidence_refs and [r.model_dump() for r in req.evidence_refs],req.supersedes,req.decision,req.action_id,req.receipt_id]).encode()).hexdigest()[:24])
             value = {**req.model_dump(), "record_id": oid, "author": "agent", "assessment": "agent_declared_not_program_verified"}
+            if req.action == 'action':
+                value['association_timing'] = 'post_hoc'
             if req.action in {'question', 'scope'}:
                 prior = self.question_at(conn, req.task_id, oid)
                 fields = ('text','required','languages','populations','regions','information_roles','time_scope','content_scope','closed')
@@ -323,6 +336,8 @@ class ResearchIndex:
                 return result
             if view == "feedback":
                 result = self.feedback(conn, task_id, after_seq, high, base, assets)
+                from runtime.research_contracts import feedback
+                result.update(feedback(self, conn, task_id, high, assets))
                 for key in ("questions_without_valid_links", "unresolved_counterevidence", "questions_without_reviewed_support", "scope_gaps", "assessments_requiring_review", "unplanned_receipts"):
                     result[key + "_count"] = len(result[key])
                     if len(result[key])>limit: result["truncated"] = True
@@ -339,7 +354,11 @@ class ResearchIndex:
                 return result
             # 不用OFFSET；续页只跳过已经读过的序号，撤回或折叠不移动其他行。
             clause = "" if view == "changes" else " AND kind=? AND NOT EXISTS(SELECT 1 FROM changes n WHERE n.task_id=c.task_id AND n.kind=c.kind AND n.object_id=c.object_id AND n.seq>c.seq AND n.seq<=?)"
-            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action"}
+            if view == 'requirements':
+                from runtime.research_contracts import requirement_projection
+                items = requirement_projection(self, conn, task_id, high, assets)
+                return {**base, 'items':items[:limit], 'truncated':len(items)>limit}
+            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition'}
             if view != "changes" and view not in kinds:
                 raise ValueError("invalid_research_view")
             params = [task_id, after_seq, high] + ([] if view == "changes" else [kinds[view], high])
@@ -469,7 +488,7 @@ class ResearchIndex:
                 "assessments_requiring_review":review_required,
                 "assessment_basis":"agent_declared_not_program_verified",
                 "unplanned_receipts": [x['receipt_id'] for x in groups.get('receipt', [])
-                    if x.get('tool') != 'kr_research' and not (x.get('research_action') or {}).get('action_id') and not any(a.get('receipt_id') == x['receipt_id'] for a in groups.get('action', []))
+                    if x.get('tool') != 'kr_research' and not (x.get('research_action') or {}).get('action_id') and not (x.get('research_action') or {}).get('exploration_id') and not any(a.get('receipt_id') == x['receipt_id'] for a in groups.get('action', []))
                     and not any(q.get('receipt_id') == x['receipt_id'] for q in queries)],
                 "unresolved_counterevidence": [l["record_id"] for l in [*links, *assessments] if l.get("relation") == "contradicts" or l.get('counterevidence_refs')],
                 "query_outcomes": {s: sum(q.get("status") == s for q in queries) for s in ("planned", "running", "ok", "partial", "failed", "skipped")},

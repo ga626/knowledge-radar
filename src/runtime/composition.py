@@ -1348,8 +1348,14 @@ def review_research_progress(
 ) -> Dict:
     """指出尚未被记录的证据缺口；这是停止审阅，不命令 Agent 使用任何平台、语言或工具。"""
     from runtime.research_index import ResearchIndex
-    return {**review_research_task(task_id=research_task_id, phase=phase),
-            "evidence_feedback":ResearchIndex().read(research_task_id,view="feedback")}
+    result = review_research_task(task_id=research_task_id, phase=phase)
+    feedback = ResearchIndex().read(research_task_id,view="feedback")
+    semantic_gaps = any(feedback.get(k+'_count',len(feedback.get(k,[]))) for k in (
+        'questions_without_reviewed_support','scope_gaps','assessments_requiring_review','unresolved_counterevidence','requirement_gaps'))
+    return {**result, 'stop_assessment':'not_ready' if semantic_gaps else result.get('stop_assessment'),
+            'review_summary':{'recording':result.get('stop_assessment'), 'semantic_review':'gaps' if semantic_gaps else 'agent_declared_only',
+                              'coverage':'registered_items_only','unregistered_coverage':'unknown','stop_authority':'agent'},
+            "evidence_feedback":feedback}
 
 
 @application_tool()
@@ -2868,10 +2874,10 @@ def _handle_detail_request(request: DetailRequest) -> DetailResponse:
 # 启动
 # ═══════════════════════════════════════════════════════════════════════
 
-from runtime.research_index import ResearchWrite
+from runtime.research_index import ResearchRequest
 
 @application_tool(group="research")
-def update_research(request: ResearchWrite) -> Dict:
+def update_research(request: ResearchRequest) -> Dict:
     """记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)

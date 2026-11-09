@@ -45,6 +45,8 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
     from runtime.application import request_scope
     origin = request_scope(job.get('origin_request_id', ''))
     origin.__enter__()
+    from runtime.research_queries import CURRENT_RESEARCH_ACTION
+    research_token = CURRENT_RESEARCH_ACTION.set((job.get('scope') or {}).get('research_action') or {})
     try:
         check_execution()
         phase("worker_imports_begin")
@@ -183,6 +185,7 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
             'document_password_required', 'document_password_incorrect', 'document_corrupt'} else {}
         store.mark_failed(task_id, message, error_code=code, metadata={**writer, "phase": "failed", **diagnostic})
     finally:
+        CURRENT_RESEARCH_ACTION.reset(research_token)
         stop.set()
         thread.join(timeout=2)
         if "previous_trace" in locals():

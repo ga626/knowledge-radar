@@ -1,6 +1,13 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
   "updated_at": "2026-11-07",
+  "research_review_contract": {
+    "owner": "src/runtime/research_contracts.py; reuse ResearchIndex changes/current, no second lifecycle",
+    "requirements": "Versioned deliverables, immutable attempts and explicit partial coverage; failed attempts are never rewritten as success.",
+    "association": "Explicit action or exploration scope survives durable handoff; missing scope remains unassigned, post-hoc links preserve origin.",
+    "review": "Agent declares critical claims, alternatives and withdrawal outcomes; program validates identities and exposes gaps, never semantic saturation.",
+    "delivery": "Human-readable critical-conclusion review is projected from fixed revisions and delivered with the report; missing review remains visible."
+  },
   "research_archive_contract": {
     "new_task_layout": "<project>/<year>年/<month>.<day> <hour>：<minute> <task>/",
     "history_migration": "Explicit identity and hash checked plan/apply; preserve source versions and user changes.",

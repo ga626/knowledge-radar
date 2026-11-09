@@ -295,6 +295,10 @@ class TaskService:
             raise ValueError("task input exceeds bounded worker size")
         payload = public_evidence_payload(payload)
         scope = public_evidence_payload(scope or {})
+        from runtime.research_queries import CURRENT_RESEARCH_ACTION
+        action = CURRENT_RESEARCH_ACTION.get() or {}
+        if scope.get('research_task_id') and action and action.get('_task_id', scope['research_task_id']) == scope['research_task_id']:
+            scope.setdefault('research_action', {k:v for k,v in action.items() if not k.startswith('_')})
         from runtime.model_roles import MODEL_ENVIRONMENT
         identity = {"source": source_identity(), "python": sys.version,
                     "models": {k: value for k, value in MODEL_ENVIRONMENT.items() if k.endswith('_MODELS')}, "contract": 4}
@@ -599,7 +603,8 @@ class TaskService:
                     task_id=research_id, trace_id=task_id + (":waiting" if task['status'] == 'waiting_for_user' else ":result"), tool=tool,
                     status=status, failure_code=task.get("error_code", ""),
                     result={**result, "task": compact_task_ref(task)},
-                    association="explicit_background_task", receipt_kind="background_completion")
+                    association="explicit_background_task", receipt_kind="background_completion",
+                    research_action=(task.get('metadata') or {}).get('research_action') if research_id == (task.get('metadata') or {}).get('research_task_id') else None)
                 if recorded.get("receipt", {}).get("status") == "partial" and (
                         status != "partial" or recorded.get('reason') == 'receipt_identity_conflict'):
                     # 兼容旧版把等待和终态写到同一 trace 的记录，保留历史而非覆盖。
@@ -607,7 +612,8 @@ class TaskService:
                         task_id=research_id, trace_id=task_id + ":result:" + status, tool=tool,
                         status=status, failure_code=task.get("error_code", ""),
                         result={**result, "task": compact_task_ref(task)},
-                        association="explicit_background_task", receipt_kind="background_completion")
+                        association="explicit_background_task", receipt_kind="background_completion",
+                        research_action=(task.get('metadata') or {}).get('research_action') if research_id == (task.get('metadata') or {}).get('research_task_id') else None)
             except Exception as exc:
                 recorded = {'status': 'recording_failed', 'error_type': type(exc).__name__}
             response["research_receipt"] = recorded
@@ -629,7 +635,7 @@ class TaskService:
         bindings = {}
         if not wanted:
             return bindings
-        for path in (runtime_state_dir() / 'research_tasks').glob('kr-research-*.json'):
+        for path in (runtime_state_dir() / 'research_tasks').glob('*.json'):
             try:
                 payload = read_task(task_id=path.stem)
             except (OSError, ValueError):

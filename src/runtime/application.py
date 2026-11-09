@@ -93,6 +93,10 @@ def register(function, *, group, read_only, publish=True):
         fields[name] = (annotation, default)
     fields['request_id'] = (str, Field(default='', max_length=128, pattern=r'^[A-Za-z0-9_-]*$',
         description='可选的调用者动作ID。写动作重试必须沿用原ID；不同意图用新ID。查询旧回执用get_task_status(receipt_request_id=...)。'))
+    if 'research_task_id' in fields and function.__name__ not in {'kr_research','finalize_research_task','review_research_progress'}:
+        from runtime.research_contracts import ResearchContext
+        fields['research_context'] = (ResearchContext | None, Field(default=None,
+            description='可选的研究意图关联：action_id与question_id/requirement_id，或预先登记的exploration_id；不填保持未关联。'))
     arguments = create_model(function.__name__ + "Arguments", __config__=ConfigDict(extra="forbid"), **fields)
     result = signature.return_annotation if signature.return_annotation is not signature.empty else Any
     operation = Operation(function.__name__, function, arguments, TypeAdapter(result),
@@ -148,7 +152,12 @@ def invoke(name, arguments, *, operation=None):
     except Exception as exc:
         return error_result(exc, name, not_started=True)
     try:
-        result = operation.function(**values)
+        research_context = values.pop('research_context', None)
+        from contextlib import nullcontext
+        from runtime.research_contracts import context_scope
+        scope = context_scope(values.get('research_task_id',''), research_context) if research_context else nullcontext()
+        with scope:
+            result = operation.function(**values)
         # 各入口都校验相同的业务输出；MCP封装仅负责协议表示。
         validated = operation.result.validate_python(result)
         return compact_evidence(operation.result.dump_python(validated, mode="json", exclude_unset=True))

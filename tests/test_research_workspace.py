@@ -141,7 +141,7 @@ def test_projection_rejects_second_lifecycle(tmp_path, action):
     assert not list(tmp_path.iterdir())
 
 
-@pytest.mark.parametrize('task_id', ['../secret','research-old','kr-research-../../secret','kr-research-'+'a'*100])
+@pytest.mark.parametrize('task_id', ['../secret','research/old','kr-research-../../secret','kr-research-'+'a'*100])
 def test_projection_rejects_invalid_identity(tmp_path, task_id):
     with pytest.raises(ValueError, match='invalid_research_task_id'):
         ResearchRecords(tmp_path).snapshot(task_id)

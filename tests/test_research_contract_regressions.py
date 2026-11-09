@@ -1,0 +1,164 @@
+"""真实研究缺陷的合同回归；所有输入和资产均为隔离合成数据。"""
+import json
+
+import pytest
+
+from runtime.research_index import ResearchIndex, ResearchWrite
+from runtime.research_ledger import open_task, record_tool_receipt
+
+
+@pytest.fixture
+def research(monkeypatch, tmp_path):
+    monkeypatch.setenv('KR_STATE_DIR', str(tmp_path))
+    tid = open_task(objective='开发者研究', budget='fast', considered=[], task_id='exam-custom-id')['research_task_id']
+    index = ResearchIndex()
+    index.annotate(ResearchWrite(action='question', task_id=tid, question_id='q1', text='开发者的真实问题'))
+    return tid, index
+
+
+def write(index, tid, **data):
+    from runtime.research_contracts import parse_write
+    return index.annotate(parse_write({'task_id': tid, **data}))
+
+
+def test_custom_id_is_visible_in_all_workspace_entries(research):
+    from runtime.research_workspace import ResearchRecords
+    tid, _ = research
+    records = ResearchRecords()
+    assert records.snapshot(tid)['research_task_id'] == tid
+    assert tid in [r['research_task_id'] for r in records.recent()['tasks']]
+    assert records.files(tid)['research_task_id'] == tid
+
+
+@pytest.mark.parametrize('bad', ['../exam', 'exam/other', '中文', 'a' * 97, '.'])
+def test_task_id_validation_is_shared_and_never_aliases(bad):
+    with pytest.raises(ValueError):
+        open_task(objective='invalid', budget='fast', considered=[], task_id=bad)
+
+
+def test_top_level_review_exposes_unreviewed_question(research):
+    from runtime.composition import review_research_progress
+    tid, _ = research
+    result = review_research_progress(tid, 'before_delivery')
+    assert result['review_summary']['semantic_review'] == 'gaps'
+    assert result['stop_assessment'] != 'registered_checks_satisfied'
+    assert result['review_summary']['stop_authority'] == 'agent'
+
+
+def test_direct_application_call_links_action_and_cleans_context(research):
+    from runtime.application import register, invoke
+    from runtime.tool_trace import traced_tool
+    tid, index = research
+    @traced_tool('contract_probe')
+    def contract_probe(research_task_id: str = '') -> dict:
+        return {'status': 'ok'}
+    op = register(contract_probe, group='search', read_only=False, publish=False)
+    result = invoke('contract_probe', {'research_task_id': tid,
+        'research_context': {'action_id': 'read-experience', 'question_id': 'q1'}}, operation=op)
+    assert result['research_receipt']['research_action']['action_id'] == 'read-experience'
+    second = invoke('contract_probe', {'research_task_id': tid}, operation=op)
+    assert not second['research_receipt']['research_action'].get('action_id')
+    assert index.read(tid, view='feedback')['unplanned_receipts_count'] == 1
+
+
+def test_unassigned_cannot_be_retroactively_washed_as_exploration(research):
+    tid, index = research
+    receipt = record_tool_receipt(task_id=tid, trace_id='unassigned', tool='kr_web_search', status='ok')['receipt']
+    write(index, tid, action='exploration', record_id='explore1', purpose='寻找未知替代思路')
+    with pytest.raises(ValueError, match='post_hoc_exploration_forbidden'):
+        write(index, tid, action='exploration_disposition', record_id='disposition',
+              exploration_id='explore1', receipt_ids=[receipt['receipt_id']], disposition='background', rationale='作为背景')
+
+
+def test_requirement_partial_scope_does_not_turn_into_full_success(research):
+    from kr_core.evidence_assets import EvidenceAssets
+    tid, index = research
+    assets = EvidenceAssets()
+    asset = assets.put('https://example.org/experience', '正文有实际经验，但评论仍未取得。', kind='content')
+    assets.reference_many([asset['version_id']], 'task:' + tid, task_id=tid)
+    receipt = record_tool_receipt(task_id=tid, trace_id='body-only', tool='get_content_detail', status='ok',
+        result={'evidence_assets': [asset]})['receipt']
+    write(index, tid, action='requirement', record_id='r1', question_id='q1', text='正文和评论',
+          required_parts=['body', 'comments'])
+    write(index, tid, action='coverage', record_id='body-coverage', requirement_id='r1',
+          requirement_revision=1, receipt_id=receipt['receipt_id'], evidence_refs=[{'version_id':asset['version_id'], 'start':0,'end':10}],
+          covered_parts=['body'], rationale='只取得正文')
+    state = index.read(tid, view='requirements')['items'][0]
+    assert state['acquisition'] == 'partial'
+    assert state['missing_parts'] == ['comments']
+    assert state['semantic_review'] == 'unreviewed'
+    assert index.read(tid, view='feedback')['requirement_gaps_count'] == 1
+
+
+def test_requirement_revision_reopens_coverage_and_rejects_stale_writes(research):
+    tid, index = research
+    write(index, tid, action='requirement', record_id='r1', question_id='q1', text='正文', required_parts=['body'])
+    write(index, tid, action='requirement', record_id='r1', question_id='q1', text='正文和评论',
+          required_parts=['body','comments'], expected_revision=1)
+    with pytest.raises(ValueError, match='revision_conflict'):
+        write(index, tid, action='requirement', record_id='r1', question_id='q1', text='静默覆盖',
+              required_parts=['body'], expected_revision=1)
+    assert index.read(tid, view='requirements')['items'][0]['revision'] == 2
+
+
+def test_failed_attempt_remains_visible_after_requirement_is_satisfied(research):
+    from runtime.research_ledger import read_task, close_task
+    from kr_core.evidence_assets import EvidenceAssets
+    tid,index=research
+    failed=record_tool_receipt(task_id=tid, trace_id='first-failure',tool='get_content_detail',status='failed',failure_code='deadline')['receipt']
+    write(index,tid,action='requirement',record_id='r1',question_id='q1',text='实际正文',required_parts=['body'])
+    write(index,tid,action='attempt',record_id='a1',requirement_id='r1',requirement_revision=1,receipt_id=failed['receipt_id'],rationale='原尝试失败')
+    assets=EvidenceAssets();asset=assets.put('https://example.org/second','第二次取得正文。',kind='content')
+    assets.reference_many([asset['version_id']],'task:'+tid,task_id=tid)
+    ok=record_tool_receipt(task_id=tid,trace_id='second-ok',tool='get_content_detail',status='ok',result={'evidence_assets':[asset]})['receipt']
+    write(index,tid,action='coverage',record_id='replacement',requirement_id='r1',requirement_revision=1,
+          receipt_id=ok['receipt_id'],evidence_refs=[{'version_id':asset['version_id'],'start':0,'end':6}],covered_parts=['body'],rationale='替代取得正文')
+    result=close_task(task_id=tid,ecology_outcomes=[],stop_rationale='带语义缺口交付',key_claims=[])
+    assert result['closeout']['requirements']['items'][0]['acquisition']=='fulfilled'
+    receipts=read_task(task_id=tid)['tool_receipts']
+    assert next(x for x in receipts if x['receipt_id']==failed['receipt_id'])['status']=='failed'
+
+
+def test_pending_requirements_are_not_reported_as_execution_complete(research):
+    from runtime.research_ledger import close_task
+    tid,index=research
+    write(index,tid,action='requirement',record_id='r1',question_id='q1',text='尚缺评论',required_parts=['comments'])
+    result=close_task(task_id=tid,ecology_outcomes=[],stop_rationale='如实交付缺口',key_claims=[])
+    assert result['closeout']['completion_facts']['required_execution']=='incomplete'
+
+
+def test_action_cannot_reference_another_questions_requirement(research):
+    from runtime.research_contracts import validate_context
+    tid,index=research
+    index.annotate(ResearchWrite(action='question',task_id=tid,question_id='q2',text='另一个问题'))
+    write(index,tid,action='requirement',record_id='r1',question_id='q1',text='正文',required_parts=['body'])
+    with pytest.raises(ValueError,match='requirement_question_mismatch'):
+        validate_context(tid,{'action_id':'a','question_id':'q2','requirement_id':'r1'})
+
+
+def test_post_hoc_association_keeps_original_unassigned_count(research):
+    tid,index=research
+    r=record_tool_receipt(task_id=tid,trace_id='late-link',tool='kr_web_search',status='ok')['receipt']
+    index.annotate(ResearchWrite(action='action',task_id=tid,question_id='q1',action_id='a',receipt_id=r['receipt_id'],rationale='事后确认归属'))
+    feedback=index.read(tid,view='feedback')
+    assert feedback['original_unassigned_receipts_count']==1
+    assert feedback['post_hoc_associations_count']==1
+    assert feedback['unplanned_receipts_count']==0
+
+
+def test_durable_job_persists_action_scope_before_worker_starts(research,monkeypatch):
+    from runtime.task_service import TaskService
+    from runtime import task_service
+    from runtime.research_contracts import context_scope
+    from runtime.tasks import get_task_store
+    monkeypatch.setenv('KR_TASK_TEST_MODE','1')
+    monkeypatch.setattr(task_service,'source_identity',lambda:'test-source')
+    monkeypatch.setattr(task_service._MONITORS,'submit',lambda *a,**k:None)
+    monkeypatch.setattr(TaskService,'start_maintenance',lambda self:None)
+    tid,_=research
+    service=TaskService(get_task_store())
+    with context_scope(tid,{'action_id':'async-action','question_id':'q1'}):
+        task=service.submit('fixture_echo',{},scope={'research_task_id':tid})
+    job=json.loads((service.root/task['task_id']/'input.json').read_text(encoding='utf-8'))
+    assert job['scope']['research_action']['action_id']=='async-action'
+    assert service.store.get_task(task['task_id'])['metadata']['research_action']['question_id']=='q1'
