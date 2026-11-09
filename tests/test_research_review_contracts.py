@@ -142,6 +142,33 @@ def test_authorized_local_observation_has_real_file_hash_and_fixed_text(review,t
     assert engine.assets.fetch(result['version_id'])['text']!='后改内容'
 
 
+def test_local_observation_keeps_project_scope_and_archives_full_source(review,tmp_path):
+    engine,index,_,_=review
+    text='合成观察原文：这不是报告摘要，必须单独完整归档。'*40
+    source=tmp_path/'full-observation.txt';source.write_text(text,encoding='utf-8')
+    result=write(index,action='local_observation',record_id='full-obs',input_path=str(source),
+        approved_input_root=str(tmp_path),input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),
+        method='直接读取隔离合成文件',title='完整观察原文')
+    with engine.assets.connection() as conn:
+        scopes=conn.execute('SELECT project_id FROM asset_scopes WHERE version_id=? AND task_id=?',
+            (result['version_id'],'task-a')).fetchall()
+    assert [row[0] for row in scopes]==['project-a']
+    status=engine.run('task-a')
+    assert status['source_delivery']['status']=='vault_committed'
+    vault=engine._grant(engine._context('task-a')['vault_grant_id'],'project-a')
+    assert any(text in path.read_text(encoding='utf-8') for path in vault.rglob('*.md') if path.name!='总报告.md')
+
+
+def test_local_observation_retry_returns_same_fixed_version(review,tmp_path):
+    engine,index,_,_=review
+    source=tmp_path/'retry-observation.txt';source.write_text('合成重试输入',encoding='utf-8')
+    request=dict(action='local_observation',record_id='retry-obs',input_path=str(source),approved_input_root=str(tmp_path),
+        input_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),method='合成输入幂等重试',title='重试观察')
+    first=write(index,**request);second=write(index,**request)
+    assert second['version_id']==first['version_id']
+    assert second['revision']==first['revision']
+
+
 def test_report_review_is_hash_bound_and_actual_delivery_contains_readable_table(review):
     engine,index,refs,_=review
     alternative(index)

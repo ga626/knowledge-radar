@@ -191,7 +191,7 @@ def state(index,conn,task_id,assets=None,high=None):
         'review_status':'gaps' if gaps else 'recorded','semantic_truth':'not_program_verified','records':records}
 
 
-def validate(index,conn,req,value,assets):
+def validate(index,conn,req,value,assets,*,project_id=''):
     tid=req.task_id
     if isinstance(req,PurposeWrite):
         if req.record_id!='purpose':raise ValueError('single_task_purpose_required')
@@ -253,7 +253,7 @@ def validate(index,conn,req,value,assets):
         repository=assets or EvidenceAssets()
         ref=repository.put('kr-observation:'+req.input_sha256,raw.decode('utf-8'),kind='content',title=req.title,
             metadata={'acquisition_path':'authorized_local_observation','input_sha256':req.input_sha256,'method':req.method})
-        repository.reference_many([ref['version_id']],tid,task_id=tid)
+        repository.reference_many([ref['version_id']],tid,project_id=project_id,task_id=tid)
         value['version_id']=ref['version_id']
 
 

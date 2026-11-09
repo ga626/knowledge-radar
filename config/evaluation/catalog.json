@@ -462,7 +462,7 @@
     },
     {
       "capability_id": "mcp.update_research",
-      "version": 3,
+      "version": 4,
       "lifecycle": "active",
       "entries": [
         "update_research"
@@ -479,7 +479,7 @@
     },
     {
       "capability_id": "research.incremental_evidence",
-      "version": 3,
+      "version": 4,
       "lifecycle": "active",
       "entries": [],
       "aliases": [],

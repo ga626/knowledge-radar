@@ -2120,8 +2120,8 @@
     },
     {
       "case_id": "research.incremental_evidence",
-      "version": 5,
-      "oracle_version": 5,
+      "version": 6,
+      "oracle_version": 6,
       "capabilities": [
         "research.incremental_evidence",
         "mcp.update_research"
@@ -2165,7 +2165,7 @@
         "src/kr_core/source_urls.py"
       ],
       "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。 合法自定义ID、需求分部覆盖、事后关联留痕、异步意图持久化和探索处置；语义保持未审阅。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。",
-      "change_reason": "2026-11-09 R09/R10与收尾:文档投影保留定位并移除访问参数，异步动作绑定任务，需求分页与完整收口，可读替代及撤证依据。"
+      "change_reason": "2026-11-09 收尾集成反例:授权本地观察绑定任务的稳定项目身份，完整原文进入来源归档；幂等重试返回同一固定版本。"
     },
     {
       "case_id": "fixture.github_objects",

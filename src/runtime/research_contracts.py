@@ -141,15 +141,17 @@ def context_scope(task_id, value):
 def record(index, req, assets=None):
     from runtime.research_ledger import read_task
     from runtime.research_index import encoded
-    if read_task(task_id=req.task_id).get('status') == 'unknown_task':
+    task = read_task(task_id=req.task_id)
+    if task.get('status') == 'unknown_task':
         raise ValueError('unknown_research_task')
     value = req.model_dump(exclude={'expected_revision'})
     with index.connection(write=True) as conn:
         prior = current(conn, req.task_id, req.action, req.record_id)
         if prior and all(prior.get(k) == v for k, v in value.items()):
             from runtime.research_reviews import REVIEW_TYPES, validate
-            if isinstance(req,REVIEW_TYPES):validate(index,conn,req,dict(value),assets)
-            return {'status':'recorded','record_id':req.record_id,'revision':prior['revision']}
+            if isinstance(req,REVIEW_TYPES):validate(index,conn,req,dict(value),assets,project_id=str(task.get('project_id') or ''))
+            return {'status':'recorded','record_id':req.record_id,'revision':prior['revision'],
+                    **({'version_id':prior['version_id']} if 'version_id' in prior else {})}
         revision = int((prior or {}).get('revision', 0))
         if prior and req.action not in {'requirement','claim','task_purpose'}:
             raise ValueError('immutable_record_use_new_id')
@@ -158,7 +160,7 @@ def record(index, req, assets=None):
         if prior and req.expected_revision is None:
             raise ValueError('expected_revision_required')
         from runtime.research_reviews import REVIEW_TYPES, validate
-        if isinstance(req,REVIEW_TYPES):validate(index,conn,req,value,assets)
+        if isinstance(req,REVIEW_TYPES):validate(index,conn,req,value,assets,project_id=str(task.get('project_id') or ''))
         if isinstance(req, RequirementWrite):
             if not index.question_at(conn, req.task_id, req.question_id):
                 raise ValueError('unknown_question')
