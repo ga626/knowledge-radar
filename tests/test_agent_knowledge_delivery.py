@@ -65,6 +65,23 @@ def test_fixed_fetch_entire_response_budget(corpus):
     with pytest.raises(ValueError,match='withdrawn'):read(Fetch(action='fetch',version_id=old['version_id']),assets)
 
 
+@pytest.mark.parametrize('body',['中文😀ABC\n'*2000,'x\n'*12000],ids=['mixed','dense-locators'])
+def test_fetch_budget_is_body_characters_with_contiguous_continuation(tmp_path,body):
+    assets=EvidenceAssets(tmp_path/'assets')
+    ref=assets.put('https://example.org/long',body)
+    pieces=[];start=0
+    while True:
+        page=read(Fetch(action='fetch',version_id=ref['version_id'],start=start,max_chars=6500),assets)
+        assert len(page['text'])==min(6500,len(body)-start)
+        assert page['locator']['start']==start
+        assert page['body_budget_chars']==6500
+        pieces.append(page['text'])
+        if page['next_start'] is None:break
+        assert page['next_start']==start+len(page['text'])
+        start=page['next_start']
+    assert ''.join(pieces)==body
+
+
 @pytest.fixture
 def delivery(tmp_path,corpus):
     assets,_,new,_=corpus

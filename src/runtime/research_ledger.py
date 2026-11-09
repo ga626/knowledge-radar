@@ -1020,6 +1020,7 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
             "unsuccessful_background_tasks": failed_tasks,
             "required_failed_tasks": required_failures,
             "requirements": requirements,
+            "claim_review": ResearchIndex().read(task_id,view='review',limit=100,max_chars=24000),
             "optional_background_tasks": optional_tasks,
             "pending_submission_ids": pending_submissions,
             "completion_facts": {

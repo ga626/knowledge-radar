@@ -35,7 +35,7 @@ class Fetch(Contract):
     action: Literal["fetch"]
     version_id: str = Field(pattern=r"^[a-f0-9]{64}$")
     start: int = Field(default=0, ge=0)
-    max_chars: int = Field(default=8000, ge=2000, le=24000)
+    max_chars: int = Field(default=8000, ge=2000, le=24000, description='正文 Unicode 字符预算；不含信封和定位信息。locators最多100项，截断明确标记；next_start连续续读正文。')
     line_start: int | None = Field(default=None, ge=1, description='可选原文起始行；与非零start互斥。GitHub固定源码可直接按行读取。')
     line_end: int | None = Field(default=None, ge=1, description='可选原文结束行，包含该行；须同时提供line_start。')
 
@@ -43,7 +43,7 @@ class Fetch(Contract):
 class ResearchRead(Contract):
     action: Literal["research"]
     task_id: str = Field(min_length=1,max_length=96,pattern=r"^[A-Za-z0-9_-]+$")
-    view: Literal["candidates","changes","queries","questions","links","relations","feedback","duplicates","host_batches","scopes","assessments","decisions","actions","requirements","attempts","coverages","explorations","exploration_dispositions"] = "candidates"
+    view: Literal["candidates","changes","queries","questions","links","relations","feedback","duplicates","host_batches","scopes","assessments","decisions","actions","requirements","attempts","coverages","explorations","exploration_dispositions","review","withdrawal_scenarios","claims","purposes","alternatives_reviews","withdrawal_reviews","report_reviews","local_observations"] = "candidates"
     after_seq: int = Field(default=0,ge=0)
     before_seq: int = Field(default=0,ge=0)
     limit: int = Field(default=20,ge=1,le=100)
@@ -234,17 +234,14 @@ def read(request: ReadRequest, assets=None):
         return ResearchIndex().read(**request.model_dump(exclude={"action"}),assets=assets)
     if isinstance(request, Search):
         return search(assets, request)
-    budget = request.max_chars
-    size = budget
-    while size > 0:
-        value = assets.fetch(request.version_id, start=request.start, max_chars=size,
-                             line_start=request.line_start, line_end=request.line_end)
-        value.update(kind="fetch", status="ok", citation=f"kr:{request.version_id}#chars={value['locator']['start']}-{value['locator']['end']}")
-        excess = len(encoded(value)) - budget
-        if excess <= 0: return value
-        # 一段文字可能带很多行定位；直接减整个超额会越过可行的小片段。
-        size -= min(max(1, size // 2), max(1, excess))
-    raise ValueError("budget_too_small_increase_max_chars")
+    value = assets.fetch(request.version_id, start=request.start, max_chars=request.max_chars,
+                         line_start=request.line_start, line_end=request.line_end)
+    locations=value.get('locators',[])
+    value.update(kind='fetch',status='ok',body_budget_chars=request.max_chars,
+        budget_unit='unicode_code_points_body',locators_total=len(locations),
+        locators_truncated=len(locations)>100,locators=locations[:100],
+        citation=f"kr:{request.version_id}#chars={value['locator']['start']}-{value['locator']['end']}")
+    return value
 
 
 def guarded_path(root, path, *, require_file=False):

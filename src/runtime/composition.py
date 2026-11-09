@@ -1350,9 +1350,12 @@ def review_research_progress(
     from runtime.research_index import ResearchIndex
     result = review_research_task(task_id=research_task_id, phase=phase)
     feedback = ResearchIndex().read(research_task_id,view="feedback")
+    review = ResearchIndex().read(research_task_id,view='review')
     semantic_gaps = any(feedback.get(k+'_count',len(feedback.get(k,[]))) for k in (
         'questions_without_reviewed_support','scope_gaps','assessments_requiring_review','unresolved_counterevidence','requirement_gaps'))
+    semantic_gaps = semantic_gaps or review.get('review_status')!='recorded'
     return {**result, 'stop_assessment':'not_ready' if semantic_gaps else result.get('stop_assessment'),
+            'claim_review':review,
             'review_summary':{'recording':result.get('stop_assessment'), 'semantic_review':'gaps' if semantic_gaps else 'agent_declared_only',
                               'coverage':'registered_items_only','unregistered_coverage':'unknown','stop_authority':'agent'},
             "evidence_feedback":feedback}
@@ -2878,7 +2881,7 @@ from runtime.research_index import ResearchRequest
 
 @application_tool(group="research")
 def update_research(request: ResearchRequest) -> Dict:
-    """记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。"""
+    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)
 

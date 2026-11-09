@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "49695d7838ea05d8341114cb74f485cfe15bc35ca18e78acabe29a03a669bf72",
+  "contract_hash": "66f7fcf5fd8ec00ba9c02c6ada1094ccb75ba02df86e145a1126ea35bd8cfb7b",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -5155,6 +5155,7 @@
               },
               "max_chars": {
                 "default": 8000,
+                "description": "正文 Unicode 字符预算；不含信封和定位信息。locators最多100项，截断明确标记；next_start连续续读正文。",
                 "maximum": 24000,
                 "minimum": 2000,
                 "title": "Max Chars",
@@ -5251,7 +5252,15 @@
                   "attempts",
                   "coverages",
                   "explorations",
-                  "exploration_dispositions"
+                  "exploration_dispositions",
+                  "review",
+                  "withdrawal_scenarios",
+                  "claims",
+                  "purposes",
+                  "alternatives_reviews",
+                  "withdrawal_reviews",
+                  "report_reviews",
+                  "local_observations"
                 ],
                 "title": "View",
                 "type": "string"
@@ -7676,6 +7685,116 @@
       "group": "research",
       "input_schema": {
         "$defs": {
+          "AlternativesWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "alternatives_review",
+                "title": "Action",
+                "type": "string"
+              },
+              "claim_id": {
+                "default": "",
+                "description": "空值审阅任务级替代问题；否则绑定当前关键命题。",
+                "maxLength": 128,
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "claim_revision": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Claim Revision",
+                "type": "integer"
+              },
+              "disposition": {
+                "enum": [
+                  "compared",
+                  "reused",
+                  "not_found",
+                  "blocked",
+                  "deferred",
+                  "not_applicable"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/Locator"
+                },
+                "maxItems": 40,
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "options": {
+                "description": "同一任务上的替代方案及结果：区分宣称、适用性、实测。",
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 40,
+                "title": "Options",
+                "type": "array"
+              },
+              "rationale": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Rationale",
+                "type": "string"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "reopen_conditions": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Reopen Conditions",
+                "type": "string"
+              },
+              "reuse_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Reuse Id",
+                "type": "string"
+              },
+              "search_scope": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Search Scope",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "disposition",
+              "rationale",
+              "search_scope"
+            ],
+            "title": "AlternativesWrite",
+            "type": "object"
+          },
           "AttemptWrite": {
             "additionalProperties": false,
             "properties": {
@@ -7742,6 +7861,131 @@
               "rationale"
             ],
             "title": "AttemptWrite",
+            "type": "object"
+          },
+          "ClaimWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "claim",
+                "title": "Action",
+                "type": "string"
+              },
+              "applicability": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Applicability",
+                "type": "string"
+              },
+              "basis": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Basis",
+                "type": "string"
+              },
+              "claim_type": {
+                "enum": [
+                  "fact",
+                  "explanation",
+                  "recommendation",
+                  "hypothesis",
+                  "comparison",
+                  "novelty"
+                ],
+                "title": "Claim Type",
+                "type": "string"
+              },
+              "counterevidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/Locator"
+                },
+                "maxItems": 40,
+                "title": "Counterevidence Refs",
+                "type": "array"
+              },
+              "dependencies": {
+                "items": {
+                  "$ref": "#/$defs/Dependency"
+                },
+                "maxItems": 40,
+                "title": "Dependencies",
+                "type": "array"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "importance": {
+                "default": "high",
+                "enum": [
+                  "high",
+                  "normal"
+                ],
+                "title": "Importance",
+                "type": "string"
+              },
+              "question_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Question Id",
+                "type": "string"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "support_assessment": {
+                "default": "unreviewed",
+                "description": "Codex对相关性、可信度及交叉验证的声明；basis说明理由，程序不判真。",
+                "enum": [
+                  "unreviewed",
+                  "supports",
+                  "supports_with_limits",
+                  "insufficient"
+                ],
+                "title": "Support Assessment",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "text": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Text",
+                "type": "string"
+              },
+              "uncertainty": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Uncertainty",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "question_id",
+              "text",
+              "claim_type",
+              "applicability",
+              "basis"
+            ],
+            "title": "ClaimWrite",
             "type": "object"
           },
           "CoverageWrite": {
@@ -7835,6 +8079,59 @@
               "covered_parts"
             ],
             "title": "CoverageWrite",
+            "type": "object"
+          },
+          "Dependency": {
+            "additionalProperties": false,
+            "properties": {
+              "basis": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Basis",
+                "type": "string"
+              },
+              "evidence_refs": {
+                "items": {
+                  "$ref": "#/$defs/Locator"
+                },
+                "maxItems": 40,
+                "title": "Evidence Refs",
+                "type": "array"
+              },
+              "group_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Group Id",
+                "type": "string"
+              },
+              "role": {
+                "enum": [
+                  "necessary",
+                  "support",
+                  "background"
+                ],
+                "title": "Role",
+                "type": "string"
+              },
+              "upstream_claim_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Upstream Claim Id",
+                "type": "string"
+              },
+              "upstream_revision": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Upstream Revision",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "group_id",
+              "role",
+              "basis"
+            ],
+            "title": "Dependency",
             "type": "object"
           },
           "EvidenceRef": {
@@ -8000,6 +8297,77 @@
             "title": "ExplorationWrite",
             "type": "object"
           },
+          "LocalObservationWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "local_observation",
+                "title": "Action",
+                "type": "string"
+              },
+              "approved_input_root": {
+                "title": "Approved Input Root",
+                "type": "string"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "input_path": {
+                "title": "Input Path",
+                "type": "string"
+              },
+              "input_sha256": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Input Sha256",
+                "type": "string"
+              },
+              "method": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Method",
+                "type": "string"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              },
+              "title": {
+                "maxLength": 200,
+                "minLength": 1,
+                "title": "Title",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "input_path",
+              "approved_input_root",
+              "input_sha256",
+              "title",
+              "method"
+            ],
+            "title": "LocalObservationWrite",
+            "type": "object"
+          },
           "Locator": {
             "additionalProperties": false,
             "properties": {
@@ -8025,6 +8393,142 @@
               "end"
             ],
             "title": "Locator",
+            "type": "object"
+          },
+          "PurposeWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "task_purpose",
+                "title": "Action",
+                "type": "string"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "purposes": {
+                "items": {
+                  "enum": [
+                    "explanation",
+                    "comparison",
+                    "decision",
+                    "causal"
+                  ],
+                  "type": "string"
+                },
+                "maxItems": 4,
+                "minItems": 1,
+                "title": "Purposes",
+                "type": "array"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "task_card": {
+                "description": "同一目标任务：使用者、输入、期望结果、必要限制。",
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Task Card",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "purposes",
+              "task_card"
+            ],
+            "title": "PurposeWrite",
+            "type": "object"
+          },
+          "ReportReviewWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "report_review",
+                "title": "Action",
+                "type": "string"
+              },
+              "baseline": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Baseline",
+                "type": "string"
+              },
+              "claim_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "title": "Claim Ids",
+                "type": "array"
+              },
+              "coverage_statement": {
+                "description": "Codex反向核对报告关键结论覆盖的范围与限制。",
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Coverage Statement",
+                "type": "string"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "report_sha256": {
+                "description": "未附程序投影前的报告正文 UTF-8 SHA256。",
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Report Sha256",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "report_sha256",
+              "baseline",
+              "claim_ids",
+              "coverage_statement"
+            ],
+            "title": "ReportReviewWrite",
             "type": "object"
           },
           "RequirementWrite": {
@@ -8380,6 +8884,118 @@
             ],
             "title": "ResearchWrite",
             "type": "object"
+          },
+          "WithdrawalWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "withdrawal_review",
+                "title": "Action",
+                "type": "string"
+              },
+              "baseline": {
+                "pattern": "^[a-f0-9]{64}$",
+                "title": "Baseline",
+                "type": "string"
+              },
+              "change": {
+                "enum": [
+                  "changed",
+                  "unchanged",
+                  "weakened",
+                  "reversed",
+                  "unknown"
+                ],
+                "title": "Change",
+                "type": "string"
+              },
+              "claim_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Claim Id",
+                "type": "string"
+              },
+              "claim_revision": {
+                "minimum": 1,
+                "title": "Claim Revision",
+                "type": "integer"
+              },
+              "conclusion": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Conclusion",
+                "type": "string"
+              },
+              "expected_revision": {
+                "anyOf": [
+                  {
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Expected Revision"
+              },
+              "rationale": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Rationale",
+                "type": "string"
+              },
+              "record_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Record Id",
+                "type": "string"
+              },
+              "remaining_refs": {
+                "items": {
+                  "$ref": "#/$defs/Locator"
+                },
+                "maxItems": 40,
+                "title": "Remaining Refs",
+                "type": "array"
+              },
+              "result_kind": {
+                "enum": [
+                  "empirical",
+                  "hypothesis",
+                  "value",
+                  "unknown"
+                ],
+                "title": "Result Kind",
+                "type": "string"
+              },
+              "scenario_id": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Scenario Id",
+                "type": "string"
+              },
+              "task_id": {
+                "pattern": "^[A-Za-z0-9_-]{1,96}$",
+                "title": "Task Id",
+                "type": "string"
+              }
+            },
+            "required": [
+              "task_id",
+              "record_id",
+              "action",
+              "claim_id",
+              "claim_revision",
+              "scenario_id",
+              "baseline",
+              "conclusion",
+              "change",
+              "rationale",
+              "result_kind"
+            ],
+            "title": "WithdrawalWrite",
+            "type": "object"
           }
         },
         "additionalProperties": false,
@@ -8388,8 +9004,10 @@
             "discriminator": {
               "mapping": {
                 "action": "#/$defs/ResearchWrite",
+                "alternatives_review": "#/$defs/AlternativesWrite",
                 "assessment": "#/$defs/ResearchWrite",
                 "attempt": "#/$defs/AttemptWrite",
+                "claim": "#/$defs/ClaimWrite",
                 "coverage": "#/$defs/CoverageWrite",
                 "decision": "#/$defs/ResearchWrite",
                 "exploration": "#/$defs/ExplorationWrite",
@@ -8397,11 +9015,15 @@
                 "fold": "#/$defs/ResearchWrite",
                 "host_request": "#/$defs/ResearchWrite",
                 "link": "#/$defs/ResearchWrite",
+                "local_observation": "#/$defs/LocalObservationWrite",
                 "question": "#/$defs/ResearchWrite",
                 "relation": "#/$defs/ResearchWrite",
                 "repair": "#/$defs/ResearchWrite",
+                "report_review": "#/$defs/ReportReviewWrite",
                 "requirement": "#/$defs/RequirementWrite",
-                "scope": "#/$defs/ResearchWrite"
+                "scope": "#/$defs/ResearchWrite",
+                "task_purpose": "#/$defs/PurposeWrite",
+                "withdrawal_review": "#/$defs/WithdrawalWrite"
               },
               "propertyName": "action"
             },
@@ -8423,6 +9045,24 @@
               },
               {
                 "$ref": "#/$defs/ExplorationDisposition"
+              },
+              {
+                "$ref": "#/$defs/PurposeWrite"
+              },
+              {
+                "$ref": "#/$defs/ClaimWrite"
+              },
+              {
+                "$ref": "#/$defs/AlternativesWrite"
+              },
+              {
+                "$ref": "#/$defs/WithdrawalWrite"
+              },
+              {
+                "$ref": "#/$defs/ReportReviewWrite"
+              },
+              {
+                "$ref": "#/$defs/LocalObservationWrite"
               }
             ],
             "title": "Request"
@@ -8447,9 +9087,9 @@
         "additionalProperties": true,
         "type": "object"
       },
-      "purpose": "记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。",
+      "purpose": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。",
       "read_only": false,
-      "usage": "记录范围/问题、带原文定位的主张评审、来源关系、可撤销折叠、动作回执或停止决定；程序只验身份和定位，语义与充分性归Agent。"
+      "usage": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"
     }
   ]
 }

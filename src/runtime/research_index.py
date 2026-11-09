@@ -101,8 +101,11 @@ class ResearchWrite(BaseModel):
 
 from runtime.research_contracts import (RequirementWrite, AttemptWrite, CoverageWrite,
     ExplorationWrite, ExplorationDisposition)
+from runtime.research_reviews import (PurposeWrite, ClaimWrite, AlternativesWrite,
+    WithdrawalWrite, ReportReviewWrite, LocalObservationWrite)
 ResearchRequest = Annotated[ResearchWrite | RequirementWrite | AttemptWrite | CoverageWrite |
-    ExplorationWrite | ExplorationDisposition, Field(discriminator='action')]
+    ExplorationWrite | ExplorationDisposition | PurposeWrite | ClaimWrite | AlternativesWrite |
+    WithdrawalWrite | ReportReviewWrite | LocalObservationWrite, Field(discriminator='action')]
 
 
 class ResearchIndex:
@@ -352,13 +355,16 @@ class ResearchIndex:
                 if len(encoded(result)) > max_chars:
                     raise ValueError("budget_too_small_increase_max_chars")
                 return result
+            if view in {'review','withdrawal_scenarios'}:
+                from runtime.research_reviews import review_page
+                return review_page(self,conn,task_id,base,assets,max_chars,limit,after_seq,high,scenarios=view=='withdrawal_scenarios')
             # 不用OFFSET；续页只跳过已经读过的序号，撤回或折叠不移动其他行。
             clause = "" if view == "changes" else " AND kind=? AND NOT EXISTS(SELECT 1 FROM changes n WHERE n.task_id=c.task_id AND n.kind=c.kind AND n.object_id=c.object_id AND n.seq>c.seq AND n.seq<=?)"
             if view == 'requirements':
                 from runtime.research_contracts import requirement_projection
                 items = requirement_projection(self, conn, task_id, high, assets)
                 return {**base, 'items':items[:limit], 'truncated':len(items)>limit}
-            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition'}
+            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition', 'claims':'claim','purposes':'task_purpose','alternatives_reviews':'alternatives_review','withdrawal_reviews':'withdrawal_review','report_reviews':'report_review','local_observations':'local_observation'}
             if view != "changes" and view not in kinds:
                 raise ValueError("invalid_research_view")
             params = [task_id, after_seq, high] + ([] if view == "changes" else [kinds[view], high])

@@ -97,12 +97,12 @@ def current(conn, task_id, kind, oid):
     return json.loads(row[0]) if row else None
 
 
-def rows_at(conn, task_id, high=None):
+def rows_at(conn, task_id, high=None, *, include_seq=False):
     if high is None:
-        return [dict(json.loads(r['value']), _kind=r['kind']) for r in conn.execute(
-            'SELECT kind,value FROM current WHERE task_id=?', (task_id,))]
-    return [dict(json.loads(r['value']), _kind=r['kind']) for r in conn.execute('''
-        SELECT c.kind,c.value FROM changes c WHERE c.task_id=? AND c.seq<=? AND NOT EXISTS(
+        return [dict(json.loads(r['value']), _kind=r['kind'], **({'_seq':r['seq']} if include_seq else {})) for r in conn.execute(
+            'SELECT kind,value,seq FROM current WHERE task_id=?', (task_id,))]
+    return [dict(json.loads(r['value']), _kind=r['kind'], **({'_seq':r['seq']} if include_seq else {})) for r in conn.execute('''
+        SELECT c.kind,c.value,c.seq FROM changes c WHERE c.task_id=? AND c.seq<=? AND NOT EXISTS(
           SELECT 1 FROM changes n WHERE n.task_id=c.task_id AND n.kind=c.kind
           AND n.object_id=c.object_id AND n.seq>c.seq AND n.seq<=?)''', (task_id, high, high))]
 
@@ -147,14 +147,18 @@ def record(index, req, assets=None):
     with index.connection(write=True) as conn:
         prior = current(conn, req.task_id, req.action, req.record_id)
         if prior and all(prior.get(k) == v for k, v in value.items()):
+            from runtime.research_reviews import REVIEW_TYPES, validate
+            if isinstance(req,REVIEW_TYPES):validate(index,conn,req,dict(value),assets)
             return {'status':'recorded','record_id':req.record_id,'revision':prior['revision']}
         revision = int((prior or {}).get('revision', 0))
-        if prior and req.action not in {'requirement'}:
+        if prior and req.action not in {'requirement','claim','task_purpose'}:
             raise ValueError('immutable_record_use_new_id')
         if req.expected_revision is not None and req.expected_revision != revision:
             raise ValueError('revision_conflict')
         if prior and req.expected_revision is None:
             raise ValueError('expected_revision_required')
+        from runtime.research_reviews import REVIEW_TYPES, validate
+        if isinstance(req,REVIEW_TYPES):validate(index,conn,req,value,assets)
         if isinstance(req, RequirementWrite):
             if not index.question_at(conn, req.task_id, req.question_id):
                 raise ValueError('unknown_question')
@@ -191,7 +195,7 @@ def record(index, req, assets=None):
                 raise ValueError('linked_exploration_requires_question')
         value.update(revision=revision+1, author='agent', assessment='agent_declared_not_program_verified')
         index.put(conn, req.task_id, req.action, req.record_id, value, encoded(value))
-    return {'status':'recorded','record_id':req.record_id,'revision':value['revision']}
+    return {'status':'recorded','record_id':req.record_id,'revision':value['revision'],**({'version_id':value['version_id']} if 'version_id' in value else {})}
 
 
 def requirement_projection(index, conn, task_id, high=None, assets=None):

@@ -80,6 +80,56 @@ def evidence(engine, text='证据原文。\r\n😀\n反证不删除',url='https:
     return ref
 
 
+def test_archive_preserves_index_proper_name():
+    from runtime.research_archive import display_subject
+    row={'source_url':'https://example.org/investment','title':'Index Ventures AI outlook','kind':'content','metadata':'{}'}
+    assert display_subject(row)=='Index Ventures AI outlook'
+
+
+def test_same_long_title_different_content_types_are_distinguishable(archive):
+    engine,_,_,vault=archive
+    for kind in ('content','transcript'):
+        ref=engine.assets.put('https://example.org/'+kind,'真实资料'+kind,kind=kind,title='很长的共同主题'*20)
+        engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
+    result=engine.run('task-a');assert not result['error_code']
+    names=[p.name for p in vault.rglob('网页 - *.md')]
+    assert any('正文' in n for n in names) and any('转写' in n for n in names)
+    assert len(set(names))==2
+
+
+def test_incremental_archive_has_one_current_navigation_and_private_history(archive):
+    engine,_,_,vault=archive
+    for i in range(3):
+        evidence(engine,'第'+str(i)+'篇全文','https://example.org/'+str(i))
+        result=engine.run('task-a');assert not result['error_code']
+    navs=list(vault.rglob('资料导航*.md'))
+    assert len(navs)==1
+    assert navs[0].read_text(encoding='utf-8').count('网页 - ')==3
+    assert all(engine._round_get(r['round_id']).get('navigation_text') for r in result['rounds'])
+    before={str(p):p.read_bytes() for p in vault.rglob('*.md')}
+    assert not engine.run('task-a',retry=True)['error_code']
+    assert before=={str(p):p.read_bytes() for p in vault.rglob('*.md')}
+
+
+def test_navigation_replace_crash_recovers_and_user_edit_is_preserved(archive,monkeypatch):
+    import runtime.research_archive as module
+    engine,*_=archive;evidence(engine);engine.run('task-a')
+    evidence(engine,'补充资料','https://example.org/new')
+    original=module.os.replace
+    def crash(source,target):
+        original(source,target)
+        if Path(target).name=='资料导航.md':raise OSError('after_navigation_replace')
+    monkeypatch.setattr(module.os,'replace',crash)
+    broken=engine.run('task-a');assert broken['error_code']
+    monkeypatch.setattr(module.os,'replace',original)
+    result=engine.run('task-a',retry=True);assert not result['error_code']
+    folder=Path(result['rounds'][-1]['path']);nav=folder/'资料导航.md'
+    nav.write_text('USER NAVIGATION',encoding='utf-8')
+    evidence(engine,'第三篇','https://example.org/third')
+    assert engine.run('task-a')['error_code']=='destination_modified_preserved'
+    assert nav.read_text(encoding='utf-8')=='USER NAVIGATION'
+
+
 def test_challenge_is_retained_as_diagnostic_and_not_exported_as_body(archive):
     engine, _, _, vault = archive
     ref = engine.assets.put('https://example.org/challenge','Client Challenge\nPlease enable JavaScript to continue.',title='Client Challenge')
@@ -212,7 +262,8 @@ def test_late_evidence_new_round_leaves_old_immutable(archive):
     engine.maintain()
     rounds=engine.status('task-a')['rounds']
     assert len(rounds)==2
-    assert all((folder/name).read_bytes()==raw for name,raw in before.items())
+    assert all((folder/name).read_bytes()==raw for name,raw in before.items() if name!='资料导航.md')
+    assert engine._round_get(initial['rounds'][0]['round_id'])['navigation_text'].encode()==before['资料导航.md']
     assert {r for item in rounds for r in reconstruct(Path(item['path']))}=={first['version_id'],second['version_id']}
 
 
@@ -301,7 +352,8 @@ def test_no_obsidian_independent_knowledge_and_report(archive):
     engine.bind(req.model_copy(update={'task_id':'solo','vault_grant_id':'','local_report_path':str(local/'solo.md')}))
     result=engine.submit(SubmitReport(action='submit_report',task_id='solo',project_id='project-a',title='独立',content='KR独立可用'))
     assert result['summary']=='delivered' and result['vault']['status']=='not_configured'
-    assert (local/'solo.md').read_text(encoding='utf-8')=='KR独立可用'
+    assert (local/'solo.md').read_text(encoding='utf-8').startswith('KR独立可用\n')
+    assert '关键结论与撤证审阅' in (local/'solo.md').read_text(encoding='utf-8')
 
 
 def test_backup_restore_provenance_user_edits_and_authorization(archive,tmp_path):
@@ -451,7 +503,10 @@ def test_actual_windows_file_lock_retry_preserves_fixed_version(archive):
     import ctypes
     from ctypes import wintypes
     engine,req,local,_=archive;evidence(engine)
-    path=Path(req.local_report_path);path.parent.mkdir(parents=True);path.write_bytes('# 结论\n保留原文和缺口。\n'.encode('utf-8'))
+    from runtime.research_reviews import report_appendix
+    from runtime.research_index import ResearchIndex
+    planned,_=report_appendix(ResearchIndex(),'task-a','# 结论\n保留原文和缺口。\n',engine.assets)
+    path=Path(req.local_report_path);path.parent.mkdir(parents=True);path.write_bytes(planned.encode('utf-8'))
     kernel=ctypes.WinDLL('kernel32',use_last_error=True)
     kernel.CreateFileW.argtypes=[wintypes.LPCWSTR,wintypes.DWORD,wintypes.DWORD,ctypes.c_void_p,wintypes.DWORD,wintypes.DWORD,wintypes.HANDLE]
     kernel.CreateFileW.restype=wintypes.HANDLE;kernel.CloseHandle.argtypes=[wintypes.HANDLE]
@@ -635,7 +690,7 @@ def test_multiple_reports_and_supplements_keep_short_human_names(archive):
         report_id='e'*64,local_report_path=str(local/'更新报告.md'),content='补齐反证后的结论。'))
     assert Path(result['vault']['path']).name=='总报告（2）.md'
     task=vault/'同名项目'/TASK_RELATIVE
-    assert {p.name for p in task.iterdir()}=={'总报告.md','总报告（2）.md','资料导航.md','资料导航（2）.md','资料导航（3）.md','网页 - 原始资料.md','网页 - 原始资料（2）.md','网页 - 原始资料（3）.md'}
+    assert {p.name for p in task.iterdir()}=={'总报告.md','总报告（2）.md','资料导航.md','网页 - 原始资料.md','网页 - 原始资料（2）.md','网页 - 原始资料（3）.md'}
     assert_readable_tree(vault)
 
 
@@ -697,7 +752,7 @@ def test_source_naming_is_independent_of_media_kind_and_collection_tool(archive,
     ref=engine.assets.put(url,'真实格式的固定转写文本',kind='transcript',title='原始标题',metadata=metadata|{'display_title_zh':'语音识别实测'})
     engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
     result=engine.run('task-a');folder=Path(result['rounds'][0]['path'])
-    note=folder/(label+' - 语音识别实测.md')
+    note=next(folder.glob(label+' - 转写 语音识别实测*.md'))
     assert note.is_file() and '资料内容：转写或字幕' in note.read_text(encoding='utf-8')
     assert not [p for p in folder.iterdir() if p.is_dir()]
     assert reconstruct(folder)[ref['version_id']].decode()=='真实格式的固定转写文本'
@@ -792,7 +847,7 @@ def test_academic_document_asset_archived_as_academic_without_body_translation(a
     ref=engine.assets.put('https://publisher.example/oa/paper','English paper body',kind='document_text',title='Original paper title',metadata={'source_platform':'academic','title_zh':'长音频识别论文'})
     engine.assets.reference_many([ref['version_id']],'task-a',project_id='project-a',task_id='task-a')
     result=engine.run('task-a');folder=Path(result['rounds'][0]['path'])
-    text=(folder/'学术 - 长音频识别论文.md').read_text(encoding='utf-8')
+    text=next(folder.glob('学术 - 文档正文 长音频识别论文*.md')).read_text(encoding='utf-8')
     assert 'English paper body' in text and engine.assets.fetch(ref['version_id'])['asset']['title']=='Original paper title'
 
 
