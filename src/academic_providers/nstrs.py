@@ -24,7 +24,7 @@ class NstrsProvider(ChineseOpenAccessProvider):
         coverage="national science and technology reports",
         stable=False,
         degraded_reason=(
-            "公众检索通过官网浏览器页面请求；全文需专业人员实名注册并通过身份认证，只允许在线浏览，不能下载保存。"
+            "公众检索通过官网浏览器页面请求；实名与文章权限逐项核验。KR当前只提供摘要/在线浏览线索，不自动下载或持久归档全文；这不是全平台统一收费/下载政策声明。"
         ),
         failure_category="",
         requires_login=False,

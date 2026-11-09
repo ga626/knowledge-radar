@@ -300,12 +300,21 @@ def _source_markdown_links(text, source_url):
             target=match[2]
             resolved='<'+absolute(target[1:-1])+'>' if target.startswith('<') else absolute(target)
             return match[1]+resolved+match[3]
-        parts=re.split(r'(`+[^`\n]*`+)',line)
-        for i in range(0,len(parts),2):
-            parts[i]=pattern.sub(rewrite,parts[i])
-            parts[i]=re.sub(r'^(\s*\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)',
-                lambda m:m[1]+('<'+absolute(m[2][1:-1])+'>' if m[2].startswith('<') else absolute(m[2])),parts[i])
-        lines.append(''.join(parts))
+        # 保护代码内容但保留其所在链接的语法；按代码段直接切断整行
+        # 会漏掉 [代码格式文件名](相对路径) 这种常见 README 链接。
+        prefix='\x00kr-inline-'
+        while prefix in line:prefix+='-'
+        codes={}
+        def protect(match):
+            token=prefix+str(len(codes))+'\x00'
+            codes[token]=match[0]
+            return token
+        protected=re.sub(r'`+[^`\n]*`+',protect,line)
+        protected=pattern.sub(rewrite,protected)
+        protected=re.sub(r'^(\s*\[[^\]\n]+\]:\s*)(<[^>\n]+>|\S+)',
+            lambda m:m[1]+('<'+absolute(m[2][1:-1])+'>' if m[2].startswith('<') else absolute(m[2])),protected)
+        for token,code in codes.items():protected=protected.replace(token,code)
+        lines.append(protected)
     return ''.join(lines)
 
 

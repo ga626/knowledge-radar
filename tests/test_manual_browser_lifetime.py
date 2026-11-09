@@ -20,9 +20,13 @@ def recovery(monkeypatch, tmp_path, request):
     monkeypatch.setattr(chrome, '_managed_process_close_allowed', lambda *a, **kw: True)
     profile = str(tmp_path/platform)
     closed = []
+    monkeypatch.setattr(browser_sessions, 'observe_process', lambda pid: {
+        'status': 'missing' if closed else 'alive',
+        'identity': '' if closed else '42:scan-window',
+    })
     proc = SimpleNamespace(poll=lambda: 0 if closed else None, wait=lambda **kw: None,
                            terminate=lambda: closed.append('terminate'),kill=lambda: closed.append('kill'))
-    monkeypatch.setattr(chrome, '_find_chrome_with_debug_port', lambda _: None if closed else 42)
+    monkeypatch.setattr(chrome, '_find_chrome_with_debug_port', lambda *a, **kw: None if closed else 42)
     monkeypatch.setattr(chrome, '_chrome_user_data_dir_for_pid', lambda _: profile)
     monkeypatch.setattr(chrome, '_managed_chrome_profile_dir', lambda *a, **kw: profile)
     monkeypatch.setattr(chrome, '_profile_metadata_for_platform', lambda *a, **kw: {'profile_id':platform+'-one'})

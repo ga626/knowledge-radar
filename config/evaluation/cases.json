@@ -1188,8 +1188,8 @@
     },
     {
       "case_id": "flow.search_to_detail",
-      "version": 5,
-      "oracle_version": 5,
+      "version": 6,
+      "oracle_version": 6,
       "capabilities": [
         "flow.search_detail"
       ],
@@ -1199,7 +1199,9 @@
         "tests/test_web_chain_contracts.py",
         "tests/test_academic_wave_repairs.py",
         "tests/test_cloud_ocr.py",
-        "tests/test_academic_handoff.py"
+        "tests/test_academic_handoff.py",
+        "tests/test_academic_provider_profiles.py",
+        "tests/test_chinese_open_access_providers.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1244,10 +1246,20 @@
         "tests/test_academic_handoff.py",
         "src/runtime/pdf_worker.py",
         "src/runtime/document_cache.py",
-        "src/runtime/research_index.py"
+        "src/runtime/research_index.py",
+        "src/academic_providers/service.py",
+        "src/academic_providers/chinese_open_access.py",
+        "src/academic_providers/vip_oa.py",
+        "src/academic_providers/nstrs.py",
+        "src/academic_providers/ntur.py",
+        "src/academic_providers/chinaxiv.py",
+        "src/academic_providers/profile.py",
+        "src/academic_providers/openalex.py",
+        "tests/test_academic_provider_profiles.py",
+        "tests/test_chinese_open_access_providers.py"
       ],
       "success": "搜索配置代际/撤销、可选来源、约束与重复上游、缓存预算、获取一次/多解析、浏览器隔离取消、PDF覆盖及宿主批次幂等；网络夹具不证明外部来源可用。",
-      "change_reason": "学术方案B：固定文献卡、独立全文、慢发现后台化、版本/溯源回读、跨研究复用、授权导入及复杂页缺口。夹具不代表真实站点通过。"
+      "change_reason": "学术方案B：固定文献卡、独立全文、慢发现后台化、版本/溯源回读、跨研究复用、授权导入及复杂页缺口。夹具不代表真实站点通过。 2026-11-09补逐源权限/诊断/题名与配置声明回归，不把目录PASS当逐篇权益。"
     },
     {
       "case_id": "account.route_order",
@@ -1614,8 +1626,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 7,
-      "oracle_version": 7,
+      "version": 8,
+      "oracle_version": 8,
       "capabilities": [
         "account.recovery"
       ],
@@ -1625,7 +1637,9 @@
         "tests/evaluation/test_account_observations.py",
         "tests/test_installed_business_routes.py",
         "tests/test_browser_recovery_contract.py",
-        "tests/test_manual_browser_lifetime.py"
+        "tests/test_manual_browser_lifetime.py",
+        "tests/test_browser_session_maintenance.py",
+        "tests/test_browser_session_retention.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1649,10 +1663,14 @@
         "src/detail_strategies/xiaohongshu.py",
         "src/runtime/profile_registry.py",
         "tests/test_browser_recovery_contract.py",
-        "tests/test_manual_browser_lifetime.py"
+        "tests/test_manual_browser_lifetime.py",
+        "src/runtime/browser_sessions.py",
+        "src/runtime/process_identity.py",
+        "tests/test_browser_session_maintenance.py",
+        "tests/test_browser_session_retention.py"
       ],
       "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "日常浏览器单账号投影和通知接入既有事实库，退役专用XHS profiles不再显示或打开。"
+      "change_reason": "日常浏览器单账号投影和通知接入既有事实库，退役专用XHS profiles不再显示或打开。 2026-11-09补死PID/代际/未知权限投影与显式维护、扫码保留和账本压缩回归。"
     },
     {
       "case_id": "content.contracts",
@@ -1930,8 +1948,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 7,
-      "oracle_version": 7,
+      "version": 8,
+      "oracle_version": 8,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -1997,7 +2015,7 @@
         "src/kr_core/source_urls.py"
       ],
       "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。",
-      "change_reason": "2026-11-09 R09/R10与收尾:文档投影保留定位并移除访问参数，异步动作绑定任务，需求分页与完整收口，可读替代及撤证依据。"
+      "change_reason": "2026-11-09 R09/R10与收尾:文档投影保留定位并移除访问参数，异步动作绑定任务，需求分页与完整收口，可读替代及撤证依据。 2026-11-09历史来源相对链接显式计划修复：固定原件不变、代码格式链接标签、人改冲突和中断恢复回归。"
     },
     {
       "case_id": "surface.read_knowledge",

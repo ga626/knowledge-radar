@@ -132,6 +132,14 @@ def test_openalex_does_not_publish_unverified_daily_credit_as_current_policy():
     assert 'free_credit_per_day_usd' not in quota
 
 
+def test_chinaxiv_identifier_link_does_not_consume_title_or_result_limit():
+    from academic_providers.chinaxiv import ChinaXivProvider
+    page='<a href="/abs/202611.00064">1. ChinaXiv:202611.00064</a><a href="/abs/202611.00064">人工智能与科学研究</a>'
+    response=httpx.Response(200,text=page,request=httpx.Request('GET','https://chinaxiv.org/user/search.htm'))
+    rows=ChinaXivProvider()._collect_response(response,'https://chinaxiv.org/user/search.htm',AcademicSearchRequest('人工智能'),set(),1)
+    assert len(rows)==1 and rows[0].title=='人工智能与科学研究'
+
+
 def test_wanfang_payment_failure_is_not_login_failure_and_leaks_no_account(monkeypatch):
     monkeypatch.setenv('WFDATA_ENABLED', 'true')
     monkeypatch.setenv('WFDATA_APP_KEY', 'never-echo-this')

@@ -52,6 +52,14 @@ def old_relative_source(archive, monkeypatch):
     return engine,ref,path,raw
 
 
+def test_source_link_projection_keeps_inline_code_label_and_resolves_its_target():
+    from runtime.research_archive import _source_markdown_links
+    source='https://github.com/org/repo/blob/main/README.md'
+    text='See [`.github/CONTRIBUTING.md`](.github/CONTRIBUTING.md). Keep `[demo](sample.md)` literal.\n'
+    expected='See [`.github/CONTRIBUTING.md`](https://github.com/org/repo/blob/main/.github/CONTRIBUTING.md). Keep `[demo](sample.md)` literal.\n'
+    assert _source_markdown_links(text, source)==expected
+
+
 def test_source_link_repair_is_explicit_fixed_version_safe_and_idempotent(archive,monkeypatch):
     from runtime.archive_layout import plan_source_links, apply_source_links
     engine,ref,path,raw=old_relative_source(archive,monkeypatch)
