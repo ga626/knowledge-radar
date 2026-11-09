@@ -64,7 +64,7 @@ def record_trial(ledger, manager, payload):
 
 def publish_quality(ledger):
     rows = [{'run_id':r['run_id'],'at':r['finished_at'],'case_id':r['quality_trial']['case_id'],
-             'identity':r['quality_trial']['identity'],'assessment':r['quality_assessment']}
+             'identity':r['quality_trial']['identity'],'assessment':r['quality_assessment'], 'layer':r['results'][0]['layer']}
             for r in ledger.history() if r.get('quality_trial')]
     value = {'schema':'kr-evaluation-quality-summary/v1','generated_at':now(),'trials':rows[-200:],
              'total_trials':len(rows),'truncated':len(rows)>200,'boundary':'historical_agent_judgments_not_current_install_acceptance'}

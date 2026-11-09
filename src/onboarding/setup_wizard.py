@@ -17,7 +17,7 @@ from onboarding.configuration import apply_updates, public_snapshot, runtime_env
 from runtime.account_alerts import account_alert_snapshot, recover_account
 from onboarding.console_page import render_console_page
 from onboarding.console_access import ConsoleAccess
-from runtime.evaluation_view import evaluation_summary
+from runtime.evaluation_view import evaluation_summary, evaluation_dashboard
 from onboarding.product_status import (
     capability_packs,
     console_configuration_snapshot,
@@ -150,12 +150,24 @@ def _handler_factory(server: WizardServer):
                 except (OSError, ValueError, RuntimeError):
                     self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {'status': 'unknown', 'error': 'runtime_observation_unavailable'})
                 return
-            if self.path == "/api/evaluation":
+            if self.path == "/api/evaluation" or self.path.startswith('/api/evaluation-page?'):
                 from onboarding.console_page import _developer_view_enabled
                 if not _developer_view_enabled():
                     self._send_json(HTTPStatus.FORBIDDEN, {'error':'maintainer_view_required'})
                     return
-                self._send_json(HTTPStatus.OK, evaluation_summary())
+                if self.path == '/api/evaluation':
+                    self._send_json(HTTPStatus.OK, evaluation_dashboard())
+                else:
+                    from urllib.parse import urlsplit, parse_qs
+                    from runtime.evaluation_maintenance import Maintenance, EvaluationRead
+                    try:
+                        query = parse_qs(urlsplit(self.path).query, strict_parsing=True)
+                        if set(query)-{'view','after','limit'} or any(len(v)!=1 for v in query.values()):
+                            raise ValueError('invalid_pagination')
+                        request = EvaluationRead(action='evaluation', **{k:v[0] for k,v in query.items()})
+                        self._send_json(HTTPStatus.OK, Maintenance().read(request))
+                    except ValueError:
+                        self._send_json(HTTPStatus.BAD_REQUEST, {'error':'分页参数无效。'})
                 return
             if self.path == "/favicon.ico":
                 # Keep the browser console quiet without adding a static-file
@@ -259,6 +271,7 @@ def _handler_factory(server: WizardServer):
                 return
             allowed = {
                 '/api/runtime/recover', '/api/runtime/receipt', '/api/runtime/wait',
+                "/api/evaluation-feedback",
                 "/api/research",
                 "/api/account-recovery",
                 "/api/config",
@@ -281,7 +294,8 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.CONFLICT,{'ok':False,'error':'数据迁移尚未完成，请在原迁移计划中继续；其他写入已暂停。'})
                 return
             local_config = self.path == "/api/config" and _preview_config_is_isolated()
-            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"} and not local_config:
+            evaluation_feedback = self.path == '/api/evaluation-feedback' and _preview_config_is_isolated()
+            if os.environ.get("KR_CONSOLE_READ_ONLY") == "1" and self.path not in {"/api/console/stop", "/api/research"} and not local_config and not evaluation_feedback:
                 self._send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "开发预览只读复用稳定数据；配置必须写入独立开发目录，其他维护请使用正式版。"})
                 return
             try:
@@ -297,6 +311,15 @@ def _handler_factory(server: WizardServer):
                     response = console_runtime_action(self.path.rsplit('/', 1)[1], payload)
                     self._send_json(HTTPStatus.CONFLICT if response.get('status') == 'rejected' else HTTPStatus.OK, response)
                     return
+                if self.path == '/api/evaluation-feedback':
+                    from onboarding.console_page import _developer_view_enabled
+                    from runtime.evaluation_maintenance import Maintenance
+                    if not _developer_view_enabled():
+                        self._send_json(HTTPStatus.FORBIDDEN, {'error':'maintainer_view_required'})
+                        return
+                    if set(payload) != {'case_id','revision','text','request_id'}:
+                        raise ValueError('纠错请求字段无效。')
+                    response = Maintenance().feedback(**payload)
                 elif self.path == "/api/research":
                     from runtime.research_workspace import workspace_for_console
                     from onboarding.research_api import workspace_api
