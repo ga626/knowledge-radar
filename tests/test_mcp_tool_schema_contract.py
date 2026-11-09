@@ -18,6 +18,15 @@ def test_public_mcp_tool_schemas_are_model_facing_contracts() -> None:
     assert {"health_check", "get_capabilities", "search_xiaohongshu", "search_zhihu"} <= set(result["tool_names"])
 
 
+def test_sdk_execution_models_match_published_application_fields():
+    """tools/list的字段必须真正进入SDK执行模型，不能仅展示相同JSON schema。"""
+    import server
+    from runtime.application import OPERATIONS
+    for name, operation in OPERATIONS.items():
+        tool = server.mcp._tool_manager.get_tool(name)
+        assert set(tool.fn_metadata.arg_model.model_fields) == set(operation.arguments.model_fields), name
+
+
 def test_schema_checker_rejects_changed_input_and_output_fields():
     import asyncio
     from copy import deepcopy
