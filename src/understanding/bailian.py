@@ -15,6 +15,7 @@ import time
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 import httpx
+from runtime.proxy_config import httpx_options
 
 from runtime.degradation import get_degradation_policy
 from runtime.monitor import get_monitor_tracker
@@ -179,6 +180,7 @@ def _post_multimodal_generation(
     with paid_send("bailian", payload, bound=len(json.dumps(payload, ensure_ascii=False).encode("utf-8")), endpoint=bailian_multimodal_endpoint()) as reservation:
         resp = httpx.post(
             bailian_multimodal_endpoint(),
+            **httpx_options(bailian_multimodal_endpoint(), adapter="bailian"),
             headers=headers,
             json=payload,
             timeout=timeout,
@@ -210,6 +212,7 @@ def _post_chat_completion(
     with paid_send("bailian", payload, bound=len(json.dumps(payload, ensure_ascii=False).encode("utf-8")), endpoint=bailian_compatible_base_url()) as reservation:
         resp = httpx.post(
             f"{bailian_compatible_base_url()}/chat/completions",
+            **httpx_options(bailian_compatible_base_url(), adapter="bailian"),
             headers=headers,
             json=payload,
             timeout=timeout,

@@ -1112,3 +1112,22 @@ def test_closeout_does_not_call_historical_delivery_current_after_conflict(archi
     assert facts['delivery'] == 'conflict'
     assert facts['delivery_error_code'] == conflict['error_code']
     assert facts['summary_version_id'] == delivered['report']['version_id']
+
+
+def test_effectiveness_two_real_archive_paths_share_vault_without_crossing(archive):
+    engine,req,local,vault=archive
+    evidence(engine);engine.run('task-a');a=submit(engine)
+    other=local/'menslink';other.mkdir()
+    lg=engine.store.authorize(Authorize(action='authorize_destination',approved_root=str(other),project_id='menslink'))
+    vg=engine.store.authorize(Authorize(action='authorize_destination',approved_root=str(vault),project_id='menslink'))
+    ledger.open_task(objective='MensLink研究',budget='fast',considered=[],task_id='menslink-task',project_id='menslink',project_name='MensLink')
+    engine.bind(BindContext(action='bind_context',task_id='menslink-task',project_id='menslink',project_name='MensLink',
+        task_title='跨项目隔离',local_grant_id=lg['grant_id'],local_report_path=str(other/'report.md'),vault_grant_id=vg['grant_id']))
+    ref=engine.assets.put('https://example.org/menslink','只属于MensLink的正文',kind='content')
+    engine.assets.reference_many([ref['version_id']],'menslink-task',project_id='menslink',task_id='menslink-task')
+    engine.run('menslink-task')
+    b=engine.submit(SubmitReport(action='submit_report',task_id='menslink-task',project_id='menslink',title='MensLink结论',content='MensLink结论'))
+    assert Path(a['vault']['path']).relative_to(vault).parts[0]=='同名项目'
+    assert Path(b['vault']['path']).relative_to(vault).parts[0]=='MensLink'
+    assert Path(b['vault']['path']).read_bytes()==Path(b['local']['path']).read_bytes()
+    assert 'MensLink' not in Path(a['vault']['path']).read_text(encoding='utf-8')

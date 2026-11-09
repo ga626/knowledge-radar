@@ -37,6 +37,8 @@ class ResearchRecords:
             payload['claim_gaps'] = [gap for gap in payload.get('claim_gaps', []) if gap.get('reason') != 'initial_research_question'] + [
                 {'claim_gap_id': row['record_id'], 'reason': row.get('text') or 'registered_question',
                  'status': 'closed' if row.get('closed') else 'open', 'origin': 'research_index'} for row in questions]
+        from runtime.research_ledger import project_context
+        payload['project_context'] = project_context(payload)
         return payload
 
     def recent(self, limit=20):
@@ -49,7 +51,7 @@ class ResearchRecords:
                 row = self.snapshot(path.stem)
                 rows.append({
                     key: row.get(key)
-                    for key in ('research_task_id', 'objective', 'budget', 'status', 'project_name', 'created_at', 'updated_at')
+                    for key in ('research_task_id', 'objective', 'budget', 'status', 'project_name', 'project_id', 'project_context', 'created_at', 'updated_at')
                 } | {'readable_summary': summarize_task(row), 'metrics': task_metrics(row)})
             except (ValueError, OSError):
                 unreadable += 1

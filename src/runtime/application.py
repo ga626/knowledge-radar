@@ -125,6 +125,15 @@ def groups():
     return result
 
 
+def research_workflow_identity():
+    from pathlib import Path
+    skill = Path(__file__).resolve().parents[2] / 'config/codex-product/plugin/knowledgeradar-research/skills/research/SKILL.md'
+    digest = hashlib.sha256(skill.read_bytes()).hexdigest() if skill.is_file() else ''
+    return {'skill_sha256': digest, 'packaged_skill': 'present' if digest else 'missing',
+            'host_loaded_skill': 'unverified',
+            'workflow': 'Declare project and question scope; associate actions; read fixed evidence; assess meaning and gaps; deliver with explicit limits.'}
+
+
 def catalog(name="", *, full=False):
     cards = [op.card() for _, op in sorted(OPERATIONS.items())]
     digest = hashlib.sha256(json.dumps(cards, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
@@ -137,7 +146,7 @@ def catalog(name="", *, full=False):
             "tools": cards if full else [{k: v for k, v in card.items()
                                          if k not in {"input_schema", "output_schema", "error_schema", "usage"}} for card in cards],
             "expand": {"tool": "get_capabilities", "arguments": {"tool_name": "<name>"}},
-            "availability": "declared_not_live_probe"}
+            "availability": "declared_not_live_probe", "research_workflow": research_workflow_identity()}
 
 
 def invoke(name, arguments, *, operation=None):

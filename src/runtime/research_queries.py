@@ -9,6 +9,20 @@ from pydantic import BaseModel, ConfigDict, Field
 CURRENT_RESEARCH_ACTION = ContextVar('kr_research_action', default=None)
 
 
+class ResearchQuestion(BaseModel):
+    """Agent-declared scope; absence never means universal coverage."""
+    model_config = ConfigDict(extra='forbid')
+    question_id: str = Field(min_length=1, max_length=128, pattern=r'\S')
+    text: str = Field(min_length=1, max_length=2000, pattern=r'\S')
+    required: bool = True
+    languages: list[str] = Field(default_factory=list, max_length=20)
+    populations: list[str] = Field(default_factory=list, max_length=20)
+    regions: list[str] = Field(default_factory=list, max_length=20)
+    information_roles: list[str] = Field(default_factory=list, max_length=20)
+    time_scope: str = Field(default='', max_length=500)
+    content_scope: str = Field(default='', max_length=500)
+
+
 class ResearchQuery(BaseModel):
     """执行者查询族；枚举和约束直接投影到MCP/CLI同源合同。"""
     model_config = ConfigDict(extra='forbid')

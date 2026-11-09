@@ -839,6 +839,17 @@ def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], 
         )
 
 
+def project_context(payload):
+    """只读身份投影；归档授权另查，不由目录或显示名推断。"""
+    pid = str(payload.get('project_id') or '').strip()
+    status = 'identified' if pid else ('legacy_adoption_pending' if 'project_id' not in payload else 'unclassified')
+    return {'status': status, 'project_id': pid, 'project_name': payload.get('project_name', ''),
+            'identity_source': 'explicit' if pid else 'missing', 'archive_ready': None,
+            'archive_status': 'not_checked',
+            'next_action': 'manage_research_artifacts.archive_status' if pid else
+                           'choose explicit project_id and bind_context; never infer from KR cwd'}
+
+
 def read_task(*, task_id: str) -> dict[str, Any]:
     """Read one persisted research task for continuity handoff tooling."""
     with _ledger_guard(task_id):

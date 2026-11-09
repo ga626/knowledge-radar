@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`66f7fcf5fd8ec00ba9c02c6ada1094ccb75ba02df86e145a1126ea35bd8cfb7b`
+合同指纹：`f7f210e1e79f071d8ccbe5194f4bf8a8e24fc976960741e24b1ae7a503b74605`
 
 ## advance_research_candidate
 
@@ -3130,6 +3130,81 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         ],
         "title": "ResearchQuery",
         "type": "object"
+      },
+      "ResearchQuestion": {
+        "additionalProperties": false,
+        "description": "Agent-declared scope; absence never means universal coverage.",
+        "properties": {
+          "content_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "information_roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Information Roles",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Languages",
+            "type": "array"
+          },
+          "populations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Populations",
+            "type": "array"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Question Id",
+            "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Regions",
+            "type": "array"
+          },
+          "required": {
+            "default": true,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "text": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "pattern": "\\S",
+            "title": "Text",
+            "type": "string"
+          },
+          "time_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Time Scope",
+            "type": "string"
+          }
+        },
+        "required": [
+          "question_id",
+          "text"
+        ],
+        "title": "ResearchQuestion",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -3209,6 +3284,24 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "default": null,
         "description": "执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。",
         "title": "Queries"
+      },
+      "questions": {
+        "anyOf": [
+          {
+            "items": {
+              "$ref": "#/$defs/ResearchQuestion"
+            },
+            "maxItems": 20,
+            "minItems": 1,
+            "type": "array"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "Codex显式选择的必要问题与范围；先登记后搜索，不提供时保留既有范围或标记未知。",
+        "title": "Questions"
       },
       "request_id": {
         "default": "",

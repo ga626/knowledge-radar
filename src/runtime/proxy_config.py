@@ -32,6 +32,8 @@ class ProxyConfig:
         if not parsed.scheme or not parsed.hostname:
             return {"server": self.url}
         host = parsed.hostname
+        if ":" in host:
+            host = f"[{host}]"
         if parsed.port:
             host = f"{host}:{parsed.port}"
         payload: Dict[str, str] = {"server": f"{parsed.scheme}://{host}"}
@@ -39,6 +41,7 @@ class ProxyConfig:
             payload["username"] = parsed.username
         if parsed.password:
             payload["password"] = parsed.password
+        payload["bypass"] = ",".join(dict.fromkeys(["localhost", "127.0.0.0/8", "[::1]", *[s.strip() for s in self.no_proxy.split(",") if s.strip()]]))
         return payload
 
     def summary(self) -> Dict[str, object]:
@@ -56,8 +59,11 @@ class ProxyConfig:
         }
 
 
-def get_runtime_proxy() -> ProxyConfig:
-    for key in PROXY_ENV_KEYS:
+def get_runtime_proxy(url: str = '') -> ProxyConfig:
+    keys = ('HTTP_PROXY', 'ALL_PROXY') if urlsplit(url).scheme == 'http' else PROXY_ENV_KEYS
+    if urlsplit(url).scheme == 'https':
+        keys = ('HTTPS_PROXY', 'ALL_PROXY')
+    for key in keys:
         value = os.environ.get(key) or os.environ.get(key.lower())
         if value:
             return ProxyConfig(source=key, url=value.strip(), no_proxy=_read_no_proxy())
@@ -131,7 +137,7 @@ def _redact_proxy_url(url: str) -> str:
         netloc = f"<proxy-host>" if not host else host
         if parsed.username or parsed.password:
             netloc = f"***:***@{netloc}"
-        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+        return urlunsplit((parsed.scheme, netloc, "", "", ""))
     except Exception:
         return "***"
 
@@ -143,3 +149,68 @@ def _redact_no_proxy(value: str) -> str:
     if len(parts) <= 8:
         return ", ".join(parts)
     return ", ".join(parts[:8]) + f", ...(+{len(parts) - 8})"
+
+
+def _route(url, config=None):
+    """选择配置不探测出口；只对显式NO_PROXY/回环直连，不猜国家或重试换路。"""
+    import ipaddress
+    from urllib.request import proxy_bypass_environment
+    parsed = urlsplit(str(url))
+    host = (parsed.hostname or '').rstrip('.').lower()
+    if parsed.scheme not in {'http', 'https'} or not host:
+        raise ValueError('proxy_route_requires_http_url')
+    config = config or get_runtime_proxy(str(url))
+    try:
+        ip = ipaddress.ip_address(host)
+        loopback = ip.is_loopback or bool(getattr(ip, 'ipv4_mapped', None) and ip.ipv4_mapped.is_loopback)
+    except ValueError:
+        loopback = host == 'localhost' or host.endswith('.localhost')
+    bypass = proxy_bypass_environment(parsed.netloc, {'no': config.no_proxy})
+    reason = 'loopback' if loopback else 'no_proxy' if bypass else 'configured_proxy' if config.url else 'no_proxy_configured'
+    proxy = config.url if not (loopback or bypass) and config.url else None
+    return proxy, {'schema': 'knowledgeradar-network-route/v1', 'decision': 'proxy' if proxy else 'direct',
+                   'reason': reason, 'source': config.source or 'none', 'target_host': host,
+                   'scope': 'selection_not_verified_egress', 'rules': 'advisory_only'}
+
+
+def proxy_decision(url):
+    return _route(url)[1]
+
+
+def _record_route(decision, adapter):
+    from runtime.tool_trace import record_trace_child
+    record_trace_child('network_route', metadata={**decision, 'adapter': adapter})
+
+
+def httpx_options(url, *, adapter='httpx'):
+    """适用于已按跳校验URL的调用方；不能用固定IP替代原域名作分流。"""
+    proxy, decision = _route(url)
+    _record_route(decision, adapter)
+    return {'proxy': proxy, 'trust_env': False}
+
+
+def http_client(**kwargs):
+    """非固定IP客户端逐请求/重定向分流；禁止失败后自动直连。"""
+    import httpx
+    if any(key in kwargs for key in ('proxy', 'transport', 'mounts', 'trust_env')):
+        raise ValueError('proxy_transport_owned_by_runtime')
+    verify = kwargs.pop('verify', True)
+    limits = kwargs.pop('limits', httpx.Limits())
+    class RoutingTransport(httpx.BaseTransport):
+        def __init__(self):
+            self.configs = {scheme: get_runtime_proxy(scheme + '://route.invalid') for scheme in ('http', 'https')}
+            self.transports = {}
+
+        def handle_request(self, request):
+            proxy, decision = _route(str(request.url), self.configs[request.url.scheme])
+            _record_route(decision, 'httpx-routed')
+            if proxy not in self.transports:
+                self.transports[proxy] = httpx.HTTPTransport(proxy=proxy, verify=verify, limits=limits, trust_env=False)
+            response = self.transports[proxy].handle_request(request)
+            response.extensions['kr_network_route'] = decision
+            return response
+
+        def close(self):
+            for transport in self.transports.values():
+                transport.close()
+    return httpx.Client(transport=RoutingTransport(), trust_env=False, **kwargs)

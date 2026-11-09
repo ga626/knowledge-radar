@@ -22,6 +22,10 @@ def launch_options():
     selection = resolve_managed_chrome()
     if selection:
         options['executable_path'] = selection.path
+    from runtime.proxy_config import get_runtime_proxy
+    proxy = get_runtime_proxy().playwright_proxy()
+    if proxy:
+        options['proxy'] = proxy
     return options
 
 
@@ -79,7 +83,9 @@ async def context():
             reused = bool(_BROWSER and _BROWSER.is_connected())
             if not reused:
                 await _launch_browser()
-        page_context = await _BROWSER.new_context(
+        from runtime.proxy_config import get_runtime_proxy
+        proxy = get_runtime_proxy().playwright_proxy()
+        page_context = await _BROWSER.new_context(**({'proxy': proxy} if proxy else {}),
             user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             locale='zh-CN',service_workers='block',accept_downloads=False)
         try:
@@ -93,7 +99,9 @@ async def _launch_browser():
     from playwright.async_api import async_playwright
     if _PLAYWRIGHT is None:
         _PLAYWRIGHT = await async_playwright().start()
-    _BROWSER = await _PLAYWRIGHT.chromium.launch(**launch_options())
+    options = launch_options()
+    options.pop('proxy', None)  # 异步复用进程的出口属于每次匿名context，避免沿用旧代理。
+    _BROWSER = await _PLAYWRIGHT.chromium.launch(**options)
 
 def close():
     global _BROWSER, _PLAYWRIGHT, _LOOP, _THREAD, _SLOTS, _LAUNCH

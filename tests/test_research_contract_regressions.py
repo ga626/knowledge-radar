@@ -254,3 +254,78 @@ def test_closeout_replacement_uses_requirements_beyond_response_budget(research,
     assert result['closeout']['completion_facts']['required_execution']=='completed'
     assert result['closeout']['required_failed_tasks']==[]
     assert result['closeout']['unsuccessful_background_tasks'][0]['task_id']=='failed-bg-job'
+
+
+def test_effectiveness_question_record_id_is_reusable(research):
+    tid,index=research
+    result=write(index,tid,action='question',record_id='market-users',text='匹配人群的实际需求')
+    assert result['record_id']=='market-users'
+    with pytest.raises(ValueError,match='question_identity_conflict'):
+        write(index,tid,action='question',record_id='one',question_id='two',text='不能静默选一个')
+
+
+def test_effectiveness_empty_plan_is_unknown_not_reviewed(research):
+    from runtime.composition import review_research_progress
+    tid=open_task(objective='研究',budget='fast',considered=[],task_id='no-scope')['research_task_id']
+    result=review_research_progress(tid,'before_delivery')
+    assert result['review_summary']['semantic_review']=='unknown'
+    assert result['evidence_feedback']['scope_registration']=='missing'
+
+
+def test_effectiveness_project_projection_distinguishes_missing_identity(research):
+    from runtime.research_workspace import ResearchRecords
+    tid,_=research
+    record=ResearchRecords().snapshot(tid)
+    assert record['project_context']['status']=='unclassified'
+    open_task(objective='另一项目',budget='fast',considered=[],task_id='other-project',project_id='menslink',project_name='MensLink')
+    rows={r['research_task_id']:r for r in ResearchRecords().recent()['tasks']}
+    assert rows['other-project']['project_id']=='menslink'
+    assert rows['other-project']['project_context']['identity_source']=='explicit'
+    assert rows['other-project']['project_context']['archive_ready'] is None
+
+
+def test_effectiveness_assessment_is_a_valid_evidence_link(research):
+    from kr_core.evidence_assets import EvidenceAssets
+    tid,index=research
+    assets=EvidenceAssets();ref=assets.put('https://example.org/body','这是支持问题的真实定位文本。',kind='content')
+    assets.reference_many([ref['version_id']],'task:'+tid,task_id=tid)
+    write(index,tid,action='assessment',record_id='a',question_id='q1',claim_id='claim',
+          relation='supports_with_limits',evidence_refs=[{'version_id':ref['version_id'],'start':0,'end':8}],
+          basis='该段讨论问题',applicability='仅此样本')
+    feedback=index.read(tid,view='feedback')
+    assert feedback['questions_without_valid_links']==[]
+
+
+
+def test_effectiveness_entry_can_seed_declared_scope_before_queries(research):
+    from runtime.composition import kr_research
+    from runtime.application import invoke
+    result=invoke('kr_research',{'task':'比较两地真实用户','research_task_id':'seeded','project_id':'menslink','project_name':'MensLink',
+        'questions':[{'question_id':'users','text':'同岗位中外使用者需求','languages':['zh','en'],'populations':['developers']}],
+        'queries':[{'query':'知识管理 开发者 痛点','intent':'experience','language':'zh','question_id':'users'}]})
+    assert result.get('status')=='ok', result
+    row=ResearchIndex().read('seeded',view='questions')['items'][0]
+    assert row['record_id']=='users' and row['languages']==['zh','en']
+    assert result['research_task']['scope_registration']=='recorded'
+
+
+def test_effectiveness_capabilities_exposes_packaged_workflow_identity(research):
+    from runtime.application import catalog
+    import hashlib
+    from pathlib import Path
+    skill=Path(__file__).resolve().parents[1]/'config/codex-product/plugin/knowledgeradar-research/skills/research/SKILL.md'
+    result=catalog()['research_workflow']
+    assert result['skill_sha256']==hashlib.sha256(skill.read_bytes()).hexdigest()
+    assert result['host_loaded_skill']=='unverified'
+
+
+def test_effectiveness_entry_reuse_does_not_reset_scope(research):
+    from runtime.application import invoke
+    args = {'task':'研究', 'research_task_id':'reuse-scope', 'questions':[{'question_id':'users','text':'用户需求','languages':['zh']} ]}
+    assert invoke('kr_research', args)['status']=='ok'
+    assert invoke('kr_research', args)['status']=='ok'
+    row=ResearchIndex().read('reuse-scope',view='questions')['items'][0]
+    assert row['revision']==1
+    result=invoke('kr_research', {'task':'研究','research_task_id':'reuse-scope'})
+    assert result['research_task']['scope_registration']=='recorded'
+    assert ResearchIndex().read('reuse-scope',view='questions')['items'][0]['languages']==['zh']

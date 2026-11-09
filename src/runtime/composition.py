@@ -18,7 +18,7 @@ from pydantic import Field
 from runtime.application import application_tool
 from runtime.agent_contracts import DetailResult, TaskStatusResult, ResearchWorkflowResult
 from runtime.read_options import DocumentReadOptions, CommentReadOptions
-from runtime.research_queries import ResearchQuery
+from runtime.research_queries import ResearchQuery, ResearchQuestion
 from collectors.platform.github_content import GitHubReadOptions
 from runtime.xhs_opencli import XhsReadOptions
 from collectors.platform.wechat import WechatReadOptions
@@ -41,6 +41,7 @@ from runtime.paths import runtime_log_dir, runtime_state_dir  # noqa: E402
 from runtime.research_ledger import (  # noqa: E402
     close_task as close_research_task,
     open_task as open_research_task,
+    project_context as research_project_context,
     record_candidates as record_research_candidates,
     record_event as record_research_event,
     review_task as review_research_task,
@@ -1200,6 +1201,7 @@ def kr_research(
     limit: Annotated[int, Field(description="first_wave 每个低风险来源返回候选数量。", ge=1, le=10)] = 5,
     research_task_id: Annotated[str, Field(description="可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。")]= "",
     queries: Annotated[list[ResearchQuery] | None, Field(min_length=1, max_length=40, description="执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。")] = None,
+    questions: Annotated[list[ResearchQuestion] | None, Field(min_length=1, max_length=20, description="Codex显式选择的必要问题与范围；先登记后搜索，不提供时保留既有范围或标记未知。")] = None,
     display_title: Annotated[str, Field(description="Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。", max_length=80)] = "",
     project_name: Annotated[str, Field(description="可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。", max_length=80)] = "",
     project_id: Annotated[str, Field(description="Codex明确选择的稳定项目ID，与显示名分离；不得按KR安装目录猜测。", max_length=200)] = "",
@@ -1228,6 +1230,15 @@ def kr_research(
         objective=task, budget=clean_budget,
         considered=list(plan.get("considered_source_ecologies") or []), task_id=research_task_id,
         display_title=display_title, project_name=project_name, project_id=project_id)
+    from runtime.research_index import ResearchIndex, ResearchWrite
+    scope_index = ResearchIndex()
+    declared_questions = [q if isinstance(q, ResearchQuestion) else ResearchQuestion.model_validate(q) for q in (questions or [])]
+    ids = [q.question_id for q in declared_questions]
+    if len(ids) != len(set(ids)):
+        raise ValueError('duplicate_question_identity')
+    for question in declared_questions:
+        scope_index.annotate(ResearchWrite(action='question', task_id=ledger['research_task_id'], **question.model_dump()))
+    scope_registration = scope_index.read(ledger['research_task_id'], view='feedback')['scope_registration']
     route_receipt_id = ""
     route_trace = current_tool_trace()
     if route_trace.get("trace_id"):
@@ -1269,6 +1280,8 @@ def kr_research(
             "display_title": ledger.get("display_title", ""),
             "project_name": ledger.get("project_name", ""),
             "project_id": ledger.get("project_id", ""),
+            "project_context": research_project_context(ledger),
+            "scope_registration": scope_registration,
             "archive": {"status":"context_pending", "next_action":"manage_research_artifacts.bind_context with explicit local/Vault targets; default summary required"},
             "status": ledger["status"],
             "ledger_schema": ledger["schema"],
@@ -1356,7 +1369,7 @@ def review_research_progress(
     semantic_gaps = semantic_gaps or review.get('review_status')!='recorded'
     return {**result, 'stop_assessment':'not_ready' if semantic_gaps else result.get('stop_assessment'),
             'claim_review':review,
-            'review_summary':{'recording':result.get('stop_assessment'), 'semantic_review':'gaps' if semantic_gaps else 'agent_declared_only',
+            'review_summary':{'recording':result.get('stop_assessment'), 'semantic_review':('unknown' if feedback.get('scope_registration') != 'recorded' else 'gaps' if semantic_gaps else 'agent_declared_only'),
                               'coverage':'registered_items_only','unregistered_coverage':'unknown','stop_authority':'agent'},
             "evidence_feedback":feedback}
 

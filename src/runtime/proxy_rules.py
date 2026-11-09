@@ -165,7 +165,9 @@ def refresh_rule_cache(
 
 
 def _fetch_url(url: str) -> str:
-    response = httpx.get(url, timeout=20, follow_redirects=True)
+    from runtime.proxy_config import http_client
+    with http_client(timeout=20, follow_redirects=True) as client:
+        response = client.get(url)
     response.raise_for_status()
     return response.text
 
@@ -216,5 +218,5 @@ def proxy_rules_summary(cache_dir: str | Path | None = None) -> dict[str, object
         "updated_at": rules.updated_at,
         "ttl_seconds": int(os.environ.get("KR_PROXY_RULE_TTL_SECONDS") or DEFAULT_TTL_SECONDS),
         "clash_required": False,
-        "notes": ["Rules classify domains even when Clash is not installed; proxy execution still uses HTTP_PROXY/HTTPS_PROXY or platform-specific proxy envs."],
+        "notes": ["Rules classify domains even when Clash is not installed; rules are advisory only; runtime selects explicit environment/Windows proxy and NO_PROXY; the local proxy owns its own routing."],
     }

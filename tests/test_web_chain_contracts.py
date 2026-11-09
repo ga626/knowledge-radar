@@ -49,7 +49,7 @@ def test_pinned_ddgs_default_is_supported_and_preserves_real_upstream(monkeypatc
 def test_http_pool_never_retains_cookie_or_authentication(monkeypatch):
     from search_providers import http_client as module
     module.close_shared_clients()
-    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy',lambda:None)
+    monkeypatch.setattr('runtime.proxy_config.httpx_options',lambda *a,**k:{'proxy':None,'trust_env':False})
     received=[]
     def respond(req):
         received.append(dict(req.headers))
@@ -491,7 +491,7 @@ def test_readonly_post_declaration_and_redirect_never_replay_body(monkeypatch):
     from generic_web import url_policy as policy
     endpoint='https://example.org/search'
     monkeypatch.setattr(policy,'public_addresses',lambda url,**kw:(__import__('urllib.parse',fromlist=['urlsplit']).urlsplit(url),'example.org',['93.184.216.34']))
-    monkeypatch.setattr('runtime.proxy_config.get_httpx_proxy',lambda:None)
+    monkeypatch.setattr('runtime.proxy_config.httpx_options',lambda *a,**k:{'proxy':None,'trust_env':False})
     actual=httpx.Client
     sent=[]
     status=[307]

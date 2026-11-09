@@ -278,7 +278,9 @@ class ResearchIndex:
             if req.action in {'question', 'scope'}:
                 if not req.text.strip():
                     raise ValueError("question_text_required")
-                oid = req.question_id or hashlib.sha256(req.text.encode()).hexdigest()[:20]
+                if req.question_id and req.record_id and req.question_id != req.record_id:
+                    raise ValueError("question_identity_conflict")
+                oid = req.question_id or req.record_id or hashlib.sha256(req.text.encode()).hexdigest()[:20]
                 if req.action == 'scope' and not conn.execute("SELECT 1 FROM current WHERE task_id=? AND kind='question' AND object_id=?",(req.task_id,oid)).fetchone():
                     raise ValueError('unknown_question')
             else:
@@ -497,7 +499,9 @@ class ResearchIndex:
         progress = {name:sum(x.get("stage")==name for x in stages) for name in ("discovered_candidate","selected","detail_extracted","identity_checked","cross_checked","counterevidence","deferred","degraded_or_blocked")}
         return {**base, "next_after_seq": high, "counts": counts, "change_counts": dict(delta),
                 "new_materials":new_materials,"material_progress":progress,
-                "questions_without_valid_links": [q["record_id"] for q in questions if not q.get("closed") and not any(l.get("question_id") == q["record_id"] for l in links)],
+                "scope_registration": "recorded" if questions else "missing",
+                "unregistered_coverage": "unknown",
+                "questions_without_valid_links": [q["record_id"] for q in questions if not q.get("closed") and not any(l.get("question_id") == q["record_id"] for l in [*links, *assessments])],
                 "questions_without_reviewed_support": [q['record_id'] for q in questions if not q.get('closed') and not any(x.get('question_id') == q['record_id'] for x in support)],
                 "scope_gaps":scope_gaps,
                 "assessments_requiring_review":review_required,
