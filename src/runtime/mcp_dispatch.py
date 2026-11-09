@@ -86,9 +86,14 @@ def attach_operation(mcp, operation):
     from runtime.agent_contracts import BusinessResult
     typed_business = inspect.isclass(signature.return_annotation) and issubclass(signature.return_annotation, BusinessResult)
     # 业务类型加严不改变既有MCP的result外壳，也不补出业务未返回的默认null。
+    # SDK依此签名生成真正执行的参数模型；只改tool.parameters会导致注入字段
+    # 虽然出现在tools/list，却在反序列化时被静默丢弃。
+    injected = [inspect.Parameter(name, inspect.Parameter.KEYWORD_ONLY,
+        default=inspect.Parameter.empty if field.is_required() else field.default,
+        annotation=field.annotation)
+        for name, field in operation.arguments.model_fields.items() if name not in signature.parameters]
     dispatch.__signature__ = signature.replace(return_annotation=Dict if typed_business else signature.return_annotation,
-        parameters=[*signature.parameters.values(),
-        inspect.Parameter('request_id', inspect.Parameter.KEYWORD_ONLY, default='', annotation=str)])
+        parameters=[*signature.parameters.values(), *injected])
     from mcp.types import ToolAnnotations
     mcp.tool(annotations=ToolAnnotations(readOnlyHint=operation.read_only, destructiveHint=not operation.read_only))(dispatch)
     tool=mcp._tool_manager.get_tool(fn.__name__)

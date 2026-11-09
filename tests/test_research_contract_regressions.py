@@ -329,3 +329,79 @@ def test_effectiveness_entry_reuse_does_not_reset_scope(research):
     result=invoke('kr_research', {'task':'研究','research_task_id':'reuse-scope'})
     assert result['research_task']['scope_registration']=='recorded'
     assert ResearchIndex().read('reuse-scope',view='questions')['items'][0]['languages']==['zh']
+
+
+@pytest.mark.parametrize('forward_owner', [False, True])
+@pytest.mark.parametrize('context', [
+    {'action_id': 'read-body', 'question_id': 'q1'},
+    {'exploration_id': 'explore-body'},
+])
+def test_mcp_dispatch_preserves_research_intent(research, monkeypatch, forward_owner, context):
+    """实际MCP参数反序列化必须保留合同注入字段；不能只验证application.invoke。"""
+    import asyncio
+    from mcp.server.fastmcp import FastMCP
+    from runtime.application import invoke, register
+    from runtime.mcp_dispatch import attach_operation
+    from runtime.tool_trace import traced_tool
+    tid, index = research
+    write(index, tid, action='exploration', record_id='explore-body', purpose='先查未知正文能力')
+    calls = []
+
+    @traced_tool('intent_probe')
+    def intent_probe(research_task_id: str = '') -> dict:
+        calls.append(research_task_id)
+        return {'status': 'ok'}
+
+    operation = register(intent_probe, group='evidence', read_only=False, publish=False)
+    mcp = FastMCP('intent-regression')
+    attach_operation(mcp, operation)
+    mcp._kr_forward_owner = forward_owner
+    monkeypatch.delenv('KR_RUNTIME_ROLE', raising=False)
+
+    class Client:
+        last_receipt = {'execution_state': 'completed'}
+
+        def call(self, name, arguments, *, request_id=None):
+            assert name == 'intent_probe'
+            assert request_id == 'intent-request'
+            return invoke(name, arguments, operation=operation)
+
+    monkeypatch.setattr('runtime.execution_owner.OwnerClient', Client)
+    async def run():
+        result = await mcp.call_tool('intent_probe', {'research_task_id': tid,
+            'research_context': context, 'request_id': 'intent-request'})
+        structured = (result.structuredContent if hasattr(result, 'structuredContent') else
+            result[1] if isinstance(result, tuple) else json.loads(result[0].text))
+        body = structured.get('result', structured)
+        assert body['research_receipt']['research_action'].items() >= context.items()
+        # 下一次未传上下文不得继承前次意图。
+        result = await mcp.call_tool('intent_probe', {'research_task_id': tid,
+            'request_id': 'intent-request'})
+        structured = (result.structuredContent if hasattr(result, 'structuredContent') else
+            result[1] if isinstance(result, tuple) else json.loads(result[0].text))
+        body = structured.get('result', structured)
+        assert body['research_receipt']['research_action'] == {'association': 'unplanned'}
+    asyncio.run(run())
+    assert calls == [tid, tid]
+
+
+def test_mcp_dispatch_validates_context_before_business(research, monkeypatch):
+    import asyncio
+    from mcp.server.fastmcp import FastMCP
+    from runtime.application import register
+    from runtime.mcp_dispatch import attach_operation
+    tid, _ = research
+    calls = []
+
+    def context_guard_probe(research_task_id: str = '') -> dict:
+        calls.append(research_task_id)
+        return {'status': 'ok'}
+
+    mcp = FastMCP('context-guard-regression')
+    attach_operation(mcp, register(context_guard_probe, group='evidence', read_only=False, publish=False))
+    monkeypatch.delenv('KR_RUNTIME_ROLE', raising=False)
+    from mcp.server.fastmcp.exceptions import ToolError
+    with pytest.raises(ToolError, match='unknown_question'):
+        asyncio.run(mcp.call_tool('context_guard_probe', {'research_task_id': tid,
+            'research_context': {'action_id': 'wrong-question', 'question_id': 'missing-question'}}))
+    assert calls == []
