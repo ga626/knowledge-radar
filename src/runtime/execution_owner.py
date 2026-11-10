@@ -34,7 +34,10 @@ def _write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
     try:
-        temporary.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+        with temporary.open('w', encoding='utf-8') as stream:
+            json.dump(value, stream, ensure_ascii=False)
+            stream.flush()
+            os.fsync(stream.fileno())
         temporary.replace(path)
     finally:
         temporary.unlink(missing_ok=True)
@@ -179,12 +182,14 @@ class OwnerClient:
             return {'status': 'incompatible', 'layer': 'execution_owner',
                     'pid': descriptor['pid'], 'protocol': descriptor.get('protocol'),
                     'source_identity': descriptor.get('source_identity'),
+                    'supervision': supervision_snapshot(self.root),
                     'next_action': 'Keep the active owner; install or select a matching client.'}
         try:
             return {**self._request(descriptor, 'status', timeout=3),
                     'supervision': supervision_snapshot(self.root)}
         except (httpx.HTTPError, ValueError):
-            return {'status': 'unreachable', 'layer': 'runtime_transport', 'pid': descriptor['pid']}
+            return {'status': 'unreachable', 'layer': 'runtime_transport', 'pid': descriptor['pid'],
+                    'supervision': supervision_snapshot(self.root)}
 
     def start(self, *, timeout=30, managed=False):
         """显式启动；竞争客户端只选主，不杀死或覆盖不同身份的有效owner。"""
@@ -223,10 +228,12 @@ class OwnerClient:
             current = self.status()
             if current['status'] != 'unavailable':
                 return current
-            env = dict(os.environ, KR_RUNTIME_ROLE='owner')
+            self.launch_id = uuid.uuid4().hex
+            env = dict(os.environ, KR_RUNTIME_ROLE='owner', KR_OWNER_LAUNCH_ID=self.launch_id,
+                       KR_OWNER_SOURCE_IDENTITY=source_identity())
             source = Path(__file__).resolve().parents[1]
             command = [background_python_executable(), '-X', 'utf8', '-c',
-                       'import sys,runpy; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module("runtime.execution_owner",run_name="__main__")', str(source)]
+                       'import sys,runpy; sys.path.insert(0,sys.argv.pop(1)); runpy.run_module("runtime.owner_bootstrap",run_name="__main__")', str(source)]
             env['PYTHONPATH'] = str(source)
             env['KR_OWNER_ROOT'] = str(self.root.resolve())
             kwargs = {'cwd': str(source.parent), 'env': env, 'stdin': subprocess.DEVNULL,
@@ -256,6 +263,17 @@ class OwnerClient:
             raise TimeoutError('execution_owner_start_timeout_inspect_status')
 
     def call(self, name, arguments, *, request_id=None):
+        from runtime.runtime_control import attach_runtime_failure, runtime_snapshot
+        # 两种轻量管理入口不转发owner，不打开平台或执行业务装配。
+        if name == 'health_check' and arguments.get('mode') == 'runtime':
+            return runtime_snapshot(self, wait_seconds=arguments.get('wait_seconds', 0))
+        if name == 'get_capabilities' and (arguments.get('summary', True) or arguments.get('tool_name')):
+            from runtime.runtime_control import static_catalog
+            return {**static_catalog(arguments.get('tool_name', '')), **runtime_snapshot(self),
+                    'availability_boundary': 'static_contract_is_not_runtime_readiness'}
+        return attach_runtime_failure(self, self._call(name, arguments, request_id=request_id))
+
+    def _call(self, name, arguments, *, request_id=None):
         request_id = request_id or uuid.uuid4().hex
         self.last_receipt = {'request_id': request_id, 'operation': name, 'execution_state': 'not_started'}
         if not active_client():
@@ -280,6 +298,10 @@ class OwnerClient:
             return failure('execution_outcome_unknown', started=True, request_id=request_id)
 
     def receipt(self, request_id):
+        from runtime.runtime_control import attach_runtime_failure
+        return attach_runtime_failure(self, self._receipt(request_id))
+
+    def _receipt(self, request_id):
         descriptor = self.descriptor()
         if not descriptor:
             return failure('execution_owner_unavailable', request_id=request_id)
@@ -289,6 +311,10 @@ class OwnerClient:
             return failure('execution_outcome_unknown', started=True, request_id=request_id)
 
     def receipts(self, limit=20):
+        from runtime.runtime_control import attach_runtime_failure
+        return attach_runtime_failure(self, self._receipts(limit))
+
+    def _receipts(self, limit=20):
         descriptor = self.descriptor()
         if not descriptor:
             return failure('execution_owner_unavailable')
@@ -298,6 +324,10 @@ class OwnerClient:
             return failure('execution_owner_receipts_unavailable')
 
     def stop(self):
+        from runtime.runtime_control import attach_runtime_failure
+        return attach_runtime_failure(self, self._stop())
+
+    def _stop(self):
         """安装维护动作：只停空闲owner；不同源码客户端也可请求旧版本安全排空。"""
         descriptor = self.descriptor()
         if not descriptor:
@@ -384,7 +414,7 @@ class OwnerSupervisor:
     """现有用户会话监督进程中的内核责任方；不调业务、不重发请求。
 
     tick只观察持有的进程句柄；退出预算耗尽后不会定时自愈。
-    显式start请求才能重新开放预算。升级由launch锁与active身份共同隔离。
+    单次恢复不清零预算；显式rearm/安装交接才重新开放。查询不推进业务。
     """
     def __init__(self, client=None, *, max_restarts=3):
         self.client = client or OwnerClient()
@@ -397,28 +427,77 @@ class OwnerSupervisor:
         self.retry_at = 0
         self.request_id = ''
         self.unobserved_exit = None
+        self.last_failure = None
+        self.incident_id = None
+        self.manual_once = False
+        self.recovery_result = None
+        self.startup_deadline = None
+        self.startup_deadline_at = None
+        self.next_retry_at = None
         previous = _read_json(self.client.root/'supervision.json')
         if previous.get('source_identity') == source_identity():
             self.failures = int(previous.get('restart_count') or 0)
-            if previous.get('state') in {'circuit_open', 'stopped'}:
+            self.last_failure = previous.get('last_failure')
+            self.incident_id = previous.get('incident_id')
+            self.request_id = previous.get('recovery_request_id') or ''
+            self.recovery_result = previous.get('recovery_result')
+            if self.recovery_result == 'running':
+                # 管理器在消费单次机会后消失：只保留未知，不重放启动。
+                observed = self.client.status()
+                if observed.get('status') == 'ready':
+                    self._observe_ready(observed)
+                else:
+                    self.state = 'blocked'
+                    self.recovery_result = 'unknown'
+                    from runtime.runtime_control import update_recovery
+                    update_recovery(self.client, self.request_id, 'unknown', reason='manager_exited_during_recovery')
+            elif previous.get('state') in {'circuit_open', 'stopped', 'blocked', 'unresponsive'}:
                 self.state = previous['state']
             elif previous.get('state') in {'ready', 'starting'} and not self.client.descriptor():
                 self.unobserved_exit = previous
+            elif previous.get('state') == 'retrying':
+                self.state = 'retrying'
+                self.next_retry_at = previous.get('next_retry_at')
+                self.retry_at = time.monotonic()+min(8, max(0, (self.next_retry_at or time.time())-time.time()))
+        from runtime.runtime_control import read_record
+        _, observation = read_record(self.client.root/'supervision.json')
+        if observation in {'invalid', 'unreadable'}:
+            self.state = 'blocked'
 
     def record(self, event, **details):
         private_owner_directory(self.client.root)
         value = {'event': event, 'time': time.time(), 'state': self.state,
                  'supervisor_pid': os.getpid(), 'process_identity': process_identity(),
                  'source_identity': source_identity(), 'generation': self.generation,
-                 'restart_count': self.failures, **details}
+                 'restart_count': self.failures, 'max_restarts': self.max_restarts,
+                 'last_failure': self.last_failure, 'incident_id': self.incident_id,
+                 'next_retry_at': self.next_retry_at, 'startup_deadline_at': self.startup_deadline_at,
+                 'recovery_request_id': self.request_id or None, 'recovery_result': self.recovery_result,
+                 **details}
         with (self.client.root/'lifecycle.jsonl').open('a', encoding='utf-8') as stream:
             stream.write(json.dumps(value, ensure_ascii=False)+'\n')
         _write_json(self.client.root/'supervision.json', value)
 
-    def _failed(self, now):
-        self.failures += 1
-        self.state = 'circuit_open' if self.failures > self.max_restarts else 'retrying'
-        self.retry_at = now + min(8, 2 ** self.failures)
+    def _finish_recovery(self, status):
+        if self.request_id and self.recovery_result == 'running':
+            from runtime.runtime_control import update_recovery
+            update_recovery(self.client, self.request_id, status, generation=self.generation)
+            self.recovery_result = status
+
+    def _failed(self, now, failure=None):
+        if failure:
+            self.last_failure = failure
+        self.incident_id = self.incident_id or uuid.uuid4().hex
+        if not self.manual_once:
+            self.failures += 1
+        self.state = ('blocked' if (self.last_failure or {}).get('retry_policy') == 'stop'
+                      else 'circuit_open' if self.manual_once or self.failures > self.max_restarts else 'retrying')
+        self._finish_recovery('failed')
+        self.manual_once = False
+        delay = min(8, 2 ** min(self.failures, 3))
+        self.retry_at = now+delay
+        self.next_retry_at = time.time()+delay if self.state == 'retrying' else None
+        self.startup_deadline = self.startup_deadline_at = None
         self.record(self.state)
 
     def _observe_ready(self, result):
@@ -427,42 +506,83 @@ class OwnerSupervisor:
             self.launcher = self.child
             self.child = _ProcessWitness(self.client.descriptor())
         self.state = 'ready'
+        self.next_retry_at = None
+        self.startup_deadline = self.startup_deadline_at = None
+        self._finish_recovery('succeeded')
+        self.manual_once = False
         self.record('owner_observed', pid=self.child.pid,
                     launcher_pid=self.launcher.pid if self.launcher else self.child.pid)
 
     def tick(self, *, now=None):
+        from runtime.runtime_control import classify_failure, read_record, recovery_receipt, update_recovery, _maintenance
         now = time.monotonic() if now is None else now
         if not active_client():
             if self.state != 'inactive':
                 self.state = 'inactive'
                 self.record('active_installation_changed')
             return
-        request = _read_json(self.client.root/'start.request.json').get('request_id')
-        if self.unobserved_exit:
-            previous, self.unobserved_exit = self.unobserved_exit, None
-            self.generation = previous.get('generation', '')
-            intentional = bool(self.generation and
-                _read_json(self.client.root/'stop.json').get('generation') == self.generation)
-            if intentional:
-                self.state = 'stopped'
-                self.record('stopped')
-            else:
-                self.record('owner_exit_unobserved', exit_code=None,
-                            reason='manager_restarted_without_live_prior_owner')
-                self._failed(now)
-        if request and request != self.request_id:
-            self.request_id = request
-            self.failures = 0
-            if self.state in {'circuit_open', 'stopped', 'blocked'}:
-                self.state, self.retry_at = 'retrying', now
-            (self.client.root/'start.request.json').unlink(missing_ok=True)
+        if _maintenance(self.client):
+            return
+        # 各入口共同串行化消费和进度发布；启动本身在锁外。
+        with file_write_lock(self.client.root/'recovery-control'):
+            command, command_observation = read_record(self.client.root/'start.request.json')
+            request = command.get('request_id')
+            if command_observation in {'invalid', 'unreadable'}:
+                if self.state != 'blocked':
+                    self.state = 'blocked'
+                    self.record('control_record_unreadable')
+                return
+            if self.unobserved_exit:
+                previous, self.unobserved_exit = self.unobserved_exit, None
+                self.generation = previous.get('generation', '')
+                intentional = bool(self.generation and
+                    _read_json(self.client.root/'stop.json').get('generation') == self.generation)
+                if intentional:
+                    self.state = 'stopped'
+                    self.record('stopped')
+                else:
+                    self.record('owner_exit_unobserved', exit_code=None,
+                                reason='manager_restarted_without_live_prior_owner')
+                    self._failed(now, {'code': 'owner_exit_unobserved', 'cause': 'unknown', 'stage': 'supervision',
+                                      'exit_code': None, 'time': time.time(), 'retry_policy': 'bounded_retry'})
+            if request and request != self.request_id:
+                self.request_id = request
+                action = command.get('action', 'rearm_auto_recovery')  # 旧安装交接的显式start合同
+                if command.get('source_identity') and command['source_identity'] != source_identity():
+                    update_recovery(self.client, request, 'rejected', reason='installation_changed')
+                    (self.client.root/'start.request.json').unlink(missing_ok=True)
+                    return
+                if command.get('action'):
+                    receipt = recovery_receipt(self.client, request)
+                    if receipt['status'] != 'accepted':
+                        if self.state != 'blocked':
+                            self.state = 'blocked'
+                            self.record('recovery_consumption_unknown')
+                        return
+                    self.recovery_result = 'running'
+                    self.manual_once = action == 'recover_once'
+                    update_recovery(self.client, request, 'running')
+                    self.record('manual_recovery_consumed')
+                if action == 'rearm_auto_recovery':
+                    self.failures = 0
+                if self.state in {'circuit_open', 'stopped', 'blocked'}:
+                    self.state, self.retry_at = 'retrying', now
+                self.record('recovery_requested')
+                (self.client.root/'start.request.json').unlink(missing_ok=True)
+            elif request and request == self.request_id:
+                # 崩溃后可能留下已消费控制文件；不把它当第二次启动。
+                (self.client.root/'start.request.json').unlink(missing_ok=True)
         if self.child is not None:
             code = self.child.poll()
             if code is None:
-                if self.state == 'starting':
+                if self.state in {'starting', 'unresponsive'}:
                     status = self.client.status()
                     if status.get('status') == 'ready':
                         self._observe_ready(status)
+                    elif self.state == 'starting' and self.startup_deadline is not None and now >= self.startup_deadline:
+                        self.state = 'unresponsive'
+                        self._finish_recovery('unknown')
+                        self.record('startup_deadline_exceeded')
                 return
             intentional = (code == 0 and
                 _read_json(self.client.root/'stop.json').get('generation') == self.generation)
@@ -478,11 +598,13 @@ class OwnerSupervisor:
                 self.state = 'stopped'
                 self.record('stopped')
             else:
-                self._failed(now)
+                self._failed(now, classify_failure(stage='running', exit_code=code))
             return
-        if self.state in {'circuit_open', 'stopped', 'inactive', 'blocked'} or now < self.retry_at:
+        if self.state in {'circuit_open', 'stopped', 'inactive', 'blocked', 'unresponsive'} or now < self.retry_at:
             return
         try:
+            self.startup_deadline = now+30
+            self.startup_deadline_at = time.time()+30
             self.client.child = None
             result = self.client.start(managed=True)
             self.child = self.client.child
@@ -491,7 +613,7 @@ class OwnerSupervisor:
                 self.record('owner_start_blocked', observed_status=result.get('status'))
                 return
             self._observe_ready(result)
-        except (OSError, RuntimeError, TimeoutError) as exc:
+        except (OSError, RuntimeError, TimeoutError, ImportError, sqlite3.DatabaseError, ValueError) as exc:
             self.child = self.client.child
             if self.child is not None and self.child.poll() is None:
                 # 超时恢复中的子进程仍属于本监督者，不再并发启动第二个。
@@ -500,7 +622,9 @@ class OwnerSupervisor:
             else:
                 self.child = None
                 self.record('owner_start_failed', error_type=type(exc).__name__)
-                self._failed(now)
+                bootstrap, _ = read_record(self.client.root/'bootstrap-failure.json')
+                failure = bootstrap.get('failure') if bootstrap.get('launcher_identity') == source_identity() and bootstrap.get('launch_id') == getattr(self.client, 'launch_id', None) else None
+                self._failed(now, failure or classify_failure(exc, stage='spawn'))
 
 class _ProcessWitness:
     """持有已核代际的Windows进程句柄，避免PID复用及退出码证据丢失。"""
@@ -544,6 +668,20 @@ class _ProcessWitness:
 
 
 def serve(*, root=None, bootstrap=None):
+    """在重业务导入之前建立结构化启动失败出口。"""
+    root = Path(root or os.environ.get('KR_OWNER_ROOT') or owner_root())
+    try:
+        return _serve(root=root, bootstrap=bootstrap)
+    except Exception as exc:
+        from runtime.owner_bootstrap import record_failure
+        try:
+            record_failure(root, exc, identity=source_identity(), stage='bootstrap')
+        except OSError:
+            pass  # 无写权限时只保留真实退出；不能伪造已落盘。
+        raise
+
+
+def _serve(*, root=None, bootstrap=None):
     root = Path(root or os.environ.get('KR_OWNER_ROOT') or owner_root())
     private_owner_directory(root)
     root = root.resolve()

@@ -36,14 +36,15 @@ def _developer_view_enabled() -> bool:
 def render_console_page(token: str) -> str:
     developer = _developer_view_enabled()
     role = os.environ.get('KR_CONSOLE_ROLE', 'unmanaged')
-    scripts = [_asset('console.js'), _asset('research_workspace.js')]
-    styles = [_asset('console.css'), _asset('research_workspace.css')]
+    scripts = [_asset('console.js'), _asset('research_workspace.js'), _asset('runtime_status.js')]
+    styles = [_asset('console.css'), _asset('research_workspace.css'), _asset('runtime_status.css')]
     if developer:
         scripts.extend([_asset('evaluation_summary.js'), _asset('developer_console.js')])
         styles.append(_asset('developer_console.css'))
     values = {
         'TITLE': 'KnowledgeRadar 开发版' if role == 'dev' else 'KnowledgeRadar',
         'ROLE': html.escape(role, quote=True), 'DEVELOPER': str(developer).lower(),
+        'RUNTIME_READ_ONLY': str(role == 'dev' or os.environ.get('KR_CONSOLE_READ_ONLY') == '1').lower(),
         'TOKEN': html.escape(token, quote=True),
         'STYLE': '\n'.join(styles),
         'SCRIPT': '\n'.join(scripts).replace('__TOKEN_JSON__', json.dumps(token)).replace('__TOKEN__', token),

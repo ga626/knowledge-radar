@@ -433,8 +433,8 @@
       }
     },
     {
-      "version": 4,
-      "oracle_version": 2,
+      "version": 5,
+      "oracle_version": 3,
       "capabilities": [
         "mcp.health_check"
       ],
@@ -446,7 +446,7 @@
       "case_id": "surface.health_check",
       "executor": "surface",
       "entry": "health_check",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='summary')])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='mode', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='runtime：内核外只读状态，不启动、不探平台，可有界等待恢复；默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。'))])], ctx=Load()), ctx=Load())), arg(arg='wait_seconds', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='ge', value=Constant(value=0)), keyword(arg='le', value=Constant(value=30)), keyword(arg='description', value=Constant(value='仅mode=runtime：有界等待现有恢复，最长30秒；不启动内核、不重试业务。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value='summary'), Constant(value=0)])",
       "layer": "contract",
       "auto": true,
       "success": "注册名、签名、文档一致；不证明平台连通。"
@@ -2090,8 +2090,8 @@
     },
     {
       "case_id": "runtime.product_form",
-      "version": 5,
-      "oracle_version": 5,
+      "version": 6,
+      "oracle_version": 6,
       "capabilities": [
         "runtime.product_form"
       ],
@@ -2104,7 +2104,9 @@
         "tests/test_runtime_process.py",
         "tests/test_runtime_supervision.py",
         "tests/test_product_install.py",
-        "tests/test_product_console_launcher.py"
+        "tests/test_product_console_launcher.py",
+        "tests/test_runtime_recovery_control.py",
+        "tests/test_console_access.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2142,10 +2144,21 @@
         "tests/test_runtime_supervision.py",
         "scripts/product_console_launcher.py",
         "tests/test_product_install.py",
-        "tests/test_product_console_launcher.py"
+        "tests/test_product_console_launcher.py",
+        "src/runtime/runtime_control.py",
+        "src/runtime/owner_bootstrap.py",
+        "src/runtime/file_write_lock.py",
+        "src/onboarding/setup_wizard.py",
+        "src/onboarding/console_page.py",
+        "src/onboarding/static/runtime_status.js",
+        "src/onboarding/static/runtime_status.css",
+        "src/onboarding/static/page.html",
+        "tests/test_runtime_recovery_control.py",
+        "tests/test_console_access.py",
+        "tests/test_console_runtime.mjs"
       ],
-      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。 用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。 薄MCP目录不依赖内核启动；退出句柄绑定真实venv内核，有界恢复与显式解熔断；二十次短stdio连接保持原内核代际。",
-      "change_reason": "2026-11-10 runtime lifecycle: separate MCP discovery and OS user-session supervision; preserve exit evidence and bounded recovery.",
+      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。 用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。 薄MCP目录不依赖内核启动；退出句柄绑定真实venv内核，有界恢复与显式解熔断；二十次短stdio连接保持原内核代际。 内核外状态与错误交接、有限bootstrap事实分类、持久预算与单次恢复分离、未知消费不重放、运行卡同源权限和预览只读。",
+      "change_reason": "2026-11-10 runtime recovery control: read-only state, bounded recovery, persistent receipts, independent console controls.",
       "owned_host_process": true
     },
     {

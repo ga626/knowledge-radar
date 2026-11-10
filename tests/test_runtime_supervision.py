@@ -35,6 +35,15 @@ def test_mcp_catalog_does_not_launch_kernel(tmp_path, monkeypatch, active):
                 await session.initialize()
                 tools = await session.list_tools()
                 assert len(tools.tools) == 27
+                runtime = await session.call_tool('health_check', {'mode': 'runtime', 'wait_seconds': 0})
+                assert not runtime.isError
+                runtime_value = runtime.structuredContent.get('result', runtime.structuredContent)
+                assert runtime_value['runtime']['state'] in {'unknown', 'blocked'}
+                capabilities = await session.call_tool('get_capabilities', {'summary': True})
+                assert not capabilities.isError
+                catalog = capabilities.structuredContent.get('result', capabilities.structuredContent)
+                assert catalog['tool_count'] == 27
+                assert catalog['runtime']['automatic_replay'] is False
                 result = await session.call_tool('health_check', {'mode': 'summary'})
                 assert result.isError
                 assert ('execution_owner_unavailable' if active else 'inactive_installation_client') in str(result)

@@ -1037,7 +1037,7 @@ def tree_summary(path: Path) -> dict[str, Any]:
 
 def _owner_ephemeral(relative: Path) -> bool:
     # 选主锁与进程描述符不是用户资料；维护接管不能改变迁移确认令牌。
-    return ((relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log', 'supervision.json', 'stop.json', 'start.request.json'}))
+    return ((relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log', 'bootstrap-failure.json', 'supervision.json', 'stop.json', 'start.request.json'}))
         or relative.as_posix() in {'runtime/browser_link/host.json','state/xhs_opencli/daemon.json','state/xhs_opencli/daemon.log'})
 
 

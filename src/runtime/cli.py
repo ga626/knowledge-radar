@@ -83,8 +83,15 @@ def parser():
     capabilities.add_argument('--tool', default='')
     runtime = sub.add_parser('runtime', help='显式启动或只读诊断唯一执行内核')
     runtime_sub = runtime.add_subparsers(dest='action', required=True)
-    runtime_sub.add_parser('start')
-    runtime_sub.add_parser('status')
+    for action in ('start', 'rearm'):
+        recovery = runtime_sub.add_parser(action, help='恢复一次' if action == 'start' else '显式重新开放自动恢复预算')
+        recovery.add_argument('--request-id', required=True)
+        recovery.add_argument('--expected-source', required=True)
+        recovery.add_argument('--expected-incident')
+    runtime_status = runtime_sub.add_parser('status')
+    runtime_status.add_argument('--wait', type=float, default=0, help='最多30秒只读等待')
+    recovery_receipt = runtime_sub.add_parser('recovery-receipt')
+    recovery_receipt.add_argument('request_id')
     receipts = runtime_sub.add_parser('receipts', help='有界回执目录，找回断连时未收到的request_id')
     receipts.add_argument('--limit', type=int, default=20)
     runtime_sub.add_parser('stop', help='仅停止空闲内核，忙时拒绝；不取消任务')
@@ -126,14 +133,21 @@ def execute(args, client):
         return {**data, 'tools': [{k: v for k, v in item.items() if k not in {'input_schema', 'output_schema'}} for item in cards]}
     if args.command == 'runtime':
         if args.action == 'status':
-            return client.status()
+            from runtime.runtime_control import runtime_snapshot
+            return runtime_snapshot(client, wait_seconds=args.wait)
+        if args.action == 'recovery-receipt':
+            from runtime.runtime_control import recovery_receipt
+            return recovery_receipt(client, args.request_id)
         if args.action == 'receipt':
             return client.receipt(args.request_id)
         if args.action == 'receipts':
             return client.receipts(args.limit)
         if args.action == 'stop':
             return client.stop()
-        return client.start()
+        from runtime.runtime_control import request_recovery
+        return request_recovery(client, request_id=args.request_id, expected_source=args.expected_source,
+            expected_incident=args.expected_incident,
+            action='recover_once' if args.action == 'start' else 'rearm_auto_recovery')
     if args.command == 'invoke':
         value = client.call(args.tool, _json_file(args.input), request_id=args.request_id)
         return {'result': value, 'execution_receipt': client.last_receipt,
@@ -222,7 +236,7 @@ def main(argv=None):
     print(json.dumps(value, ensure_ascii=False, separators=(',', ':')))
     if value.get('batch_status') == 'partial':
         return 3
-    return 2 if _failed(value) or value.get('status') in {'unavailable', 'unreachable', 'incompatible', 'busy'} else 0
+    return 2 if _failed(value) or value.get('status') in {'unavailable', 'unreachable', 'incompatible', 'busy', 'unknown', 'rejected', 'failed'} else 0
 
 
 if __name__ == '__main__':

@@ -143,6 +143,13 @@ def _handler_factory(server: WizardServer):
             if self.path == "/api/account-alerts":
                 self._send_json(HTTPStatus.OK, {**account_alert_snapshot(), "read_only": os.environ.get("KR_CONSOLE_READ_ONLY") == "1"})
                 return
+            if self.path == '/api/runtime':
+                from runtime.runtime_control import runtime_snapshot
+                try:
+                    self._send_json(HTTPStatus.OK, runtime_snapshot())
+                except (OSError, ValueError, RuntimeError):
+                    self._send_json(HTTPStatus.SERVICE_UNAVAILABLE, {'status': 'unknown', 'error': 'runtime_observation_unavailable'})
+                return
             if self.path == "/api/evaluation":
                 from onboarding.console_page import _developer_view_enabled
                 if not _developer_view_enabled():
@@ -251,6 +258,7 @@ def _handler_factory(server: WizardServer):
                 self._send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "本地会话校验失败。请刷新页面后重试。"})
                 return
             allowed = {
+                '/api/runtime/recover', '/api/runtime/receipt', '/api/runtime/wait',
                 "/api/research",
                 "/api/account-recovery",
                 "/api/config",
@@ -284,7 +292,12 @@ def _handler_factory(server: WizardServer):
                 payload = json.loads(self.rfile.read(length).decode("utf-8"))
                 if not isinstance(payload, dict):
                     raise ValueError("请求必须是JSON对象。")
-                if self.path == "/api/research":
+                if self.path.startswith('/api/runtime/'):
+                    from runtime.runtime_control import console_runtime_action
+                    response = console_runtime_action(self.path.rsplit('/', 1)[1], payload)
+                    self._send_json(HTTPStatus.CONFLICT if response.get('status') == 'rejected' else HTTPStatus.OK, response)
+                    return
+                elif self.path == "/api/research":
                     from runtime.research_workspace import workspace_for_console
                     from onboarding.research_api import workspace_api
                     from onboarding.console_page import _developer_view_enabled
@@ -327,7 +340,8 @@ def _handler_factory(server: WizardServer):
                                 'application': 'applied_for_next_search', 'active_tasks': 'pinned_with_send_revocation_check'}
                 self._send_json(HTTPStatus.OK, response)
             except (OSError, RuntimeError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(error)})
+                self._send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": 'runtime_control_request_failed', 'error_type': type(error).__name__}
+                    if self.path.startswith('/api/runtime/') else {"ok": False, "error": str(error)})
 
         def _valid_page_token(self) -> bool:
             return (bool(server.access) or time.monotonic() - server.setup_token_created_at < 1800) and secrets.compare_digest(

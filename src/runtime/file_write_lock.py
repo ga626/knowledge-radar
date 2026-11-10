@@ -10,9 +10,10 @@ _LOCK = threading.RLock()
 _PATH_LOCKS = weakref.WeakValueDictionary()
 
 
-def read_observed(path):
+def read_observed(path, *, max_bytes=-1):
     """读取完整文件快照，并允许Windows写入方原子替换路径。"""
-    if os.name!='nt':return path.read_bytes()
+    if os.name!='nt':
+        with path.open('rb') as stream:return stream.read(max_bytes)
     import ctypes,msvcrt
     from ctypes import wintypes
     api=ctypes.WinDLL('kernel32',use_last_error=True)
@@ -25,7 +26,7 @@ def read_observed(path):
     except BaseException:
         api.CloseHandle(handle)
         raise
-    with os.fdopen(descriptor,'rb') as stream:return stream.read()
+    with os.fdopen(descriptor,'rb') as stream:return stream.read(max_bytes)
 
 
 @contextmanager

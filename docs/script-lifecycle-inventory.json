@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "6b6769a6a2d2c82b95a86c84f7a4473cd5ad622979562e972bc75a4e061a97a2",
+  "content_hash": "42f1bbd2c5dbde152d18035c50004d3d0f543d21cce2e2f39069cdfc66ce2566",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
@@ -259,7 +259,7 @@
       "path": "scripts/setup_wizard.bat",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 55,
+      "reference_count": 56,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

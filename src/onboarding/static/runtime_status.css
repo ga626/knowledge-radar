@@ -1,0 +1,7 @@
+.runtime-card{margin-bottom:20px;padding:18px 22px}
+.runtime-card .runtime-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.runtime-card h2{font-size:16px;margin:0 0 8px}
+.runtime-card p{margin:8px 0;line-height:1.6}
+.runtime-card details{font-size:12px;overflow-wrap:anywhere}
+.runtime-card .runtime-actions{display:flex;gap:10px}
+.runtime-card button:disabled{opacity:.5;cursor:default}

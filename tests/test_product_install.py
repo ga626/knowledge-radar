@@ -28,6 +28,12 @@ def _load():
 installer = _load()
 
 
+def test_bootstrap_failure_is_volatile_but_recovery_history_is_not():
+    assert installer._owner_ephemeral(Path('state/execution_owner/bootstrap-failure.json'))
+    assert not installer._owner_ephemeral(Path('state/execution_owner/recovery_requests/past.json'))
+    assert not installer._owner_ephemeral(Path('state/execution_owner/lifecycle.jsonl'))
+
+
 @pytest.mark.parametrize('component', ['opencli', 'browser_link'])
 def test_component_update_drains_before_mutation_and_resumes_host_on_failure(tmp_path, monkeypatch, component):
     from runtime import browser_components
