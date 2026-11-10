@@ -153,7 +153,7 @@ def record(index, req, assets=None):
             return {'status':'recorded','record_id':req.record_id,'revision':prior['revision'],
                     **({'version_id':prior['version_id']} if 'version_id' in prior else {})}
         revision = int((prior or {}).get('revision', 0))
-        if prior and req.action not in {'requirement','claim','task_purpose'}:
+        if prior and req.action not in {'requirement','claim','task_purpose','investigation'}:
             raise ValueError('immutable_record_use_new_id')
         if req.expected_revision is not None and req.expected_revision != revision:
             raise ValueError('revision_conflict')
@@ -202,11 +202,14 @@ def record(index, req, assets=None):
 
 def requirement_projection(index, conn, task_id, high=None, assets=None):
     records = rows_at(conn, task_id, high)
+    from runtime.research_reviews import question_assessments
+    reviewed=question_assessments(index,conn,task_id,assets,high) if any(r['_kind']=='claim' and r.get('requirement_ids') for r in records) else []
     result = []
     for req in [r for r in records if r['_kind'] == 'requirement']:
         covered = set()
         receipts = []
         partial = False
+        covered_refs=[]
         for c in records:
             if c['_kind'] != 'coverage' or c['requirement_id'] != req['record_id'] or c['requirement_revision'] != req['revision']:
                 continue
@@ -215,13 +218,20 @@ def requirement_projection(index, conn, task_id, high=None, assets=None):
                     index.validate_ref(ref, assets)
             except (ValueError, OSError):
                 continue
+            covered_refs.extend(c['evidence_refs'])
             covered.update(c['covered_parts'])
             receipts.append(c['receipt_id'])
             partial |= c['partial']
         missing = [p for p in req['required_parts'] if p not in covered]
         state = 'waived' if req['waived'] else 'partial' if covered and (missing or partial) else 'fulfilled' if not missing else 'open'
+        matching=[a for a in reviewed if not a.get('review_required')
+            and a.get('requirement_revisions',{}).get(req['record_id'])==req['revision'] and covered_refs
+            and all(any(r['version_id']==v['version_id'] and r['start']<=v['start']<v['end']<=r['end']
+                for r in a['evidence_refs']) for v in covered_refs)]
+        semantic=('supports_with_limits' if any(a['support_assessment']=='supports_with_limits' for a in matching)
+            else 'supports' if matching else 'unreviewed')
         result.append({k:v for k,v in req.items() if k != '_kind'} | {
-            'acquisition':state,'missing_parts':missing,'covering_receipt_ids':receipts,'semantic_review':'unreviewed'})
+            'acquisition':state,'missing_parts':missing,'covering_receipt_ids':receipts,'semantic_review':semantic,'semantic_review_claims':[a['claim_id'] for a in matching]})
     return result
 
 

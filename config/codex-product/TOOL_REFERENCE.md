@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`f7f210e1e79f071d8ccbe5194f4bf8a8e24fc976960741e24b1ae7a503b74605`
+合同指纹：`1eb480e159ccb75fa75c6268bce8dbc378be19810ce5b5800d93ffa10dd2c568`
 
 ## advance_research_candidate
 
@@ -5415,7 +5415,8 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
               "alternatives_reviews",
               "withdrawal_reviews",
               "report_reviews",
-              "local_observations"
+              "local_observations",
+              "investigations"
             ],
             "title": "View",
             "type": "string"
@@ -8098,6 +8099,30 @@ YouTube 公开视频搜索。
             "title": "Claim Type",
             "type": "string"
           },
+          "content_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Content Scope",
+            "type": "string"
+          },
+          "counterevidence_effect": {
+            "default": "unreviewed",
+            "enum": [
+              "unreviewed",
+              "limits",
+              "overturns",
+              "no_change"
+            ],
+            "title": "Counterevidence Effect",
+            "type": "string"
+          },
+          "counterevidence_reason": {
+            "default": "",
+            "description": "解释反证针对哪个命题、适用性与强度；引用不等于已处置。",
+            "maxLength": 2000,
+            "title": "Counterevidence Reason",
+            "type": "string"
+          },
           "counterevidence_refs": {
             "items": {
               "$ref": "#/$defs/Locator"
@@ -8136,10 +8161,47 @@ YouTube 公开视频搜索。
             "title": "Importance",
             "type": "string"
           },
+          "information_roles": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Information Roles",
+            "type": "array"
+          },
+          "languages": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Languages",
+            "type": "array"
+          },
+          "populations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Populations",
+            "type": "array"
+          },
           "question_id": {
             "maxLength": 128,
             "minLength": 1,
             "title": "Question Id",
+            "type": "string"
+          },
+          "question_relation": {
+            "default": "background",
+            "description": "显式声明本命题如何回答问题；未声明不自动填覆盖。",
+            "enum": [
+              "background",
+              "supports",
+              "supports_with_limits",
+              "contradicts",
+              "uncertain"
+            ],
+            "title": "Question Relation",
             "type": "string"
           },
           "record_id": {
@@ -8147,6 +8209,23 @@ YouTube 公开视频搜索。
             "minLength": 1,
             "title": "Record Id",
             "type": "string"
+          },
+          "regions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Regions",
+            "type": "array"
+          },
+          "requirement_ids": {
+            "description": "显式复用本次评审的需求ID，绑定当时需求版本；不改变取得状态。",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Requirement Ids",
+            "type": "array"
           },
           "support_assessment": {
             "default": "unreviewed",
@@ -8171,11 +8250,26 @@ YouTube 公开视频搜索。
             "title": "Text",
             "type": "string"
           },
+          "time_scope": {
+            "default": "",
+            "maxLength": 500,
+            "title": "Time Scope",
+            "type": "string"
+          },
           "uncertainty": {
             "default": "",
             "maxLength": 2000,
             "title": "Uncertainty",
             "type": "string"
+          },
+          "withdrawal_sets": {
+            "description": "显式来源组/共同偏差组；后者不代表同源。程序不按域名自动合并。",
+            "items": {
+              "$ref": "#/$defs/WithdrawalSet"
+            },
+            "maxItems": 20,
+            "title": "Withdrawal Sets",
+            "type": "array"
           }
         },
         "required": [
@@ -8498,6 +8592,159 @@ YouTube 公开视频搜索。
           "purpose"
         ],
         "title": "ExplorationWrite",
+        "type": "object"
+      },
+      "InvestigationWrite": {
+        "additionalProperties": false,
+        "description": "可修订调查笔记；不调度搜索，不宣布客观饱和。",
+        "properties": {
+          "action": {
+            "const": "investigation",
+            "title": "Action",
+            "type": "string"
+          },
+          "analysis_unit": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Analysis Unit",
+            "type": "string"
+          },
+          "changed_because": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Changed Because",
+            "type": "string"
+          },
+          "decision_use": {
+            "maxLength": 1000,
+            "minLength": 1,
+            "title": "Decision Use",
+            "type": "string"
+          },
+          "discriminating_evidence": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Discriminating Evidence",
+            "type": "array"
+          },
+          "evidence_refs": {
+            "items": {
+              "$ref": "#/$defs/Locator"
+            },
+            "maxItems": 40,
+            "title": "Evidence Refs",
+            "type": "array"
+          },
+          "expected_revision": {
+            "anyOf": [
+              {
+                "minimum": 0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Expected Revision"
+          },
+          "explanations": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "title": "Explanations",
+            "type": "array"
+          },
+          "next_action": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Next Action",
+            "type": "string"
+          },
+          "next_action_reason": {
+            "default": "",
+            "maxLength": 1000,
+            "title": "Next Action Reason",
+            "type": "string"
+          },
+          "object_frame": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Object Frame",
+            "type": "string"
+          },
+          "question_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Question Id",
+            "type": "string"
+          },
+          "rationale": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Rationale",
+            "type": "string"
+          },
+          "record_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Record Id",
+            "type": "string"
+          },
+          "reopen_conditions": {
+            "default": "",
+            "maxLength": 2000,
+            "title": "Reopen Conditions",
+            "type": "string"
+          },
+          "selection_basis": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Selection Basis",
+            "type": "string"
+          },
+          "state": {
+            "default": "active",
+            "enum": [
+              "active",
+              "sufficient_for_use",
+              "desk_incomplete",
+              "blocked",
+              "needs_fieldwork",
+              "deferred"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "task_id": {
+            "pattern": "^[A-Za-z0-9_-]{1,96}$",
+            "title": "Task Id",
+            "type": "string"
+          },
+          "unresolved_questions": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "title": "Unresolved Questions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "task_id",
+          "record_id",
+          "action",
+          "question_id",
+          "decision_use",
+          "analysis_unit",
+          "object_frame",
+          "selection_basis",
+          "rationale"
+        ],
+        "title": "InvestigationWrite",
         "type": "object"
       },
       "LocalObservationWrite": {
@@ -9088,6 +9335,55 @@ YouTube 公开视频搜索。
         "title": "ResearchWrite",
         "type": "object"
       },
+      "WithdrawalSet": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Basis",
+            "type": "string"
+          },
+          "group_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 40,
+            "minItems": 2,
+            "title": "Group Ids",
+            "type": "array"
+          },
+          "kind": {
+            "enum": [
+              "same_origin",
+              "shared_bias"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Label",
+            "type": "string"
+          },
+          "set_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Set Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_id",
+          "kind",
+          "label",
+          "group_ids",
+          "basis"
+        ],
+        "title": "WithdrawalSet",
+        "type": "object"
+      },
       "WithdrawalWrite": {
         "additionalProperties": false,
         "properties": {
@@ -9217,6 +9513,7 @@ YouTube 公开视频搜索。
             "exploration_disposition": "#/$defs/ExplorationDisposition",
             "fold": "#/$defs/ResearchWrite",
             "host_request": "#/$defs/ResearchWrite",
+            "investigation": "#/$defs/InvestigationWrite",
             "link": "#/$defs/ResearchWrite",
             "local_observation": "#/$defs/LocalObservationWrite",
             "question": "#/$defs/ResearchWrite",
@@ -9266,6 +9563,9 @@ YouTube 公开视频搜索。
           },
           {
             "$ref": "#/$defs/LocalObservationWrite"
+          },
+          {
+            "$ref": "#/$defs/InvestigationWrite"
           }
         ],
         "title": "Request"
