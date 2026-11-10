@@ -7,7 +7,85 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+import uuid
 from urllib.request import Request, ProxyHandler, build_opener
+
+
+def _stable_task(action):
+    if os.name != 'nt':
+        raise RuntimeError('runtime_user_session_task_requires_windows')
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+        "$ErrorActionPreference='Stop'; " + action + "-ScheduledTask -TaskName 'KnowledgeRadar Stable Local Console' | Out-Null"],
+        capture_output=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        raise RuntimeError('runtime_user_session_task_control_failed_' + action.lower())
+
+
+def _json(path):
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _process_identity_module(package_root):
+    spec = importlib.util.spec_from_file_location('kr_handoff_identity', Path(package_root)/'src/runtime/process_identity.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _wake_runtime(install_root):
+    active = _json(Path(install_root)/'active.json')
+    if not active:
+        return
+    path = Path(active['data_root'])/'state/execution_owner/start.request.json'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix('.tmp')
+    temporary.write_text(json.dumps({'request_id': uuid.uuid4().hex}), encoding='utf-8')
+    temporary.replace(path)
+
+
+@contextmanager
+def runtime_manager_handoff(active, *, install_root, package_root):
+    """先暂停OS入口并请求管理器安全退出，再进入内核维护锁。
+
+    只发送本安装的控制文件，不按PID杀进程。过时PID无法确认退出时停止交接。
+    失败也恢复原任务；启动发生在调用者释放maintenance锁之后。
+    """
+    root = Path(install_root)
+    registered = any((root/name).is_file() for name in ('runtime-autostart.task', 'console-autostart.task'))
+    try:
+        if active:
+            if registered:
+                _stable_task('Disable')
+            state = Path(active['data_root'])/'state/console_supervisor/stable'
+            snapshot = _json(state/'status.json')
+            process_id = snapshot.get('supervisor_pid')
+            identity = _process_identity_module(package_root)
+            observed = identity.process_identity(process_id) if type(process_id) is int and process_id > 0 else ''
+            if observed:
+                request = state/'shutdown.request.json'
+                state.mkdir(parents=True, exist_ok=True)
+                request.write_text(json.dumps({'schema':'knowledgeradar-console-shutdown-request/v1', 'reason':'installation_handoff'}), encoding='utf-8')
+                deadline = time.monotonic()+40
+                try:
+                    while identity.process_identity(process_id) == observed:
+                        runtime = _json(Path(active['data_root'])/'state/execution_owner/supervision.json')
+                        if runtime.get('event') == 'manager_stop_refused_busy' and not request.exists():
+                            raise RuntimeError('execution_owner_busy_before_install')
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError('runtime_manager_shutdown_unconfirmed')
+                        time.sleep(.1)
+                finally:
+                    request.unlink(missing_ok=True)
+        yield
+    finally:
+        if any((root/name).is_file() for name in ('runtime-autostart.task', 'console-autostart.task')):
+            _wake_runtime(root)
+            _stable_task('Enable')
+            _stable_task('Start')
 
 
 def active_environment(active):

@@ -90,7 +90,10 @@ def run_ci(root, suite, ledger, extra_nodes=()):
     if host_nodes:
         host_dir = folder / 'host-process'
         host_dir.mkdir()
-        host = _pytest(root, {"nodes": host_nodes, "timeout_seconds": 240, "owned_host_process": True}, host_dir)
+        # 合批后仍保留所属case的执行预算；避免新增生命周期回归被旧硬期限截断。
+        host_timeout = max([240, *[case.get('timeout_seconds', 120) for case in pytest_cases
+                                  if case.get('owned_host_process')]])
+        host = _pytest(root, {"nodes": host_nodes, "timeout_seconds": host_timeout, "owned_host_process": True}, host_dir)
         batches['owned_host_process'] = host
         host_junit = host_dir / 'junit.xml'
         if host_junit.is_file():

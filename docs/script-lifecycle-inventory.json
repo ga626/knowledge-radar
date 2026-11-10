@@ -1,13 +1,13 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "9350be8ee0488f65513dd63e33a63b874172e207bbed42c4a865f4ee2a168856",
+  "content_hash": "6b6769a6a2d2c82b95a86c84f7a4473cd5ad622979562e972bc75a4e061a97a2",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
       "path": "scripts/__init__.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 151,
+      "reference_count": 153,
       "action": "may_move_after_targeted_checks"
     },
     {
@@ -105,7 +105,7 @@
       "path": "scripts/generate_tool_manual.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 25,
+      "reference_count": 26,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -217,14 +217,14 @@
       "path": "scripts/product_console_launcher.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 23,
+      "reference_count": 35,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
       "path": "scripts/product_install.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 106,
+      "reference_count": 108,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -294,7 +294,7 @@
       "path": "scripts/verify_codex_product.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 25,
+      "reference_count": 28,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

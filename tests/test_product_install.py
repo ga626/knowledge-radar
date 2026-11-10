@@ -267,6 +267,100 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         return executable
 
     monkeypatch.setattr(installer, "ensure_runtime", fake_runtime)
+    # 安装单元测试不注册真实用户任务；真实控制边界在定向用例验证。
+    from contextlib import nullcontext
+    monkeypatch.setattr(installer, 'runtime_handoff', lambda *a, **k: nullcontext(), raising=False)
+    monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *a, **k: {'status': 'ready', 'scope': 'fixture_only'}, raising=False)
+    monkeypatch.setattr(installer, 'write_runtime_autostart', lambda *a, **k: None, raising=False)
+
+
+def test_activation_handoff_restarts_after_maintenance_and_records_separate_readiness(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    events = []
+    active = {'program_root': str(tmp_path/'program'), 'data_root': str(tmp_path/'data')}
+    (tmp_path/'active.json').write_text('{}')
+    monkeypatch.setattr(installer, 'load_active', lambda _: active)
+    @contextmanager
+    def paused(*args, **kwargs):
+        events.append('manager-paused')
+        try: yield
+        finally: events.append('manager-resumed')
+    @contextmanager
+    def maintenance(*args, **kwargs):
+        events.append('locked')
+        try: yield
+        finally: events.append('unlocked')
+    monkeypatch.setattr(installer, 'runtime_handoff', paused)
+    monkeypatch.setattr(installer, 'cli_lifecycle', lambda: types.SimpleNamespace(maintenance=maintenance))
+    monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *args: events.append('ready-checked') or {'status': 'ready'})
+    @installer.installation_maintenance
+    def operation(install_root):
+        events.append('active-applied')
+        return {'status': 'APPLIED', 'active': active}
+    result = operation(tmp_path)
+    assert events == ['manager-paused', 'locked', 'active-applied', 'unlocked', 'manager-resumed', 'ready-checked']
+    assert result['runtime_readiness']['status'] == 'ready'
+    assert result['native_host_binding']['status'] == 'not_revalidated'
+
+
+def test_failed_handoff_readiness_never_claims_installation_complete(tmp_path, monkeypatch):
+    active = {'program_root': str(tmp_path/'program'), 'data_root': str(tmp_path/'data')}
+    monkeypatch.setattr(installer, 'load_active', lambda _: active)
+    monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *args: {'status': 'unavailable'})
+    @installer.installation_maintenance
+    def operation(install_root):
+        return {'status': 'APPLIED', 'active': active}
+    result = operation(tmp_path)
+    assert result['status'] == 'APPLIED_RUNTIME_NOT_READY'
+    assert result['active'] == active  # 不伪装激活回滚
+
+
+def test_failed_os_task_resume_keeps_activation_but_reports_runtime_failure(tmp_path, monkeypatch):
+    from contextlib import contextmanager
+    active = {'program_root': str(tmp_path/'program'), 'data_root': str(tmp_path/'data')}
+    @contextmanager
+    def resume_fails(*args):
+        yield
+        raise RuntimeError('runtime_user_session_task_control_failed_start')
+    monkeypatch.setattr(installer, 'runtime_handoff', resume_fails)
+    monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *a: pytest.fail('do not obscure failed OS handoff'))
+    @installer.installation_maintenance
+    def operation(install_root):
+        return {'status': 'APPLIED', 'active': active}
+    result = operation(tmp_path)
+    assert result['status'] == 'APPLIED_RUNTIME_NOT_READY'
+    assert result['runtime_readiness']['reason'] == 'runtime_user_session_handoff_failed'
+
+
+def test_migration_ignores_old_runtime_controls_but_keeps_exit_evidence():
+    for name in ('supervision.json', 'stop.json', 'start.request.json'):
+        assert installer._owner_ephemeral(Path('state/execution_owner')/name)
+    assert not installer._owner_ephemeral(Path('state/execution_owner/lifecycle.jsonl'))
+
+
+@pytest.mark.skipif(sys.platform != 'win32', reason='Windows GUI runtime')
+def test_control_helpers_use_gui_entry_through_venv(tmp_path, monkeypatch):
+    pythonw = __import__('os').environ.get('KR_RUNTIME_PROBE_PYTHON') or installer.quiet_runtime_python(sys.executable)
+    calls=[]
+    def run(command, **kwargs):
+        calls.append(command)
+        return types.SimpleNamespace(returncode=0,stdout='{}',stderr='')
+    monkeypatch.setattr(installer.subprocess,'run',run)
+    executable=Path(pythonw).with_name('python.exe')
+    installer.write_console_autostart(tmp_path,executable)
+    assert Path(calls[-1][0]).name=='pythonw.exe'
+    (tmp_path/'console-autostart.task').unlink()
+    installer.write_runtime_autostart(tmp_path,executable)
+    assert Path(calls[-1][0]).name=='pythonw.exe'
+
+
+def test_readiness_reports_missing_gui_runtime_instead_of_raising(tmp_path, monkeypatch):
+    actual=_load()
+    monkeypatch.setattr(actual,'_active_runtime',lambda *a:tmp_path/'missing/python.exe')
+    def missing(*args):
+        raise RuntimeError('background_python_gui_missing')
+    monkeypatch.setattr(actual,'quiet_runtime_python',missing)
+    assert actual.complete_runtime_handoff(tmp_path, {}) == {'status':'unavailable','reason':'RuntimeError'}
 
 
 def package_fixture(tmp_path: Path, version: str) -> Path:

@@ -2090,8 +2090,8 @@
     },
     {
       "case_id": "runtime.product_form",
-      "version": 4,
-      "oracle_version": 4,
+      "version": 5,
+      "oracle_version": 5,
       "capabilities": [
         "runtime.product_form"
       ],
@@ -2101,11 +2101,14 @@
         "tests/test_continuity_fallback.py",
         "tests/test_data_relocation.py",
         "tests/test_browser_components.py",
-        "tests/test_runtime_process.py"
+        "tests/test_runtime_process.py",
+        "tests/test_runtime_supervision.py",
+        "tests/test_product_install.py",
+        "tests/test_product_console_launcher.py"
       ],
       "layer": "contract",
       "auto": true,
-      "timeout_seconds": 180,
+      "timeout_seconds": 480,
       "dependencies": [
         "src/runtime/application.py",
         "src/runtime/execution_owner.py",
@@ -2135,10 +2138,14 @@
         "config/browser-components.json",
         "scripts/browser_link_install.py",
         "tests/test_runtime_process.py",
-        "src/runtime/process.py"
+        "src/runtime/process.py",
+        "tests/test_runtime_supervision.py",
+        "scripts/product_console_launcher.py",
+        "tests/test_product_install.py",
+        "tests/test_product_console_launcher.py"
       ],
-      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。 用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。",
-      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。",
+      "success": "真实隔离进程验证单owner、MCP/CLI固定证据一致、客户端断连继续、取消/deadline、崩溃显式恢复、请求幂等、安装维护与不覆盖；不涉及真实账号、付费、宿主刷新或安装。 备用通道按所选制品合同核目录，兼容旧注册声明；分阶段错误脱敏且未知执行结果不重放，不冒充原生恢复。 用户数据根迁移、内部Vault身份重绑定、随包扩展稳定路径及旧资产保护。 薄MCP目录不依赖内核启动；退出句柄绑定真实venv内核，有界恢复与显式解熔断；二十次短stdio连接保持原内核代际。",
+      "change_reason": "2026-11-10 runtime lifecycle: separate MCP discovery and OS user-session supervision; preserve exit evidence and bounded recovery.",
       "owned_host_process": true
     },
     {

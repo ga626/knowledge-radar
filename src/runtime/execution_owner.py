@@ -24,10 +24,35 @@ from pydantic_core import to_jsonable_python
 from runtime.file_write_lock import file_write_lock
 from runtime.paths import runtime_state_dir
 from runtime.process_identity import process_identity
-from runtime.process import background_python_executable, silent_subprocess_popen
+from runtime.process import background_python_executable, silent_subprocess_popen, silent_subprocess_run
 
 PROTOCOL = 1
 MAX_REQUEST = 2 * 1024 * 1024
+
+
+def _write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        temporary.write_text(json.dumps(value, ensure_ascii=False), encoding='utf-8')
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _read_json(path):
+    try:
+        value = json.loads(path.read_text(encoding='utf-8'))
+        return value if isinstance(value, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def supervision_snapshot(root):
+    value = _read_json(Path(root)/'supervision.json')
+    if value and process_identity(value.get('supervisor_pid', 0)) != value.get('process_identity'):
+        return {**value, 'state': 'supervisor_unavailable', 'prior_state': value.get('state')}
+    return value
 
 
 def private_owner_directory(root):
@@ -119,6 +144,7 @@ class OwnerClient:
         self.root = Path(root) if root else owner_root()
         self.timeout = timeout
         self.last_receipt = None
+        self.child = None
 
     def descriptor(self):
         try:
@@ -147,19 +173,49 @@ class OwnerClient:
         """纯查询：不创建目录，不启动、恢复或替换运行时。"""
         descriptor = self.descriptor()
         if not descriptor:
-            return {'status': 'unavailable', 'layer': 'execution_owner', 'next_action': 'runtime start'}
+            return {'status': 'unavailable', 'layer': 'execution_owner', 'next_action': 'runtime start',
+                    'supervision': supervision_snapshot(self.root)}
         if descriptor.get('source_identity') != source_identity() or descriptor.get('protocol') != PROTOCOL:
             return {'status': 'incompatible', 'layer': 'execution_owner',
                     'pid': descriptor['pid'], 'protocol': descriptor.get('protocol'),
                     'source_identity': descriptor.get('source_identity'),
                     'next_action': 'Keep the active owner; install or select a matching client.'}
         try:
-            return self._request(descriptor, 'status', timeout=3)
+            return {**self._request(descriptor, 'status', timeout=3),
+                    'supervision': supervision_snapshot(self.root)}
         except (httpx.HTTPError, ValueError):
             return {'status': 'unreachable', 'layer': 'runtime_transport', 'pid': descriptor['pid']}
 
-    def start(self, *, timeout=30):
+    def start(self, *, timeout=30, managed=False):
         """显式启动；竞争客户端只选主，不杀死或覆盖不同身份的有效owner。"""
+        if not active_client():
+            return {'status':'incompatible','layer':'product_identity','next_action':'Reconnect using the active installation.'}
+        # 正式入口只唤醒已有的用户会话任务，不尝试从宿主受限Job逃逸。
+        # 源码/隔离显式启动保留原合同；只读status和MCP绝不进入此路径。
+        if not managed and (os.environ.get('KR_ACTIVE_INSTALL_ROOT') or
+                            supervision_snapshot(self.root).get('state') not in {None, 'supervisor_unavailable'}):
+            current = self.status()
+            if current['status'] != 'unavailable':
+                return current
+            private_owner_directory(self.root)
+            _write_json(self.root/'start.request.json', {'request_id': uuid.uuid4().hex})
+            snapshot = supervision_snapshot(self.root)
+            if os.name == 'nt' and (not snapshot or snapshot.get('state') == 'supervisor_unavailable'):
+                command = ['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+                    "$ErrorActionPreference='Stop'; Enable-ScheduledTask -TaskName 'KnowledgeRadar Stable Local Console' | Out-Null; Start-ScheduledTask -TaskName 'KnowledgeRadar Stable Local Console'"]
+                result = silent_subprocess_run(command, capture_output=True)
+                if result.returncode:
+                    raise RuntimeError('runtime_user_task_unavailable_repair_installation')
+            deadline = time.monotonic()+timeout
+            while time.monotonic() < deadline:
+                current = self.status()
+                if current['status'] != 'unavailable':
+                    return current
+                if (not (self.root/'start.request.json').exists()
+                        and supervision_snapshot(self.root).get('state') == 'circuit_open'):
+                    raise RuntimeError('runtime_recovery_exhausted_inspect_supervision')
+                time.sleep(.1)
+            raise TimeoutError('runtime_user_task_start_timeout_inspect_supervision')
         private_owner_directory(self.root)
         with file_write_lock(self.root / 'launch'):
             if not active_client():
@@ -175,14 +231,15 @@ class OwnerClient:
             env['KR_OWNER_ROOT'] = str(self.root.resolve())
             kwargs = {'cwd': str(source.parent), 'env': env, 'stdin': subprocess.DEVNULL,
                       'stdout': subprocess.DEVNULL, 'close_fds': True}
-            if os.name == 'nt':
+            if os.name == 'nt' and not managed:
                 # GUI入口贯穿venv/base链；Job脱离与控制台分离是两件事。
                 kwargs['creationflags'] = subprocess.CREATE_BREAKAWAY_FROM_JOB
-            else:
+            elif os.name != 'nt':
                 kwargs['start_new_session'] = True
             with (self.root / 'startup.log').open('ab') as log:
                 try:
                     child = silent_subprocess_popen(command, stderr=log, **kwargs)
+                    self.child = child
                 except OSError as exc:
                     if os.name == 'nt' and exc.winerror == 5:
                         raise RuntimeError('execution_owner_job_breakaway_denied_start_from_user_terminal') from exc
@@ -205,7 +262,9 @@ class OwnerClient:
             return failure('inactive_installation_client', request_id=request_id, layer='product_identity')
         descriptor = self.descriptor()
         if not descriptor:
-            return failure('execution_owner_unavailable', request_id=request_id)
+            value = failure('execution_owner_unavailable', request_id=request_id)
+            value['execution_owner'] = self.status()
+            return value
         if descriptor.get('source_identity') != source_identity() or descriptor.get('protocol') != PROTOCOL:
             return failure('execution_owner_identity_mismatch', request_id=request_id)
         try:
@@ -321,6 +380,169 @@ class RequestReceipts:
         return {'status':'ok','requests':[dict(zip(('request_id','operation','status','created_at'), row)) for row in rows]}
 
 
+class OwnerSupervisor:
+    """现有用户会话监督进程中的内核责任方；不调业务、不重发请求。
+
+    tick只观察持有的进程句柄；退出预算耗尽后不会定时自愈。
+    显式start请求才能重新开放预算。升级由launch锁与active身份共同隔离。
+    """
+    def __init__(self, client=None, *, max_restarts=3):
+        self.client = client or OwnerClient()
+        self.max_restarts = max_restarts
+        self.state = 'new'
+        self.child = None
+        self.generation = ''
+        self.launcher = None
+        self.failures = 0
+        self.retry_at = 0
+        self.request_id = ''
+        self.unobserved_exit = None
+        previous = _read_json(self.client.root/'supervision.json')
+        if previous.get('source_identity') == source_identity():
+            self.failures = int(previous.get('restart_count') or 0)
+            if previous.get('state') in {'circuit_open', 'stopped'}:
+                self.state = previous['state']
+            elif previous.get('state') in {'ready', 'starting'} and not self.client.descriptor():
+                self.unobserved_exit = previous
+
+    def record(self, event, **details):
+        private_owner_directory(self.client.root)
+        value = {'event': event, 'time': time.time(), 'state': self.state,
+                 'supervisor_pid': os.getpid(), 'process_identity': process_identity(),
+                 'source_identity': source_identity(), 'generation': self.generation,
+                 'restart_count': self.failures, **details}
+        with (self.client.root/'lifecycle.jsonl').open('a', encoding='utf-8') as stream:
+            stream.write(json.dumps(value, ensure_ascii=False)+'\n')
+        _write_json(self.client.root/'supervision.json', value)
+
+    def _failed(self, now):
+        self.failures += 1
+        self.state = 'circuit_open' if self.failures > self.max_restarts else 'retrying'
+        self.retry_at = now + min(8, 2 ** self.failures)
+        self.record(self.state)
+
+    def _observe_ready(self, result):
+        self.generation = result['generation']
+        if self.child is None or (result.get('pid') and self.child.pid != result['pid']):
+            self.launcher = self.child
+            self.child = _ProcessWitness(self.client.descriptor())
+        self.state = 'ready'
+        self.record('owner_observed', pid=self.child.pid,
+                    launcher_pid=self.launcher.pid if self.launcher else self.child.pid)
+
+    def tick(self, *, now=None):
+        now = time.monotonic() if now is None else now
+        if not active_client():
+            if self.state != 'inactive':
+                self.state = 'inactive'
+                self.record('active_installation_changed')
+            return
+        request = _read_json(self.client.root/'start.request.json').get('request_id')
+        if self.unobserved_exit:
+            previous, self.unobserved_exit = self.unobserved_exit, None
+            self.generation = previous.get('generation', '')
+            intentional = bool(self.generation and
+                _read_json(self.client.root/'stop.json').get('generation') == self.generation)
+            if intentional:
+                self.state = 'stopped'
+                self.record('stopped')
+            else:
+                self.record('owner_exit_unobserved', exit_code=None,
+                            reason='manager_restarted_without_live_prior_owner')
+                self._failed(now)
+        if request and request != self.request_id:
+            self.request_id = request
+            self.failures = 0
+            if self.state in {'circuit_open', 'stopped', 'blocked'}:
+                self.state, self.retry_at = 'retrying', now
+            (self.client.root/'start.request.json').unlink(missing_ok=True)
+        if self.child is not None:
+            code = self.child.poll()
+            if code is None:
+                if self.state == 'starting':
+                    status = self.client.status()
+                    if status.get('status') == 'ready':
+                        self._observe_ready(status)
+                return
+            intentional = (code == 0 and
+                _read_json(self.client.root/'stop.json').get('generation') == self.generation)
+            self.record('owner_exited', pid=self.child.pid, exit_code=code,
+                        reason='explicit_stop' if intentional else 'unexpected_exit')
+            if hasattr(self.child, 'close'):
+                self.child.close()
+            if self.launcher:
+                self.launcher.poll()
+                self.launcher = None
+            self.child = None
+            if intentional:
+                self.state = 'stopped'
+                self.record('stopped')
+            else:
+                self._failed(now)
+            return
+        if self.state in {'circuit_open', 'stopped', 'inactive', 'blocked'} or now < self.retry_at:
+            return
+        try:
+            self.client.child = None
+            result = self.client.start(managed=True)
+            self.child = self.client.child
+            if result.get('status') != 'ready':
+                self.state = 'inactive' if result.get('status') == 'incompatible' else 'blocked'
+                self.record('owner_start_blocked', observed_status=result.get('status'))
+                return
+            self._observe_ready(result)
+        except (OSError, RuntimeError, TimeoutError) as exc:
+            self.child = self.client.child
+            if self.child is not None and self.child.poll() is None:
+                # 超时恢复中的子进程仍属于本监督者，不再并发启动第二个。
+                self.state = 'starting'
+                self.record('owner_start_pending', error_type=type(exc).__name__)
+            else:
+                self.child = None
+                self.record('owner_start_failed', error_type=type(exc).__name__)
+                self._failed(now)
+
+class _ProcessWitness:
+    """持有已核代际的Windows进程句柄，避免PID复用及退出码证据丢失。"""
+    def __init__(self, descriptor):
+        if not descriptor:
+            raise RuntimeError('owner_disappeared_before_observation')
+        self.pid = descriptor['pid']
+        self.identity = descriptor['process_identity']
+        self.handle = None
+        if os.name == 'nt':
+            import ctypes
+            from ctypes import wintypes
+            self.api = ctypes.WinDLL('kernel32', use_last_error=True)
+            self.api.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+            self.api.OpenProcess.restype = wintypes.HANDLE
+            self.api.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+            self.api.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+            self.api.CloseHandle.argtypes = [wintypes.HANDLE]
+            self.handle = self.api.OpenProcess(0x100000 | 0x1000, False, self.pid)
+            if not self.handle or process_identity(self.pid) != self.identity:
+                self.close()
+                raise RuntimeError('owner_observation_identity_changed')
+
+    def poll(self):
+        if os.name != 'nt':
+            return None if process_identity(self.pid) == self.identity else 'unknown'
+        import ctypes
+        from ctypes import wintypes
+        state = self.api.WaitForSingleObject(self.handle, 0)
+        if state == 258:
+            return None
+        code = wintypes.DWORD()
+        if state != 0 or not self.api.GetExitCodeProcess(self.handle, ctypes.byref(code)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return code.value
+
+    def close(self):
+        if self.handle:
+            self.api.CloseHandle(self.handle)
+            self.handle = None
+
+
 def serve(*, root=None, bootstrap=None):
     root = Path(root or os.environ.get('KR_OWNER_ROOT') or owner_root())
     private_owner_directory(root)
@@ -399,6 +621,7 @@ def serve(*, root=None, bootstrap=None):
                             self.send_json({'status': 'busy', 'layer': 'execution_owner', 'next_action': 'Wait for accepted work; no task was cancelled.'})
                             return
                         draining = True
+                        _write_json(root/'stop.json', {'generation': generation, 'reason': 'explicit_stop'})
                     self.send_json({'status': 'stopping', 'pid': os.getpid()})
                     threading.Thread(target=httpd.shutdown, daemon=True).start()
                     return

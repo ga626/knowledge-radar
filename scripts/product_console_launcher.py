@@ -305,6 +305,7 @@ def _start_background(context: ConsoleContext) -> None:
         _run_task_script(f"$ErrorActionPreference='Stop'\nEnable-ScheduledTask -TaskName '{DEV_TASK_NAME}' | Out-Null\nStart-ScheduledTask -TaskName '{DEV_TASK_NAME}'")
         return
     if context.role == "stable" and os.name == "nt":
+        _write_json_atomic(context.state_dir/'console.request.json', {'requested_at': _utc_now()})
         _run_task_script(_task_script(context=context, enabled=True, start_now=True))
         return
     _spawn([sys.executable, str(Path(__file__).resolve()), "--supervise", "--port", str(context.port), "--no-open", *_command_context(context)], log_path=context.log_path)
@@ -385,7 +386,8 @@ def _terminate_worker(child: subprocess.Popen[Any]) -> None:
         return
     if os.name == 'nt':
         # venv python.exe 可能只是转发进程，必须回收由我们启动的整棵树。
-        result = subprocess.run(['taskkill.exe', '/PID', str(child.pid), '/T', '/F'], capture_output=True, check=False)
+        result = subprocess.run(['taskkill.exe', '/PID', str(child.pid), '/T', '/F'], capture_output=True, check=False,
+                                creationflags=subprocess.CREATE_NO_WINDOW)
         if result.returncode and child.poll() is None:
             raise RuntimeError('无法回收自有控制台进程树。')
     else:
@@ -404,7 +406,47 @@ def _restart_delay(restarts: list[float]) -> float:
     return min(8.0, 0.5 * (2 ** max(0, len(restarts) - 1)))
 
 
-def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = False) -> None:
+def _runtime_manager(context):
+    if context.role != 'stable':
+        return None
+    _configure_environment(context, generation=0)
+    os.environ['KR_ACTIVE_INSTALL_ROOT'] = str(context.install_root)
+    os.environ.pop('KR_OWNER_ROOT', None)
+    os.environ.pop('KR_RUNTIME_ROLE', None)
+    from runtime.execution_owner import OwnerSupervisor
+    manager = OwnerSupervisor()
+    manager.record('supervisor_started')
+    return manager
+
+
+def _wait_with_runtime(manager, seconds):
+    """控制台退避不阻塞独立内核监督；不执行任何平台/登录轮询。"""
+    while seconds > 0:
+        if manager is not None:
+            manager.tick()
+            if manager.state == 'inactive':
+                return False
+        step = min(1, seconds)
+        time.sleep(step)
+        seconds -= step
+    return True
+
+
+def _stop_runtime(manager):
+    if manager is None:
+        return True
+    result = manager.client.stop()
+    if result.get('status') not in {'stopping', 'unavailable'}:
+        manager.record('manager_stop_refused_busy')
+        return False
+    end = time.monotonic()+10
+    while manager.child is not None and manager.child.poll() is None and time.monotonic() < end:
+        time.sleep(.1)
+    manager.tick()
+    return manager.child is None
+
+
+def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = False, runtime_only: bool = False) -> None:
     """Own one console worker and restart it after an unexpected exit.
 
     ``legacy_healthless`` is a narrowly-scoped recovery bridge for an already
@@ -422,21 +464,41 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
     shutdown_requested = False
     exit_state = "SUPERVISOR_EXITED"
     exit_reason = "loop-ended"
+    manager = None
     try:
+        manager = _runtime_manager(context)
         _write_status(context, "STARTING", supervisor_pid=os.getpid())
         _log(context, "supervisor_started", supervisor_pid=os.getpid())
         while True:
+            if manager is not None:
+                manager.tick()
+                if manager.state == 'inactive':
+                    exit_state, exit_reason = 'STALE_INSTALLATION', 'active-installation-changed'
+                    return
             if child is None and context.shutdown_path.is_file():
+                if not _stop_runtime(manager):
+                    context.shutdown_path.unlink(missing_ok=True)
+                    _wait_with_runtime(manager, 1)
+                    continue
                 context.shutdown_path.unlink(missing_ok=True)
                 _log(context, "supervisor_shutdown_requested_without_worker")
                 exit_state, exit_reason = "STOPPED", "shutdown-requested"
                 return
+            if runtime_only:
+                requested = context.state_dir/'console.request.json'
+                if requested.is_file():
+                    requested.unlink(missing_ok=True)
+                    runtime_only = False
+                else:
+                    _write_status(context, 'RUNTIME_' + manager.state.upper(), supervisor_pid=os.getpid())
+                    _wait_with_runtime(manager, 1)
+                    continue
             state = _health(context.port, context)
             if child is None:
                 if state in {"foreign", "stale", "unresponsive"}:
                     _write_status(context, "FOREIGN_PORT_OWNER", supervisor_pid=os.getpid(), observed_state=state)
                     _log(context, "foreign_port_owner", observed_state=state)
-                    time.sleep(2.0)
+                    _wait_with_runtime(manager, 2.0)
                     continue
                 if state == "ready":
                     # We own the role mutex, but this worker survived a previous
@@ -455,7 +517,7 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
                         _log(context, 'orphan_worker_recovered', generation=generation)
                     except (OSError, RuntimeError, HTTPException) as error:
                         _log(context, 'orphan_recovery_deferred', error=str(error))
-                        time.sleep(2.0)
+                        _wait_with_runtime(manager, 2.0)
                     continue
                 generation += 1
                 command = [sys.executable, str(Path(__file__).resolve()), "--serve", "--port", str(context.port), "--generation", str(generation), "--no-open", *_command_context(context)]
@@ -464,7 +526,16 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
                 _write_status(context, "STARTING_WORKER", supervisor_pid=os.getpid(), worker_pid=child.pid, generation=generation)
                 _log(context, "worker_started", worker_pid=child.pid, generation=generation)
             while child.poll() is None:
+                if manager is not None:
+                    manager.tick()
+                    if manager.state == 'inactive':
+                        exit_state, exit_reason = 'STALE_INSTALLATION', 'active-installation-changed'
+                        return
                 if context.shutdown_path.is_file():
+                    if not _stop_runtime(manager):
+                        context.shutdown_path.unlink(missing_ok=True)
+                        _wait_with_runtime(manager, 1)
+                        continue
                     shutdown_requested = True
                     _write_status(context, "STOPPING", supervisor_pid=os.getpid(), worker_pid=child.pid, generation=generation)
                     _log(context, "supervisor_shutdown_requested", generation=generation)
@@ -512,17 +583,21 @@ def supervise_console(context: ConsoleContext, *, legacy_healthless: bool = Fals
             if len(restarts) > MAX_RESTARTS:
                 _write_status(context, "BACKOFF_EXHAUSTED", supervisor_pid=os.getpid(), restart_count=len(restarts), retry_after_seconds=RESTART_WINDOW_SECONDS)
                 _log(context, "restart_backoff_exhausted", restart_count=len(restarts))
-                time.sleep(RESTART_WINDOW_SECONDS)
+                _wait_with_runtime(manager, RESTART_WINDOW_SECONDS)
                 restarts.clear()
             else:
                 delay = _restart_delay(restarts)
                 _write_status(context, "RETRYING", supervisor_pid=os.getpid(), restart_count=len(restarts), retry_after_seconds=delay)
-                time.sleep(delay)
+                _wait_with_runtime(manager, delay)
     except BaseException as error:
         exit_state, exit_reason = "SUPERVISOR_FAILED", type(error).__name__
         _log(context, "supervisor_failed", error=str(error), traceback=traceback.format_exc())
         raise
     finally:
+        if manager is not None:
+            manager.record('supervisor_stopped', reason=exit_reason)
+            if hasattr(manager.child, 'close'):
+                manager.child.close()
         if child is not None and child.poll() is None:
             _terminate_worker(child)
         _write_status(context, exit_state, supervisor_pid=os.getpid(), generation=generation, reason=exit_reason)
@@ -543,7 +618,7 @@ def _ps_literal(value: str) -> str:
     return value.replace("'", "''")
 
 
-def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = False, validate_helper: bool = True) -> str:
+def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = False, validate_helper: bool = True, runtime_only: bool = False) -> str:
     task_name = _task_name(context)
     if not enabled:
         return f"Unregister-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Confirm:$false -ErrorAction SilentlyContinue"
@@ -559,6 +634,8 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
     else:
         helper = Path(__file__).resolve()
     arguments = f'"{helper}" --supervise --role {context.role} --port {context.port} --no-open --install-root "{context.install_root}"'
+    if runtime_only:
+        arguments += ' --runtime-only'
     if context.role == "dev":
         arguments += f' --program-root "{context.program}" --preview-state-root "{context.supervisor_root}"'
     lines = [
@@ -568,10 +645,8 @@ def _task_script(*, context: ConsoleContext, enabled: bool, start_now: bool = Fa
     ]
     lines.append("$owner = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name")
     lines.append("$trigger = New-ScheduledTaskTrigger -AtLogOn -User $owner")
-    # 实测部分退出路径不触发 RestartOnFailure；同一任务定时补启动，
-    # IgnoreNew 确保正在运行时不会另起宿主，无需额外 watcher。
-    lines.append("$retry = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)")
-    lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Trigger @($trigger,$retry) -Settings $settings -User $owner -RunLevel Limited -Force | Out-Null")
+    # OS只负责登录与有限失败重启；周期触发会绕过内核熔断。
+    lines.append(f"Register-ScheduledTask -TaskName '{_ps_literal(task_name)}' -Action $action -Trigger $trigger -Settings $settings -User $owner -RunLevel Limited -Force | Out-Null")
     if start_now:
         lines.append(f"Start-ScheduledTask -TaskName '{_ps_literal(task_name)}'")
     return "\n".join(lines)
@@ -584,14 +659,16 @@ def _stable_task_script(*, enabled: bool, install_root: Path) -> str:
 
 
 def _run_task_script(script: str) -> None:
+    script = '[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)\n' + script
     encoded = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], capture_output=True, text=True, encoding="utf-8", check=False)
+    result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded], capture_output=True, text=True, encoding="utf-8", check=False,
+                            **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
     if result.returncode != 0:
         raise RuntimeError(f"无法更新 KnowledgeRadar Task Scheduler 任务：{result.stderr.strip() or result.stdout.strip()}")
 
 
-def set_autostart(*, enabled: bool, context: ConsoleContext) -> str:
-    _run_task_script(_task_script(context=context, enabled=enabled))
+def set_autostart(*, enabled: bool, context: ConsoleContext, runtime_only: bool = False) -> str:
+    _run_task_script(_task_script(context=context, enabled=enabled, runtime_only=runtime_only))
     if context.role == 'stable':
         _startup_path().unlink(missing_ok=True)
     else:
@@ -647,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--restart", action="store_true", help="Ask the existing supervisor for a controlled worker restart.")
     parser.add_argument("--stop-supervisor", action="store_true", help="Request an intentional role-supervisor shutdown.")
     parser.add_argument("--status", action="store_true", help="Print redacted supervisor and health status.")
+    parser.add_argument('--runtime-only', action='store_true', help='Supervise the installed kernel without starting the console worker.')
     parser.add_argument("--generation", type=int, default=0, help=argparse.SUPPRESS)
     parser.add_argument("--no-open", action="store_true", help="Do not open the default browser.")
     parser.add_argument("--install-root", default="", help=argparse.SUPPRESS)
@@ -663,12 +741,14 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("choose at most one lifecycle action")
     if args.legacy_healthless and (not args.supervise or args.role != "stable"):
         parser.error("--legacy-healthless is only valid for the stable supervisor recovery bridge")
+    if args.runtime_only and (args.role != 'stable' or not (args.supervise or args.enable_autostart)):
+        parser.error('--runtime-only requires a stable supervisor or autostart registration')
     install_root = Path(args.install_root).resolve() if args.install_root else _install_root()
     program_override = Path(args.program_root).resolve() if args.program_root else None
     preview_state_root = Path(args.preview_state_root).resolve() if args.preview_state_root else None
     context = resolve_context(role=args.role, port=args.port, install_root=install_root, program_override=program_override, preview_state_root=preview_state_root)
     if args.enable_autostart:
-        print(set_autostart(enabled=True, context=context)); return 0
+        print(set_autostart(enabled=True, context=context, runtime_only=args.runtime_only)); return 0
     if args.disable_autostart:
         print(set_autostart(enabled=False, context=context)); return 0
     if args.status:
@@ -678,7 +758,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.serve:
         serve_console(context=context, generation=max(1, args.generation)); return 0
     if args.supervise:
-        supervise_console(context, legacy_healthless=args.legacy_healthless); return 0
+        supervise_console(context, legacy_healthless=args.legacy_healthless, runtime_only=args.runtime_only); return 0
     open_console(context=context, restart=args.restart, open_browser=not args.no_open)
     return 0
 

@@ -17,6 +17,82 @@ from kr_core.evidence_assets import EvidenceAssets
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows正式venv拓扑')
+def test_supervisor_retains_actual_venv_owner_exit_handle(isolated, monkeypatch):
+    from runtime import execution_owner as owner
+    executable = os.environ.get('KR_RUNTIME_PROBE_PYTHON') or owner.background_python_executable()
+    _, client, _ = isolated
+    monkeypatch.setattr(owner, 'background_python_executable', lambda: executable)
+    manager = owner.OwnerSupervisor(client, max_restarts=1)
+    try:
+        manager.tick()
+        descriptor = client.descriptor()
+        assert descriptor is not None
+        assert client.status()['supervision']['state'] == 'ready'
+        assert manager.child.pid == descriptor['pid']  # 不能只持有venv转发器
+        victim = descriptor['pid']
+        result = subprocess.run(['taskkill.exe', '/PID', str(victim), '/T', '/F'], capture_output=True)
+        assert result.returncode == 0
+        until(manager.child.poll, lambda value: value is not None)
+        manager.tick()
+        assert manager.state == 'retrying'
+        manager.tick(now=time.monotonic()+10)
+        assert client.status()['status'] == 'ready'
+        assert client.descriptor()['generation'] != descriptor['generation']
+        records = [json.loads(line) for line in (client.root/'lifecycle.jsonl').read_text(encoding='utf-8').splitlines()]
+        exited = [item for item in records if item['event'] == 'owner_exited']
+        assert exited[-1]['pid'] == victim
+        assert exited[-1]['exit_code'] != 0
+        assert exited[-1]['generation'] == descriptor['generation']
+    finally:
+        if client.descriptor():
+            assert client.stop()['status'] == 'stopping'
+            until(client.descriptor, lambda value: value is None)
+        if manager.child:
+            until(manager.child.poll, lambda value: value is not None)
+        if hasattr(manager.child, 'close'):
+            manager.child.close()
+
+
+def test_twenty_short_stdio_sessions_preserve_supervised_generation(isolated):
+    from runtime.execution_owner import OwnerSupervisor
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    from runtime.knowledge import Fetch
+    _, client, _ = isolated
+    manager = OwnerSupervisor(client)
+    try:
+        manager.tick()
+        descriptor = client.descriptor()
+        item = EvidenceAssets().put('https://example.test/lifecycle', '短连接固定证据')
+        async def cycles():
+            for _ in range(20):
+                params = StdioServerParameters(command=sys.executable,
+                    args=['-X','utf8',str(ROOT/'src/server.py')], cwd=str(ROOT),
+                    env=dict(os.environ,KR_MCP_TRANSPORT='stdio'))
+                async with stdio_client(params) as (reader, writer):
+                    async with ClientSession(reader,writer) as session:
+                        await session.initialize()
+                        assert len((await session.list_tools()).tools) == 27
+                        value = await session.call_tool('read_knowledge', {
+                            'request': Fetch(action='fetch',version_id=item['version_id']).model_dump()})
+                        assert not value.isError
+                        content = value.structuredContent
+                        assert content.get('result',content)['text'] == '短连接固定证据'
+                manager.tick()
+                assert client.descriptor()['generation'] == descriptor['generation']
+                assert manager.state == 'ready'
+        asyncio.run(asyncio.wait_for(cycles(), timeout=120))
+    finally:
+        if client.descriptor():
+            assert client.stop()['status'] == 'stopping'
+            until(client.descriptor, lambda value: value is None)
+        if manager.child:
+            until(manager.child.poll, lambda value: value is not None)
+        if hasattr(manager.child, 'close'):
+            manager.child.close()
+
+
 def windows_job_start_owner():
     """在可脱离、关闭即回收子进程的真实Job里启动owner。"""
     probe = __import__('runpy').run_path(str(ROOT/'scripts/verify_codex_product.py'))
