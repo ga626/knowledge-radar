@@ -26,6 +26,10 @@ KR 提供感知工具，Agent 决定关键词、平台、研究充分性与停�
 
 Vault物理路径由KR按项目名、年份与任务标题生成：项目／2026年／11.08 15：14 任务名。文件名与物理层一致，不额外维护带斜杠的虚拟展示标题。Codex提供清楚的人类名称，不把任务ID、哈希或工具动作放入vault_project_dir。身份、校验和字节定位存在KR内部。已交付旧成果不自动搬动，按原回执保护人改和移动。
 
+归档交付核对：稳定project_id与显示名分开，大小写归一不重命名旧成果。项目已有Vault要求时，新任务漏授权须补bind_context；只有明确选择仅本地保存才可降为local_only，不能称已送到Obsidian。收尾读取archive_status的completion、delivery_gap和delivery_receipt，核对项目、授权、双端位置与SHA；研究停止不等于归档成功。archive_audit按next_cursor查未绑定和待交付任务；scan_orphan_reports只发现授权报告收件目录的有限候选，truncated不代表扫完，文件名不证明任务归属，未经明确绑定不搬动或补交。
+
+浏览器回执核对：静态能力不证明已连接；借用通道断连先看readiness。普通OpenCLI工作不因输入或渲染失败抢前台；后台呈现无法确认时返回明确失败，不换独立Profile兜底。具体登录/验证窗口保留至确认完成或取消；关闭只认执行器回执，超时及清理失败保持待核实。browser_lifecycle中的context/session/run/task与窗口观测用于对账；未知Profile、PID或代际不能写成已确认，也不能据此关闭日常Chrome进程。
+
 ## 自主研究闭环
 
 - 先明确研究用途、必要问题与范围。优先在kr_research的questions一次登记必要问题，后续用question/scope修订语言、地区、人群、信息角色、时间和正文范围；这些是本题需求，不是平台永久标签，也不要求填满18格或中英五五开。

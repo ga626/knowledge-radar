@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`ef1aea8344534582f23f53eb348f2ac068a1d758f3253bf091e27ddbc56335b0`
+合同指纹：`7ff7dfae33e051fd8cccda69923579f2a193c8516f9cccd25afd688c27a0b7e0`
 
 ## advance_research_candidate
 
@@ -4580,6 +4580,35 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "title": "ApplyArchiveLayout",
         "type": "object"
       },
+      "ArchiveAudit": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "archive_audit",
+            "title": "Action",
+            "type": "string"
+          },
+          "cursor": {
+            "default": "",
+            "maxLength": 110,
+            "pattern": "^[A-Za-z0-9_.-]*$",
+            "title": "Cursor",
+            "type": "string"
+          },
+          "limit": {
+            "default": 50,
+            "maximum": 100,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "ArchiveAudit",
+        "type": "object"
+      },
       "ArchiveStatus": {
         "additionalProperties": false,
         "properties": {
@@ -4706,6 +4735,19 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "description": "Codex选择的Vault项目目录；同一项目跨任务复用。初次绑定遇已有目录时必须明确提供，不自动加序号新建项目。",
             "title": "Vault Project Dir",
             "type": "string"
+          },
+          "vault_required": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "省略时沿用本项目已有的Vault交付要求；true必须有Vault授权，false仅对新任务显式选择仅本地保存。",
+            "title": "Vault Required"
           }
         },
         "required": [
@@ -4798,6 +4840,35 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           "delivery_id"
         ],
         "title": "DeliveryStatus",
+        "type": "object"
+      },
+      "OrphanReportScan": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "const": "scan_orphan_reports",
+            "title": "Action",
+            "type": "string"
+          },
+          "cursor": {
+            "default": "",
+            "maxLength": 12,
+            "pattern": "^\\d*$",
+            "title": "Cursor",
+            "type": "string"
+          },
+          "limit": {
+            "default": 100,
+            "maximum": 500,
+            "minimum": 1,
+            "title": "Limit",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "action"
+        ],
+        "title": "OrphanReportScan",
         "type": "object"
       },
       "PlanArchiveLayout": {
@@ -5139,6 +5210,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "discriminator": {
           "mapping": {
             "apply_archive_layout": "#/$defs/ApplyArchiveLayout",
+            "archive_audit": "#/$defs/ArchiveAudit",
             "archive_status": "#/$defs/ArchiveStatus",
             "archive_task": "#/$defs/ArchiveTask",
             "authorize_destination": "#/$defs/Authorize",
@@ -5151,6 +5223,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "restore_research": "#/$defs/RestoreResearch",
             "retry_archive": "#/$defs/RetryArchive",
             "revoke_destination": "#/$defs/Revoke",
+            "scan_orphan_reports": "#/$defs/OrphanReportScan",
             "snapshot_research": "#/$defs/SnapshotResearch",
             "submit_report": "#/$defs/SubmitReport",
             "upgrade_index": "#/$defs/Reindex"
@@ -5199,6 +5272,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           },
           {
             "$ref": "#/$defs/ApplyArchiveLayout"
+          },
+          {
+            "$ref": "#/$defs/OrphanReportScan"
+          },
+          {
+            "$ref": "#/$defs/ArchiveAudit"
           },
           {
             "$ref": "#/$defs/SnapshotResearch"

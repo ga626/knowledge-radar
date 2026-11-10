@@ -120,7 +120,9 @@ def _capture_user_versions(store,stage,project):
     if not archive._has_contexts():return
     mapping=[]
     with store.connection() as c:
-        contexts=[json.loads(row[0]) for row in c.execute('SELECT payload FROM research_context WHERE json_extract(payload,\'$.project_id\')=?',(project,))]
+        from runtime.project_identity import canonical_project_id
+        c.create_function('kr_project_id',1,canonical_project_id,deterministic=True)
+        contexts=[json.loads(row[0]) for row in c.execute('SELECT payload FROM research_context WHERE kr_project_id(json_extract(payload,\'$.project_id\'))=kr_project_id(?)',(project,))]
     seen=set()
     for item in contexts:
         # 补交前的人改版本也在回执中，不能因换目标而从备份范围消失。

@@ -374,11 +374,14 @@ class BrowserSessionStore:
         account_slot: str = "",
         metadata: Optional[Dict[str, Any]] = None,
         event: str = "session_upserted",
+        session_id: str = "",
     ) -> Dict[str, Any]:
         with self._transaction():
             self._ensure_loaded()
-            sid = ""
+            sid = session_id
             for existing in self._sessions.values():
+                if session_id:
+                    break
                 if _session_matches_scope(
                     existing,
                     platform=platform,
@@ -599,9 +602,9 @@ class BrowserSessionStore:
             "schema_version": SCHEMA_VERSION,
             "status": "ok",
             "state_path": str(self.state_path),
-            "authority": "managed_cdp_sessions_only",
+            "authority": "managed_cdp_and_observed_borrowed_sessions",
             "authentication": "not_probed",
-            "other_channels": "native_site_and_opencli_keep_their_own_interactions",
+            "other_channels": "native_site_keeps_its_own_interactions; opencli_receipts_are_observed_without_browser_ownership",
             "event_path": str(self.event_path),
             "total": len(sessions),
             "counts": counts,
@@ -681,3 +684,39 @@ def browser_sessions_summary(limit: int = 20) -> Dict[str, Any]:
 
 def compact_terminal_browser_sessions(**kwargs: Any) -> Dict[str, Any]:
     return _STORE.compact_terminal_sessions(**kwargs)
+
+
+def observe_borrowed_call(result, *, platform, context_id, session, run_id, operation,
+                          task_id='', store=None):
+    """按执行器回执投影资源；调用结束不等于页面关闭，不探测登录、不接管浏览器。"""
+    # 按当前数据根选择账本；不把模块首次导入时的路径带进后续隔离执行。
+    target = store or BrowserSessionStore()
+    meta = result.setdefault('metadata', {})
+    actual = meta.get('work_session') or session
+    observation = meta.get('window_observation') or {}
+    closed = meta.get('work_page_closed') is True
+    manual = bool(meta.get('attention', {}).get('manual') or
+                  (operation in {'login', 'attention'} and result.get('ok') and
+                   (meta.get('presentation') or (result.get('data') or {}).get('presentation') or {}).get('visible')))
+    state = 'CLOSED' if closed else 'USER_INTERACTING' if manual else 'QUIESCING'
+    details = {'driver':'opencli', 'ownership':'borrowed', 'context_id':context_id,
+               'session':actual, 'run_id':meta.get('run_id') or run_id, 'task_id':task_id,
+               'operation':operation, 'cleanup':'confirmed' if closed else 'unconfirmed',
+               'window_observation':observation, 'retained_for_interaction':bool(meta.get('retained_for_interaction')),
+               'connection_observation':meta.get('connection_observation',{}),
+               'cleanup_warnings':meta.get('cleanup_warnings',[]),
+               'identity_status':'observed' if observation else 'not_observed',
+               'process_identity':observation.get('process_identity',''),
+               'account_recovery_pending':manual and not closed}
+    # 身份按真实 context/session 隔离；同一日常Profile的两个工作页不能互相关闭。
+    sid = 'borrowed-' + hashlib.sha256(json.dumps([context_id, actual], ensure_ascii=False).encode()).hexdigest()[:24]
+    try:
+        target.upsert(platform=platform, session_id=sid, profile_id=context_id, account_slot=actual,
+                      pid=observation.get('pid'),
+                      state=state, desired_visibility='foreground' if manual else 'background',
+                      reason='login_or_verification_pending' if manual else 'work_page_closed' if closed else 'cleanup_unconfirmed',
+                      metadata=details, event='borrowed_call_observed')
+        meta['browser_lifecycle'] = dict(details, session_id=sid, state=state)
+    except (OSError, ValueError, RuntimeError) as exc:
+        meta.setdefault('diagnostic_warnings', []).append('browser_lifecycle_write_failed:'+type(exc).__name__)
+    return result

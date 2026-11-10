@@ -12,6 +12,7 @@ let data = request.checkpoint || {};
 let bridge, page, releaseSiteSessionLease, runId, inspectSignals;
 let requestExecuted = false;
 let viewportOverride = false;
+let windowControl, connectionObservation;
 let attention, output, workClosed=false, retainedForInteraction=false;
 const cleanupWarnings=[];
 let stage = 'connect';
@@ -33,6 +34,9 @@ try {
     output={ok:true,data:status || {extensionConnected:false,profiles:[]}};
   } else {
     const status = await waitForBoundBrowser(load, request.contextId);
+    connectionObservation={context_id:request.contextId,daemon_version:status.daemonVersion,extension_version:status.extensionVersion,
+      profile_disconnected:Boolean(status.profileDisconnected),daemon_pid:status.pid || null,extension_generation:status.generation || null,
+      identity_boundary:'missing_pid_or_generation_is_unknown; never_inferred_from_connected'};
     if (status.daemonVersion !== '2.0.2') stop('opencli_daemon_identity_mismatch');
     if (!extensionSupported(status.extensionVersion)) stop('opencli_extension_identity_mismatch');
     requireOfficialExtension(status, request.operation);
@@ -41,7 +45,7 @@ try {
     const {BrowserBridge} = await load('dist/src/browser/bridge.js');
     const client = await load('dist/src/browser/daemon-client.js');
     releaseSiteSessionLease = client.releaseSiteSessionLease;
-    runId = client.generateRunId();
+    runId = request.runId || client.generateRunId();
     client.setDaemonRunContext({runId,command:'kr:xiaohongshu',access:'read'});
     bridge = new BrowserBridge();
     page = await measure('bridge_connect_s', () => bridge.connect({contextId:request.contextId,session,surface:'adapter',
@@ -56,8 +60,11 @@ try {
       if (tabs.length > 1) stop('opencli_session_page_ambiguous');
       page.setActivePage(tabs[0]?.page || await page.newTab());
     }
-    if(request.operation!=='release')attention=attentionController(page,await officialWindowController(load,page,request.pythonExecutable,
-        {initialBackground:!['login','attention'].includes(request.operation)}));
+    if(!['release','inventory','inspect'].includes(request.operation)){
+      windowControl=await officialWindowController(load,page,request.pythonExecutable,
+        {initialBackground:!['login','attention'].includes(request.operation)});
+      attention=attentionController(page,windowControl);
+    }
     const signalJs = `(() => {
       const body = document.body?.innerText || '';
       const url = location.href;
@@ -106,7 +113,7 @@ try {
     };
     if (request.operation === 'release') {
       process.env.OPENCLI_CLOSE_OWNED_TAB = '1';
-      await page.closeWindow();
+      await page.closeWindow();workClosed=true;
       data = {released:true,ownership:'borrowed',browser_closed:false};
     } else if (request.operation === 'session_probe' || request.operation === 'resume') {
       data = await signals();
@@ -354,7 +361,8 @@ try {
     } catch {cleanupWarnings.push('viewport_cleanup_failed');}
   }
   try {
-    if (page && ['search','detail','probe'].includes(request.operation) && !retainedForInteraction) {
+    const verifiedLogin=request.operation==='resume' && output?.ok && output.data?.authenticated_ui;
+    if (page && (['search','detail','probe'].includes(request.operation) || verifiedLogin) && !retainedForInteraction) {
       process.env.OPENCLI_CLOSE_OWNED_TAB='1';
       try { await page.closeWindow();workClosed=true; } catch {cleanupWarnings.push('work_page_cleanup_failed');}
     }
@@ -369,4 +377,7 @@ output.metadata={...output.metadata,...(attention?{attention:attention.metadata(
   retained_for_interaction:retainedForInteraction,
   ...(retainedForInteraction?{retention_max_s:request.idleTimeoutS ?? 120,automatic_retry:false}:{}),
   ...(cleanupWarnings.length?{cleanup_warnings:cleanupWarnings}:{})};
+output.metadata={...output.metadata,run_id:runId || request.runId,
+  ...(windowControl?.observation?{window_observation:windowControl.observation()}:{}),
+  ...(connectionObservation?{connection_observation:connectionObservation}:{})};
 process.stdout.write(JSON.stringify(output));

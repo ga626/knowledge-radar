@@ -90,7 +90,7 @@ export const command={func:async(page,args)=>{
         target=tmp_path/rel
         target.parent.mkdir(parents=True,exist_ok=True)
         target.write_text(text,encoding="utf-8")
-    (tmp_path/'window-helper-fixture.mjs').write_text("import cp from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {PassThrough} from 'node:stream';\nimport {appendFileSync} from 'node:fs';\ncp.execFile=(exe,args,options,callback)=>{\n const stdin=new PassThrough();let input='';\n stdin.on('data',chunk=>input+=chunk);\n stdin.on('end',()=>{\n  const r=JSON.parse(input);\n  if(r.action==='present')globalThis.fixtureWindowShown=r.foreground;\n  appendFileSync(process.env.KR_RUNNER_FIXTURE_LOG,JSON.stringify({kind:'window-helper',...r})+'\\n');\n  callback(null,JSON.stringify(r.action==='bind'?{handle:1,pid:2}:{}));\n });return {stdin};\n};\nsyncBuiltinESMExports();\n",encoding='utf-8')
+    (tmp_path/'window-helper-fixture.mjs').write_text("import cp from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {PassThrough} from 'node:stream';\nimport {appendFileSync} from 'node:fs';\ncp.execFile=(exe,args,options,callback)=>{\n const stdin=new PassThrough();let input='';\n stdin.on('data',chunk=>input+=chunk);\n stdin.on('end',()=>{\n  const r=JSON.parse(input);\n  if(r.action==='present')globalThis.fixtureWindowShown=r.foreground;\n  appendFileSync(process.env.KR_RUNNER_FIXTURE_LOG,JSON.stringify({kind:'window-helper',...r})+'\\n');\n  callback(null,JSON.stringify(r.action==='bind'?{handle:1,pid:2}:{presentation_confirmed:true,observed_visibility:r.foreground?'visible':'minimized',focused:r.foreground}));\n });return {stdin};\n};\nsyncBuiltinESMExports();\n",encoding='utf-8')
     return tmp_path
 
 
@@ -294,6 +294,8 @@ def test_login_probe_preserves_window_mode_and_remaining_grace(fixture_root,monk
     connect=next(c for c in calls if c['kind']=='connect')
     assert connect['windowMode']=='background' and connect['idleTimeout']==247
     assert not any(c['kind']=='goto' for c in calls)
+    assert result['metadata']['work_page_closed'] is (operation=='resume')
+    assert any(c['kind']=='close-owned' for c in calls) is (operation=='resume')
 
 
 def test_checkpoint_skips_body_and_reads_only_missing_comments_and_media(fixture_root,monkeypatch):

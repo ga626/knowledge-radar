@@ -1626,8 +1626,8 @@
     },
     {
       "case_id": "account.facts",
-      "version": 8,
-      "oracle_version": 8,
+      "version": 9,
+      "oracle_version": 9,
       "capabilities": [
         "account.recovery"
       ],
@@ -1639,11 +1639,20 @@
         "tests/test_browser_recovery_contract.py",
         "tests/test_manual_browser_lifetime.py",
         "tests/test_browser_session_maintenance.py",
-        "tests/test_browser_session_retention.py"
+        "tests/test_browser_session_retention.py",
+        "tests/test_browser_field_fixes.py",
+        "tests/test_opencli_readiness.py",
+        "tests/test_recruitment_page_runner.py",
+        "tests/test_xhs_runner_contract.py",
+        "tests/test_xhs_opencli_transport.py",
+        "tests/test_xhs_auth_recovery.py",
+        "tests/test_xhs_account_identity_lifecycle.py",
+        "tests/test_browser_link_integration.py",
+        "tests/test_browser_components.py"
       ],
       "layer": "fixture",
       "auto": true,
-      "timeout_seconds": 120,
+      "timeout_seconds": 180,
       "dependencies": [
         "tests/evaluation/test_account_observations.py",
         "src/runtime/account_observations.py",
@@ -1667,10 +1676,25 @@
         "src/runtime/browser_sessions.py",
         "src/runtime/process_identity.py",
         "tests/test_browser_session_maintenance.py",
-        "tests/test_browser_session_retention.py"
+        "tests/test_browser_session_retention.py",
+        "src/runtime/browser_channel.py",
+        "src/runtime/browser_bootstrap.py",
+        "src/runtime/opencli_bridge.py",
+        "src/runtime/opencli_readiness.mjs",
+        "src/runtime/opencli_page_runner.mjs",
+        "tests/test_browser_visibility.mjs",
+        "tests/test_browser_field_fixes.py",
+        "tests/test_opencli_readiness.py",
+        "tests/test_recruitment_page_runner.py",
+        "tests/test_xhs_runner_contract.py",
+        "tests/test_xhs_opencli_transport.py",
+        "tests/test_xhs_auth_recovery.py",
+        "tests/test_xhs_account_identity_lifecycle.py",
+        "tests/test_browser_link_integration.py",
+        "tests/test_browser_components.py"
       ],
-      "success": "同profile事实/TTL/事件去重/业务与认证分离",
-      "change_reason": "日常浏览器单账号投影和通知接入既有事实库，退役专用XHS profiles不再显示或打开。 2026-11-09补死PID/代际/未知权限投影与显式维护、扫码保留和账本压缩回归。"
+      "success": "同profile事实/TTL/事件去重/业务与认证分离 2026-11-11：官方OpenCLI不换扩展；普通任务不自动前置，窗口代际与实测呈现、借用context/session/run/task账本；关闭需回执，扫码确认后清理失败保留交接。 仅隔离源码合同验证；不代表正式安装或真实账号与桌面验收。",
+      "change_reason": "2026-11-11：官方OpenCLI不换扩展；普通任务不自动前置，窗口代际与实测呈现、借用context/session/run/task账本；关闭需回执，扫码确认后清理失败保留交接。"
     },
     {
       "case_id": "content.contracts",
@@ -1951,8 +1975,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 9,
-      "oracle_version": 9,
+      "version": 10,
+      "oracle_version": 10,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -1967,11 +1991,18 @@
         "tests/test_mcp_tool_schema_contract.py",
         "tests/test_strategy_tree_registry.py",
         "tests/test_p0_p7_governance.py",
-        "tests/test_archive_layout.py"
+        "tests/test_archive_layout.py",
+        "tests/test_project_identity_contract.py",
+        "tests/test_archive_field_fixes.py",
+        "tests/test_research_ledger.py",
+        "tests/test_research_review_contracts.py",
+        "tests/test_research_workspace.py",
+        "tests/test_research_workspace_integration.py",
+        "tests/test_product_status.py"
       ],
       "layer": "contract",
       "auto": true,
-      "timeout_seconds": 360,
+      "timeout_seconds": 600,
       "dependencies": [
         "src/runtime/agent_contracts.py",
         "src/runtime/knowledge.py",
@@ -2017,10 +2048,23 @@
         "tests/fixtures/research_semantic_challenges.json",
         "src/kr_core/source_urls.py",
         "src/kr_core/evidence_coverage.py",
-        "src/kr_core/evidence_store.py"
+        "src/kr_core/evidence_store.py",
+        "src/runtime/project_identity.py",
+        "src/onboarding/research_api.py",
+        "src/onboarding/product_status.py",
+        "src/onboarding/static/research_contract.ts",
+        "src/onboarding/static/research_workspace.ts",
+        "src/onboarding/static/research_workspace.js",
+        "config/codex-product/plugin/knowledgeradar-research/skills/research/SKILL.md",
+        "tests/test_project_identity_contract.py",
+        "tests/test_archive_field_fixes.py",
+        "tests/test_research_ledger.py",
+        "tests/test_research_workspace.py",
+        "tests/test_research_workspace_integration.py",
+        "tests/test_product_status.py"
       ],
-      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。",
-      "change_reason": "2026-11-10 F39-01：错误壳不算取得正文；旧 acquired 重新核对；原件保留，归档排除诊断页；合法短文与代码反例。"
+      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。 2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 仅隔离源码合同验证；不代表正式安装或真实账号与桌面验收。",
+      "change_reason": "2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。"
     },
     {
       "case_id": "surface.read_knowledge",

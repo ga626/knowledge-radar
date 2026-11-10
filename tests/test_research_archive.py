@@ -379,9 +379,9 @@ def test_no_obsidian_independent_knowledge_and_report(archive):
     engine,req,local,_=archive
     # 独立任务，不把已经接受的Vault义务静默取消。
     ledger.open_task(objective='独立',budget='fast',considered=[],task_id='solo',project_id='project-a')
-    engine.bind(req.model_copy(update={'task_id':'solo','vault_grant_id':'','local_report_path':str(local/'solo.md')}))
+    engine.bind(req.model_copy(update={'task_id':'solo','vault_grant_id':'','vault_required':False,'local_report_path':str(local/'solo.md')}))
     result=engine.submit(SubmitReport(action='submit_report',task_id='solo',project_id='project-a',title='独立',content='KR独立可用'))
-    assert result['summary']=='delivered' and result['vault']['status']=='not_configured'
+    assert result['summary']=='local_only' and result['vault']['status']=='not_configured'
     assert (local/'solo.md').read_text(encoding='utf-8').startswith('KR独立可用\n')
     assert '关键结论与撤证审阅' in (local/'solo.md').read_text(encoding='utf-8')
 

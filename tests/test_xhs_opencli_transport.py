@@ -352,7 +352,7 @@ def test_expired_login_tries_paid_and_finishes_with_reason(monkeypatch):
 
 
 def test_auth_confirmation_requires_observed_login_and_changes_identity(monkeypatch):
-    monkeypatch.setattr(oc,"invoke",lambda *a,**k:{"ok":True,"data":{"authenticated_ui":True}})
+    monkeypatch.setattr(oc,"invoke",lambda *a,**k:{"ok":True,"data":{"authenticated_ui":True},"metadata":{"work_page_closed":True}})
     oc.latch("SECURITY_BLOCK")
     before=oc.runtime_identity()
     assert oc.complete_login()["authenticated"]

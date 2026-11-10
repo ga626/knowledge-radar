@@ -13,7 +13,7 @@ let viewportOverride = false;
 let verificationClosed = false;
 let workClosed = false;
 let retainedForInteraction = false;
-let output, attention;
+let output, attention, windowControl, connectionObservation;
 const cleanupWarnings = [];
 const passiveLogin = request.passiveManualLogin && ['login','attention','release_login'].includes(request.operation);
 const isolatedWork = request.isolatedWork && ['search','detail','comments','probe','auth_verify'].includes(request.operation);
@@ -37,6 +37,9 @@ const ensureViewport = async () => {
 };
 try {
   const status = await waitForBoundBrowser(load, request.contextId);
+    connectionObservation={context_id:request.contextId,daemon_version:status.daemonVersion,extension_version:status.extensionVersion,
+      profile_disconnected:Boolean(status.profileDisconnected),daemon_pid:status.pid || null,extension_generation:status.generation || null,
+      identity_boundary:'missing_pid_or_generation_is_unknown; never_inferred_from_connected'};
   if (status.daemonVersion !== '2.0.2' || !extensionSupported(status.extensionVersion)) stop('opencli_identity_mismatch');
   if (request.operation === 'inventory') {
     output = {ok:true, data:{connected:true}};
@@ -45,7 +48,7 @@ try {
     const {BrowserBridge} = await load('dist/src/browser/bridge.js');
     const client = await load('dist/src/browser/daemon-client.js');
     releaseSiteSessionLease = client.releaseSiteSessionLease;
-    runId = client.generateRunId();
+    runId = request.runId || client.generateRunId();
     client.setDaemonRunContext({runId,command:session,access:'read'});
     bridge = new BrowserBridge();
     page = await bridge.connect({contextId:request.contextId,session,surface:'adapter',
@@ -69,6 +72,7 @@ try {
     if (['release','release_login'].includes(request.operation)) {
       process.env.OPENCLI_CLOSE_OWNED_TAB = '1';
       await page.closeWindow();
+      workClosed = true;
       output = {ok:true,data:{released:true,browser_closed:false}};
     } else if (passiveLogin) {
       // 人工页面只使用上游原生tabs操作，绝不goto/exec/CDP/采集。
@@ -102,8 +106,9 @@ try {
         page.setActivePage(tabs[0]?.page || await page.newTab());
         await ensureViewport();
       }
-      attention=attentionController(page,await officialWindowController(load,page,request.pythonExecutable,
-        {initialBackground:!['login','attention'].includes(request.operation)}));
+      windowControl=await officialWindowController(load,page,request.pythonExecutable,
+        {initialBackground:!['login','attention'].includes(request.operation)});
+      attention=attentionController(page,windowControl);
       const captureEnabled = request.capturePattern ? await page.startNetworkCapture(request.capturePattern) : false;
       if (request.url) {
         await navigate(request.url);
@@ -218,9 +223,12 @@ if(attention)output.metadata={...output.metadata,attention:attention.metadata()}
 if (cleanupWarnings.length) {
   output.metadata = {...output.metadata,cleanup_warnings:cleanupWarnings};
 }
-if (isolatedWork) {
-  output.metadata = {...output.metadata,work_session:session,isolated_work:true,
+{
+  output.metadata = {...output.metadata,work_session:session,isolated_work:Boolean(isolatedWork),
     work_page_closed:workClosed || verificationClosed,retained_for_interaction:retainedForInteraction,
     ...(retainedForInteraction?{retention_max_s:idleTimeout,automatic_retry:false}: {})};
 }
+output.metadata={...output.metadata,run_id:runId || request.runId,
+  ...(windowControl?.observation?{window_observation:windowControl.observation()}:{}),
+  ...(connectionObservation?{connection_observation:connectionObservation}:{})};
 process.stdout.write(JSON.stringify(output));

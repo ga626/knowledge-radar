@@ -40,8 +40,8 @@ export async function ensureOwnedViewport(page, attention, {requireLayout=true}=
   return {overridden};
 }
 
-export function attentionController(page, controlWindow) {
-  let presented=false, manual=false, reason='';
+export function attentionController(page, controlWindow, {allowForegroundRepair=false}={}) {
+  let presented=false, manual=false, reason='', suppressed='';
   const control = async (foreground, why) => {
     if (!controlWindow) throw new Error('kr_window_controller_unavailable');
     return controlWindow(foreground, why);
@@ -51,6 +51,9 @@ export function attentionController(page, controlWindow) {
       // Native keyboard commands require a visible page. Present only this
       // verified owned window, before input; this is not a timeout retry.
       if(manual)throw new Error('browser_manual_interaction_pending');
+      // OpenCLI的insertText/pressKey是目标页CDP输入，不是桌面键盘；普通
+      // 工作在原窗口执行一次。失败返回调用方，不以抢前台或重放来修复。
+      if(!allowForegroundRepair)return action();
       const hidden=await page.evaluate('/* kr:native-input */ document.hidden');
       let moved=false;
       if(hidden===true && !presented){
@@ -81,6 +84,10 @@ export function attentionController(page, controlWindow) {
       }
       const decision=visibilityPolicy.decide(state,{presented});
       if(decision.action==='foreground'){
+        if(!decision.manual && !allowForegroundRepair){
+          suppressed=decision.reason;
+          return {action:'background_blocked',reason:decision.reason,manual:false};
+        }
         const result=await control(true,decision.reason);
         if(result?.skipped)return {action:'none',reason:result.reason};
         presented=true;manual=decision.manual;reason=decision.reason;
@@ -93,7 +100,7 @@ export function attentionController(page, controlWindow) {
       return decision;
     },
     async finish(){if(presented && !manual){await control(false,'completed');presented=false;}},
-    metadata:()=>({presented,manual,reason}),
+    metadata:()=>({presented,manual,reason,foreground_suppressed:suppressed}),
   };
 }
 export async function waitForBoundBrowser(load, contextId) {
@@ -189,29 +196,43 @@ export async function officialWindowController(load,page,pythonExecutable,{helpe
   const marker='KR-work-'+randomUUID().replaceAll('-','');
   // 临时标识只用于定位本租约的窗口；立即恢复原标题，不修改站点正文。
   const prior=await page.evaluate(`(() => {const title=document.title;document.title=${JSON.stringify(marker)};return title;})()`);
-  let tab,identity;
+  let tab,identity,observation={status:'not_observed'};
   try{
     const matches=await native('tabs.query',[{title:marker}]);
     if(matches.length!==1)throw new Error('kr_work_tab_not_unique');
     tab=matches[0];
     const siblings=await native('tabs.query',[{windowId:tab.windowId}]);
-    if(siblings.length!==1 || siblings[0].id!==tab.id)return async()=>({skipped:true,reason:'kr_work_window_shared'});
+    if(siblings.length!==1 || siblings[0].id!==tab.id){
+      const skipped=async()=>({skipped:true,reason:'kr_work_window_shared'});
+      skipped.observation=()=>({status:'relinquished',reason:'kr_work_window_shared',window_id:tab.windowId,tab_id:tab.id});
+      return skipped;
+    }
     identity=await helper(pythonExecutable,{action:'bind',marker});
-    if(initialBackground)await helper(pythonExecutable,{action:'present',identity,title:marker,foreground:false});
+    observation={...identity,hwnd:identity.handle,window_id:tab.windowId,tab_id:tab.id,status:'bound'};
+    if(initialBackground){
+      const receipt=await helper(pythonExecutable,{action:'present',identity,title:marker,foreground:false});
+      observation={...observation,...receipt};
+      if(receipt.presentation_confirmed!==true)throw Object.assign(new Error('background presentation unconfirmed'),
+        {code:'browser_background_presentation_unconfirmed'});
+    }
   }finally{await page.evaluate(`document.title=${JSON.stringify(prior)}`);}
   const control=async foreground=>{
     // 每次收起/前置之前重核归属：用户加页、移动页面后放弃窗口控制。
     const tabs=await native('tabs.query',[{windowId:tab.windowId}]);
-    if(tabs.length!==1 || tabs[0].id!==tab.id)return {skipped:true,reason:'kr_work_window_ownership_changed'};
+    if(tabs.length!==1 || tabs[0].id!==tab.id){observation={...observation,status:'relinquished',reason:'kr_work_window_ownership_changed'};return {skipped:true,reason:observation.reason};}
     // 导航/站点渲染可异步改标题；不能用上一次tabs快照匹配Windows标题。
     // 每次展示都重新用随机标识核对同一HWND/PID，结束立即恢复站点标题。
     const previous=await page.evaluate(`(() => {const title=document.title;document.title=${JSON.stringify(marker)};return title;})()`);
     try{
       const rebound=await helper(pythonExecutable,{action:'bind',marker});
-      if(rebound.handle!==identity.handle || rebound.pid!==identity.pid)
+      if(rebound.handle!==identity.handle || rebound.pid!==identity.pid ||
+        (identity.process_identity && rebound.process_identity!==identity.process_identity))
         return {skipped:true,reason:'kr_work_window_identity_changed'};
-      return await helper(pythonExecutable,{action:'present',identity,title:marker,foreground});
+      const receipt=await helper(pythonExecutable,{action:'present',identity,title:marker,foreground});
+      observation={...observation,...receipt};
+      return receipt;
     }finally{await page.evaluate(`document.title=${JSON.stringify(previous)}`);}
   };
+  control.observation=()=>({...observation});
   return control;
 }

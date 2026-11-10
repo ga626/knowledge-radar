@@ -19,7 +19,8 @@ from runtime.file_write_lock import file_write_lock, read_observed
 from runtime.paths import runtime_state_dir
 from runtime.execution_context import check_execution, ExecutionStopped
 from runtime.knowledge import Contract, encoded, guarded_path, register_report
-from runtime.research_archive import BindContext, SubmitReport, ArchiveTask, ArchiveStatus, RetryArchive, ResearchArchive, RebindReportOutput, PlanArchiveLayout, ApplyArchiveLayout, stable_target, DISPLAY_LAYOUT, task_display_title, calendar_layout
+from runtime.project_identity import canonical_project_id
+from runtime.research_archive import BindContext, SubmitReport, ArchiveTask, ArchiveStatus, RetryArchive, ResearchArchive, RebindReportOutput, PlanArchiveLayout, ApplyArchiveLayout, OrphanReportScan, ArchiveAudit, stable_target, DISPLAY_LAYOUT, task_display_title, calendar_layout
 from runtime.research_backup import SnapshotResearch, RestoreResearch
 
 
@@ -65,7 +66,7 @@ class Reindex(Contract):
     action: Literal["upgrade_index"]
 
 
-ArtifactRequest = Annotated[RegisterReport | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
+ArtifactRequest = Annotated[RegisterReport | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | OrphanReportScan | ArchiveAudit | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
 
 
 def identity(path):
@@ -147,8 +148,9 @@ class DeliveryStore:
         guarded_path(root,root/'__kr_scope_probe__')
         grant=secrets.token_hex(16)
         with file_write_lock(self.db),self.connection() as c:
-            c.execute('INSERT INTO grants VALUES(?,?,?,?,1)',(grant,str(root.resolve()),encoded(identity(root)),request.project_id))
-        return {"status":"authorized","grant_id":grant,"project_id":request.project_id,"root":str(root.resolve()),"scope":"create_only_files_and_directories"}
+            project_id = canonical_project_id(request.project_id)
+            c.execute('INSERT INTO grants VALUES(?,?,?,?,1)',(grant,str(root.resolve()),encoded(identity(root)),project_id))
+        return {"status":"authorized","grant_id":grant,"project_id":project_id,"root":str(root.resolve()),"scope":"create_only_files_and_directories"}
 
     def revoke(self, grant_id):
         with file_write_lock(self.db),self.connection() as c:
@@ -158,7 +160,7 @@ class DeliveryStore:
     def _grant(self, request):
         with self.connection() as c:
             row=c.execute('SELECT root,identity,project,active FROM grants WHERE id=?',(request.grant_id,)).fetchone()
-        if not row or not row[3] or row[2]!=request.project_id:raise ValueError('destination_not_authorized')
+        if not row or not row[3] or canonical_project_id(row[2]) != canonical_project_id(request.project_id):raise ValueError('destination_not_authorized')
         root=Path(row[0])
         guarded_path(root,root/'__kr_scope_probe__')
         if encoded(identity(root))!=row[1]:raise ValueError('destination_identity_changed')
@@ -213,11 +215,12 @@ class DeliveryStore:
             for version in versions:
                 check_execution()
                 with self.assets.connection() as c:
+                    c.create_function('kr_project_id', 1, canonical_project_id, deterministic=True)
                     row=c.execute('SELECT * FROM assets WHERE version_id=?',(version,)).fetchone()
                     if row is None:raise ValueError('version_not_found_or_withdrawn')
                     row=dict(row)
                     self.assets.assert_available(c,row)
-                    allowed=c.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND project_id=? AND task_id=?',(version,request.project_id,request.task_id)).fetchone()
+                    allowed=c.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND kr_project_id(project_id)=kr_project_id(?) AND task_id=?',(version,request.project_id,request.task_id)).fetchone()
                     if not allowed:raise ValueError('selected_version_outside_project_task')
                     if sum(map(len,files.values()))+row['size_bytes']>64*1024*1024:raise ValueError('delivery_too_large')
                     # One verified read per original, not a full-file hash for every 24K page.
@@ -285,18 +288,19 @@ class DeliveryStore:
         tracker=ResearchArchive(self);tracker._ensure()
         versions=sorted(set(request.version_ids))
         with self.assets.connection() as c:
+            c.create_function('kr_project_id', 1, canonical_project_id, deterministic=True)
             size=0
             for version in versions:
                 row=c.execute('SELECT * FROM assets WHERE version_id=?',(version,)).fetchone()
                 if row is None:raise ValueError('version_not_found_or_withdrawn')
                 self.assets.assert_available(c,dict(row));self.assets._verified_text(dict(row));size+=row['size_bytes']
-                if not c.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND project_id=? AND task_id=?',(version,request.project_id,request.task_id)).fetchone():
+                if not c.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND kr_project_id(project_id)=kr_project_id(?) AND task_id=?',(version,request.project_id,request.task_id)).fetchone():
                     raise ValueError('selected_version_outside_project_task')
             if size>64*1024*1024:raise ValueError('delivery_too_large')
         metadata=tracker._ledger(request.task_id)
         bound=tracker._context(request.task_id)
         # 绑定任务的旧布局保持原状；本次显式选取可在同任务目录中使用新规范。
-        if bound and bound['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        if bound and canonical_project_id(bound['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
         if bound and bound.get('vault_grant_id') and stable_target(tracker._grant(bound['vault_grant_id'],request.project_id),request.project_id)==stable_target(root,request.project_id):
             context=bound.copy()
         else:
@@ -342,6 +346,9 @@ def execute(request, store=None):
     if isinstance(request,(PlanArchiveLayout,ApplyArchiveLayout)):
         from runtime.archive_layout import plan, apply
         return apply(archive,request) if isinstance(request,ApplyArchiveLayout) else plan(archive,request)
+    if isinstance(request,OrphanReportScan):
+        return {"status":"observed", **archive.orphan_report_candidates(limit=request.limit, details=True, cursor=request.cursor)}
+    if isinstance(request,ArchiveAudit):return archive.audit(limit=request.limit, cursor=request.cursor)
     if isinstance(request,BindContext):return archive.bind(request)
     if isinstance(request,SubmitReport):return archive.submit(request)
     if isinstance(request,RebindReportOutput):return archive.rebind_report_output(request)
@@ -355,11 +362,13 @@ def execute(request, store=None):
         return restore(request)
     if isinstance(request,RegisterReport):
         bound=archive._context(request.task_id)
-        if bound and bound['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        if bound and canonical_project_id(bound['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
         result=register_report(assets=store.assets,**request.model_dump(exclude={'action'}))
         if archive._context(request.task_id):
             archive.attach_registered(request.task_id,request.project_id,result['asset'],request.report_id)
             result['archive']=archive.run(request.task_id)
+        else:
+            result['archive']=archive.status(request.task_id)
         return result
     if isinstance(request,Authorize):return store.authorize(request)
     if isinstance(request,Revoke):return store.revoke(request.grant_id)

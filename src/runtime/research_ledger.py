@@ -780,6 +780,8 @@ def _write(payload: dict[str, Any]) -> dict[str, Any]:
 
 def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], task_id: str = "", display_title: str = "", project_name: str = "", project_id: str = "") -> dict[str, Any]:
     """Create or retrieve the auditable research state for one user delivery."""
+    from runtime.project_identity import canonical_project_id
+    project_id = canonical_project_id(project_id)
     if task_id:
         from runtime.research_contracts import validate_task_id
         validate_task_id(task_id)
@@ -793,7 +795,7 @@ def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], 
         research_task_id = str(task_id or "").strip() or _new_id(objective)
         existing = _read(research_task_id)
         if existing:
-            if project_id and existing.get("project_id") != project_id:
+            if project_id and canonical_project_id(existing.get("project_id", "")) != project_id:
                 raise ValueError("research_project_mismatch_use_new_task")
             if project_name and existing.get("project_name") != project_name:
                 raise ValueError("research_project_name_changed_bind_context_explicitly")
@@ -841,7 +843,8 @@ def open_task(*, objective: str, budget: str, considered: list[dict[str, Any]], 
 
 def project_context(payload):
     """只读身份投影；归档授权另查，不由目录或显示名推断。"""
-    pid = str(payload.get('project_id') or '').strip()
+    from runtime.project_identity import canonical_project_id
+    pid = canonical_project_id(payload.get('project_id') or '')
     status = 'identified' if pid else ('legacy_adoption_pending' if 'project_id' not in payload else 'unclassified')
     return {'status': status, 'project_id': pid, 'project_name': payload.get('project_name', ''),
             'identity_source': 'explicit' if pid else 'missing', 'archive_ready': None,
@@ -889,30 +892,35 @@ def close_task(*, task_id: str, ecology_outcomes: list[dict[str, Any]], stop_rat
         if archive.get('status')=='context_pending':archive=None
         delivery_error = archive.get("error_code", "") if archive else ""
         archive_source_delivery = archive.get('source_delivery', {}) if archive else {}
+        from runtime.research_archive import _vault_required
         archive_delivery_ready = bool(archive and archive.get('local', {}).get('status') == 'local_committed'
-                                      and archive.get('vault', {}).get('status') in {'local_committed', 'not_configured'}
+                                      and (archive.get('vault', {}).get('status') == 'local_committed'
+                                           or (archive.get('vault', {}).get('status') == 'not_configured' and not _vault_required(archive)))
                                       and archive_source_delivery.get('status') not in {'pending', 'incomplete'})
         observed_summary = archive.get("summary", "unknown") if archive else "summary_pending"
         # 完成事实只能沿用已固定且已交付的归档状态。旧账本可能在
         # report 已注册时仍留下 summary_pending，不能把它投影成已完成。
         if delivery_error:
             observed_summary = "registered" if archive and archive.get("report") else "summary_pending"
-        elif observed_summary == "delivered" and not archive_delivery_ready:
+        elif observed_summary in {"delivered", "local_only"} and not archive_delivery_ready:
             observed_summary = "registered" if archive and archive.get("report") else "summary_pending"
         delivery_observation = {
             "summary": observed_summary,
             "summary_version_id": (archive.get("report") or {}).get("version_id", "") if archive else "",
             "delivery": ("conflict" if archive.get("failure_kind") == "conflict" else "pending") if delivery_error else
-                        ("delivered" if archive_delivery_ready
-                         else "pending") if archive else "not_configured",
+                        (("delivered" if archive.get('vault', {}).get('status') == 'local_committed' else "local_only")
+                         if archive_delivery_ready else "pending") if archive else "not_configured",
             "delivery_error_code": delivery_error,
+            "delivery_gap": archive.get('delivery_gap', '') if archive else 'archive_context_missing',
+            "delivery_receipt": archive.get('delivery_receipt', {}) if archive else {},
             "delivery_observed_at": _now(),
             "source_delivery": archive_source_delivery,
         }
-        if archive and archive.get('source_delivery',{}).get('status') in {'pending','incomplete'} and delivery_observation['delivery']=='delivered':
+        if archive and archive.get('source_delivery',{}).get('status') in {'pending','incomplete'} and delivery_observation['delivery'] in {'delivered','local_only'}:
             delivery_observation['delivery']='pending'
-    except (OSError, ValueError, sqlite3.Error):
+    except (OSError, ValueError, sqlite3.Error) as exc:
         delivery_observation = {"summary": "unknown", "summary_version_id": "", "delivery": "unavailable",
+                                "delivery_gap":"archive_status_unavailable", "delivery_error_code":type(exc).__name__,
                                 "delivery_observed_at": _now()}
     with _ledger_guard(task_id):
         payload = _read(task_id)

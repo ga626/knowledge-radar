@@ -33,7 +33,7 @@ function pageFixture(initial) {
 
 test('native input presents only an owned hidden page and restores after failure without replay',async()=>{
   const actions=[];
-  const c=attentionController({evaluate:async()=>true},async(foreground,reason)=>actions.push({foreground,reason}));
+  const c=attentionController({evaluate:async()=>true},async(foreground,reason)=>actions.push({foreground,reason}),{allowForegroundRepair:true});
   let inputs=0;
   await assert.rejects(()=>c.withNativeInput(async()=>{inputs++;throw Error('input unknown');}),/input unknown/);
   assert.equal(inputs,1);
@@ -44,12 +44,12 @@ test('native input presents only an owned hidden page and restores after failure
   assert.deepEqual(actions.map(a=>a.foreground),[true]);
   await c.finish();
   assert.deepEqual(actions.map(a=>a.foreground),[true,false]);
-  const changed=attentionController({evaluate:async()=>true},async()=>({skipped:true}));
+  const changed=attentionController({evaluate:async()=>true},async()=>({skipped:true}),{allowForegroundRepair:true});
   await assert.rejects(()=>changed.withNativeInput(async()=>assert.fail('input after ownership change')),/ownership_changed/);
 });
 test('visibility recovery never navigates and always returns to background at completion',async()=>{
   const p=pageFixture({visibility:{hidden:true,dom_ready:true,reason:'zero_viewport'}});
-  const c=attentionController(p.page,(foreground,reason)=>p.page.cdp("test-window-control",{foreground,reason}));
+  const c=attentionController(p.page,(foreground,reason)=>p.page.cdp("test-window-control",{foreground,reason}),{allowForegroundRepair:true});
   await c.observe();await c.observe();await c.finish();
   assert.equal(p.actions.filter(a=>a.foreground).length,1);
   assert.equal(p.actions.at(-1).foreground,false);
@@ -65,6 +65,21 @@ test('manual handoff survives call completion and ends when the actual control d
 test('timeouts and broad risk classification do not cause a foreground fallback',async()=>{
   const p=pageFixture({risk:true,visibility:{hidden:true,dom_ready:true,reason:''}});
   const c=attentionController(p.page,(foreground,reason)=>p.page.cdp("test-window-control",{foreground,reason}));await c.observe();await c.finish();assert.deepEqual(p.actions,[]);
+});
+
+test('ordinary background work never foregrounds for native input or rendering repair',async()=>{
+  const calls=[];
+  let state=true;
+  const page={evaluate:async()=>state,wait:async()=>{}};
+  const c=attentionController(page,async foreground=>calls.push(foreground));
+  let dispatched=0;
+  await c.withNativeInput(async()=>{dispatched++;});
+  state={visibility:{hidden:true,dom_ready:true,stalled:true,reason:'zero_viewport'}};
+  const result=await c.observe();
+  assert.equal(result.action,'background_blocked');
+  assert.equal(dispatched,1);
+  assert.deepEqual(calls,[]);
+  assert.equal(c.metadata().foreground_suppressed,'visibility_zero_viewport');
 });
 
 async function contentScenario(manual) {
@@ -149,7 +164,7 @@ test('official controller restores title, minimizes only owned window and relinq
   const load=async()=>({sendCommand:async(action,p)=>{
     assert.equal(action,'chrome-call');assert.equal(p.chromeMethod,'tabs.query');return tabs;
   }});
-  const helper=async(p,r)=>{calls.push(r);return r.action==='bind'?{handle:9,pid:10}:{};};
+  const helper=async(p,r)=>{calls.push(r);return r.action==='bind'?{handle:9,pid:10}:{presentation_confirmed:true,observed_visibility:'minimized',focused:false};};
   const control=await officialWindowController(load,page,'python',{helper});
   assert.equal(title,'Research');assert.equal(calls[1].foreground,false);
   await control(true);assert.equal(calls.at(-1).foreground,true);

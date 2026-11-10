@@ -406,9 +406,16 @@ def obsidian_component_status():
     if store.db.is_file():
         import sqlite3
         with sqlite3.connect(store.db.resolve().as_uri()+'?mode=ro',uri=True) as connection:
-            grants=connection.execute('SELECT COUNT(*) FROM grants WHERE active=1').fetchone()[0]
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE name='research_context'").fetchone():
+                grants=connection.execute("SELECT COUNT(DISTINCT g.id) FROM grants g JOIN research_context c ON g.id=json_extract(c.payload,'$.vault_grant_id') WHERE g.active=1").fetchone()[0]
+    from runtime.research_workspace import ResearchRecords
+    from kr_core.evidence_assets import EvidenceAssets
+    recent=ResearchRecords(store.root.parent,assets=EvidenceAssets(read_only=True)).recent(limit=20)
+    pending=sum(1 for task in recent['tasks'] if task.get('archive',{}).get('completion')!='complete')
+    archive_label=f'最近{len(recent["tasks"])}项调研中{pending}项归档待处理' if recent['tasks'] else '尚无调研归档记录'
     return {'id':'obsidian','label':'Obsidian阅读与资料库授权','status':'available' if installed else 'not_installed',
-        'status_label':('已检测到软件' if installed else '未检测到软件')+' · '+('已有授权目标（逐任务核验）' if grants else '尚未授权归档目标'),
+        'status_label':('已检测到软件' if installed else '未检测到软件')+' · '+('已有资料库授权（逐任务核验）' if grants else '尚未绑定资料库授权')+' · '+archive_label,
+        'archive_health':{'scope':'recent_20_tasks','pending_count':pending,'unreadable_count':recent['unreadable_records'],'read_only':True},
         'description':'每项调研按项目、年份和日期时间归档；报告与全部有效来源正文一并保存。',
         'requirement':'选装','install_mode':'guided','boundary':'安装软件不等于授权资料库。已有目标保留；由Codex按项目绑定明确的本地库，不扫描私人目录。',
         'guide':{'official_url':'https://obsidian.md/download','official_label':'打开Obsidian官方下载页',
