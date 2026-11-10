@@ -2143,8 +2143,8 @@
     },
     {
       "case_id": "research.incremental_evidence",
-      "version": 7,
-      "oracle_version": 7,
+      "version": 8,
+      "oracle_version": 8,
       "capabilities": [
         "research.incremental_evidence",
         "mcp.update_research"
@@ -2185,10 +2185,11 @@
         "tests/test_research_review_contracts.py",
         "tests/fixtures/research_semantic_challenges.json",
         "src/runtime/research_archive.py",
-        "src/kr_core/source_urls.py"
+        "src/kr_core/source_urls.py",
+        "config/codex-product/plugin/knowledgeradar-research/skills/research/SKILL.md"
       ],
-      "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。 合法自定义ID、需求分部覆盖、事后关联留痕、异步意图持久化和探索处置；语义保持未审阅。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。",
-      "change_reason": "2026-11-09 可读审阅反例:结论与撤证情景分表，编号引用及固定定位附录，重复引用去重，混合合成资料统一披露，三端同字节交付；保留项目归属及幂等原文归档判据。"
+      "success": "候选与行动回执对账、真实详情固定版本、主张评审与有效定位、范围修订和来源换版待复核、多语言视角缺口、反证和退出决定可回读；程序不裁定语义饱和，不代表账号或安装验收。 合法自定义ID、需求分部覆盖、事后关联留痕、异步意图持久化和探索处置；语义保持未审阅。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。 调查修订、显式同版语义复用、反证影响、同源/共同偏差组撤证和上游排除、旧报告审阅过时提示及新固定稿同版交付。合成挑战只验证声明传递，不证明真实调查质量提升。",
+      "change_reason": "2026-11-10 调查深度审计：以红绿反例补充既有研究合同，保持固定报告与用户改稿，增加六类推断错位挑战。"
     },
     {
       "case_id": "fixture.github_objects",

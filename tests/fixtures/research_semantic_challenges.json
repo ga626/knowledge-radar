@@ -2,11 +2,119 @@
   "schema": "research-semantic-challenges/v1",
   "boundary": "合成挑战材料。判据由可见原文和本轮Codex审阅确定；自动测试仅验证声明及缺口传递，不宣称程序能理解真假。",
   "cases": [
-    {"id":"irrelevant-authority","claim":"目标用户愿意为知识库付费","texts":["大学实验室测量SSD连续读取速度，提高了20%。"],"assessment":"insufficient","reason":"权威来源研究的是硬盘速度，没有涉及目标用户或付费。"},
-    {"id":"same-origin-reposts","claim":"有三个独立来源确认市场需求","texts":["甲站转载同一份公司公告。","乙站注明转载该公司公告。","公司公告：我们认为市场需求很大。"],"assessment":"insufficient","reason":"三篇材料只有一个已知来源；公司自己的市场判断缺少独立验证。"},
-    {"id":"body-refutes-title","claim":"访谈用户已全部购买","texts":["标题：人人愿意付费。正文：五位受访者都没有购买，作者只是在提出假设。"],"assessment":"insufficient","reason":"正文直接否定已全部购买，不能用标题支持事实结论。"},
-    {"id":"obsolete-alternative","claim":"现成工具完全无法离线","texts":["旧版说明：不支持离线。","新版变更：已支持离线，企业同步功能仍需联网。"],"assessment":"insufficient","reason":"旧限制已经改变；必须比较具体版本和所需功能，不能维持完全不支持的结论。"},
-    {"id":"incomparable-populations","claim":"中文用户比海外用户更需要本地部署","texts":["中文样本来自受监管银行IT部门。","英文样本来自个人游戏开发者。"],"assessment":"insufficient","reason":"行业与任务不同，不能把差异直接归因于语言或地区。"},
-    {"id":"unsupported-investment","claim":"应立即投入全部预算开发","texts":["一条匿名留言：我喜欢这个想法，但我不会购买。"],"assessment":"insufficient","reason":"兴趣不等于购买；单一匿名负付费样本不能证明投入回报，应改为小规模验证假设。"}
+    {
+      "id": "irrelevant-authority",
+      "claim": "目标用户愿意为知识库付费",
+      "texts": [
+        "大学实验室测量SSD连续读取速度，提高了20%。"
+      ],
+      "assessment": "insufficient",
+      "reason": "权威来源研究的是硬盘速度，没有涉及目标用户或付费。"
+    },
+    {
+      "id": "same-origin-reposts",
+      "claim": "有三个独立来源确认市场需求",
+      "texts": [
+        "甲站转载同一份公司公告。",
+        "乙站注明转载该公司公告。",
+        "公司公告：我们认为市场需求很大。"
+      ],
+      "assessment": "insufficient",
+      "reason": "三篇材料只有一个已知来源；公司自己的市场判断缺少独立验证。"
+    },
+    {
+      "id": "body-refutes-title",
+      "claim": "访谈用户已全部购买",
+      "texts": [
+        "标题：人人愿意付费。正文：五位受访者都没有购买，作者只是在提出假设。"
+      ],
+      "assessment": "insufficient",
+      "reason": "正文直接否定已全部购买，不能用标题支持事实结论。"
+    },
+    {
+      "id": "obsolete-alternative",
+      "claim": "现成工具完全无法离线",
+      "texts": [
+        "旧版说明：不支持离线。",
+        "新版变更：已支持离线，企业同步功能仍需联网。"
+      ],
+      "assessment": "insufficient",
+      "reason": "旧限制已经改变；必须比较具体版本和所需功能，不能维持完全不支持的结论。"
+    },
+    {
+      "id": "incomparable-populations",
+      "claim": "中文用户比海外用户更需要本地部署",
+      "texts": [
+        "中文样本来自受监管银行IT部门。",
+        "英文样本来自个人游戏开发者。"
+      ],
+      "assessment": "insufficient",
+      "reason": "行业与任务不同，不能把差异直接归因于语言或地区。"
+    },
+    {
+      "id": "unsupported-investment",
+      "claim": "应立即投入全部预算开发",
+      "texts": [
+        "一条匿名留言：我喜欢这个想法，但我不会购买。"
+      ],
+      "assessment": "insufficient",
+      "reason": "兴趣不等于购买；单一匿名负付费样本不能证明投入回报，应改为小规模验证假设。"
+    },
+    {
+      "id": "single-jd-to-national-pattern",
+      "claim": "全国AI客服研发主要集中在深圳且需要销售技能",
+      "texts": [
+        "某公司深圳AI销售岗要求客户沟通。"
+      ],
+      "assessment": "insufficient",
+      "reason": "单岗位只能说明该公司该岗位，不能推断全国研发地区分布或成本结构。"
+    },
+    {
+      "id": "consumer-to-buyer",
+      "claim": "中小企业采购客服系统最看重拟人语气",
+      "texts": [
+        "消费者问卷：与机器人聊天时更喜欢自然语气。"
+      ],
+      "assessment": "insufficient",
+      "reason": "消费者体验不等于企业采购排序，分析单位与决策用途不匹配。"
+    },
+    {
+      "id": "pain-does-not-refute-red-ocean",
+      "claim": "用户抱怨现有工具，所以该赛道竞争不激烈",
+      "texts": [
+        "用户：现有工具很难用。",
+        "多家竞品提供相似功能。"
+      ],
+      "assessment": "insufficient",
+      "reason": "痛点存在不能反驳竞争激烈，需区分需求未满足与竞争结构。"
+    },
+    {
+      "id": "vendor-class-only",
+      "claim": "多家公司独立证明客服能节省八成人工成本",
+      "texts": [
+        "甲公司宣传：客户成本降低80%。",
+        "乙公司宣传：客户成本降低80%。"
+      ],
+      "assessment": "insufficient",
+      "reason": "不同公司不必同源，但具有共同促销偏差；撤掉厂商宣称后没有买方或测量证据。"
+    },
+    {
+      "id": "failure-event-to-cause",
+      "claim": "该公司倒闭证明AI客服技术无法商用",
+      "texts": [
+        "公告：公司停止经营。没有披露原因。"
+      ],
+      "assessment": "insufficient",
+      "reason": "失败事件不能识别技术、销售、融资或管理的因果贡献。"
+    },
+    {
+      "id": "license-to-team-estimate",
+      "claim": "MIT组件证明五个工程师八周能完成可靠客服产品",
+      "texts": [
+        "仓库使用MIT许可证，README列出检索与聊天功能。"
+      ],
+      "assessment": "insufficient",
+      "reason": "许可只说明使用条件，不能支持集成工期、生产可靠性或客户实施成本。"
+    }
   ]
 }

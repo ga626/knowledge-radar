@@ -43,7 +43,7 @@ class Fetch(Contract):
 class ResearchRead(Contract):
     action: Literal["research"]
     task_id: str = Field(min_length=1,max_length=96,pattern=r"^[A-Za-z0-9_-]+$")
-    view: Literal["candidates","changes","queries","questions","links","relations","feedback","duplicates","host_batches","scopes","assessments","decisions","actions","requirements","attempts","coverages","explorations","exploration_dispositions","review","withdrawal_scenarios","claims","purposes","alternatives_reviews","withdrawal_reviews","report_reviews","local_observations"] = "candidates"
+    view: Literal["candidates","changes","queries","questions","links","relations","feedback","duplicates","host_batches","scopes","assessments","decisions","actions","requirements","attempts","coverages","explorations","exploration_dispositions","review","withdrawal_scenarios","claims","purposes","alternatives_reviews","withdrawal_reviews","report_reviews","local_observations","investigations"] = "candidates"
     after_seq: int = Field(default=0,ge=0)
     before_seq: int = Field(default=0,ge=0)
     limit: int = Field(default=20,ge=1,le=100)

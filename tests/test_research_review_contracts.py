@@ -31,7 +31,7 @@ def review(archive):
         claim_type='recommendation',importance='high',applicability='个人研究者；尚未验证付费',basis='偏好证据不能支持投入承诺',
         dependencies=[{'group_id':'g1','role':'necessary','evidence_refs':[refs[0]],'basis':'唯一直接访谈'},
                       {'group_id':'g2','role':'support','evidence_refs':[refs[1]],'basis':'独立补充访谈'}],
-        counterevidence_refs=[refs[1]],uncertainty='合成样本不代表市场')
+        counterevidence_refs=[refs[1]],counterevidence_effect='limits',counterevidence_reason='访谈不能证明实际付费，只能限制适用范围',uncertainty='合成样本不代表市场')
     write(index,**claim)
     return engine,index,refs,claim
 
@@ -404,7 +404,7 @@ def test_readable_audit_deduplicates_mixed_synthetic_disclosures_and_keeps_scope
                          'evidence_refs': [{'version_id': synthetic['version_id'], 'start': 0, 'end': len(synthetic_raw)}], 'basis': '首份材料'},
                         {'group_id': 'g2', 'role': 'support',
                          'evidence_refs': [{'version_id': real['version_id'], 'start': 0, 'end': len(other_raw)}],
-                         'basis': '另一份材料'}], 'counterevidence_refs': []})
+                         'basis': '另一份材料'}], 'counterevidence_refs': [], 'counterevidence_effect':'unreviewed', 'counterevidence_reason':''})
     p = projection(index, engine)
     body = '# 结论\n仍需验证。'
     write(index, action='report_review', record_id='mixed-v2',
@@ -423,3 +423,216 @@ def test_readable_audit_deduplicates_mixed_synthetic_disclosures_and_keeps_scope
     assert '资料2（合成）' not in text
     assert '适用范围：个人研究者；尚未验证付费' in text
     assert '语义正确性：由 Codex 声明，程序未判真' in text
+
+
+# 调查深度回归：语义由Agent声明，程序只复用同版本的有效声明。
+def test_reviewed_claim_contributes_to_question_only_when_explicit(review):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'support_assessment':'supports_with_limits','expected_revision':1})
+    assert index.read('task-a',view='feedback',assets=engine.assets)['questions_without_reviewed_support']==['q1']
+    write(index,**{**claim,'support_assessment':'supports_with_limits','question_relation':'supports_with_limits',
+        'languages':['zh-CN'],'information_roles':['buyer_experience'],'expected_revision':2})
+    feedback=index.read('task-a',view='feedback',assets=engine.assets)
+    assert feedback['questions_without_reviewed_support']==[]
+    assert feedback['assessment_origins']['claim']==1
+    assert index.read('task-a',view='assessments')['items']==[]  # 不制造第二份评审
+    index.annotate(ResearchWrite(action='scope',task_id='task-a',question_id='q1',text='全国采购者比例'))
+    stale=index.read('task-a',view='feedback',assets=engine.assets)
+    assert stale['questions_without_reviewed_support']==['q1']
+    assert stale['assessments_requiring_review']
+
+
+def test_fact_in_decision_task_does_not_force_product_alternatives(review):
+    engine,index,_,claim=review
+    write(index,**{**claim,'claim_type':'fact','text':'该岗位要求英语','expected_revision':1})
+    assert projection(index,engine)['claims'][0]['alternatives_required'] is False
+    # 任务的决策仍须处置；不能用只登记事实绕过任务级替代检查。
+    assert 'task_alternatives_unreviewed' in projection(index,engine)['gaps']
+    from runtime.research_reviews import report_appendix
+    text,_=report_appendix(index,'task-a','# 事实清单',engine.assets)
+    assert '任务决策的直接替代尚未处置' in text
+
+
+def test_claim_support_cannot_fill_question_with_background_or_insufficient(review):
+    engine,index,refs,claim=review
+    with pytest.raises(ValueError,match='question_support_requires_reviewed_core'):
+        write(index,**{**claim,'question_relation':'supports','support_assessment':'insufficient','expected_revision':1})
+    with pytest.raises(ValueError,match='question_support_requires_reviewed_core'):
+        write(index,**{**claim,'question_relation':'supports','support_assessment':'supports','expected_revision':1,
+            'dependencies':[{'group_id':'bg','role':'background','evidence_refs':refs,'basis':'仅背景'}]})
+
+
+def test_investigation_revisions_preserve_plan_and_do_not_claim_saturation(review):
+    engine,index,refs,_=review
+    data=dict(action='investigation',record_id='q1',question_id='q1',decision_use='是否值得进一步尽调',
+        analysis_unit='同一客户部署案例',object_frame='电商与SaaS客户暂分两类',selection_basis='先找不同交付方式',
+        explanations=['产品能力不足','实施维护成本高'],discriminating_evidence=['买方部署工时与故障原因'],
+        next_action='沿案例追客户自己的公开材料',next_action_reason='区分产品与实施原因',rationale='起始框架可修订')
+    write(index,**data)
+    assert write(index,**data)['revision']==1  # 完全同输入重试不要求改判理由
+    before=index.read('task-a',view='investigations',assets=engine.assets)
+    write(index,**{**data,'object_frame':'只保留电商售后','changed_because':'发现买方任务不可比',
+        'evidence_refs':refs,'expected_revision':1})
+    assert index.read('task-a',view='investigations',before_seq=before['watermark'])['items'][0]['object_frame']==data['object_frame']
+    latest=index.read('task-a',view='investigations')['items'][0]
+    assert latest['revision']==2 and latest['changed_because']
+    with pytest.raises(ValueError,match='revision_conflict'):
+        write(index,**{**data,'expected_revision':1})
+    feedback=index.read('task-a',view='feedback',assets=engine.assets)
+    assert feedback['investigation_summary'][0]['state']=='active'
+    assert feedback['semantic_saturation']=='not_computed'
+
+
+def test_investigation_stop_requires_usable_scope_and_reopen_condition(review):
+    _,index,_,_=review
+    with pytest.raises(ValueError,match='investigation_stop_requires'):
+        write(index,action='investigation',record_id='q1',question_id='q1',decision_use='决定调查顺序',
+            analysis_unit='公司',object_frame='未知',selection_basis='暂未建立',state='blocked',rationale='页面不可用')
+
+
+def test_claim_requirement_review_reuse_is_explicit_versioned_and_not_acquisition(review):
+    engine,index,refs,claim=review
+    write(index,action='requirement',record_id='r1',question_id='q1',text='买方正文及评论',required_parts=['body','comments'])
+    receipt=record_tool_receipt(task_id='task-a',trace_id='depth-body',tool='get_content_detail',status='ok',
+        result={'evidence_assets':[{'version_id':refs[0]['version_id']}]})['receipt']
+    write(index,action='coverage',record_id='body',requirement_id='r1',requirement_revision=1,
+        receipt_id=receipt['receipt_id'],evidence_refs=[refs[0]],covered_parts=['body'],rationale='只获取正文')
+    write(index,**{**claim,'support_assessment':'supports_with_limits','question_relation':'supports_with_limits','expected_revision':1})
+    assert index.read('task-a',view='requirements',assets=engine.assets)['items'][0]['semantic_review']=='unreviewed'
+    write(index,**{**claim,'support_assessment':'supports_with_limits','question_relation':'supports_with_limits',
+        'requirement_ids':['r1'],'expected_revision':2})
+    item=index.read('task-a',view='requirements',assets=engine.assets)['items'][0]
+    assert item['acquisition']=='partial' and item['missing_parts']==['comments']
+    assert item['semantic_review']=='supports_with_limits'
+    assert item['semantic_review_claims']==['c1']
+    write(index,action='requirement',record_id='r1',question_id='q1',text='新的买方范围',required_parts=['body'],expected_revision=1)
+    assert index.read('task-a',view='requirements',assets=engine.assets)['items'][0]['semantic_review']=='unreviewed'
+
+
+def test_claim_question_review_invalidates_on_new_source(review):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'support_assessment':'supports','question_relation':'supports','expected_revision':1})
+    newer=evidence(engine,'新版本直接反驳旧资料','https://example.org/e0')
+    assert newer['version_id']!=refs[0]['version_id']
+    assert index.read('task-a',view='feedback',assets=engine.assets)['questions_without_reviewed_support']==['q1']
+
+
+@pytest.mark.parametrize('kind',['same_origin','shared_bias'])
+def test_withdrawal_sets_remove_common_origin_or_bias_without_conflating_them(review,kind):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'expected_revision':1,'withdrawal_sets':[{'set_id':'vendors','kind':kind,
+        'label':'厂商宣称组','group_ids':['g1','g2'],'basis':'明确声明来源关系或共同激励，不由域名猜测'}]})
+    snap=projection(index,engine)
+    scenario=next(s for s in snap['claims'][0]['scenarios'] if s.get('withdrawal_kind')==kind)
+    assert set(scenario['excluded_versions'])=={r['version_id'] for r in refs}
+    assert scenario['remaining_versions']==[]
+    with pytest.raises(ValueError,match='excluded_evidence'):
+        withdrawal(index,scenario,claim_revision=2,result_kind='empirical',remaining_refs=refs)
+    withdrawal(index,scenario,claim_revision=2)
+    from runtime.research_reviews import report_appendix
+    text,_=report_appendix(index,'task-a','# 尚待验证',engine.assets)
+    assert '厂商宣称组' in text
+    assert ('共同偏差' if kind=='shared_bias' else '同源') in text
+
+
+def test_withdrawal_set_rejects_unknown_or_background_member(review):
+    _,index,refs,claim=review
+    with pytest.raises(ValueError,match='withdrawal_set_members_must_be_core'):
+        write(index,**{**claim,'expected_revision':1,'withdrawal_sets':[{'set_id':'bad','kind':'same_origin',
+            'label':'错误分组','group_ids':['g1','missing'],'basis':'测试'}]})
+
+
+def test_counterevidence_is_not_resolved_by_merely_citing_it(review):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'expected_revision':1,'counterevidence_effect':'unreviewed','counterevidence_reason':''})
+    assert 'counterevidence_unreviewed:c1' in projection(index,engine)['gaps']
+    write(index,**{**claim,'expected_revision':2,'support_assessment':'insufficient',
+        'counterevidence_effect':'overturns','counterevidence_reason':'原始买方材料直接否定采用率，不能继续推广该结论'})
+    from runtime.research_reviews import report_appendix
+    text,_=report_appendix(index,'task-a','# 审阅',engine.assets)
+    assert '已被所登记反证推翻' in text
+    assert '不能继续推广该结论' in text
+    with pytest.raises(ValueError,match='counterevidence_requires_reason'):
+        write(index,**{**claim,'expected_revision':3,'counterevidence_effect':'no_change','counterevidence_reason':''})
+
+
+def test_fixed_report_exposes_new_review_without_rewriting_old_file(review):
+    engine,index,_,_=review
+    body='# 决策报告\n仍需验证付费意愿。'
+    req=SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='固定稿',content=body)
+    first=engine.submit(req)
+    old=Path(first['local']['path']); original=old.read_bytes()
+    assert first['review_projection_stale'] is False
+    snap=projection(index,engine)
+    write(index,action='report_review',record_id='after-delivery',report_sha256=hashlib.sha256(body.encode()).hexdigest(),
+        baseline=snap['baseline'],claim_ids=['c1'],coverage_statement='已经逐条核对正文')
+    again=engine.submit(req)
+    assert again['review_projection_stale'] is True
+    assert again['current_review']['full_text_review']=='recorded'
+    assert again['report']['review_snapshot']['full_text_review']=='unreviewed_or_stale'
+    assert again['next_action']=='submit_new_report_id_and_explicit_local_path_for_updated_review'
+    assert old.read_bytes()==original
+    assert again['report']['version_id']==first['report']['version_id']
+    # 人工改稿不覆盖；更新审阅显式另存新固定稿，双端保持一致。
+    old.write_text('用户自己的修改',encoding='utf-8')
+    newer=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',
+        report_id='reviewed-v2',local_report_path=str(old.with_name('reviewed-v2.md')),title='已审阅稿',content=body))
+    assert newer['review_projection_stale'] is False
+    assert newer['report']['review_snapshot']['full_text_review']=='recorded'
+    assert '全文关键结论核对：已记录' in Path(newer['local']['path']).read_text(encoding='utf-8')
+    assert Path(newer['local']['path']).read_bytes()==Path(newer['vault']['path']).read_bytes()
+    assert old.read_text(encoding='utf-8')=='用户自己的修改'
+
+
+def test_upstream_revision_invalidates_explicit_question_support(review):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'record_id':'downstream','support_assessment':'supports','question_relation':'supports',
+        'dependencies':[{'group_id':'up','role':'necessary','upstream_claim_id':'c1','upstream_revision':1,'basis':'依赖上游'}]})
+    assert index.read('task-a',view='feedback',assets=engine.assets)['questions_without_reviewed_support']==[]
+    write(index,**{**claim,'text':'修订上游适用范围','expected_revision':1})
+    assert index.read('task-a',view='feedback',assets=engine.assets)['questions_without_reviewed_support']==['q1']
+
+
+def test_withdrawal_expands_upstream_evidence_and_cannot_reuse_removed_source(review):
+    engine,index,refs,claim=review
+    write(index,**{**claim,'record_id':'downstream','dependencies':[
+        {'group_id':'up','role':'necessary','upstream_claim_id':'c1','upstream_revision':1,'basis':'上游两份来源'},
+        {'group_id':'direct','role':'support','evidence_refs':[refs[0]],'basis':'重复引用同一来源'}]})
+    down=next(c for c in projection(index,engine)['claims'] if c['record_id']=='downstream')
+    scenario=next(s for s in down['scenarios'] if s['group_id']=='up')
+    assert set(scenario['excluded_versions'])=={r['version_id'] for r in refs}
+    assert scenario['remaining_versions']==[]
+    with pytest.raises(ValueError,match='excluded_evidence'):
+        withdrawal(index,scenario,claim_id='downstream',result_kind='empirical',remaining_refs=[refs[0]])
+    direct=next(s for s in down['scenarios'] if s['group_id']=='direct')
+    assert direct['remaining_versions']==[refs[1]['version_id']]
+    withdrawal(index,direct,claim_id='downstream',result_kind='empirical',remaining_refs=[refs[1]])
+
+    from runtime.research_reviews import report_appendix
+    text,_=report_appendix(index,'task-a','# 下游撤证',engine.assets)
+    rows=[line for line in text.splitlines() if line.startswith('| 结论2 |')]
+    assert len(rows)==2
+    assert sum('无剩余固定证据' in line for line in rows)==1
+
+
+def test_old_review_contract_baselines_cannot_certify_new_withdrawal_semantics(review):
+    """复现升级前基线公式；旧审阅不能自动认证新版上游展开和组撤证。"""
+    engine,index,_,_=review
+    from runtime.research_contracts import rows_at
+    from runtime.research_reviews import digest
+    with index.connection() as conn:
+        records=sorted(rows_at(conn,'task-a',include_seq=True),key=lambda r:r['_seq'])
+        claims=[r for r in records if r['_kind']=='claim']
+        purpose=next(r for r in records if r['_kind']=='task_purpose')
+        q=index.question_at(conn,'task-a','q1')
+    old_task=digest({'purpose':purpose,'claims':claims,'questions':{'q1':q},'freshness':{'c1':{}}})
+    old_report=digest([old_task,[]])
+    old_claim=digest([claims[0],q,{},[]])
+    snap=projection(index,engine)
+    assert snap['baseline']!=old_report
+    assert snap['claims'][0]['baseline']!=old_claim
+    with pytest.raises(ValueError,match='stale_report_review_baseline'):
+        write(index,action='report_review',record_id='legacy-review',report_sha256='a'*64,
+            baseline=old_report,claim_ids=['c1'],coverage_statement='旧合同审阅')
+    with pytest.raises(ValueError,match='stale_withdrawal_baseline'):
+        withdrawal(index,snap['claims'][0]['scenarios'][0],baseline=old_claim)

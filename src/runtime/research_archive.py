@@ -626,11 +626,25 @@ class ResearchArchive:
                 item=json.loads(row[1]);rounds.append({'round_id':row[0],**{key:item.get(key) for key in ('status','count','path','watermark','navigation','skipped_assets')}})
         pending+=int(self._content_watermark(context)>context['last_watermark'])
         complete=context.get('summary')=='delivered' and not pending and not conversion_gaps
+        fixed_review=(context.get('report') or {}).get('review_snapshot')
+        current_review=None
+        review_stale=False
+        if fixed_review:
+            from runtime.research_index import ResearchIndex
+            from runtime.research_reviews import state
+            index=ResearchIndex()
+            with index.connection() as conn:
+                snap=state(index,conn,task,self.assets)
+            reviewed=any(r['_kind']=='report_review' and r['report_sha256']==fixed_review['body_sha256']
+                and r['baseline']==snap['baseline'] for r in snap['records'])
+            current_review={'baseline':snap['baseline'],'full_text_review':'recorded' if reviewed else 'unreviewed_or_stale'}
+            review_stale=any(current_review[k]!=fixed_review.get(k) for k in current_review)
         return {key:context.get(key) for key in ('task_id','project_id','project_name','context_revision','summary','research','local','vault','report','error_code','failure_kind','retry_at','remote_synced')} | {'status':'tracked','rounds':rounds,'report_count':len(context.get('report_history',[]))+(1 if context.get('report') else 0),
             'completion':'complete' if complete else 'incomplete',
+            'review_projection_stale':review_stale,'current_review':current_review,
             'source_delivery':{'status':'pending' if pending else 'incomplete' if conversion_gaps else 'vault_committed' if context.get('vault_grant_id') else 'retained_in_kr','pending_rounds':pending,'conversion_gaps':conversion_gaps},
             'retryable':bool(context.get('error_code') and context.get('failure_kind')=='retryable'),
-            'next_action':('resolve_lock_or_space_then_retry_archive_same_fixed_version' if context.get('failure_kind')=='retryable' else 'preserve_user_files_inspect_conflict_then_explicitly_rebind_report_output' if context.get('error_code') else 'submit_report' if context['summary']=='summary_pending' else 'read_fixed_report_or_continue_research'),
+            'next_action':('resolve_lock_or_space_then_retry_archive_same_fixed_version' if context.get('failure_kind')=='retryable' else 'preserve_user_files_inspect_conflict_then_explicitly_rebind_report_output' if context.get('error_code') else 'submit_new_report_id_and_explicit_local_path_for_updated_review' if review_stale else 'submit_report' if context['summary']=='summary_pending' else 'read_fixed_report_or_continue_research'),
             'new_evidence_after_report':bool(context.get('report') and self._content_watermark(context)>context['report'].get('source_watermark',0)),'read_only':True}
 
     def _wake(self):

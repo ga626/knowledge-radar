@@ -2,7 +2,7 @@
 
 由 scripts/generate_tool_manual.py 从同一生态声明和工具合同生成；禁止手改。
 目录仅帮助Agent选择来源；注册、启用、账号就绪和真实验收分开，来源数量不决定证据饱和。
-工具合同指纹：`f7f210e1e79f071d8ccbe5194f4bf8a8e24fc976960741e24b1ae7a503b74605`
+工具合同指纹：`1eb480e159ccb75fa75c6268bce8dbc378be19810ce5b5800d93ffa10dd2c568`
 
 ## 微信公众号公开文章生态
 

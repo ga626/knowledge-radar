@@ -102,10 +102,10 @@ class ResearchWrite(BaseModel):
 from runtime.research_contracts import (RequirementWrite, AttemptWrite, CoverageWrite,
     ExplorationWrite, ExplorationDisposition)
 from runtime.research_reviews import (PurposeWrite, ClaimWrite, AlternativesWrite,
-    WithdrawalWrite, ReportReviewWrite, LocalObservationWrite)
+    WithdrawalWrite, ReportReviewWrite, LocalObservationWrite, InvestigationWrite)
 ResearchRequest = Annotated[ResearchWrite | RequirementWrite | AttemptWrite | CoverageWrite |
     ExplorationWrite | ExplorationDisposition | PurposeWrite | ClaimWrite | AlternativesWrite |
-    WithdrawalWrite | ReportReviewWrite | LocalObservationWrite, Field(discriminator='action')]
+    WithdrawalWrite | ReportReviewWrite | LocalObservationWrite | InvestigationWrite, Field(discriminator='action')]
 
 
 class ResearchIndex:
@@ -375,7 +375,7 @@ class ResearchIndex:
                         break
                     base['next_after_seq']=sequences[item['record_id']]
                 return {**base,'truncated':len(base['items'])<len(pending)}
-            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition', 'claims':'claim','purposes':'task_purpose','alternatives_reviews':'alternatives_review','withdrawal_reviews':'withdrawal_review','report_reviews':'report_review','local_observations':'local_observation'}
+            kinds = {"candidates": "candidate", "queries": "query", "questions": "question", "links": "link", "relations": "relation", "host_batches":"host_batch", "scopes":"scope", "assessments":"assessment", "decisions":"decision", "actions":"action", 'attempts':'attempt', 'coverages':'coverage', 'explorations':'exploration', 'exploration_dispositions':'exploration_disposition', 'claims':'claim','purposes':'task_purpose','alternatives_reviews':'alternatives_review','withdrawal_reviews':'withdrawal_review','report_reviews':'report_review','local_observations':'local_observation','investigations':'investigation'}
             if view != "changes" and view not in kinds:
                 raise ValueError("invalid_research_view")
             params = [task_id, after_seq, high] + ([] if view == "changes" else [kinds[view], high])
@@ -468,6 +468,8 @@ class ResearchIndex:
         questions = [self.question_at(conn,task_id,q['record_id'],high) for q in groups.get('question',[])]
         assessments = [self.assessment_review(x,next((q for q in questions if q['record_id']==x.get('question_id')),{}),assets,task_id)
                        for x in groups.get('assessment',[]) if x.get('record_id') not in superseded and not x.get('closed')]
+        from runtime.research_reviews import question_assessments
+        assessments += [x for x in question_assessments(self,conn,task_id,assets,high) if x['relation']!='background']
         review_required = [{'record_id':x['record_id'],'question_id':x.get('question_id'),
                             'reason':x.get('review_reason'),'newer_versions':x.get('newer_versions',[])}
                            for x in assessments if x.get('review_required')]
@@ -506,6 +508,12 @@ class ResearchIndex:
                 "scope_gaps":scope_gaps,
                 "assessments_requiring_review":review_required,
                 "assessment_basis":"agent_declared_not_program_verified",
+                "assessment_origins":{kind:sum(x.get('origin','assessment')==kind for x in assessments) for kind in ('assessment','claim')},
+                "investigation_summary":[{'question_id':x['question_id'],'revision':x['revision'],'state':x['state'],
+                    'decision_use':x['decision_use'],'next_action':x['next_action'],
+                    'scope_changed':x.get('question_revision')!=self.question_at(conn,task_id,x['question_id'],high).get('revision',1),
+                    'judgment':'agent_declared_not_program_verified'} for x in groups.get('investigation',[])],
+                "questions_without_investigation":[q['record_id'] for q in questions if not q.get('closed') and not any(x['question_id']==q['record_id'] for x in groups.get('investigation',[]))],
                 "unplanned_receipts": [x['receipt_id'] for x in groups.get('receipt', [])
                     if x.get('tool') != 'kr_research' and not (x.get('research_action') or {}).get('action_id') and not (x.get('research_action') or {}).get('exploration_id') and not any(a.get('receipt_id') == x['receipt_id'] for a in groups.get('action', []))
                     and not any(q.get('receipt_id') == x['receipt_id'] for q in queries)],
