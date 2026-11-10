@@ -1,6 +1,11 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-11-09",
+  "updated_at": "2026-11-10",
+  "runtime_lifecycle_contract": {
+    "transport": "MCP initialization and tools/list never start the kernel; unavailable execution is an explicit not_started error.",
+    "management": "The existing OS user-session supervisor owns the kernel independently of console pages, retaining process handles, exit codes and generations. Recovery is bounded and never replays requests.",
+    "handoff": "Installation drains the current kernel before switching active identity, stops the old manager and starts the registered user-session task after releasing maintenance. Activation, runtime readiness and native host binding are distinct receipts."
+  },
   "research_review_contract": {
     "owner": "src/runtime/research_contracts.py and research_reviews.py; reuse ResearchIndex changes/current, no second lifecycle",
     "requirements": "Versioned deliverables, immutable attempts and explicit partial coverage; failed attempts are never rewritten as success.",
@@ -74,7 +79,7 @@
     {
       "path": "src/onboarding/",
       "area": "dev_runtime",
-      "role": "同一HTML页面壳与TypeScript构建；研究与交付回执只读投影、维护者门禁及组件安装；不执行任务交付。",
+      "role": "同一HTML页面壳与TypeScript构建；研究与交付回执只读投影、维护者门禁及组件安装；runtime_status提供独立于业务内核的运行卡与一次恢复，不执行研究任务交付。",
       "codex_edit": "allowed_with_secret_scan",
       "release": "include"
     },
@@ -472,7 +477,7 @@
     "common_comments": "runtime/comments_contract按平台对象和讨论流统一ID/父根/覆盖/媒体；comments_view仅给可解释有界导航，原文固定回读。comment_media把短期签名位置放私有comment_media_fetch引用表、原件放公共媒体缓存、加工逐项断点放comment_media；不导出Cookie/本地路径，不因重复整理延长签名有效期，未知OCR/ASR结果不自动重发。能力注册不是逐平台真实验收结论。",
     "github_objects": "官方只读API对象层；原生查询与公开范围，gh/REST单请求身份冻结，公共租约和冷却；固定commit/blob/原文行定位，Issue/PR多流按页窗和检查点恢复；正文进公共证据，原始内部快照不对检索或Vault展示。",
     "xhs_media": "小红书沿用OpenCLI与公共媒体执行器；xhs类型化请求声明图片索引和评论窗口。公开媒体清单/逐项账本以原生文件身份或完整URL散列连接本地私有获取表，不向公开证据泄露签名地址；实际原件经公共下载安全校验和SHA核对。采集版本与模型加工身份分离，OCR图片定位/ASR块级时间/评论根关系进入同一固定证据库；请求未完成如实保留partial。连接只读检查区分后台服务与扩展；执行按需准备服务并等待获准绑定重连。",
-    "execution_owner": "安装级执行owner与连接独立；Windows显式启动脱离调用者Job，脱离失败明确拒绝而不静默降级。查询不启动或重放，未知结果按原请求回执对账；正常启动/退出只记PID与代际。"
+    "execution_owner": "安装级执行owner与连接独立；正式入口由既有用户任务监督。runtime_control统一只读状态、故障事实和幂等单次恢复；自动恢复预算持久有界，重开预算为独立维护动作。查询不启动或重放，未知结果按原请求回执对账；运行卡不把网页ready当内核ready。"
   },
   "stable_research_reports": [],
   "research_report_scope": "Private research reports and their quality sidecars remain in the private source; public product docs use structural governance.",

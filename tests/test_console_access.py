@@ -15,6 +15,50 @@ from onboarding.console_access import ConsoleAccess, _matching_tcp_pid
 from onboarding.setup_wizard import WizardServer
 
 
+@pytest.mark.parametrize('role', ['stable', 'dev'])
+def test_runtime_api_survives_owner_failure_and_preserves_access(tmp_path, monkeypatch, role):
+    from runtime import runtime_control
+    monkeypatch.setenv('KR_CONSOLE_ROLE', role)
+    monkeypatch.delenv('KR_CONSOLE_READ_ONLY', raising=False)
+    access = ConsoleAccess(tmp_path, role)
+    monkeypatch.setattr(access, 'connection_identity', lambda connection: True)
+    calls = []
+    monkeypatch.setattr(runtime_control, 'runtime_snapshot', lambda **kw: {'status': 'ok', 'runtime': {'state': 'circuit_open'}})
+    monkeypatch.setattr(runtime_control, 'request_recovery', lambda **kw: calls.append(kw) or {'status': 'accepted'})
+    server = WizardServer(('127.0.0.1', 0), access=access)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    headers = {'Cookie': access.session_cookie().split(';')[0], 'X-KR-Setup-Token': access.csrf_token,
+               'Origin': f'http://127.0.0.1:{server.server_port}'}
+    def request(method, path, payload=None, credentials=None):
+        conn = HTTPConnection('127.0.0.1', server.server_port, timeout=3)
+        conn.request(method, path, headers=credentials if credentials is not None else headers,
+                     body=json.dumps(payload) if payload is not None else None)
+        response = conn.getresponse()
+        result = response.status, json.loads(response.read())
+        conn.close()
+        return result
+    try:
+        assert request('GET', '/api/runtime', credentials={})[0] == 403
+        assert request('GET', '/api/runtime')[1]['runtime']['state'] == 'circuit_open'
+        payload = {'request_id': 'http-one', 'expected_source': 'candidate', 'expected_incident': None}
+        assert request('POST', '/api/runtime/recover', payload, {**headers, 'Origin': 'https://evil.example'})[0] == 403
+        assert request('POST', '/api/runtime/recover', {**payload, 'action': 'rearm_auto_recovery'})[0] in {400, 409}
+        assert request('POST', '/api/runtime/wait', {'wait_seconds': 300})[0] in {400, 409}
+        code, value = request('POST', '/api/runtime/recover', payload)
+        if role == 'dev':
+            assert code == 409
+            assert not calls
+        else:
+            assert code == 200 and value['status'] == 'accepted'
+            assert len(calls) == 1
+            assert calls[0].get('action', 'recover_once') == 'recover_once'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(3)
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='Windows local connection identity')
 def test_same_windows_user_opens_fixed_url_without_cookie_or_launch_ticket(tmp_path):
     access = ConsoleAccess(tmp_path, 'dev')

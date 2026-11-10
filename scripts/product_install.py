@@ -8,8 +8,10 @@ overwrites user configuration.  Source-checkout installation remains in
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from functools import wraps
 import inspect
+import importlib.util
 import hashlib
 import json
 import os
@@ -64,14 +66,52 @@ def installation_maintenance(function):
     def guarded(*args, **kwargs):
         values = inspect.signature(function).bind(*args, **kwargs).arguments
         install_root = Path(values['install_root'])
-        if not (install_root/'active.json').is_file():
-            return function(*args, **kwargs)
-        active = load_active(install_root)
-        if not active:
-            return function(*args, **kwargs)
-        with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT):
-            return function(*args, **kwargs)
+        active = load_active(install_root) if (install_root/'active.json').is_file() else None
+        result = None
+        handoff_error = None
+        try:
+            with runtime_handoff(active, install_root):
+                with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT) if active else nullcontext():
+                    result = function(*args, **kwargs)
+        except (OSError, RuntimeError) as exc:
+            if result is None:
+                raise
+            handoff_error = type(exc).__name__
+        current = load_active(install_root) if (install_root/'active.json').is_file() else result.get('active')
+        if current:
+            readiness = ({'status': 'unavailable', 'reason': 'runtime_user_session_handoff_failed',
+                          'error_type': handoff_error} if handoff_error else complete_runtime_handoff(install_root, current))
+            result['runtime_readiness'] = readiness
+            result['native_host_binding'] = {'status': 'pending_host_refresh' if active != current else 'not_revalidated'}
+            if readiness.get('status') != 'ready' and result.get('status') in {'APPLIED', 'ROLLED_BACK'}:
+                result['status'] += '_RUNTIME_NOT_READY'
+            if function.__name__ == 'apply_install':
+                write_json_atomic(Path(current['data_root'])/'receipts/activation.json', result)
+        return result
     return guarded
+
+
+def runtime_handoff(active, install_root):
+    return cli_lifecycle().runtime_manager_handoff(active, install_root=install_root, package_root=PACKAGE_ROOT)
+
+
+def complete_runtime_handoff(install_root, active):
+    """核内核真实身份；不宣称Codex当前session已重新绑定。"""
+    try:
+        executable = quiet_runtime_python(_active_runtime(Path(install_root), active))
+        environment = dict(os.environ)
+        environment.update(cli_lifecycle().active_environment(active))
+        for key in ('KR_OWNER_ROOT', 'KR_RUNTIME_ROLE'):
+            environment.pop(key, None)
+        command = [str(executable), '-X', 'utf8', '-c',
+            'import json; from runtime.execution_owner import OwnerClient; print(json.dumps(OwnerClient().start(timeout=35)))']
+        result = subprocess.run(command, env=environment, cwd=active['program_root'],
+            capture_output=True, text=True, encoding='utf-8', timeout=45, check=False,
+            **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+        value = json.loads(result.stdout) if result.returncode == 0 else {'status':'unavailable', 'reason':'runtime_start_failed', 'exit_code': result.returncode}
+        return {key: value[key] for key in ('status', 'reason', 'exit_code', 'pid', 'generation', 'source_identity', 'protocol', 'layer') if key in value}
+    except (OSError, ValueError, RuntimeError, KeyError, TypeError, subprocess.TimeoutExpired) as exc:
+        return {'status': 'unavailable', 'reason': type(exc).__name__}
 
 
 @installation_maintenance
@@ -137,6 +177,14 @@ def default_install_root() -> Path:
 
 def runtime_python(runtime_root: Path) -> Path:
     return runtime_root / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def quiet_runtime_python(executable):
+    # GUI入口要贯穿venv/base转发链；仅给python.exe加NO_WINDOW不够。
+    spec = importlib.util.spec_from_file_location('kr_install_process', PACKAGE_ROOT/'src/runtime/process.py')
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.background_python_executable(executable)
 
 
 def require_python_312(python_exe: Path) -> None:
@@ -474,11 +522,12 @@ def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
     """Register the stable supervisor and retire the legacy Startup entry."""
     helper = install_root / "console_product.py"
     result = subprocess.run(
-        [str(python_exe), str(helper), "--role", "stable", "--port", "18882", "--enable-autostart"],
+        [quiet_runtime_python(python_exe), str(helper), "--role", "stable", "--port", "18882", "--enable-autostart"],
         capture_output=True,
         text=True,
         encoding="utf-8",
         check=False,
+        **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}),
     )
     if result.returncode != 0:
         raise RuntimeError(
@@ -497,10 +546,29 @@ def write_console_autostart(install_root: Path, python_exe: Path) -> Path:
     return marker
 
 
+def write_runtime_autostart(install_root: Path, python_exe: Path) -> Path:
+    """同一个用户会话任务始终管理内核；控制台自启仍可独立关闭。"""
+    marker = install_root/'runtime-autostart.task'
+    if not (install_root/'console-autostart.task').is_file():
+        result = subprocess.run([quiet_runtime_python(python_exe), str(install_root/'console_product.py'),
+            '--role', 'stable', '--port', '18882', '--enable-autostart', '--runtime-only'],
+            capture_output=True, text=True, encoding='utf-8', check=False,
+            **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+        if result.returncode:
+            raise RuntimeError('runtime_user_session_task_registration_failed')
+    write_json_atomic(marker, {'schema':'knowledgeradar-runtime-autostart/v1',
+        'task_name':'KnowledgeRadar Stable Local Console', 'console_enabled':(install_root/'console-autostart.task').is_file()})
+    return marker
+
+
 def refresh_console_autostart(install_root: Path, python_exe: Path) -> Path | None:
     """Refresh a prior explicit Task Scheduler opt-in without probing global Startup."""
     marker = install_root / "console-autostart.task"
-    return write_console_autostart(install_root, python_exe) if marker.is_file() else None
+    if marker.is_file():
+        return write_console_autostart(install_root, python_exe)
+    if (install_root/'runtime-autostart.task').is_file():
+        write_runtime_autostart(install_root, python_exe)
+    return None
 
 
 def initialize_data(data_root: Path, package_root: Path) -> None:
@@ -969,7 +1037,7 @@ def tree_summary(path: Path) -> dict[str, Any]:
 
 def _owner_ephemeral(relative: Path) -> bool:
     # 选主锁与进程描述符不是用户资料；维护接管不能改变迁移确认令牌。
-    return ((relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log'}))
+    return ((relative.parent.as_posix() == 'state/execution_owner' and (relative.suffix in {'.lock', '.tmp'} or relative.name in {'owner.json', 'startup.log', 'bootstrap-failure.json', 'supervision.json', 'stop.json', 'start.request.json'}))
         or relative.as_posix() in {'runtime/browser_link/host.json','state/xhs_opencli/daemon.json','state/xhs_opencli/daemon.log'})
 
 
@@ -1647,6 +1715,7 @@ def apply_install(
         if enable_console_autostart
         else refresh_console_autostart(install_root, product_python)
     )
+    runtime_autostart = write_runtime_autostart(install_root, product_python)
     receipt = {
         "schema": "knowledgeradar-activation-receipt/v1",
         "status": "APPLIED",
@@ -1656,6 +1725,7 @@ def apply_install(
         "console_launcher": str(install_root / "console.cmd"),
         "cli_launcher": str(install_root / "knowledgeradar.cmd"),
         "console_autostart": str(autostart) if autostart else None,
+        "runtime_autostart": str(runtime_autostart),
         "browser_link": browser_link,
         "restored_runtime_components": restored_components,
         "model_configuration": model_configuration,
@@ -1871,7 +1941,7 @@ def main(argv: list[str] | None = None) -> int:
     ) as exc:
         result = {"status": "FAIL", "error": str(exc)}
     print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0 if result.get("status") not in {"FAIL"} else 1
+    return 1 if result.get('status') == 'FAIL' or str(result.get('status', '')).endswith('_RUNTIME_NOT_READY') else 0
 
 
 if __name__ == "__main__":

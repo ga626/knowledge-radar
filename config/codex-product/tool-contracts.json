@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "1eb480e159ccb75fa75c6268bce8dbc378be19810ce5b5800d93ffa10dd2c568",
+  "contract_hash": "ef1aea8344534582f23f53eb348f2ac068a1d758f3253bf091e27ddbc56335b0",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -15,6 +15,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -45,6 +57,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -86,6 +110,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -230,6 +280,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -260,6 +322,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -301,6 +375,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -358,6 +458,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -388,6 +500,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -429,6 +553,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -699,6 +849,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -729,6 +891,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -770,6 +944,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -889,6 +1089,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -919,6 +1131,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -960,6 +1184,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -1077,6 +1327,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -1107,6 +1369,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -1148,6 +1422,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -1349,6 +1649,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -1379,6 +1691,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -1420,6 +1744,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -1475,6 +1825,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -1505,6 +1867,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -1546,6 +1920,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -2327,6 +2727,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -2357,6 +2769,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -2398,6 +2822,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -2808,6 +3258,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -2838,6 +3300,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -2879,6 +3353,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -2898,7 +3398,7 @@
         "properties": {
           "mode": {
             "default": "summary",
-            "description": "默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
+            "description": "runtime：内核外只读状态，不启动、不探平台，可有界等待恢复；默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
             "title": "Mode",
             "type": "string"
           },
@@ -2909,6 +3409,14 @@
             "pattern": "^[A-Za-z0-9_-]*$",
             "title": "Request Id",
             "type": "string"
+          },
+          "wait_seconds": {
+            "default": 0,
+            "description": "仅mode=runtime：有界等待现有恢复，最长30秒；不启动内核、不重试业务。",
+            "maximum": 30,
+            "minimum": 0,
+            "title": "Wait Seconds",
+            "type": "number"
           }
         },
         "title": "health_checkArguments",
@@ -2928,6 +3436,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -2958,6 +3478,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -2999,6 +3531,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -3479,6 +4037,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -3509,6 +4079,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -3550,6 +4132,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -3746,6 +4354,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -3776,6 +4396,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -3817,6 +4449,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -4527,6 +5185,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -4557,6 +5227,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -4598,6 +5280,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -4667,6 +5375,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -4697,6 +5417,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -4738,6 +5470,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -5123,6 +5881,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -5153,6 +5923,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -5194,6 +5976,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -5769,6 +6577,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -5799,6 +6619,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -5840,6 +6672,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6000,6 +6858,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6030,6 +6900,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6071,6 +6953,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6133,6 +7041,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6163,6 +7083,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6204,6 +7136,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6334,6 +7292,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6364,6 +7334,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6405,6 +7387,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6515,6 +7523,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6545,6 +7565,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6586,6 +7618,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6710,6 +7768,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6740,6 +7810,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6781,6 +7863,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -6909,6 +8017,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -6939,6 +8059,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -6980,6 +8112,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -7136,6 +8294,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -7166,6 +8336,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -7207,6 +8389,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -7330,6 +8538,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -7360,6 +8580,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -7401,6 +8633,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -7511,6 +8769,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -7541,6 +8811,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -7582,6 +8864,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",
@@ -7692,6 +9000,18 @@
         "$defs": {
           "AgentError": {
             "properties": {
+              "automatic_investigation": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Automatic Investigation"
+              },
               "code": {
                 "title": "Code",
                 "type": "string"
@@ -7722,6 +9042,18 @@
                 "default": "Inspect the task/result before repeating a command.",
                 "title": "Next Action",
                 "type": "string"
+              },
+              "request_id": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "title": "Request Id"
               },
               "retryable": {
                 "default": false,
@@ -7763,6 +9095,32 @@
         "properties": {
           "error": {
             "$ref": "#/$defs/AgentError"
+          },
+          "execution_owner": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Execution Owner"
+          },
+          "runtime": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Runtime"
           },
           "status": {
             "default": "error",

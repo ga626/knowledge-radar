@@ -1,7 +1,6 @@
 """MCP传输投影；业务装配和执行所有者不导入本模块。"""
 from contextlib import asynccontextmanager
 from functools import partial
-import asyncio
 import os
 
 
@@ -12,10 +11,8 @@ def mount(app):
 
     @asynccontextmanager
     async def lifespan(_server):
-        from runtime.execution_owner import OwnerClient
-        owner = await asyncio.to_thread(OwnerClient().start)
-        if owner.get('status') != 'ready':
-            raise RuntimeError('execution_owner_not_ready_' + owner.get('status', 'unknown'))
+        # 目录发现/stdio连接寿命不拥有持久业务进程。内核缺失由调用边界
+        # 返回not_started；不能因此让initialize响应也消失。
         app.mcp._kr_forward_owner = True
         registered = False
         try:

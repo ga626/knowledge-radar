@@ -18,12 +18,16 @@ class AgentError(BaseModel):
     next_action: str="Inspect the task/result before repeating a command."
     contract_tool: str="get_capabilities"
     layer: str="application"
+    request_id: str | None=None
+    automatic_investigation: bool | None=None
 
 
 class ErrorResponse(BaseModel):
     model_config=ConfigDict(extra='forbid')
     status: str="error"
     error: AgentError
+    runtime: dict | None=None
+    execution_owner: dict | None=None
 
 
 def error_result(exc, name, *, not_started=False, layer="application"):
@@ -39,7 +43,7 @@ def error_result(exc, name, *, not_started=False, layer="application"):
         text=str(current)
         code=text if re.fullmatch(r'[a-z][a-z0-9_]{1,100}',text) else type(current).__name__
     if code=='runtime_busy':not_started=True
-    return ErrorResponse(error=AgentError(code=code,fields=fields,retryable=code=='runtime_busy',execution_state='not_started' if not_started else 'unknown',layer=layer,next_action=f"Read get_capabilities(tool_name='{name}') for legal fields; correct invalid inputs. For an uncertain execution, inspect its task/receipt before retry.")).model_dump()
+    return ErrorResponse(error=AgentError(code=code,fields=fields,retryable=code=='runtime_busy',execution_state='not_started' if not_started else 'unknown',layer=layer,next_action=f"Read get_capabilities(tool_name='{name}') for legal fields; correct invalid inputs. For an uncertain execution, inspect its task/receipt before retry.")).model_dump(exclude_none=True)
 
 
 def compact_evidence(value):

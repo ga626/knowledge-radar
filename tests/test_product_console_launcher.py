@@ -88,8 +88,34 @@ def test_stable_task_definition_uses_bounded_recovery_and_ignores_duplicates(tmp
     assert "--program-root" not in script
     assert "-ExecutionTimeLimit ([TimeSpan]::Zero)" in script
     assert "-AllowStartIfOnBatteries" in script
+    assert 'RepetitionInterval' not in script  # 熔断后不能被每分钟任务绕开
     assert "-DontStopIfGoingOnBatteries" in script
-    assert '-RepetitionInterval (New-TimeSpan -Minutes 1)' in script
+
+
+def test_runtime_management_is_stable_only_and_independent_of_page(tmp_path, monkeypatch):
+    launcher = load_launcher()
+    candidate = context(launcher, tmp_path, role='stable')
+    with monkeypatch.context() as isolated:
+        isolated.setattr(os, 'environ', dict(os.environ))
+        for key in ('KR_OWNER_ROOT', 'KR_RUNTIME_ROLE'):
+            isolated.setenv(key, 'foreign-inherited-value')
+        manager = launcher._runtime_manager(candidate)
+        assert manager.client.root == candidate.data/'state/execution_owner'
+        assert os.environ['KR_ACTIVE_INSTALL_ROOT'] == str(candidate.install_root)
+        assert os.environ.get('KR_RUNTIME_ROLE') != 'foreign-inherited-value'
+    candidate.role = 'dev'
+    assert launcher._runtime_manager(candidate) is None
+
+
+def test_waiting_for_console_recovery_still_observes_kernel(tmp_path, monkeypatch):
+    launcher = load_launcher()
+    moments = []
+    class Manager:
+        state = 'ready'
+        def tick(self): moments.append('observed')
+    monkeypatch.setattr(launcher.time, 'sleep', lambda duration: moments.append(duration))
+    launcher._wait_with_runtime(Manager(), 3)
+    assert moments.count('observed') == 3
 
 
 def test_dev_task_has_one_fixed_name_and_logon_trigger(tmp_path):

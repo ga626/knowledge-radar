@@ -2278,7 +2278,8 @@ def manage_xiaohongshu_accounts(
 @application_tool()
 @traced_tool("health_check", strategy="layered_runtime_diagnostics")
 def health_check(
-    mode: Annotated[str, Field(description="默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。")] = "summary",
+    mode: Annotated[str, Field(description="runtime：内核外只读状态，不启动、不探平台，可有界等待恢复；默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。")] = "summary",
+    wait_seconds: Annotated[float, Field(ge=0, le=30, description="仅mode=runtime：有界等待现有恢复，最长30秒；不启动内核、不重试业务。")] = 0,
 ) -> Dict:
     """检查 KnowledgeRadar 的关键平台和运行依赖状态。
 
@@ -2286,6 +2287,9 @@ def health_check(
     full 可能较慢；summary/light/lite 返回轻量摘要。
     """
     normalized_mode = str(mode or "full").strip().lower()
+    if normalized_mode == 'runtime':
+        from runtime.runtime_control import runtime_snapshot
+        return runtime_snapshot(wait_seconds=wait_seconds)
     if normalized_mode.startswith(('reconcile_browser_operation:', 'resolve_browser_operation:')):
         parts = str(mode).strip().split(':')
         platform = parts[1].lower() if len(parts)>1 else ''

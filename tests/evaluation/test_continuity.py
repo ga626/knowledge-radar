@@ -416,3 +416,24 @@ def test_ci_routes_owner_and_stdio_nodes_without_enabling_external_network(tmp_p
         assert len(calls) == 1
         assert calls[0]['nodes'] == [selection]
     assert calls[-1]['owned_host_process'] is True
+
+
+@pytest.mark.parametrize('budget', [300, 600])
+def test_ci_host_batch_preserves_selected_case_execution_budget(tmp_path, monkeypatch, budget):
+    root, suite, ledger=repository(tmp_path)
+    (root/'tests').mkdir()
+    node='tests/test_product_runtime.py'
+    (root/node).write_text('pass',encoding='utf-8')
+    case={**suite['cases'][0], 'case_id':'owned.demo','executor':'pytest','auto':True,
+          'layer':'contract','nodes':[node],'owned_host_process':True,'timeout_seconds':budget}
+    suite['cases'].append(case)
+    calls=[]
+    def execute(root, specification, folder):
+        calls.append(specification)
+        (folder/'junit.xml').write_text('<testsuites><testcase classname="tests.test_product_runtime" name="lifecycle"/></testsuites>')
+        return {'verdict':'PASS','returncode':0}
+    monkeypatch.setattr(ci,'_pytest',execute)
+    _,passed=ci.run_ci(root,suite,ledger)
+    assert passed
+    assert len(calls)==1
+    assert calls[0]['timeout_seconds']>=budget

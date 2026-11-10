@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`1eb480e159ccb75fa75c6268bce8dbc378be19810ce5b5800d93ffa10dd2c568`
+合同指纹：`ef1aea8344534582f23f53eb348f2ac068a1d758f3253bf091e27ddbc56335b0`
 
 ## advance_research_candidate
 
@@ -15,6 +15,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -45,6 +57,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -86,6 +110,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -235,6 +285,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -265,6 +327,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -306,6 +380,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -365,6 +465,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -395,6 +507,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -436,6 +560,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -711,6 +861,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -741,6 +903,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -782,6 +956,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -906,6 +1106,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -936,6 +1148,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -977,6 +1201,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -1096,6 +1346,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -1126,6 +1388,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -1167,6 +1441,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -1373,6 +1673,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -1403,6 +1715,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -1444,6 +1768,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -1505,6 +1855,18 @@
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -1535,6 +1897,18 @@
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -1576,6 +1950,32 @@
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -2363,6 +2763,18 @@ wait=true 可能阻塞到 max_wait_s。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -2393,6 +2805,18 @@ wait=true 可能阻塞到 max_wait_s。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -2434,6 +2858,32 @@ wait=true 可能阻塞到 max_wait_s。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -2849,6 +3299,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -2879,6 +3341,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -2921,6 +3395,32 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
       "error": {
         "$ref": "#/$defs/AgentError"
       },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
+      },
       "status": {
         "default": "error",
         "title": "Status",
@@ -2938,7 +3438,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "properties": {
       "mode": {
         "default": "summary",
-        "description": "默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
+        "description": "runtime：内核外只读状态，不启动、不探平台，可有界等待恢复；默认summary为只读声明/任务摘要；诊断用diagnostic_summary，完整探活用full。未知浏览器执行只查原回执：reconcile_browser_operation:<platform>；显式接受确定结果或放弃原操作：resolve_browser_operation:<platform>:<accept_result|abandon>:<原operation_id>，均不重放；仅支持zhihu/boss/liepin/maimai。微信读书认证检查probe_browser_auth:weread，显式登录交接request_browser_interaction:weread:login，结束自有登录页release_browser_interaction:weread。",
         "title": "Mode",
         "type": "string"
       },
@@ -2949,6 +3449,14 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "pattern": "^[A-Za-z0-9_-]*$",
         "title": "Request Id",
         "type": "string"
+      },
+      "wait_seconds": {
+        "default": 0,
+        "description": "仅mode=runtime：有界等待现有恢复，最长30秒；不启动内核、不重试业务。",
+        "maximum": 30,
+        "minimum": 0,
+        "title": "Wait Seconds",
+        "type": "number"
       }
     },
     "title": "health_checkArguments",
@@ -2975,6 +3483,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -3005,6 +3525,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -3046,6 +3578,32 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -3531,6 +4089,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -3561,6 +4131,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -3602,6 +4184,32 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -3800,6 +4408,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -3830,6 +4450,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -3871,6 +4503,32 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -4586,6 +5244,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -4616,6 +5286,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -4657,6 +5339,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -4728,6 +5436,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -4758,6 +5478,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -4799,6 +5531,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -5186,6 +5944,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -5216,6 +5986,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -5257,6 +6039,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -5834,6 +6642,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -5864,6 +6684,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -5905,6 +6737,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -6067,6 +6925,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -6097,6 +6967,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -6138,6 +7020,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -6205,6 +7113,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -6235,6 +7155,18 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -6276,6 +7208,32 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -6411,6 +7369,18 @@ B站视频搜索。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -6441,6 +7411,18 @@ B站视频搜索。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -6482,6 +7464,32 @@ B站视频搜索。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -6597,6 +7605,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -6627,6 +7647,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -6668,6 +7700,32 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -6799,6 +7857,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -6829,6 +7899,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -6870,6 +7952,32 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -7003,6 +8111,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -7033,6 +8153,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -7074,6 +8206,32 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -7235,6 +8393,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -7265,6 +8435,18 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -7306,6 +8488,32 @@ gh与REST是同一只读API的传输。身份在请求前冻结，错误/空结�
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -7434,6 +8642,18 @@ YouTube 公开视频搜索。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -7464,6 +8684,18 @@ YouTube 公开视频搜索。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -7505,6 +8737,32 @@ YouTube 公开视频搜索。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -7620,6 +8878,18 @@ YouTube 公开视频搜索。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -7650,6 +8920,18 @@ YouTube 公开视频搜索。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -7691,6 +8973,32 @@ YouTube 公开视频搜索。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
@@ -7803,6 +9111,18 @@ YouTube 公开视频搜索。
     "$defs": {
       "AgentError": {
         "properties": {
+          "automatic_investigation": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Automatic Investigation"
+          },
           "code": {
             "title": "Code",
             "type": "string"
@@ -7833,6 +9153,18 @@ YouTube 公开视频搜索。
             "default": "Inspect the task/result before repeating a command.",
             "title": "Next Action",
             "type": "string"
+          },
+          "request_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Request Id"
           },
           "retryable": {
             "default": false,
@@ -7874,6 +9206,32 @@ YouTube 公开视频搜索。
     "properties": {
       "error": {
         "$ref": "#/$defs/AgentError"
+      },
+      "execution_owner": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Execution Owner"
+      },
+      "runtime": {
+        "anyOf": [
+          {
+            "additionalProperties": true,
+            "type": "object"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "title": "Runtime"
       },
       "status": {
         "default": "error",
