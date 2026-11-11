@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`292f9ef82172dfc6591a285f017c13fa7f5cb2a6dc820fe7b1a3183fa8f7d70b`
+合同指纹：`f9e72b0773519d754b2147da2b553de8b5f1e85370ecba65b52a864f14ff203f`
 
 ## advance_research_candidate
 
@@ -622,6 +622,21 @@
         "description": "后台任务返回的固定ID。",
         "title": "Task Id",
         "type": "string"
+      },
+      "timeout_s": {
+        "anyOf": [
+          {
+            "maximum": 3600,
+            "minimum": 1,
+            "type": "number"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null,
+        "description": "仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。",
+        "title": "Timeout S"
       }
     },
     "required": [

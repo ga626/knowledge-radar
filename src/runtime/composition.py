@@ -2919,11 +2919,14 @@ def manage_research_artifacts(request: ArtifactRequest) -> Dict:
 
 @application_tool( group="runtime")
 def control_task(task_id: Annotated[str, Field(description="后台任务返回的固定ID。")],
-                 action: Literal["cancel", "resume"]) -> TaskStatusResult:
+                 action: Literal["cancel", "resume"],
+                 timeout_s: Annotated[float | None, Field(ge=1,le=3600,description="仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。")]=None) -> TaskStatusResult:
     """显式取消或恢复已接受任务；不与状态查询混用，恢复沿原费用幂等范围。"""
     from runtime.task_service import TaskService
+    if action == 'cancel' and timeout_s is not None:
+        raise ValueError('timeout_s_only_valid_for_resume')
     service=TaskService()
-    task=service.cancel(task_id) if action=="cancel" else service.retry(task_id)
+    task=service.cancel(task_id) if action=="cancel" else service.retry(task_id, timeout_s=timeout_s)
     return {"status":"ok" if task else "not_found","task":compact_task_ref(task),"action":action}
 
 

@@ -2119,8 +2119,8 @@
     },
     {
       "case_id": "surface.control_task",
-      "version": 1,
-      "oracle_version": 1,
+      "version": 2,
+      "oracle_version": 2,
       "capabilities": [
         "mcp.control_task"
       ],
@@ -2134,10 +2134,11 @@
       ],
       "executor": "surface",
       "entry": "control_task",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='后台任务返回的固定ID。'))])], ctx=Load()), ctx=Load())), arg(arg='action', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='cancel'), Constant(value='resume')], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='后台任务返回的固定ID。'))])], ctx=Load()), ctx=Load())), arg(arg='action', annotation=Subscript(value=Name(id='Literal', ctx=Load()), slice=Tuple(elts=[Constant(value='cancel'), Constant(value='resume')], ctx=Load()), ctx=Load())), arg(arg='timeout_s', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[BinOp(left=Name(id='float', ctx=Load()), op=BitOr(), right=Constant(value=None)), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=3600)), keyword(arg='description', value=Constant(value='仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。'))])], ctx=Load()), ctx=Load()))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=None)])",
       "layer": "contract",
       "auto": true,
-      "success": "实际注册与函数入口存在；业务合同另由knowledge.agent_delivery验证。"
+      "success": "实际注册与函数入口存在；业务合同另由knowledge.agent_delivery验证。",
+      "change_reason": "2026-11-12: expose explicit resume timeout; cancellation rejects timeout without side effects."
     },
     {
       "case_id": "runtime.product_form",

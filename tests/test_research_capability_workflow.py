@@ -125,3 +125,20 @@ def test_native_asr_failure_retains_stage_metrics_without_publishing_text(tmp_pa
     assert progress['model_load_s'] >= 0 and progress['transcription_s'] >= 0
     assert 'text' not in progress
     assert compact_task_ref(store.get_task(task['task_id']))['media_progress'] == progress
+
+
+def test_resume_can_explicitly_increase_budget_without_replaying_cancel(monkeypatch):
+    from types import SimpleNamespace
+    from runtime import composition, task_service
+    calls = []
+    def retry(task_id, *, timeout_s=None):
+        calls.append((task_id,timeout_s))
+        return {'task_id':'new-attempt','status':'queued','metadata':{}}
+    def cancel(task_id):
+        raise AssertionError('invalid cancellation must not execute')
+    monkeypatch.setattr(task_service,'TaskService',lambda:SimpleNamespace(retry=retry,cancel=cancel))
+    result = composition.control_task('durable-old','resume',timeout_s=900)
+    assert result['task']['task_id'] == 'new-attempt'
+    assert calls == [('durable-old',900)]
+    with pytest.raises(ValueError,match='only_valid_for_resume'):
+        composition.control_task('durable-old','cancel',timeout_s=900)
