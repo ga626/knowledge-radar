@@ -42,6 +42,13 @@ class Authorize(Contract):
     project_id: str = Field(min_length=1,max_length=200)
 
 
+class AttachEvidence(Contract):
+    action: Literal['attach_evidence']
+    project_id: str = Field(min_length=1,max_length=200)
+    task_id: str = Field(min_length=1,max_length=96)
+    version_ids: list[str] = Field(min_length=1,max_length=100)
+
+
 class Revoke(Contract):
     action: Literal["revoke_destination"]
     grant_id: str = Field(pattern=r"^[a-f0-9]{32}$")
@@ -66,7 +73,7 @@ class Reindex(Contract):
     action: Literal["upgrade_index"]
 
 
-ArtifactRequest = Annotated[RegisterReport | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | OrphanReportScan | ArchiveAudit | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
+ArtifactRequest = Annotated[RegisterReport | AttachEvidence | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | OrphanReportScan | ArchiveAudit | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
 
 
 def identity(path):
@@ -343,6 +350,17 @@ class DeliveryStore:
 def execute(request, store=None):
     store=store or DeliveryStore()
     archive=ResearchArchive(store)
+    if isinstance(request,AttachEvidence):
+        from runtime.research_workspace import ResearchRecords
+        task = ResearchRecords().snapshot(request.task_id)
+        if canonical_project_id(task.get('project_id','')) != request.project_id:
+            raise ValueError('research_project_mismatch_use_new_task')
+        # 同一事务核对全部版本、撤回及原字节；不重抽、不继承语义评审。
+        store.assets.reference_many(request.version_ids,request.task_id,
+            project_id=request.project_id,task_id=request.task_id)
+        return {'status':'attached','task_id':request.task_id,'version_ids':list(dict.fromkeys(request.version_ids)),
+                'content_reprocessed':False,'semantic_review_inherited':False,
+                'archive':archive.run(request.task_id) if archive._context(request.task_id) else archive.status(request.task_id)}
     if isinstance(request,(PlanArchiveLayout,ApplyArchiveLayout)):
         from runtime.archive_layout import plan, apply
         return apply(archive,request) if isinstance(request,ApplyArchiveLayout) else plan(archive,request)

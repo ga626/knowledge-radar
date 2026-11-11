@@ -228,6 +228,8 @@ def compact_task_ref(task: Optional[Dict[str, Any]], *, now: float | None = None
         compact['poll_after_seconds']=max(1,math.ceil(float(metadata.get('not_before',ts))-ts))
         compact['recommended_next_action']='wait_for_automatic_bounded_probe_or_cancel'
     timing = _compact_timing(metadata)
+    if metadata.get('media_progress'):
+        compact['media_progress'] = metadata['media_progress']
     if timing:
         compact["timing"] = timing
     fanin = _compact_fanin(metadata)

@@ -36,6 +36,28 @@ def check_execution():
         raise ExecutionStopped('execution_superseded_or_cancelled')
 
 
+def record_execution_progress(stage, **metrics):
+    """事件驱动的有界诊断；与原任务同库，旧执行及终态不可回写。"""
+    current = current_execution()
+    if current is None:
+        return
+    store, task_id = current['store'], current['KR_DURABLE_TASK_ID']
+    row = store.get_task(task_id) or {}
+    meta = row.get('metadata') or {}
+    if (row.get('status') != 'running' or meta.get('attempt_id') != current['attempt_id']
+            or meta.get('execution_id') != current['execution_id']):
+        return
+    allowed = {'model_load_s','model_cache_hit','audio_decode_s','transcription_s','worker_total_s',
+               'completed_chunks','resumed_chunks','processed_audio_s','download_s','resource_wait_s'}
+    values = {k:v for k,v in metrics.items() if k in allowed and isinstance(v,(int,float)) and v >= 0}
+    prior = meta.get('media_progress') or {}
+    progress = {**prior, **values, 'stage': str(stage)[:80], 'observed_at': time.time()}
+    if prior.get('stage') != stage:
+        progress['stage_started_at'] = time.time()
+    store._mark(task_id, 'running', metadata={'attempt_id':current['attempt_id'],
+        'execution_id':current['execution_id'], 'media_progress':progress}, expected_updated_at=row['updated_at'])
+
+
 @contextmanager
 def execution_scope(values):
     token = _CURRENT.set(values)

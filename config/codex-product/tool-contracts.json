@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "3927520d66818f99d58e4f94ac64dbf63f5d02d87bdb5d0789630da3c4b27a11",
+  "contract_hash": "292f9ef82172dfc6591a285f017c13fa7f5cb2a6dc820fe7b1a3183fa8f7d70b",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -2346,7 +2346,7 @@
           },
           "deadline_s": {
             "default": 600,
-            "description": "增强任务总deadline秒数，含排队；到期停止自有worker。",
+            "description": "增强任务总期限秒数，含排队；长视频可能超过180秒。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。",
             "maximum": 3600,
             "minimum": 1,
             "title": "Deadline S",
@@ -4600,6 +4600,45 @@
             "title": "ArchiveTask",
             "type": "object"
           },
+          "AttachEvidence": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "attach_evidence",
+                "title": "Action",
+                "type": "string"
+              },
+              "project_id": {
+                "maxLength": 200,
+                "minLength": 1,
+                "title": "Project Id",
+                "type": "string"
+              },
+              "task_id": {
+                "maxLength": 96,
+                "minLength": 1,
+                "title": "Task Id",
+                "type": "string"
+              },
+              "version_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "Version Ids",
+                "type": "array"
+              }
+            },
+            "required": [
+              "action",
+              "project_id",
+              "task_id",
+              "version_ids"
+            ],
+            "title": "AttachEvidence",
+            "type": "object"
+          },
           "Authorize": {
             "additionalProperties": false,
             "properties": {
@@ -5160,6 +5199,7 @@
                 "archive_audit": "#/$defs/ArchiveAudit",
                 "archive_status": "#/$defs/ArchiveStatus",
                 "archive_task": "#/$defs/ArchiveTask",
+                "attach_evidence": "#/$defs/AttachEvidence",
                 "authorize_destination": "#/$defs/Authorize",
                 "bind_context": "#/$defs/BindContext",
                 "deliver": "#/$defs/Deliver",
@@ -5180,6 +5220,9 @@
             "oneOf": [
               {
                 "$ref": "#/$defs/RegisterReport"
+              },
+              {
+                "$ref": "#/$defs/AttachEvidence"
               },
               {
                 "$ref": "#/$defs/Authorize"
@@ -6927,7 +6970,7 @@
           },
           "host_batch_id": {
             "default": "",
-            "description": "宿主搜索交回：先用 update_research(request={action:host_request,task_id:研究ID,text:查询}) 登记批次，再提供批次ID；tool填真实宿主工具，candidates保留host_reference。宿主声明不冒充原生工具回执。",
+            "description": "可选既有宿主批次ID；无须搜索前登记。宿主工具交回时可留空并提供实际query，candidates保留真实host_reference。宿主声明不冒充KR原生取证。",
             "title": "Host Batch Id",
             "type": "string"
           },
@@ -6957,7 +7000,7 @@
           },
           "query": {
             "default": "",
-            "description": "本次实际查询；只即时计算 HMAC 指纹，绝不写入账本。",
+            "description": "本次实际查询。普通候选仅存HMAC指纹；宿主结果无预登记批次时必填，显式批次保存该查询和公开引用。勿传凭据或个人敏感信息。",
             "title": "Query",
             "type": "string"
           },

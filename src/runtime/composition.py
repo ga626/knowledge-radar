@@ -932,10 +932,10 @@ _HOST_INTERNAL_WEB_WAVE = {
     "strategy_tree": "web_search.provider_wave",
     "source_ecology": "generic_web_ecology",
     "candidate_provider_ids": ["codex_builtin_web_search", "codex_builtin_web_fetch"],
-    "admission": "requires_kr_research_route_plan_first",
+    "admission": "agent_selected_no_prior_route_required",
     "status": "host_agent_invoked",
-    "relationship_to_kr": "finger_of_kr_hand; not an independent fallback path",
-    "usage_rule": "If the Agent uses built-in web/search, it must treat each call as execution of this KR-authorized wave and record the wave_id in trace/evidence.",
+    "relationship_to_kr": "host discovery complements KR acquisition and fixed evidence",
+    "usage_rule": "The Agent may search directly, then optionally return selected results with real host references; no KR pre-registration is needed.",
     "evidence_record_fields": ["wave_id", "strategy_tree", "source_ecology", "relationship_to_kr", "reason"],
 }
 
@@ -1115,7 +1115,7 @@ def _research_route_plan(
             "Use this as a perception entry, not as a fixed script.",
             "source_ecology_hints and relevance signals only prioritize optional first-wave candidates; they never exclude another ecology from model consideration.",
             "Search results are candidate evidence until detail extraction or cross-source validation.",
-            "Built-in web/search is not a parallel bypass. Use it only after this KR route plan as host_internal_web_wave and record wave_id plus relationship_to_kr.",
+            "Official host search may start directly without this route plan. Use KR for special acquisition, durable execution and fixed evidence when useful.",
             "Do not treat shell import server.py as natural MCP tool use in user-facing research tasks.",
         ],
     }
@@ -1290,7 +1290,7 @@ def kr_research(
         },
         "first_wave": [],
         "fallback_policy": {
-            "builtin_web": "Allowed only as host_internal_web_wave after KR route admission; record wave_id and relationship_to_kr in reports.",
+            "builtin_web": "Agent-selected host search needs no prior KR admission. Results may be returned after search with actual references; do not claim KR executed the host search.",
             "server_import": "Use only for local development/tests; user-facing research should prefer MCP tool calls.",
         },
     }
@@ -1319,17 +1319,17 @@ def record_research_candidates_tool(
     source_ecology: Annotated[str, Field(description="候选来自的来源生态。")],
     tool: Annotated[str, Field(description="本次发现候选所用工具。")],
     candidates: Annotated[List[Dict], Field(description="本次已获得的候选对象。普通登记保存不可逆候选ID；宿主批次另保留公开URL、标题与真实host_reference，供后续正文获取；不保存凭据。")],
-    query: Annotated[str, Field(description="本次实际查询；只即时计算 HMAC 指纹，绝不写入账本。")]= "",
+    query: Annotated[str, Field(description="本次实际查询。普通候选仅存HMAC指纹；宿主结果无预登记批次时必填，显式批次保存该查询和公开引用。勿传凭据或个人敏感信息。")]= "",
     language: Annotated[str, Field(description="本次查询语言标签，例如 zh、en 或 mixed。")]= "",
     intent_label: Annotated[str, Field(description="查询意图标签，例如 implementation、counterexample、user_experience。")]= "",
     receipt_id: Annotated[str, Field(description="刚完成的显式 research_task_id 工具调用返回的 research_receipt.receipt_id；缺失时仅记录为未核验候选。")]= "",
-    host_batch_id: Annotated[str, Field(description="宿主搜索交回：先用 update_research(request={action:host_request,task_id:研究ID,text:查询}) 登记批次，再提供批次ID；tool填真实宿主工具，candidates保留host_reference。宿主声明不冒充原生工具回执。")]= "",
+    host_batch_id: Annotated[str, Field(description="可选既有宿主批次ID；无须搜索前登记。宿主工具交回时可留空并提供实际query，candidates保留真实host_reference。宿主声明不冒充KR原生取证。")]= "",
     host_outcome: Annotated[Literal['', 'results', 'no_results', 'unavailable'], Field(description="宿主结果语义。非空候选默认results；空候选必须显式no_results（已确认零命中）或unavailable（工具没有可用载荷/故障），后者不会记作搜索成功。")]= '',
 ) -> Dict:
     """把 Agent 已决定执行的低层发现纳入同一候选池；不指定后续工具或轮次。"""
-    if host_batch_id:
+    if host_batch_id or tool in {'web.run','codex_web_search','codex_builtin_web_search','mcp__codex_apps__search_service_web_run'}:
         from runtime.host_search_handoff import submit
-        return submit(research_task_id, host_batch_id, candidates, host_tool=tool, host_outcome=host_outcome)
+        return submit(research_task_id, host_batch_id, candidates, host_tool=tool, host_outcome=host_outcome, query=query)
     if host_outcome:
         raise ValueError('host_outcome_requires_registered_host_batch')
     return record_research_candidates(
@@ -2801,7 +2801,7 @@ def get_content_detail(
     include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
     include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
     language: Annotated[str | None, Field(description="本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。")] = None,
-    deadline_s: Annotated[float, Field(description="增强任务总deadline秒数，含排队；到期停止自有worker。", ge=1, le=3600)] = 600,
+    deadline_s: Annotated[float, Field(description="增强任务总期限秒数，含排队；长视频可能超过180秒。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。", ge=1, le=3600)] = 600,
     academic_reference: Annotated[str, Field(description="search_academic返回的fulltext_ref.version_id。提供时按固定文献卡提交独立学术全文任务，url须与该卡片一致；用get_task_status和read_knowledge读取结果。", pattern='^(?:[a-f0-9]{64})?$')] = '',
     academic_refresh: Annotated[bool, Field(description="学术全文显式要求重新核验来源；默认允许复用一天内同文献卡、同处理版本的固定证据，并说明未重新联网核验。")]=False,
     github: Annotated[GitHubReadOptions | None, Field(description="GitHub对象范围；普通URL可不填。主页默认目录概览，kind=readme读说明，file/tree配path；非默认分支URL用ref消歧。评论默认每流一页，按next_page续读。异步任务沿固定commit和已完成页恢复。")]=None,

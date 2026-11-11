@@ -1,6 +1,13 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-11-11",
+  "updated_at": "2026-11-12",
+  "research_capability_contract": {
+    "ownership": "Codex owns research framing, source selection, sufficiency and recommendations. Official host search requires no KR route admission; KR supplies special acquisition, durable execution and fixed evidence.",
+    "skill": "The capability entry is concise; recruitment, customer evidence and media references are loaded on demand, not mandatory forms or platform quotas.",
+    "handoff": "Host results may be submitted after search with real references and an explicit query. Empty payload, zero matches and declared provenance stay distinct; validation and idempotency precede projection.",
+    "failure": "Event-driven media observations use existing attempt-guarded task metadata. Terminal task reads settle pending enhancement projections without rewriting fixed artifacts or publishing incomplete transcripts.",
+    "reuse": "Fixed evidence is attached to an explicit existing task and stable project identity; reading does not silently grant task scope. Reviews and historical failures remain intact."
+  },
   "runtime_lifecycle_contract": {
     "transport": "MCP initialization and tools/list never start the kernel; unavailable execution is an explicit not_started error.",
     "management": "The existing OS user-session supervisor owns the kernel independently of console pages, retaining process handles, exit codes and generations. Recovery is bounded and never replays requests.",

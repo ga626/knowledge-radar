@@ -489,6 +489,17 @@ class TaskService:
         if continuation:
             return {**self.result(continuation, _visited=visited), "resumed_from": task_id}
         response = {"task": compact_task_ref(task), "status": task["status"]}
+        progress = (task.get('metadata') or {}).get('media_progress')
+        if progress:
+            endpoint = task.get('finished_at') or time.time()
+            response['media_progress'] = {**progress,
+                'stage_elapsed_s': round(max(0, endpoint - progress.get('stage_started_at', endpoint)),3),
+                'timing_basis':'last_worker_observation_and_task_clock',
+                'partial_transcript_published':False}
+        if task['status'] in {'failed','cancelled','interrupted'}:
+            response['automatic_retry'] = False
+            response['next_action'] = ('Inspect last stage and deadline; explicitly retry with an adequate budget if useful. '
+                                       'A stopped enhancement is not still queued; collected material remains readable.')
         if task['status'] == 'failed' and task.get('error_code') in {
             'document_password_required', 'document_password_incorrect', 'document_corrupt'}:
             from runtime.pdf_text import DocumentError
@@ -530,6 +541,19 @@ class TaskService:
                 or response["result"].get("enhancement_status") in {"queued", "partial"}
                 or bool(response['result'].get('evidence_storage_gaps'))
                 or (response['result'].get('content_coverage') or {}).get('request_satisfied') is False)
+            if task['status'] in {'failed','cancelled','interrupted'}:
+                # 只投影终态，不改写固定产物或把简介升为转写。
+                import copy
+                response['result'] = copy.deepcopy(response['result'])
+                value = response['result']
+                if value.get('enhancement_status') in {'queued','pending','running'}:
+                    value.update(enhancement_status=task['status'], _enhancement_pending=False,
+                                 enhancement_error_code=task.get('error_code') or task['status'])
+                coverage = value.get('content_coverage') or {}
+                for part in (coverage.get('parts') or {}).values():
+                    if isinstance(part,dict) and part.get('status') in {'queued','pending','running'}:
+                        part.update(status=task['status'], missing_reason=task.get('error_code') or task['status'])
+                        coverage['request_satisfied'] = False
         recording = (task.get("metadata") or {}).get("research_recording") or {}
         if self._recording_matches(task, recording) and recording.get('handoff_version') == 1:
             response["research_receipt"] = recording["response"]
