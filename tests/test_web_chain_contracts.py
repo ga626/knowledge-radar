@@ -435,6 +435,25 @@ def test_host_handoff_is_fixed_idempotent_and_declared(monkeypatch,tmp_path):
         submit('task-a',batch['batch_id'],[{'title':'changed','url':'https://example.com/other', 'host_reference':'other-reference'}],host_tool='web.run',index=index)
 
 
+def test_official_search_connector_preserves_real_tool_identity(monkeypatch,tmp_path):
+    from runtime.host_search_handoff import register, submit
+    from runtime.research_index import ResearchIndex
+    monkeypatch.setattr('runtime.research_ledger.read_task',lambda **kw:{'status':'open'})
+    index=ResearchIndex(tmp_path/'index')
+    batch=register('task-official','official search',index=index)
+    tool='mcp__codex_apps__search_service_web_run'
+    rows=[{'title':'Official','url':'https://example.com/docs','host_reference':'actual-search-reference'}]
+    first=submit('task-official',batch['batch_id'],rows,host_tool=tool,index=index)
+    assert first==submit('task-official',batch['batch_id'],rows,host_tool=tool,index=index)
+    saved=index.read('task-official',view='host_batches')['items'][0]
+    assert saved['host_tool']==tool
+    assert saved['verification']=='host_declared_not_native_verified'
+    assert saved['candidates'][0]['host_reference']=='actual-search-reference'
+    assert len(index.read('task-official')['items'])==1
+    with pytest.raises(ValueError,match='known_host_tool'):
+        submit('task-official',batch['batch_id'],rows,host_tool='arbitrary_web_run',index=index)
+
+
 def test_host_empty_payload_is_not_zero_matches(monkeypatch,tmp_path):
     from runtime.host_search_handoff import register, submit
     from runtime.research_index import ResearchIndex

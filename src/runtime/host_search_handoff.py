@@ -32,7 +32,10 @@ def submit(task_id, batch_id, items, *, host_tool, host_outcome='', index=None):
     import json
     from kr_core.source_urls import public_evidence_payload
     from generic_web.url_policy import public_addresses
-    if not batch_id or host_tool not in {'web.run','codex_web_search','codex_builtin_web_search'}:
+    if not batch_id or host_tool not in {
+        'web.run', 'codex_web_search', 'codex_builtin_web_search',
+        'mcp__codex_apps__search_service_web_run',
+    }:
         raise ValueError('registered_host_batch_and_known_host_tool_required')
     if not isinstance(items, list) or len(items) > 50:
         raise ValueError('host_candidates_must_be_a_list_of_up_to_50')
