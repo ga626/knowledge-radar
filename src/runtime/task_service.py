@@ -399,6 +399,7 @@ class TaskService:
     def _monitor(self, job, folder, execution_input, stage="collection"):
         task_id = job["task_id"]
         deadline = job["submitted_at"] + job["timeout_s"]
+        writer = {"attempt_id": job['attempt_id'], "execution_id": uuid.uuid4().hex}
         try:
             if time.time() >= deadline:
                 self.store.mark_failed(task_id, "deadline expired in queue", error_code="deadline_exceeded")
@@ -419,11 +420,18 @@ class TaskService:
             watcher.start()
             try:
                 from runtime.task_process import execute_job
-                execute_job(folder / 'input.json', execution_input=execution_input, stage=stage)
+                execute_job(folder / 'input.json', execution_input=execution_input, stage=stage,
+                            execution_id=writer['execution_id'])
             finally:
                 stop.set()
                 watcher.join(timeout=2)
             current = self.store.get_task(task_id) or {}
+            metadata = current.get('metadata') or {}
+            # 冷却可在旧monitor收尾前被下一轮接走；不能把后继执行标为中断。
+            if metadata.get('execution_id') != writer['execution_id']:
+                return
+            if current.get('status') == 'queued' and metadata.get('phase') == 'cooldown_probe_queued':
+                return
             if stage == "collection" and current.get("status") == "queued" and (current.get("metadata") or {}).get("phase") == "enhancement_queued":
                 partial = self.result(task_id)
                 if partial.get("status") in {"artifact_missing", "artifact_corrupt"}:
@@ -439,7 +447,8 @@ class TaskService:
                 self._queue_enhancement(job, folder, execution_input, stage)
                 return
             if current.get("status") not in {*TERMINAL_STATUSES, "waiting_for_user", "waiting_cooldown"}:
-                self.store.mark_interrupted(task_id, "worker_exited_without_committed_result", metadata={"executor": "inprocess"})
+                self.store.mark_interrupted(task_id, "worker_exited_without_committed_result",
+                                            metadata={**writer, "executor": "inprocess"})
         except Exception as exc:
             self.store.mark_failed(task_id, type(exc).__name__, error_code="worker_launch_error")
         finally:
