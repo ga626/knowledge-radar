@@ -1188,8 +1188,8 @@
     },
     {
       "case_id": "flow.search_to_detail",
-      "version": 6,
-      "oracle_version": 6,
+      "version": 7,
+      "oracle_version": 7,
       "capabilities": [
         "flow.search_detail"
       ],
@@ -1201,7 +1201,8 @@
         "tests/test_cloud_ocr.py",
         "tests/test_academic_handoff.py",
         "tests/test_academic_provider_profiles.py",
-        "tests/test_chinese_open_access_providers.py"
+        "tests/test_chinese_open_access_providers.py",
+        "tests/test_jobposting_metadata.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1256,10 +1257,12 @@
         "src/academic_providers/profile.py",
         "src/academic_providers/openalex.py",
         "tests/test_academic_provider_profiles.py",
-        "tests/test_chinese_open_access_providers.py"
+        "tests/test_chinese_open_access_providers.py",
+        "src/collectors/platform/jobposting.py",
+        "tests/test_jobposting_metadata.py"
       ],
-      "success": "搜索配置代际/撤销、可选来源、约束与重复上游、缓存预算、获取一次/多解析、浏览器隔离取消、PDF覆盖及宿主批次幂等；网络夹具不证明外部来源可用。",
-      "change_reason": "学术方案B：固定文献卡、独立全文、慢发现后台化、版本/溯源回读、跨研究复用、授权导入及复杂页缺口。夹具不代表真实站点通过。 2026-11-09补逐源权限/诊断/题名与配置声明回归，不把目录PASS当逐篇权益。"
+      "success": "搜索配置代际/撤销、可选来源、约束与重复上游、缓存预算、获取一次/多解析、浏览器隔离取消、PDF覆盖及宿主批次幂等；网络夹具不证明外部来源可用。 岗位字段保真：目标URL实体、页头字段、推荐卡独立出处、派生去重留原文；验证壳不算正文。 仅离线回归，不证明正式安装或真实平台已恢复。",
+      "change_reason": "学术方案B：固定文献卡、独立全文、慢发现后台化、版本/溯源回读、跨研究复用、授权导入及复杂页缺口。夹具不代表真实站点通过。 2026-11-09补逐源权限/诊断/题名与配置声明回归，不把目录PASS当逐篇权益。 2026-11-12招聘短诊断回归：岗位字段保真：目标URL实体、页头字段、推荐卡独立出处、派生去重留原文；验证壳不算正文。"
     },
     {
       "case_id": "account.route_order",
@@ -1509,8 +1512,8 @@
     },
     {
       "case_id": "task.durable",
-      "version": 10,
-      "oracle_version": 10,
+      "version": 11,
+      "oracle_version": 11,
       "capabilities": [
         "task.lifecycle"
       ],
@@ -1539,7 +1542,8 @@
         "tests/test_health_agent_summary.py",
         "tests/test_task_cooldown.py",
         "tests/test_platform_risk.py",
-        "tests/test_hardening_regressions.py"
+        "tests/test_hardening_regressions.py",
+        "tests/test_recruitment_diagnostic_regressions.py"
       ],
       "layer": "integration",
       "auto": true,
@@ -1619,10 +1623,12 @@
         "tests/test_hardening_regressions.py",
         "src/runtime/pdf_text.py",
         "src/runtime/pdf_worker.py",
-        "src/runtime/recruitment_governance.py"
+        "src/runtime/recruitment_governance.py",
+        "tests/test_recruitment_diagnostic_regressions.py",
+        "scripts/product_console_launcher.py"
       ],
-      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。 风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。",
-      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。"
+      "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。 风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。 招聘交接：监督者Host路径与预览隔离、明确冷却不转人工、明确人工不后台重探、终态投影不残留等待。 仅离线回归，不证明正式安装或真实平台已恢复。",
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。 2026-11-12招聘短诊断回归：招聘交接：监督者Host路径与预览隔离、明确冷却不转人工、明确人工不后台重探、终态投影不残留等待。"
     },
     {
       "case_id": "account.facts",
