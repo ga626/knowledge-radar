@@ -120,6 +120,68 @@ def test_repeated_risk_stops_after_three_automatic_probes(service,monkeypatch):
     assert len(calls)==4
 
 
+@pytest.mark.parametrize('successor_state', ['queued', 'running'])
+def test_old_monitor_cannot_interrupt_next_cooldown_probe(service, monkeypatch, successor_state):
+    import threading
+    from runtime import composition, task_process
+
+    first_committed = threading.Event()
+    release_first = threading.Event()
+    successor_entered = threading.Event()
+    release_successor = threading.Event()
+    first_monitor_finished = threading.Event()
+    calls = []
+    executions = []
+    original_execute = task_process.execute_job
+    original_monitor = service._monitor
+
+    def business(payload):
+        calls.append(payload)
+        if len(calls) == 1:
+            return {'failure_type': 'rate_limited', 'retry_after_s': 60}
+        if successor_state == 'running':
+            successor_entered.set()
+            assert release_successor.wait(5)
+        return {'status': 'ok', 'content': '恢复成功'}
+
+    def execute(*args, **kwargs):
+        executions.append(True)
+        first = len(executions) == 1
+        if not first and successor_state == 'queued':
+            successor_entered.set()
+            assert release_successor.wait(5)
+        result = original_execute(*args, **kwargs)
+        if first:
+            first_committed.set()
+            assert release_first.wait(5)
+        return result
+
+    def monitor(job, *args, **kwargs):
+        try:
+            return original_monitor(job, *args, **kwargs)
+        finally:
+            if not job.get('cooldown_probe_lease_id'):
+                first_monitor_finished.set()
+
+    monkeypatch.setattr(composition, 'execute_research_query', business)
+    monkeypatch.setattr(task_process, 'execute_job', execute)
+    monkeypatch.setattr(service, '_monitor', monitor)
+    row = service.submit('research_query', {'query': 'monitor handoff'}, timeout_s=300)
+    try:
+        assert first_committed.wait(5)
+        service.store._mark(row['task_id'], 'waiting_cooldown', metadata={'not_before': time.time()-1})
+        service._advance_cooldown(row['task_id'])
+        assert successor_entered.wait(5)
+        release_first.set()
+        assert first_monitor_finished.wait(5)
+        assert service.store.get_task(row['task_id'])['status'] == successor_state
+    finally:
+        release_first.set()
+        release_successor.set()
+    assert settled(service, row['task_id'])['status'] == 'completed'
+    assert len(calls) == 2 and service.store.get_task(row['task_id'])['metadata']['cooldown_attempts'] == 1
+
+
 def test_discovery_wait_persists_initial_risk_without_immediate_replay(service,monkeypatch):
     from runtime import composition
     monkeypatch.setattr(composition, 'TaskService', lambda: service, raising=False)

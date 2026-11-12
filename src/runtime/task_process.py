@@ -12,7 +12,7 @@ from runtime.tasks import TaskStore, TERMINAL_STATUSES
 from runtime.process_identity import process_identity
 
 
-def execute_job(input_path, *, execution_input=None, stage="collection"):
+def execute_job(input_path, *, execution_input=None, stage="collection", execution_id=None):
     folder = input_path.resolve().parent
     job = json.loads(input_path.read_text(encoding="utf-8"))
     job['payload'] = json.loads(execution_input) if execution_input is not None else job['payload']
@@ -22,7 +22,7 @@ def execute_job(input_path, *, execution_input=None, stage="collection"):
         job['payload'] = job['payload']['request']
     store = TaskStore(job["db_path"])
     task_id = job["task_id"]
-    writer = {"attempt_id": job["attempt_id"], "execution_id": uuid.uuid4().hex}
+    writer = {"attempt_id": job["attempt_id"], "execution_id": execution_id or uuid.uuid4().hex}
     if not store.claim_queued(task_id, {**writer, "worker_pid": os.getpid(), "worker_identity": process_identity(), "phase": "worker_start", "stage": stage}):
         return
     stop = threading.Event()
