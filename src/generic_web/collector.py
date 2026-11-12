@@ -83,6 +83,9 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
             _remaining(request)
             response = parse(request, artifact=artifact)
             _observe_extraction(response)
+            if 'html' in artifact[1].lower():
+                from collectors.platform.jobposting import enrich_job_response
+                response = enrich_job_response(response, html=artifact[0].text, url=str(artifact[0].url))
             _remaining(request)
             response.metadata.update(acquisition={'fetch_count': artifact[0].extensions.get('acquisition_fetch_count',1),
                 'cache':artifact[0].extensions.get('acquisition_cache','miss'), 'bytes': len(artifact[0].content),
@@ -240,6 +243,9 @@ def _check_page_body(soup, *, collector, status_code):
     observation = body_observation({'title': soup.title.get_text(' ', strip=True) if soup.title else '',
                                     'content': body.get_text(' ', strip=True)})
     reason = observation['missing_reason']
+    page_title = soup.title.get_text(' ', strip=True) if soup.title else ''
+    if re.search(r'^security\s+verification$', page_title, re.I) and soup.select_one('script[src*="captcha" i]'):
+        reason = 'anti_bot_or_blocked'
     article = soup.select_one('article,main')
     if reason and article and article.get_text(' ',strip=True):
         # 旁栏的JS/登录提示不应截断已经存在的正文；强挑战标题仍会被拒绝。
@@ -400,6 +406,8 @@ def collect_rendered_html(
             strategy=strategy,
         )
         _observe_extraction(response)
+        from collectors.platform.jobposting import enrich_job_response
+        response = enrich_job_response(response, html=html, url=final_url or request.url)
         if render_metadata:
             response.metadata.update({"render": dict(render_metadata)})
         return response

@@ -478,6 +478,16 @@ def _promote_manual_interaction_result(
     error = result.get("error")
     if not isinstance(error, dict):
         return result
+    # 站点明确允许冷却的风控不升级为人工登录；旧类型名本身不推翻站点判断。
+    from runtime.task_cooldown import cooldown_plan
+    if error.get("manual_action_required") is False and cooldown_plan(result, operation="platform_discovery"):
+        admission = {**classify_admission_state(error), "status_class": "RETRY_LATER",
+                     "manual_action_required": False, "retryable": True}
+        return {**result, "manual_action_required": False, "resume_policy": "bounded_read_only_probe",
+                "error": {**error, "manual_action_required": False, "status_class": "RETRY_LATER",
+                          "admission_state": admission},
+                "metadata": {**(result.get("metadata") or {}), "status_class": "RETRY_LATER",
+                             "admission_state": admission}}
     admission = classify_admission_state(error)
     if admission.get("status_class") != "NEEDS_INTERACTION":
         return result
@@ -1770,7 +1780,7 @@ def _persist_discovery_cooldown(result, *, tool, platform, arguments):
     task = service.submit('platform_discovery', {'tool': tool, 'platform': platform,
         'arguments': arguments, 'initial_result': result}, timeout_s=600,
         scope={'research_task_id': arguments.get('research_task_id', '')})
-    return {**result, 'accepted': True, 'task_id': task['task_id'], 'task': compact_task_ref(task),
+    return {**result, 'status': task['status'], 'accepted': True, 'task_id': task['task_id'], 'task': compact_task_ref(task),
             'result_tool': 'get_task_status', 'resume_policy': 'bounded_read_only_probe',
             'manual_action_required': False}
 

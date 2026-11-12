@@ -110,6 +110,8 @@ class NativeSite:
                         'at': time.time(), 'retry_at': max(time.time()+60, float(current.get('retry_at') or 0))})
             result = self.failure('outcome_latched' if uncertain else code,
                 request_executed=response.get('request_executed', False))
+            if isinstance(response.get('browser_readiness'), dict):
+                result['browser_readiness'] = response['browser_readiness']
             result['metadata']['transport_failure'] = code
             return result
         response.setdefault('metadata', {}).update(transport=self.transport_name(), ownership='borrowed',

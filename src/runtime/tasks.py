@@ -233,6 +233,11 @@ def compact_task_ref(task: Optional[Dict[str, Any]], *, now: float | None = None
     if timing:
         compact["timing"] = timing
     fanin = _compact_fanin(metadata)
+    if status in TERMINAL_STATUSES and fanin.get('phase') in {
+        'waiting_for_user', 'waiting_cooldown', 'waiting_resource', 'cooldown_probe_queued', 'queued',
+    }:
+        # 历史元数据不重写；公开投影不能把已终结任务继续描述成等待。
+        fanin['phase'] = status
     if fanin:
         compact["fanin"] = fanin
     if compact["result"].get("available") and not compact.setdefault("fanin", {}).get("result_ref"):
