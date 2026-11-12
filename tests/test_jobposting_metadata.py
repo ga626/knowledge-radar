@@ -1,5 +1,6 @@
 """公开职位正文必须保留字段出处，不能串入相似岗位工资。"""
 import json
+import socket
 
 import httpx
 import pytest
@@ -26,6 +27,11 @@ def extract(monkeypatch, html, *, rendered=False):
     if rendered:
         return collect_rendered_html(GenericWebRequest(URL, use_jina=False), html=html)
     from generic_web import collector, acquisition
+    # 网页与 DNS 都来自夹具；仍经过真实 URL/公网地址校验，不访问外网。
+    def resolve_fixture(host, port, **kwargs):
+        assert host == "www.zhaopin.com" and port == 443
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", port))]
+    monkeypatch.setattr(socket, "getaddrinfo", resolve_fixture)
     acquisition._PARSED.clear()
     acquisition._RESPONSES.clear()
     raw = httpx.Response(200, text=html, headers={"content-type": "text/html"}, request=httpx.Request("GET", URL))
