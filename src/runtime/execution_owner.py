@@ -513,6 +513,24 @@ class OwnerSupervisor:
         self.record('owner_observed', pid=self.child.pid,
                     launcher_pid=self.launcher.pid if self.launcher else self.child.pid)
 
+    def _observe_child_exit(self, code, now):
+        from runtime.runtime_control import classify_failure
+        intentional = (code == 0 and
+            _read_json(self.client.root/'stop.json').get('generation') == self.generation)
+        self.record('owner_exited', pid=self.child.pid, exit_code=code,
+                    reason='explicit_stop' if intentional else 'unexpected_exit')
+        if hasattr(self.child, 'close'):
+            self.child.close()
+        if self.launcher:
+            self.launcher.poll()
+            self.launcher = None
+        self.child = None
+        if intentional:
+            self.state = 'stopped'
+            self.record('stopped')
+        else:
+            self._failed(now, classify_failure(stage='running', exit_code=code))
+
     def tick(self, *, now=None):
         from runtime.runtime_control import classify_failure, read_record, recovery_receipt, update_recovery, _maintenance
         now = time.monotonic() if now is None else now
@@ -522,6 +540,11 @@ class OwnerSupervisor:
                 self.record('active_installation_changed')
             return
         if _maintenance(self.client):
+            # 维护阻止启动与恢复，但必须确认已退出的自有内核，才能完成安装交接。
+            if self.child is not None:
+                code = self.child.poll()
+                if code is not None:
+                    self._observe_child_exit(code, now)
             return
         # 各入口共同串行化消费和进度发布；启动本身在锁外。
         with file_write_lock(self.client.root/'recovery-control'):
@@ -584,21 +607,7 @@ class OwnerSupervisor:
                         self._finish_recovery('unknown')
                         self.record('startup_deadline_exceeded')
                 return
-            intentional = (code == 0 and
-                _read_json(self.client.root/'stop.json').get('generation') == self.generation)
-            self.record('owner_exited', pid=self.child.pid, exit_code=code,
-                        reason='explicit_stop' if intentional else 'unexpected_exit')
-            if hasattr(self.child, 'close'):
-                self.child.close()
-            if self.launcher:
-                self.launcher.poll()
-                self.launcher = None
-            self.child = None
-            if intentional:
-                self.state = 'stopped'
-                self.record('stopped')
-            else:
-                self._failed(now, classify_failure(stage='running', exit_code=code))
+            self._observe_child_exit(code, now)
             return
         if self.state in {'circuit_open', 'stopped', 'inactive', 'blocked', 'unresponsive'} or now < self.retry_at:
             return
