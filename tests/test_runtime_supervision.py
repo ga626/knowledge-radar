@@ -261,3 +261,19 @@ if __name__ == '__main__':
         probe_os_user_task_starts_kernel_outside_restrictive_stdio_job(Path(directory))
     print(json.dumps({'status':'PASS','probe':'user_session_task_outside_restrictive_job',
                       'temporary_task_removed':True,'formal_installation_modified':False}))
+
+
+def test_installation_maintenance_reaps_exited_child_without_restarting(tmp_path, monkeypatch):
+    from runtime import runtime_control
+    manager, children = supervisor(tmp_path, monkeypatch)
+    manager.tick(now=0)
+    marker = manager.client.root / 'stop.json'
+    marker.write_text(json.dumps({'generation': manager.generation}), encoding='utf-8')
+    monkeypatch.setattr(runtime_control, '_maintenance', lambda client: True)
+    manager.tick(now=1)
+    assert manager.child is children[0] and len(children) == 1
+    children[0].returncode = 0
+    manager.tick(now=2)
+    assert manager.child is None and manager.state == 'stopped'
+    manager.tick(now=1000)
+    assert len(children) == 1
