@@ -15,7 +15,8 @@ from runtime import research_ledger as ledger
 
 
 TASK_STAMP = calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'完整测试')['directory_title']
-TASK_RELATIVE = Path('2026年') / TASK_STAMP
+_CALENDAR = calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'完整测试')
+TASK_RELATIVE = Path(_CALENDAR['directory_year']) / _CALENDAR['directory_month'] / _CALENDAR['directory_day'] / TASK_STAMP
 
 
 def test_github_same_readme_names_keep_repository_and_object_identity():
@@ -382,8 +383,8 @@ def test_no_obsidian_independent_knowledge_and_report(archive):
     engine.bind(req.model_copy(update={'task_id':'solo','vault_grant_id':'','vault_required':False,'local_report_path':str(local/'solo.md')}))
     result=engine.submit(SubmitReport(action='submit_report',task_id='solo',project_id='project-a',title='独立',content='KR独立可用'))
     assert result['summary']=='local_only' and result['vault']['status']=='not_configured'
-    assert (local/'solo.md').read_text(encoding='utf-8').startswith('KR独立可用\n')
-    assert '关键结论与撤证审阅' in (local/'solo.md').read_text(encoding='utf-8')
+    assert (local/'solo.md').read_text(encoding='utf-8')=='KR独立可用'
+    assert '关键结论与撤证审阅' not in (local/'solo.md').read_text(encoding='utf-8')
 
 
 def test_backup_restore_provenance_user_edits_and_authorization(archive,tmp_path):
@@ -675,7 +676,7 @@ def test_same_project_reuses_directory_and_new_project_collision_requires_explic
         bind_another(engine,local,vault,'project-b','task-b')
     bind_another(engine,local,vault,'project-a','task-c')
     assert (vault/'同名项目'/TASK_RELATIVE).is_dir()
-    assert (vault/'同名项目'/'2026年'/(TASK_STAMP+'（2）')).is_dir()
+    assert (vault/'同名项目'/TASK_RELATIVE.parent/(TASK_STAMP+'（2）')).is_dir()
     assert not (vault/'同名项目（2）').exists()
     assert_readable_tree(vault)
 
@@ -697,7 +698,7 @@ def test_renamed_project_and_task_accept_late_content_without_recreating_old_pat
     evidence(engine,'后续资料','https://example.org/late-after-folder-rename')
     later=engine.run('task-a',retry=True)
     assert later['rounds'][0]['status']=='local_committed',later
-    assert Path(later['rounds'][0]['path'])==vault/'我的研究项目'/'2026年'/'已经改名的调研'
+    assert Path(later['rounds'][0]['path'])==vault/'我的研究项目'/TASK_RELATIVE.parent/'已经改名的调研'
     assert not original.exists() and not task.exists()
     assert_readable_tree(vault)
 
@@ -727,7 +728,7 @@ def test_multiple_reports_and_supplements_keep_short_human_names(archive):
 def test_opaque_ids_and_reserved_titles_do_not_leak_into_display(archive):
     engine,_,local,vault=archive
     _,bound=bind_another(engine,local,vault,'f'*64,'a'*64,project_name='b'*64,task_title='CON')
-    assert (vault/'未命名调研'/'2026年'/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'CON')['directory_title']).is_dir()
+    assert (vault/'未命名调研'/TASK_RELATIVE.parent/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'CON')['directory_title']).is_dir()
     ref=engine.assets.put('https://example.org/opaque','保留原文',title='index')
     engine.assets.reference_many([ref['version_id']],'a'*64,project_id='f'*64,task_id='a'*64)
     result=engine.run('a'*64)
@@ -918,7 +919,7 @@ def test_calendar_layout_uses_same_windows_safe_title_for_obsidian_and_physical_
     from runtime.research_archive import calendar_layout
     layout = calendar_layout({'created_at': '2026-11-07T01:44:00-04:00'}, '连续探索 / 首轮:回归')
     assert layout['directory_year'] == '2026年'
-    assert re.match(r'^11\.07 \d{2}：\d{2} ', layout['directory_title'])
+    assert re.match(r'^\d{2}：\d{2} ', layout['directory_title'])
     assert '/' not in layout['directory_title'] and ':' not in layout['directory_title']
 
 
@@ -972,7 +973,7 @@ def test_explicit_project_binding_survives_human_rename_without_recreation(archi
     engine.bind(explicit)
     bind_another(engine,local,vault,'project-a','third-task',task_title='追加任务')
     assert not (vault/'同名项目').exists()
-    assert (vault/'人改后的项目名称'/'2026年'/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'追加任务')['directory_title']).is_dir()
+    assert (vault/'人改后的项目名称'/TASK_RELATIVE.parent/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'追加任务')['directory_title']).is_dir()
 
 
 def test_raw_html_archived_only_after_extraction_and_bad_body_is_explicit_gap(archive):

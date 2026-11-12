@@ -15,7 +15,7 @@ def legacy(engine):
     # 将尚未交付的fixture登记为旧规范；模拟升级前数据库。
     context=engine._context('task-a')
     folder=engine._task_directory(context)
-    old=folder.parent.parent/'2026-11-02 完整测试'
+    old=folder.parents[3]/'2026-11-02 完整测试'
     folder.rename(old)
     context.pop('directory_layout',None);context.pop('directory_year',None)
     context['directory_title']=old.name
@@ -133,9 +133,9 @@ def test_naming_migration_keeps_bound_calendar_time_and_is_idempotent(archive,la
     engine._save(context)
     # fixture ledger是11月2日；迁移必须保留绑定的11月7日01：24，不重算时区。
     candidate=plan(engine,request())
-    assert Path(candidate['destination']).name=='11.07 01：24 完整测试'
+    assert Path(candidate['destination']).name=='01：24 完整测试'
     receipt=apply(engine,apply_request(candidate))
-    assert engine._context('task-a')['directory_title']=='11.07 01：24 完整测试'
+    assert engine._context('task-a')['directory_title']=='01：24 完整测试'
     assert apply(engine,apply_request(candidate))==receipt
     assert plan(engine,request())['source']==plan(engine,request())['destination']
 

@@ -9,14 +9,14 @@ from urllib.parse import quote
 
 from runtime.file_write_lock import file_write_lock
 from runtime.knowledge import encoded, guarded_path
-from runtime.research_archive import calendar_layout, sha, _hash_file
+from runtime.research_archive import calendar_layout, calendar_parents, sha, _hash_file
 from runtime.knowledge_delivery import identity
 from runtime.project_identity import canonical_project_id
 
 
 def _binding(engine, root, owner):
     owners=[owner]
-    if owner[0] in {'project','year','task'}:
+    if owner[0] in {'project','year','month','day','task'}:
         # 只查同一稳定项目的既存owner，计划不分配目录、不改历史键。
         with engine._connection() as c:
             aliases={json.loads(raw).get('project_id','') for (raw,) in c.execute('SELECT payload FROM research_context')}
@@ -55,21 +55,39 @@ def _plan(engine, request):
     task_key,folder=_binding(engine,root,['task',request.project_id,request.task_id])
     _,project=_binding(engine,root,['project',request.project_id])
     metadata=engine._ledger(request.task_id)
-    if not metadata.get('created_at') and context.get('directory_layout')!='project-year-task-v1':
+    if not metadata.get('created_at') and context.get('directory_layout') not in {'project-year-task-v1','project-year-task-v2','project-calendar-task-v3'}:
         raise ValueError('archive_original_creation_time_required')
-    layout=calendar_layout(metadata,context['task_title'])
+    layout=({key:context[key] for key in ('directory_layout','directory_year','directory_month',
+            'directory_day','directory_title','calendar_date','calendar_offset') if key in context}
+            if context.get('directory_layout')=='project-calendar-task-v3' else
+            {'directory_layout':'project-calendar-task-v3'} if context.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}
+            else calendar_layout(metadata,context['task_title']))
     # 命名迁移保持已经绑定的本地日历值，不随机器时区变化改写历史时间。
     if context.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:
         stamp=re.fullmatch(r'(\d{2})[月.\-](\d{2})日? (\d{2})[：\-](\d{2}) (.+)',context['directory_title'])
         if not stamp:raise ValueError('archive_original_creation_time_required')
         month,day,hour,minute,subject=stamp.groups()
+        from datetime import date
+        try:original=date(int(context['directory_year'][:-1]),int(month),int(day))
+        except ValueError:raise ValueError('archive_original_creation_time_required') from None
         layout.update(directory_year=context['directory_year'],
-            directory_title=f'{month}.{day} {hour}：{minute} {subject}')
-    year=project/layout['directory_year']
-    if year.exists():
-        _,owned_year=_binding(engine,root,['year',request.project_id,layout['directory_year']])
-        if year!=owned_year:raise ValueError('archive_year_directory_changed')
-    destination=guarded_path(root,year/layout['directory_title'])
+            directory_month=f'{month}月',directory_day=f'{month}月{day}日',
+            calendar_date=original.isoformat(),calendar_offset=context.get('calendar_offset',''),
+            directory_title=f'{hour}：{minute} {subject}')
+    if request.target_layout=='project-year-task-v2':
+        stamp=layout['directory_day'].replace('月','.').replace('日','')
+        layout.update(directory_layout='project-year-task-v2',directory_title=stamp+' '+layout['directory_title'])
+    parent=project
+    for level,name in calendar_parents(layout):
+        parent=parent/name
+        owner=[level,request.project_id,layout['directory_year']]
+        if level in {'month','day'}:owner.append(layout['directory_month'])
+        if level=='day':owner.append(name)
+        if parent.exists():
+            _,owned=_binding(engine,root,owner)
+            if parent!=owned:raise ValueError('archive_calendar_directory_changed')
+    destination=guarded_path(root,parent/layout['directory_title'])
+    if len(str(destination))>230:raise ValueError('display_path_too_long_choose_shorter_destination')
     if destination!=folder and destination.exists():raise ValueError('archive_migration_destination_exists')
     files=_inventory(root,folder)
     # 迁移不是修复人改内容；已有回执对应的文件必须仍为原版本。
@@ -112,6 +130,130 @@ def _plan(engine, request):
 def plan(engine,request):
     with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
         return _plan(engine,request)
+
+
+def _adoption_plan(engine,request):
+    context=engine._context(request.task_id)
+    if not context or canonical_project_id(context['project_id'])!=request.project_id:
+        raise ValueError('research_project_mismatch_use_new_task')
+    if context.get('report'):raise ValueError('archive_already_has_report')
+    root=engine._grant(context['vault_grant_id'],request.project_id)
+    task_key,allocated=_binding(engine,root,['task',request.project_id,request.task_id])
+    _,project=_binding(engine,root,['project',request.project_id])
+    if _inventory(root,allocated):raise ValueError('allocated_archive_not_empty')
+    folder=guarded_path(root,root/request.relative_path)
+    if not folder.is_dir() or not folder.is_relative_to(project):raise ValueError('archive_adoption_project_path_required')
+    parts=folder.relative_to(project).parts
+    if len(parts)!=2 or not re.fullmatch(r'\d{4}年',parts[0]):raise ValueError('archive_adoption_original_calendar_required')
+    stamp=re.fullmatch(r'(\d{2})[月.\-](\d{2})日? (\d{2})[：\-](\d{2}) (.+)',parts[1])
+    if not stamp:raise ValueError('archive_adoption_original_calendar_required')
+    from datetime import datetime
+    month,day,hour,minute,_=stamp.groups()
+    datetime(int(parts[0][:-1]),int(month),int(day),int(hour),int(minute))
+    if Path(request.report_name).name!=request.report_name:raise ValueError('archive_adoption_report_filename_required')
+    report=guarded_path(root,folder/request.report_name,require_file=True)
+    ref=engine.assets.fetch(request.report_version_id,max_chars=1)['asset']
+    with engine.assets.connection() as c:
+        row=c.execute('SELECT metadata FROM assets WHERE version_id=?',(request.report_version_id,)).fetchone()
+    meta=json.loads(row[0])
+    if ref['kind']!='report' or canonical_project_id(meta.get('project_id'))!=request.project_id or meta.get('task_id')!=request.task_id:
+        raise ValueError('archive_adoption_fixed_report_scope_required')
+    if _hash_file(report)!=ref['raw_sha256']:raise ValueError('destination_modified_preserved')
+    files=_inventory(root,folder)
+    adopted_parts=[];seen=set()
+    for item in getattr(request,'existing_sources',[]):
+        if set(item)-{'file','version_id','text_version_id'}:raise ValueError('archive_adoption_source_fields_invalid')
+        name=item.get('file');version=item.get('version_id');text_version=item.get('text_version_id') or version
+        if not isinstance(name,str) or Path(name).name!=name or name==request.report_name or name not in files or name in seen:
+            raise ValueError('archive_adoption_source_filename_required')
+        seen.add(name)
+        with engine.assets.connection() as c:
+            c.create_function('kr_project_id',1,canonical_project_id)
+            row=c.execute('SELECT * FROM assets WHERE version_id=?',(version,)).fetchone()
+            readable=c.execute('SELECT * FROM assets WHERE version_id=?',(text_version,)).fetchone()
+            if not row or not readable:raise ValueError('archive_adoption_source_version_missing')
+            row=dict(row);readable=dict(readable);engine.assets.assert_available(c,row);engine.assets.assert_available(c,readable)
+            if not c.execute('SELECT 1 FROM asset_scopes WHERE version_id=? AND task_id=? AND kr_project_id(project_id)=?',(version,request.task_id,request.project_id)).fetchone():
+                raise ValueError('archive_adoption_source_scope_required')
+        if text_version!=version and version not in json.loads(readable['metadata']).get('derived_from',[]):
+            raise ValueError('archive_adoption_source_derivation_required')
+        raw=engine.assets._verified_text(readable).encode('utf-8');body=(folder/name).read_bytes()
+        offset=body.find(raw)
+        if not raw or offset<0 or body.find(raw,offset+1)>=0:raise ValueError('archive_adoption_source_body_not_unique')
+        adopted_parts.append({'version_id':version,'text_version_id':text_version,'source_id':row['source_id'],
+            'source_url':row['source_url'],'captured_at':row['captured_at'],'raw_sha256':sha(raw),'original_sha256':row['raw_sha256'],
+            'raw_bytes':len(raw),'raw_start':0,'raw_end':len(raw),'file':name,'export_start':offset,'export_end':offset+len(raw),
+            'part_sha256':sha(raw),'source_label':'资料','title':row['title']})
+    with engine._connection() as c:
+        for owner,raw in c.execute('SELECT owner,payload FROM archive_display_names'):
+            if owner==task_key:continue
+            record=json.loads(raw)
+            if Path(record['path'])==folder:raise ValueError('archive_directory_already_owned')
+    payload={'task_id':request.task_id,'project_id':request.project_id,'context_revision':context['context_revision'],
+        'root':str(root),'folder':str(folder),'folder_identity':identity(folder),'files':files,
+        'allocated':str(allocated),'allocated_identity':identity(allocated),'task_binding':task_key,
+        'report_name':request.report_name,'report_version_id':request.report_version_id,'report_id':meta['report_id'],
+        'report_sha256':ref['raw_sha256'],'source_parts':adopted_parts,'layout':{'directory_layout':'project-year-task-v2',
+        'directory_year':parts[0],'directory_title':parts[1]},'scope':'fixed_report_and_explicit_fixed_source_files_only'}
+    return {'status':'planned','plan_id':sha(encoded(payload).encode()),**payload}
+
+
+def plan_adoption(engine,request):
+    with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):return _adoption_plan(engine,request)
+
+
+def apply_adoption(engine,request):
+    with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
+        context=engine._context(request.task_id)
+        if not context or canonical_project_id(context['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        root=engine._grant(context['vault_grant_id'],request.project_id)
+        with engine._connection() as c:
+            c.execute('CREATE TABLE IF NOT EXISTS archive_adoptions(plan_id TEXT PRIMARY KEY,payload TEXT)')
+            row=c.execute('SELECT payload FROM archive_adoptions WHERE plan_id=?',(request.plan_id,)).fetchone()
+        if row:
+            journal=json.loads(row[0]);candidate=journal['plan']
+            if candidate['task_id']!=request.task_id or candidate['project_id']!=request.project_id:raise ValueError('archive_adoption_scope_changed')
+            folder=guarded_path(root,candidate['folder'])
+            if identity(folder)!=candidate['folder_identity'] or any(_inventory(root,folder).get(k)!=v for k,v in candidate['files'].items()):
+                raise ValueError('destination_modified_preserved')
+            receipt=journal['receipt']
+        else:
+            candidate=_adoption_plan(engine,request)
+            if candidate['plan_id']!=request.plan_id:raise ValueError('archive_adoption_plan_stale')
+            folder=Path(candidate['folder']);report=folder/candidate['report_name']
+            context.update(candidate['layout']);context.update(vault_relative=str(folder.relative_to(root)),
+                report={'version_id':candidate['report_version_id'],'sha256':candidate['report_sha256'],
+                    'report_id':candidate['report_id'],'vault_report_path':str(report),'role':'final'},
+                vault={'path':str(report),'identity':identity(report),'sha256':candidate['report_sha256'],'status':'local_committed'},
+                summary='registered',context_revision=context['context_revision']+1)
+            receipt={'status':'adopted','task_id':request.task_id,'path':str(folder),'files_verified':len(candidate['files']),
+                'report_version_id':candidate['report_version_id'],'reconciled_source_files':len(candidate['source_parts']),
+                'unclaimed_files':len(candidate['files'])-len(candidate['source_parts'])-1}
+            with engine._connection() as c:
+                from runtime.research_archive import DISPLAY_LAYOUT
+                if candidate['source_parts']:
+                    key=sha(('adopt-sources:'+request.plan_id).encode())
+                    names={p['file'] for p in candidate['source_parts']}
+                    record={'status':'local_committed','task_id':request.task_id,'count':len(names),'watermark':0,
+                        'path':str(folder),'identity':candidate['folder_identity'],'display_layout':DISPLAY_LAYOUT,
+                        'file_hashes':{name:candidate['files'][name]['sha256'] for name in names},
+                        'file_records':{name:{'path':str(folder/name),'identity':candidate['files'][name]['identity']} for name in names},
+                        'role':'explicit_existing_source_adoption'}
+                    c.execute('INSERT INTO archive_rounds VALUES(?,?,?,?)',(key,request.task_id,0,encoded(record)))
+                    for number,part in enumerate(candidate['source_parts']):
+                        c.execute('INSERT INTO archive_members VALUES(?,?,?)',(key,number,part['version_id']))
+                        c.execute('INSERT INTO archive_parts VALUES(?,?,?)',(key,number,encoded(part)))
+                record={'path':str(folder),'identity':candidate['folder_identity']}
+                c.execute('UPDATE archive_display_names SET parent=?,name_key=?,payload=? WHERE owner=?',
+                    (str(folder.parent).casefold(),folder.name.casefold(),encoded(record),candidate['task_binding']))
+                c.execute('UPDATE research_context SET payload=? WHERE task_id=?',(encoded(context),request.task_id))
+                c.execute('INSERT INTO archive_adoptions VALUES(?,?)',(request.plan_id,encoded({'plan':candidate,'receipt':receipt})))
+        # 仅回收计划中我们新建且仍为空的任务目录；中断重试可继续，不触碰用户目录。
+        allocated=guarded_path(root,candidate['allocated'])
+        if allocated!=folder and allocated.exists() and identity(allocated)==candidate['allocated_identity']:
+            try:allocated.rmdir()
+            except OSError:pass
+        return receipt
 
 
 def _source_link_plan(engine, request):
@@ -328,8 +470,12 @@ def apply(engine,request):
         inventory=_inventory(root,active)
         _reconcile_inventory(inventory,candidate['files'],candidate['renames'],journal.get('navigation_files'))
         if active==source and source!=destination:
-            parent=engine._display_path(root,Path(candidate['project_path']),
-                ['year',request.project_id,candidate['layout']['directory_year']],candidate['layout']['directory_year'],directory=True)
+            parent=Path(candidate['project_path']);layout=candidate['layout']
+            for level,name in calendar_parents(layout):
+                owner=[level,request.project_id,layout['directory_year']]
+                if level in {'month','day'}:owner.append(layout['directory_month'])
+                if level=='day':owner.append(name)
+                parent=engine._display_path(root,parent,owner,name,directory=True)
             if parent!=destination.parent:raise ValueError('archive_migration_destination_changed')
             if destination.exists():raise ValueError('archive_migration_destination_exists')
             source.rename(destination)

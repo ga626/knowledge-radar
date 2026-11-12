@@ -31,10 +31,10 @@ description: 用 KnowledgeRadar 获取学术全文、视频字幕与转写、登
 
 ## 保存、交付与执行边界
 
-需要持久成果时，尽早建立一个研究任务并把 `research_task_id` 传给相关 KR 调用；`research_context` 可关联已有动作，没登记的语义关系保持未知，不补造计划。官方结果可在搜索后一次性交回 `record_research_candidates_tool`，保留真实 `host_reference`、实际 `query` 和工具名；无载荷用 `unavailable`，确认零命中才用 `no_results`。宿主声明不是 KR 原生取证。
+需要持久成果时，尽早建立一个研究任务并把 `research_task_id` 传给相关 KR 调用；`research_context` 可关联已有动作，没登记的语义关系保持未知，不补造计划。官方结果可在搜索后一次性交回 `record_research_candidates_tool`，保留真实 `host_reference`、实际 `query` 和工具名；无载荷用 `unavailable`，确认零命中才用 `no_results`。宿主声明不是 KR 原生取证。已打开页面的实际可见文字可随批次附 `visible_text`、`visible_scope`（excerpt/page_text）、`truncated` 与带时区 `retrieved_at`；保存为可回读快照，不把摘要或截断内容称全文。
 
 需要维护评测时，可用 `read_knowledge`/`update_research` 的 `action=evaluation` 处理现有队列并保留判定依据；界面纠错待 Agent 接手，不会自动启动研究或付费评分。
 
-按所属项目规则明确稳定 `project_id` 和精确本地报告路径，用 `bind_context` 绑定已获准目标。收尾用 `submit_report` 提交 Codex 实际生成的总结，并读投递回执；没有报告也如实简写。有效取得的转译材料（含未引用与反证）一并保留。Vault 未投递、缺目标或冲突要明确告知；不覆盖用户修改、不自动重建用户删除的文件。归档完成不等于研究充分。
+按所属项目规则明确稳定 `project_id` 和精确本地报告路径，用 `bind_context` 绑定已获准目标。收尾用 `submit_report` 提交 Codex 实际生成的总结，并读投递回执；没有报告也如实简写。有效取得的转译材料（含未引用与反证）一并保留。Vault 未投递、缺目标或冲突要明确告知；不覆盖用户修改、不自动重建用户删除的文件。新任务按项目／年／月／日／时间任务归档；任务名只留时间，恢复沿原研究日期。已有文件先计划核对后原地登记；旧固定版本受控导入保留原ID，不继承旧评审。普通总结不自动追加空审阅表，需要时显式 `include_review`。归档完成不等于研究充分。
 
 保留费用、登录授权、公共 URL、未知结果对账、幂等和浏览器所有权约束。后台媒体到期不等于仍在排队；检查任务的最后阶段和实际进度，再决定是否显式续跑。登录页面待用户操作时保留，不轮询扫码，不关日常 Chrome。不要把后台模型调用、付费兜底或额外 Agent 当默认步骤。

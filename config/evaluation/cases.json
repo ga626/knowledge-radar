@@ -1975,8 +1975,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 11,
-      "oracle_version": 11,
+      "version": 12,
+      "oracle_version": 12,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -2000,7 +2000,10 @@
         "tests/test_research_workspace_integration.py",
         "tests/test_product_status.py",
         "tests/test_research_capability_workflow.py",
-        "tests/test_agent_capability_disclosure.py"
+        "tests/test_agent_capability_disclosure.py",
+        "tests/test_calendar_evidence_reconciliation.py",
+        "tests/test_host_visible_evidence.py",
+        "tests/test_legacy_evidence_import.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2068,10 +2071,13 @@
         "tests/test_agent_capability_disclosure.py",
         "src/runtime/execution_context.py",
         "src/runtime/host_search_handoff.py",
-        "src/runtime/optional_media_worker.py"
+        "src/runtime/optional_media_worker.py",
+        "tests/test_calendar_evidence_reconciliation.py",
+        "tests/test_host_visible_evidence.py",
+        "tests/test_legacy_evidence_import.py"
       ],
       "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。 2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 仅隔离源码合同验证；不代表正式安装或真实账号与桌面验收。",
-      "change_reason": "2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 2026-11-12：后置宿主候选、显式固定证据复用、精确预览续读、媒体失败进度及终态；不代表真实研究质量改善。"
+      "change_reason": "2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 2026-11-12：后置宿主候选、显式固定证据复用、精确预览续读、媒体失败进度及终态；不代表真实研究质量改善。 2026-11-12：日历年/月/日/时间目录、受保护迁移与原地登记、宿主可见快照、历史固定ID导入。"
     },
     {
       "case_id": "surface.read_knowledge",
@@ -2360,8 +2366,8 @@
       "success": "微信真实缺陷与公共合同回归：验证页不存正文、候选不丢、正文固定版本、媒体覆盖/中断恢复、附件完整性、借用浏览器所有权；不冒充真实平台或原生MCP验收。"
     },
     {
-      "version": 1,
-      "oracle_version": 1,
+      "version": 2,
+      "oracle_version": 2,
       "capabilities": [
         "evidence.integrity"
       ],
@@ -2380,14 +2386,17 @@
         "scripts/kr_eval/*.py",
         "scripts/kr_evaluate.py",
         "tests/evaluation/test_maintenance*.py",
-        "config/evaluation/cases.json"
+        "config/evaluation/cases.json",
+        "tests/evaluation/test_retrospective_quality.py"
       ],
       "case_id": "evaluation.maintenance",
       "nodes": [
-        "tests/evaluation/test_maintenance.py"
+        "tests/evaluation/test_maintenance.py",
+        "tests/evaluation/test_retrospective_quality.py"
       ],
       "timeout_seconds": 120,
-      "success": "Distinct task/tool/candidate/trial denominators, bounded observation, independent admission, optimistic atomic changes, reversible merges, user correction and immutable quality trials."
+      "success": "Distinct task/tool/candidate/trial denominators, bounded observation, independent admission, optimistic atomic changes, reversible merges, user correction and immutable quality trials.",
+      "change_reason": " 温态诊断沿已有case记录且强制NOT_SCORED，不伪造独立裁判。"
     },
     {
       "version": 1,
