@@ -32,3 +32,23 @@ def test_existing_case_accepts_unscored_retro_without_creating_an_active_card(tm
     assert record_trial(ledger,manager,payload)['run_id']==run['run_id']
     with pytest.raises(ValueError,match='configured_case'):
         record_trial(ledger,manager,{**payload,'case_id':'not.a.real.case'})
+
+
+@pytest.mark.parametrize("with_source_run", [False, True])
+def test_regression_plan_uses_source_history_not_later_quality_trials(tmp_path, monkeypatch, with_source_run):
+    from types import SimpleNamespace
+    from scripts.kr_eval import runner, core
+    from scripts import kr_test_selector
+    history = []
+    if with_source_run:
+        history.append({'target': {'kind': 'development_source'},
+                        'snapshot': {'files': {'src/example.py': 'old'}}})
+    history.append({'target': {'kind': 'research_quality_trial'}, 'quality_trial': {}})
+    monkeypatch.setattr(core, 'status', lambda *a: {'cases': [], 'inventory': {'issues': []}, 'gate': 'INCOMPLETE'})
+    monkeypatch.setattr(runner, 'snapshot', lambda *a: {'files': {'src/example.py': 'new'}})
+    selected = []
+    monkeypatch.setattr(kr_test_selector, 'select_tests',
+                        lambda changes, **kw: selected.extend(changes) or {'selected_tests': []})
+    result = runner.plan(tmp_path, {'cases': []}, SimpleNamespace(history=lambda: history))
+    assert result['status'] == 'INCOMPLETE'
+    assert selected == (['src/example.py'] if with_source_run else [])
