@@ -117,6 +117,7 @@ def _configure_environment(context: ConsoleContext, *, generation: int) -> None:
             "KR_DATA_ROOT": str(writable), "KR_RUNTIME_ENV_PATH": str(writable / "config" / "runtime.env"),
             "KR_PROFILE_REGISTRY_PATH": str(writable / "config" / "profile_registry.json"), "KR_BROWSER_DATA_DIR": str(writable / "browser_data"),
             "KR_STATE_DIR": str(writable / "state"), "KR_LOG_DIR": str(writable / "logs"), "KR_MEDIA_CACHE_DIR": str(writable / "state" / "media_cache"),
+            "KR_BROWSER_LINK_STATE_FILE": str(writable / "runtime" / "browser_link" / "host.json"),
             "KR_EVIDENCE_ROOT": str(writable / "state" / "evidence_assets"),
             "KR_RESEARCH_READ_ROOT": str(context.data / 'state') if context.role == 'dev' else '',
             "KR_CONSOLE_ACCESS_ROOT": str(context.supervisor_root / 'state' / 'console_access'),

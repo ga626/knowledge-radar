@@ -46,6 +46,7 @@ class SubmitReport(Contract):
     local_report_path: str = ''
     # 固定归档轮次可作为大批引用的句柄，不要求AI传巨型版本数组。
     source_round: str = ''
+    include_review: bool = False
 
 
 class ArchiveTask(Contract):
@@ -72,12 +73,14 @@ class RebindReportOutput(Contract):
 
 
 class PlanArchiveLayout(Contract):
+    target_layout: Literal['project-calendar-task-v3','project-year-task-v2'] = 'project-calendar-task-v3'
     action: Literal['plan_archive_layout']
     task_id: str = Field(min_length=1, max_length=96)
     project_id: str = Field(min_length=1, max_length=200)
 
 
 class ApplyArchiveLayout(Contract):
+    target_layout: Literal['project-calendar-task-v3','project-year-task-v2'] = 'project-calendar-task-v3'
     action: Literal['apply_archive_layout']
     task_id: str = Field(min_length=1, max_length=96)
     project_id: str = Field(min_length=1, max_length=200)
@@ -251,18 +254,26 @@ def task_display_title(metadata, title):
 
 
 def calendar_layout(metadata, title):
-    """按首次创建时间固定本地日历，并使用物理层安全的展示标题。
-
-    目录名同时出现在 Windows 文件系统和 Obsidian 的展示树中，因此两者
-    必须共享同一套命名合同：日期用点号，时间用全角冒号。半角 ``/`` 和
-    ``:`` 会分别被解释成路径分隔符或被 Windows 拒绝，不用于物理名称。
-    """
+    """首次创建时固定本地日历；日期在父级，时间用 Windows 安全全角冒号。"""
     try:
         created=datetime.fromisoformat(str(metadata.get('created_at')).replace('Z','+00:00')).astimezone()
     except (ValueError,TypeError):
-        created=datetime.now().astimezone()
-    return {'directory_layout':'project-year-task-v2', 'directory_year':f'{created.year}年',
-        'directory_title':f'{created:%m.%d %H}：{created:%M} '+_safe_name(title,'未命名调研')}
+        raise ValueError('archive_original_creation_time_required') from None
+    return {'directory_layout':'project-calendar-task-v3', 'directory_year':f'{created.year}年',
+        'directory_month':f'{created:%m}月','directory_day':f'{created:%m}月{created:%d}日',
+        'calendar_date':created.date().isoformat(),'calendar_offset':created.strftime('%z'),
+        'directory_title':f'{created:%H}：{created:%M} '+_safe_name(title,'未命名调研')}
+
+
+def calendar_parents(context):
+    """目录层和所有权共用一个定义，已绑定旧布局不隐式迁移。"""
+    layout=context.get('directory_layout')
+    if layout not in {'project-year-task-v1','project-year-task-v2','project-calendar-task-v3'}:
+        return []
+    result=[('year',context['directory_year'])]
+    if layout=='project-calendar-task-v3':
+        result += [('month',context['directory_month']),('day',context['directory_day'])]
+    return result
 
 
 def _readable_structure(kind, text, meta):
@@ -361,7 +372,7 @@ def readable_asset(assets, row):
         return None, '诊断页面（非正文）：' + observation['missing_reason']
     if kind in {'transcript_map','images','media_manifest'}:
         return None, '仅供机器定位或媒体引用'
-    if kind not in {'content','video_description','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
+    if kind not in {'content','host_snapshot','video_description','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
         return None, '未知资料类型，需显式提供正文转换'
     rendered=text
     if kind in {'comments','tables'}:
@@ -397,6 +408,7 @@ def _presentation_kind(row, meta):
 
 def processing_description(row, meta):
     kind=_presentation_kind(row, meta)
+    if kind=='host_snapshot':return '宿主实际可见文字快照（声明来源，非KR原生采集或全文保证）'
     if kind == 'video_description':
         return '视频平台简介（元数据层）'
     if kind in {'description','abstract','index'}:
@@ -422,8 +434,8 @@ def asset_header(row, *, include_title=False):
     if isinstance(original,(int,float)):
         original=datetime.fromtimestamp(original,timezone.utc).isoformat()
     kind=_presentation_kind(row,meta)
-    labels={'content':'正文','video_description':'视频简介','description':'简介','abstract':'摘要','index':'目录','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
-    coverage={'complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
+    labels={'host_snapshot':'宿主可见文字','content':'正文','video_description':'视频简介','description':'简介','abstract':'摘要','index':'目录','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
+    coverage={'host_visible_excerpt':'宿主可见摘录（非全文）','host_visible_page_text':'宿主可见页面文字（不保证全文）','complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
     observed_coverage=meta.get('coverage')
     if isinstance(observed_coverage,dict):
         # 评论等公共合同提供结构化覆盖，不能把dict当作映射键。
@@ -491,7 +503,7 @@ class ResearchArchive:
         owner=self._owner_key(root,logical_owner)
         explicit=guarded_path(root,explicit_directory) if explicit_directory is not None else None
         with file_write_lock(self.root/'archive-display-names'):
-            if logical_owner[0] in {'project','year'}:
+            if logical_owner[0] in {'project','year','month','day'}:
                 # 等待锁后再读别名，避免漏看前一个写入者刚提交的历史owner。
                 # 旧owner包含原稳定ID的字节；不改旧路径或owner。
                 with self._connection() as c:
@@ -558,8 +570,11 @@ class ResearchArchive:
         project=context.get('vault_project_dir','')
         parent=self._display_path(root,root,['project',context['project_id']],context['project_name'],directory=True,
             explicit_directory=root/project if project else None)
-        if context.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:
-            parent=self._display_path(root,parent,['year',context['project_id'],context['directory_year']],context['directory_year'],directory=True)
+        for level,name in calendar_parents(context):
+            owner=[level,context['project_id'],context['directory_year']]
+            if level in {'month','day'}:owner.append(context['directory_month'])
+            if level=='day':owner.append(name)
+            parent=self._display_path(root,parent,owner,name,directory=True)
         title=context.get('directory_title') or context['task_title']
         path=self._display_path(root,parent,['task',context['project_id'],context['task_id']],title,directory=True)
         context['vault_relative']=str(path.relative_to(root))
@@ -616,13 +631,13 @@ class ResearchArchive:
                 observed_revision=0, retry_at=0, attempts=0, error_code='', remote_synced='not_applicable',display_layout=DISPLAY_LAYOUT,
                 vault_required=required,
                 directory_title=task_display_title(self._ledger(request.task_id),request.task_title))
-            context.update(calendar_layout(self._ledger(request.task_id),request.task_title))
+            if not old:context.update(calendar_layout(self._ledger(request.task_id),request.task_title))
             context['vault_relative']=str(Path(request.vault_project_dir or _safe_name(request.project_name,'未命名项目'))/_safe_name(request.task_title,'未命名调研'))
             if old:
                 if canonical_project_id(old.get('project_id', '')) != request.project_id:
                     raise ValueError('research_project_mismatch_use_new_task')
                 prior_project=Path(old['vault_relative']).parent
-                if old.get('directory_layout') in {'project-year-task-v1','project-year-task-v2'}:prior_project=prior_project.parent
+                for _ in calendar_parents(old):prior_project=prior_project.parent
                 if request.vault_project_dir and str(Path(request.vault_project_dir)) not in {
                     str(prior_project), str(Path(old.get('vault_project_dir') or prior_project))}:
                     raise ValueError('archive_target_changed')
@@ -789,12 +804,15 @@ class ResearchArchive:
                 raise ValueError('research_project_mismatch_use_new_task')
             input_sha=sha(request.content.encode('utf-8'))
             if context.get('report') and context['report']['report_id']==request.report_id:
+                if 'include_review' in context['report'] and context['report']['include_review']!=request.include_review:
+                    raise ValueError('report_projection_request_changed_use_new_report_id')
                 if context['report'].get('body_sha256',context['report']['sha256'])!=input_sha:
                     raise ValueError('report_id_already_fixed_use_new_report_id_and_explicit_path')
                 return self.status(request.task_id)
             from runtime.research_reviews import report_appendix
             from runtime.research_index import ResearchIndex
-            content,review_snapshot=report_appendix(ResearchIndex(),request.task_id,request.content,self.assets)
+            content,review_snapshot=report_appendix(ResearchIndex(),request.task_id,request.content,self.assets,
+                requested=request.include_review)
             raw=content.encode('utf-8')
             if len(raw)>2*1024*1024:
                 raise ValueError('report_too_large')
@@ -833,7 +851,7 @@ class ResearchArchive:
                 parent=self._task_directory(context)
                 title='总报告' if request.report_role=='final' else '阶段报告 - '+_safe_name(request.title,'调研小结')
                 vault_name=self._display_path(root,parent,['report',request.project_id,request.task_id,request.report_id],title,suffix='.md').name
-            context.update(report={'version_id':ref['version_id'],'sha256':sha(raw),'body_sha256':input_sha,'review_snapshot':review_snapshot,'report_id':request.report_id,'role':request.report_role,
+            context.update(report={'version_id':ref['version_id'],'sha256':sha(raw),'body_sha256':input_sha,'review_snapshot':review_snapshot,'report_id':request.report_id,'role':request.report_role,'include_review':request.include_review,
                 'local_report_path':str(Path(local_path).resolve()),'source_watermark':self._round_get(request.source_round)['watermark'] if request.source_round else self._content_watermark(context),'vault_name':vault_name},summary='registered',retry_at=0)
             self._save(context)
         self._wake()

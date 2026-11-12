@@ -123,12 +123,18 @@ class BrowserLink:
         if timeout_s <= 0:
             return self._failure('native_command_timeout', request_id, request_executed=False)
         request_deadline = time.monotonic() + timeout_s
-        if operation in {'search', 'detail', 'comments', 'login', 'auth_verify', 'attention'} and not self.health().get('ok'):
+        last_health = self.health() if operation in {'search', 'detail', 'comments', 'login', 'auth_verify', 'attention'} else {'ok': True}
+        if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
-            ready = ensure_borrowed_browser(lambda: bool(self.health().get('ok')), timeout_s=min(8, timeout_s))
+            def connected():
+                nonlocal last_health
+                last_health = self.health()
+                return bool(last_health.get('ok'))
+            ready = ensure_borrowed_browser(connected, timeout_s=min(8, timeout_s))
             if not ready['ok']:
                 return self._failure(ready['code'], request_id, request_executed=False,
-                                     browser_readiness=ready)
+                                     browser_readiness={**ready, 'connection_reason': last_health.get('code') or
+                                         ('extension_disconnected' if last_health.get('connected') is False else 'channel_not_ready')})
             timeout_s = min(timeout_s, request_deadline - time.monotonic())
             if timeout_s <= 0:
                 return self._failure('native_command_timeout', request_id, request_executed=False)

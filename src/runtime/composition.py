@@ -478,6 +478,16 @@ def _promote_manual_interaction_result(
     error = result.get("error")
     if not isinstance(error, dict):
         return result
+    # 站点明确允许冷却的风控不升级为人工登录；旧类型名本身不推翻站点判断。
+    from runtime.task_cooldown import cooldown_plan
+    if error.get("manual_action_required") is False and cooldown_plan(result, operation="platform_discovery"):
+        admission = {**classify_admission_state(error), "status_class": "RETRY_LATER",
+                     "manual_action_required": False, "retryable": True}
+        return {**result, "manual_action_required": False, "resume_policy": "bounded_read_only_probe",
+                "error": {**error, "manual_action_required": False, "status_class": "RETRY_LATER",
+                          "admission_state": admission},
+                "metadata": {**(result.get("metadata") or {}), "status_class": "RETRY_LATER",
+                             "admission_state": admission}}
     admission = classify_admission_state(error)
     if admission.get("status_class") != "NEEDS_INTERACTION":
         return result
@@ -1201,14 +1211,14 @@ def kr_research(
     limit: Annotated[int, Field(description="first_wave 每个低风险来源返回候选数量。", ge=1, le=10)] = 5,
     research_task_id: Annotated[str, Field(description="可选研究任务 ID。用于持久记录本次路线与后续完成状态；不是 host call-id 或 trace_context。")]= "",
     queries: Annotated[list[ResearchQuery] | None, Field(min_length=1, max_length=40, description="执行者给出的类型化查询族；intent使用公开枚举。默认仅原语种草案，不伪造翻译。")] = None,
-    questions: Annotated[list[ResearchQuestion] | None, Field(min_length=1, max_length=20, description="Codex显式选择的必要问题与范围；先登记后搜索，不提供时保留既有范围或标记未知。")] = None,
+    questions: Annotated[list[ResearchQuestion] | None, Field(min_length=1, max_length=20, description="Codex显式选择的必要问题与范围；可在搜索后补充，不提供时保留既有范围或标记未知。")] = None,
     display_title: Annotated[str, Field(description="Codex 根据用户目标提供的简短中文任务名，建议12至24字，保留必要产品名；不放工具名、任务ID或执行限制。省略时从原始目标提取。", max_length=80)] = "",
     project_name: Annotated[str, Field(description="可选项目名称，用于研究历史按项目归类；不提供时归入未分类项目。", max_length=80)] = "",
     project_id: Annotated[str, Field(description="Codex明确选择的稳定项目ID，与显示名分离；不得按KR安装目录猜测。", max_length=200)] = "",
 ) -> ResearchWorkflowResult:
     """高层研究感知入口。
 
-    用于重度研究、查证、治理和跨来源证据任务的第一步。返回 KR 能力握手、
+    按需建立持久研究任务；不是官方搜索的前置许可。返回 KR 能力握手、
     来源生态路线和可选第一波低风险证据；不会自动启动登录态浏览器、
     不绕过验证码/付费墙，也不会把路线固定成强制工具序列。
     """
@@ -1318,7 +1328,7 @@ def record_research_candidates_tool(
     research_task_id: Annotated[str, Field(description="kr_research 返回的研究任务 ID。")],
     source_ecology: Annotated[str, Field(description="候选来自的来源生态。")],
     tool: Annotated[str, Field(description="本次发现候选所用工具。")],
-    candidates: Annotated[List[Dict], Field(description="本次已获得的候选对象。普通登记保存不可逆候选ID；宿主批次另保留公开URL、标题与真实host_reference，供后续正文获取；不保存凭据。")],
+    candidates: Annotated[List[Dict], Field(description="本次已获得的候选对象。普通登记保存不可逆候选ID；宿主批次另保留公开URL、标题与真实host_reference，供后续正文获取；实际可见文字可附visible_text、visible_scope(excerpt/page_text)、truncated和带时区retrieved_at，保存host_snapshot而非全文；不保存凭据。")],
     query: Annotated[str, Field(description="本次实际查询。普通候选仅存HMAC指纹；宿主结果无预登记批次时必填，显式批次保存该查询和公开引用。勿传凭据或个人敏感信息。")]= "",
     language: Annotated[str, Field(description="本次查询语言标签，例如 zh、en 或 mixed。")]= "",
     intent_label: Annotated[str, Field(description="查询意图标签，例如 implementation、counterexample、user_experience。")]= "",
@@ -1770,7 +1780,7 @@ def _persist_discovery_cooldown(result, *, tool, platform, arguments):
     task = service.submit('platform_discovery', {'tool': tool, 'platform': platform,
         'arguments': arguments, 'initial_result': result}, timeout_s=600,
         scope={'research_task_id': arguments.get('research_task_id', '')})
-    return {**result, 'accepted': True, 'task_id': task['task_id'], 'task': compact_task_ref(task),
+    return {**result, 'status': task['status'], 'accepted': True, 'task_id': task['task_id'], 'task': compact_task_ref(task),
             'result_tool': 'get_task_status', 'resume_policy': 'bounded_read_only_probe',
             'manual_action_required': False}
 
@@ -2898,7 +2908,7 @@ from runtime.research_index import ResearchRequest
 
 @application_tool(group="research")
 def update_research(request: ResearchRequest) -> Dict:
-    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
+    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)
 
@@ -2912,7 +2922,7 @@ def read_knowledge(request: ReadRequest) -> ReadResult:
 
 @application_tool( group="delivery")
 def manage_research_artifacts(request: ArtifactRequest) -> Dict:
-    """授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年份/首次日期时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。"""
+    """授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年/月/日/时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。历史固定证据用plan_evidence_import/apply_evidence_import保留原ID接入；已有报告用plan_adopt_archive/apply_adopt_archive核对后原地登记。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。"""
     from runtime.knowledge_delivery import execute
     return execute(request)
 

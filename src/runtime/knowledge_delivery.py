@@ -34,6 +34,7 @@ class RegisterReport(Contract):
     report_id: str = Field(min_length=1,max_length=200)
     title: str = Field(min_length=1,max_length=200)
     derived_from: list[str] = Field(default_factory=list,max_length=100)
+    defer_delivery: bool = Field(default=False,description='仅登记固定报告，交付仍待完成；已有文件原地登记前使用，不生成新的Vault副本。')
 
 
 class Authorize(Contract):
@@ -47,6 +48,24 @@ class AttachEvidence(Contract):
     project_id: str = Field(min_length=1,max_length=200)
     task_id: str = Field(min_length=1,max_length=96)
     version_ids: list[str] = Field(min_length=1,max_length=100)
+
+
+class ImportHistoricalEvidence(Contract):
+    action: Literal['plan_evidence_import','apply_evidence_import']
+    approved_root: str
+    version_ids: list[str] = Field(min_length=1,max_length=100)
+    plan_id: str = Field(default='',pattern=r'^(?:[a-f0-9]{64})?$')
+
+
+class AdoptArchive(Contract):
+    action: Literal['plan_adopt_archive','apply_adopt_archive']
+    project_id: str = Field(min_length=1,max_length=200)
+    task_id: str = Field(min_length=1,max_length=96)
+    relative_path: str = Field(min_length=1,max_length=1024)
+    report_version_id: str = Field(pattern=r'^[a-f0-9]{64}$')
+    report_name: str = '总报告.md'
+    existing_sources: list[dict] = Field(default_factory=list,max_length=100)
+    plan_id: str = Field(default='',pattern=r'^(?:[a-f0-9]{64})?$')
 
 
 class Revoke(Contract):
@@ -73,7 +92,7 @@ class Reindex(Contract):
     action: Literal["upgrade_index"]
 
 
-ArtifactRequest = Annotated[RegisterReport | AttachEvidence | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | OrphanReportScan | ArchiveAudit | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
+ArtifactRequest = Annotated[RegisterReport | AdoptArchive | ImportHistoricalEvidence | AttachEvidence | Authorize | Revoke | Deliver | DeliveryStatus | Reindex | BindContext | SubmitReport | ArchiveTask | ArchiveStatus | RetryArchive | RebindReportOutput | PlanArchiveLayout | ApplyArchiveLayout | OrphanReportScan | ArchiveAudit | SnapshotResearch | RestoreResearch, Field(discriminator="action")]
 
 
 def identity(path):
@@ -315,7 +334,12 @@ class DeliveryStore:
             context={'task_id':request.task_id,'project_id':request.project_id,'project_name':request.project_name or metadata.get('project_name') or '未命名项目',
                 'task_title':title,'directory_title':task_display_title(metadata,title),'display_layout':DISPLAY_LAYOUT,
                 'vault_grant_id':request.grant_id,'vault_project_dir':''}
-            context.update(calendar_layout(metadata,title))
+            if metadata.get('created_at'):
+                context.update(calendar_layout(metadata,title))
+            else:
+                # 无研究记录的旧选取接口只保留未定日期的项目/任务目录。
+                # 新研究绑定必须有原创建时间；不得猜当前年份、恢复日或文件mtime。
+                context.update(directory_layout='legacy-undated-selection',directory_title=title)
         context['vault_grant_id']=request.grant_id
         receipt={'delivery_id':key,'status':'preparing','version_ids':versions,'project_id':request.project_id,'task_id':request.task_id,
             'display_layout':DISPLAY_LAYOUT,'obsidian_observed':'unknown','remote_synced':'not_applicable','attempted_at':time.time()}
@@ -350,6 +374,13 @@ class DeliveryStore:
 def execute(request, store=None):
     store=store or DeliveryStore()
     archive=ResearchArchive(store)
+    if isinstance(request,AdoptArchive):
+        from runtime.archive_layout import plan_adoption, apply_adoption
+        return plan_adoption(archive,request) if request.action=='plan_adopt_archive' else apply_adoption(archive,request)
+    if isinstance(request,ImportHistoricalEvidence):
+        if request.action=='plan_evidence_import':return store.assets.plan_import(request.approved_root,request.version_ids)
+        if not request.plan_id:raise ValueError('historical_import_plan_required')
+        return store.assets.apply_import(request.approved_root,request.version_ids,request.plan_id)
     if isinstance(request,AttachEvidence):
         from runtime.research_workspace import ResearchRecords
         task = ResearchRecords().snapshot(request.task_id)
@@ -381,8 +412,11 @@ def execute(request, store=None):
     if isinstance(request,RegisterReport):
         bound=archive._context(request.task_id)
         if bound and canonical_project_id(bound['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
-        result=register_report(assets=store.assets,**request.model_dump(exclude={'action'}))
-        if archive._context(request.task_id):
+        result=register_report(assets=store.assets,**request.model_dump(exclude={'action','defer_delivery'}))
+        if request.defer_delivery:
+            result['archive']=archive.status(request.task_id)
+            result['delivery_deferred']=True
+        elif archive._context(request.task_id):
             archive.attach_registered(request.task_id,request.project_id,result['asset'],request.report_id)
             result['archive']=archive.run(request.task_id)
         else:

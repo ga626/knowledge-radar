@@ -78,7 +78,22 @@ def record_trial(ledger, manager, payload):
         with closing(_readonly(manager.path)) as db:
             if db.execute("SELECT 1 FROM sqlite_master WHERE name='evaluation_cards'").fetchone():
                 card=manager._case(db,case_id)
-    if not card or card['revision'] != payload['identity']['case_revision']:
+    if payload.get('diagnostic_only'):
+        if payload['identity']['profile']!='knowledge_reuse':raise ValueError('retrospective_requires_knowledge_reuse')
+        source_root=Path(__file__).resolve().parents[2]
+        configured=json.loads((source_root/'config/evaluation/cases.json').read_text(encoding='utf-8'))['cases']
+        case=next((c for c in configured if c['case_id']==case_id),None)
+        if not case or case['version']!=payload['identity']['case_revision']:raise ValueError('retrospective_configured_case_revision_required')
+        # 同上下文回看不是独立金标；保留逐项判断，却绝不计为能力/安装通过。
+        assessment.update(validity='UNVERIFIED',verdict='NOT_SCORED',
+            reasons=assessment['reasons']+['retrospective_diagnostic_not_calibrated'])
+        from runtime.evaluation_maintenance import LAYERS
+        layer=payload.get('diagnostic_layer')
+        if layer not in LAYERS:raise ValueError('retrospective_diagnostic_layer_required')
+        card={'case_id':case_id,'layer':layer,
+            'examples':[{'input_hash':v} for v in payload['identity']['inputs']],
+            'dependencies':case.get('dependencies',[])}
+    elif not card or card['revision'] != payload['identity']['case_revision']:
         raise ValueError('trial_case_revision_changed')
     manager.validate_assets(card)
     for checksum in [*payload['identity']['inputs'], payload['answer_hash'],

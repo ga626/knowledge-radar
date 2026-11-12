@@ -15,6 +15,9 @@ def cooldown_plan(result, *, operation, attempts=0, now=None):
         return False
     if unsafe(result):return None
     error=result.get('error') if isinstance(result.get('error'),dict) else {}
+    # 已明确交给人的挑战不能被后台自动等待/重探覆盖。
+    if result.get('manual_action_required') is True or error.get('manual_action_required') is True:
+        return None
     risk=result.get('risk_event') if isinstance(result.get('risk_event'),dict) else {}
     reason=str(result.get('failure_type') or error.get('failure_type') or error.get('type') or result.get('reason_code') or result.get('reason') or risk.get('reason_code') or '')
     text=reason.lower()

@@ -62,4 +62,6 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 当前没有受支持的宿主工具访问隔离验证器，cold_replay即使自填access_audit_verified也保持UNVERIFIED/NOT_SCORED。installed_live必须绑定同一Ledger内由现有原生导入器核验过的native_run_id，源码/制品身份匹配；仅填native_receipt标签不计分。原生身份回执不证明答案语义正确，仍需独立判据。依赖快照只代表记录试次的源码checkout，不冒充原生安装源码证明。
 
+历史固定材料可用同一 `quality-trial` 加 `diagnostic_only=true`、`profile=knowledge_reuse` 记录温态回顾。必须引用本题库已有case及其version、固定输入/答案/判定资料；不新建或激活题卡，结果强制NOT_SCORED并保留逐项FAIL/UNKNOWN/PASS及理由。同上下文审阅没有独立校准，不能用于宣称修复提升或正式环境通过。
+
 PR前先plan和定向测试，CI沿既有`ci`合批节点跑维护合同；安装后仅按同制品身份重验受影响的read/update、观察采集、片段读取和纠错持久化。新MCP schema必须完整预检，正式宿主刷新后才赋原生PASS。

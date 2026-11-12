@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`f9e72b0773519d754b2147da2b553de8b5f1e85370ecba65b52a864f14ff203f`
+合同指纹：`d08b53a32bfbb190537b3a593f38bbc845163452d54353b9fdf96742ebd4d9f7`
 
 ## advance_research_candidate
 
@@ -3488,7 +3488,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
 
 高层研究感知入口。
 
-用于重度研究、查证、治理和跨来源证据任务的第一步。返回 KR 能力握手、
+按需建立持久研究任务；不是官方搜索的前置许可。返回 KR 能力握手、
 来源生态路线和可选第一波低风险证据；不会自动启动登录态浏览器、
 不绕过验证码/付费墙，也不会把路线固定成强制工具序列。
 
@@ -3873,7 +3873,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           }
         ],
         "default": null,
-        "description": "Codex显式选择的必要问题与范围；先登记后搜索，不提供时保留既有范围或标记未知。",
+        "description": "Codex显式选择的必要问题与范围；可在搜索后补充，不提供时保留既有范围或标记未知。",
         "title": "Questions"
       },
       "request_id": {
@@ -4415,7 +4415,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
 
 ## manage_research_artifacts
 
-授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年份/首次日期时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。
+授权目标、交付固定报告及全部有效来源正文。新任务按动态项目/年/月/日/时间任务归档，最终报告命名总报告.md；未引用和反证同样保留，报告与来源完成分别回读。晚绑定补交历史固定版本；旧布局用plan_archive_layout检查归属/身份/哈希，再以同plan_id调用apply_archive_layout。历史固定证据用plan_evidence_import/apply_evidence_import保留原ID接入；已有报告用plan_adopt_archive/apply_adopt_archive核对后原地登记。选取只生成链接并复用正文；人改、移动或删除受保护，命名不调用模型。
 
 ```json
 {
@@ -4559,6 +4559,71 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
   },
   "input": {
     "$defs": {
+      "AdoptArchive": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "plan_adopt_archive",
+              "apply_adopt_archive"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "existing_sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 100,
+            "title": "Existing Sources",
+            "type": "array"
+          },
+          "plan_id": {
+            "default": "",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "project_id": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Project Id",
+            "type": "string"
+          },
+          "relative_path": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "title": "Relative Path",
+            "type": "string"
+          },
+          "report_name": {
+            "default": "总报告.md",
+            "title": "Report Name",
+            "type": "string"
+          },
+          "report_version_id": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Report Version Id",
+            "type": "string"
+          },
+          "task_id": {
+            "maxLength": 96,
+            "minLength": 1,
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "project_id",
+          "task_id",
+          "relative_path",
+          "report_version_id"
+        ],
+        "title": "AdoptArchive",
+        "type": "object"
+      },
       "ApplyArchiveLayout": {
         "additionalProperties": false,
         "properties": {
@@ -4577,6 +4642,15 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "maxLength": 200,
             "minLength": 1,
             "title": "Project Id",
+            "type": "string"
+          },
+          "target_layout": {
+            "default": "project-calendar-task-v3",
+            "enum": [
+              "project-calendar-task-v3",
+              "project-year-task-v2"
+            ],
+            "title": "Target Layout",
             "type": "string"
           },
           "task_id": {
@@ -4896,6 +4970,45 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "title": "DeliveryStatus",
         "type": "object"
       },
+      "ImportHistoricalEvidence": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "plan_evidence_import",
+              "apply_evidence_import"
+            ],
+            "title": "Action",
+            "type": "string"
+          },
+          "approved_root": {
+            "title": "Approved Root",
+            "type": "string"
+          },
+          "plan_id": {
+            "default": "",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Plan Id",
+            "type": "string"
+          },
+          "version_ids": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Version Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "action",
+          "approved_root",
+          "version_ids"
+        ],
+        "title": "ImportHistoricalEvidence",
+        "type": "object"
+      },
       "OrphanReportScan": {
         "additionalProperties": false,
         "properties": {
@@ -4937,6 +5050,15 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "maxLength": 200,
             "minLength": 1,
             "title": "Project Id",
+            "type": "string"
+          },
+          "target_layout": {
+            "default": "project-calendar-task-v3",
+            "enum": [
+              "project-calendar-task-v3",
+              "project-year-task-v2"
+            ],
+            "title": "Target Layout",
             "type": "string"
           },
           "task_id": {
@@ -5004,6 +5126,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           "approved_input_root": {
             "title": "Approved Input Root",
             "type": "string"
+          },
+          "defer_delivery": {
+            "default": false,
+            "description": "仅登记固定报告，交付仍待完成；已有文件原地登记前使用，不生成新的Vault副本。",
+            "title": "Defer Delivery",
+            "type": "boolean"
           },
           "derived_from": {
             "items": {
@@ -5202,6 +5330,11 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "title": "Content",
             "type": "string"
           },
+          "include_review": {
+            "default": false,
+            "title": "Include Review",
+            "type": "boolean"
+          },
           "local_report_path": {
             "default": "",
             "title": "Local Report Path",
@@ -5263,7 +5396,9 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
       "request": {
         "discriminator": {
           "mapping": {
+            "apply_adopt_archive": "#/$defs/AdoptArchive",
             "apply_archive_layout": "#/$defs/ApplyArchiveLayout",
+            "apply_evidence_import": "#/$defs/ImportHistoricalEvidence",
             "archive_audit": "#/$defs/ArchiveAudit",
             "archive_status": "#/$defs/ArchiveStatus",
             "archive_task": "#/$defs/ArchiveTask",
@@ -5272,7 +5407,9 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "bind_context": "#/$defs/BindContext",
             "deliver": "#/$defs/Deliver",
             "delivery_status": "#/$defs/DeliveryStatus",
+            "plan_adopt_archive": "#/$defs/AdoptArchive",
             "plan_archive_layout": "#/$defs/PlanArchiveLayout",
+            "plan_evidence_import": "#/$defs/ImportHistoricalEvidence",
             "rebind_report_output": "#/$defs/RebindReportOutput",
             "register_report": "#/$defs/RegisterReport",
             "restore_research": "#/$defs/RestoreResearch",
@@ -5288,6 +5425,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
         "oneOf": [
           {
             "$ref": "#/$defs/RegisterReport"
+          },
+          {
+            "$ref": "#/$defs/AdoptArchive"
+          },
+          {
+            "$ref": "#/$defs/ImportHistoricalEvidence"
           },
           {
             "$ref": "#/$defs/AttachEvidence"
@@ -7039,7 +7182,7 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
     "additionalProperties": false,
     "properties": {
       "candidates": {
-        "description": "本次已获得的候选对象。普通登记保存不可逆候选ID；宿主批次另保留公开URL、标题与真实host_reference，供后续正文获取；不保存凭据。",
+        "description": "本次已获得的候选对象。普通登记保存不可逆候选ID；宿主批次另保留公开URL、标题与真实host_reference，供后续正文获取；实际可见文字可附visible_text、visible_scope(excerpt/page_text)、truncated和带时区retrieved_at，保存host_snapshot而非全文；不保存凭据。",
         "items": {
           "additionalProperties": true,
           "type": "object"
@@ -9329,7 +9472,7 @@ YouTube 公开视频搜索。
 
 ## update_research
 
-记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
+记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
 
 ```json
 {

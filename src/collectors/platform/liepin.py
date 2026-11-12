@@ -149,7 +149,7 @@ def _static_liepin_detail(url: str) -> Optional[Dict]:
         if raw.status_code >= 400:return None
         from urllib.parse import urlsplit
         if urlsplit(str(raw.url)).path != urlsplit(url).path:return None
-        typed = parse_jobposting(raw.text)
+        typed = parse_jobposting(raw.text, url=str(raw.url))
         if typed:
             return {**typed,'status':'ok','platform':'猎聘','url':url,'content_type':'recruitment_job_detail',
                 'metadata':{'transport':'http','external_reader':False,'extraction_source':'jobposting_jsonld'}}

@@ -163,7 +163,8 @@ def plan(root, suite, ledger):
     selected = [c["case_id"] for c in summary["cases"] if c["applicability"] != "fresh" or c["verdict"] != "PASS"]
     allowed = {c["case_id"] for c in suite["cases"] if c["auto"]}
     changes = []
-    history = ledger.history()
+    # 质量试次共享账本，但不是源码回归基线，且不携带源码快照。
+    history = [run for run in ledger.history() if run["target"]["kind"] == "development_source"]
     if history:
         from .core import changed_files
         changes = changed_files(history[-1]["snapshot"]["files"], snapshot(root)["files"])

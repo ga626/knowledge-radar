@@ -141,7 +141,7 @@ class EvidenceAssets:
     def _ref(row):
         meta = json.loads(row['metadata'])
         provenance = meta.get('provenance') if isinstance(meta.get('provenance'), dict) else {}
-        provenance = {key: provenance[key] for key in ('provider_id', 'source_url', 'resolved_url', 'mode', 'coverage', 'pdf_processing', 'ocr_images', 'comments_metadata', 'academic', 'github', 'input_sha256', 'structure', 'reuse', 'location') if key in provenance}
+        provenance = {key: provenance[key] for key in ('provider_id', 'source_url', 'resolved_url', 'mode', 'coverage', 'pdf_processing', 'ocr_images', 'comments_metadata', 'academic', 'github', 'host', 'input_sha256', 'structure', 'reuse', 'location') if key in provenance}
         provenance.update({key: meta[key] for key in ('parent_version_id', 'legacy_source_sha256', 'completeness_proven', 'derived_from', 'project_id', 'task_id', 'report_id', 'input_sha256') if key in meta})
         return {k: v for k, v in row.items() if k != 'metadata'} | {'locator_unit': 'unicode_code_point', 'coverage': meta.get('coverage', 'unknown'), 'extractor': meta.get('extractor', 'unknown'), 'locator_count': len(meta.get('locators') or []), 'provenance': provenance}
 
@@ -153,6 +153,96 @@ class EvidenceAssets:
         if digest(raw) != row['raw_sha256']:
             raise ValueError('asset_integrity_mismatch')
         return raw.decode('utf-8')
+
+    def plan_import(self, approved_root, version_ids):
+        """只读规划显式历史库中的版本；不继承旧项目权限，也不按目录猜来源。"""
+        from runtime.knowledge import guarded_path, encoded
+        root=Path(approved_root)
+        database=guarded_path(root,root/'index.sqlite3',require_file=True)
+        if root.resolve()==self.root.resolve():raise ValueError('historical_store_must_differ')
+        versions=sorted(set(version_ids))
+        if not versions or len(versions)>100 or any(not re.fullmatch('[a-f0-9]{64}',v) for v in versions):
+            raise ValueError('invalid_historical_versions')
+        old=EvidenceAssets(root,read_only=True);rows=[]
+        with old.connection() as c:
+            for version in versions:
+                row=c.execute('SELECT a.*,s.withdrawn FROM assets a JOIN sources s USING(source_id) WHERE version_id=?',(version,)).fetchone()
+                if not row:raise ValueError('historical_version_missing')
+                row=dict(row);guarded_path(root,old._file(row['raw_sha256']),require_file=True)
+                text=old._verified_text(row)
+                if len(text.encode('utf-8'))!=row['size_bytes'] or len(text)!=row['chars'] or digest(text.replace('\r\n','\n').replace('\r','\n').encode())!=row['normalized_sha256']:
+                    raise ValueError('asset_integrity_mismatch')
+                json.loads(row['metadata'])
+                rows.append(row)
+        parents={v for row in rows for v in json.loads(row['metadata']).get('derived_from',[])}
+        missing=parents-set(versions)
+        if missing:
+            if not (self.root/'index.sqlite3').is_file():raise ValueError('historical_provenance_closure_required')
+            current=EvidenceAssets(self.root,read_only=True)
+            for version in missing:current.fetch(version,max_chars=1)
+        payload={'schema':'historical-evidence-import/v1','source':str(database.resolve()),
+            'destination':str(self.root.resolve()),'rows':rows,'version_ids':versions,
+            'scope_inherited':False,'semantic_review_inherited':False}
+        return {'status':'planned','plan_id':digest(encoded(payload).encode()),**payload}
+
+    def apply_import(self, approved_root, version_ids, plan_id):
+        """按同一计划导入原ID/时间/原文；事务重试不重新采集或改写历史行。"""
+        from runtime.knowledge import encoded
+        if self.read_only:raise ValueError('evidence_read_only')
+        candidate=self.plan_import(approved_root,version_ids)
+        if candidate['plan_id']!=plan_id:raise ValueError('historical_import_plan_stale')
+        old=EvidenceAssets(approved_root,read_only=True)
+        # 批次字节在写事务前全部核对，避免半批无引用资产。
+        bodies={row['version_id']:old._verified_text(row).encode('utf-8') for row in candidate['rows']}
+        with self.connection() as conn:
+            conn.execute('CREATE TABLE IF NOT EXISTS historical_imports(plan_id TEXT PRIMARY KEY,payload TEXT NOT NULL)')
+            saved=conn.execute('SELECT payload FROM historical_imports WHERE plan_id=?',(plan_id,)).fetchone()
+            if saved:
+                for row in candidate['rows']:
+                    stored=conn.execute('SELECT * FROM assets WHERE version_id=?',(row['version_id'],)).fetchone()
+                    if not stored or dict(stored)!={k:v for k,v in row.items() if k!='withdrawn'}:raise ValueError('historical_import_identity_conflict')
+                    self._verified_text(row)
+                return json.loads(saved[0])
+            additions=[]
+            for row in candidate['rows']:
+                stored=conn.execute('SELECT * FROM assets WHERE version_id=?',(row['version_id'],)).fetchone()
+                if stored and dict(stored)!={k:v for k,v in row.items() if k!='withdrawn'}:raise ValueError('historical_import_identity_conflict')
+                if not stored:additions.append(row)
+                path=self._file(row['raw_sha256'])
+                if path.exists() and digest(path.read_bytes())!=row['raw_sha256']:raise ValueError('asset_integrity_mismatch')
+            additional={row['raw_sha256']:row['size_bytes'] for row in additions
+                if not conn.execute('SELECT 1 FROM assets WHERE raw_sha256=? LIMIT 1',(row['raw_sha256'],)).fetchone()}
+            used=conn.execute('SELECT COALESCE(SUM(size_bytes),0) FROM (SELECT MAX(size_bytes) size_bytes FROM assets GROUP BY raw_sha256)').fetchone()[0]
+            if self.max_bytes is not None and used+sum(additional.values())>self.max_bytes:raise ValueError('evidence_capacity_exceeded')
+            admit_bytes(self.root,sum(additional.values())*4+1024*1024)
+            for row in candidate['rows']:
+                conn.execute('INSERT INTO sources VALUES(?,?) ON CONFLICT(source_id) DO UPDATE SET withdrawn=MAX(withdrawn,excluded.withdrawn)',(row['source_id'],row['withdrawn']))
+            for row in additions:
+                values={k:v for k,v in row.items() if k!='withdrawn'}
+                columns=list(values)
+                conn.execute('INSERT INTO assets('+','.join(columns)+') VALUES('+','.join('?' for _ in columns)+')',[values[k] for k in columns])
+                conn.execute('INSERT INTO asset_fts VALUES(?,?)',(row['version_id'],bodies[row['version_id']].decode('utf-8').replace('\r\n','\n').replace('\r','\n')))
+            database_bytes=conn.execute('PRAGMA page_count').fetchone()[0]*conn.execute('PRAGMA page_size').fetchone()[0]
+            other_bytes=sum(p.stat().st_size for p in self.root.iterdir() if p.is_file() and p.name!='index.sqlite3')
+            unpublished={row['raw_sha256']:row['size_bytes'] for row in additions if not self._file(row['raw_sha256']).exists()}
+            if self.max_physical_bytes is not None and database_bytes+other_bytes+sum(unpublished.values())>self.max_physical_bytes:
+                raise ValueError('evidence_physical_capacity_exceeded')
+            for row in additions:
+                raw=bodies[row['version_id']];path=self._file(row['raw_sha256'])
+                if not path.exists():
+                    temporary=None
+                    try:
+                        with tempfile.NamedTemporaryFile(dir=self.root,prefix='.asset-import-',delete=False) as handle:
+                            temporary=Path(handle.name);handle.write(raw);handle.flush();os.fsync(handle.fileno())
+                        os.replace(temporary,path)
+                    finally:
+                        if temporary:temporary.unlink(missing_ok=True)
+            conn.execute("UPDATE knowledge_meta SET value=value+1 WHERE key='generation'")
+            receipt={'status':'imported','plan_id':plan_id,'version_ids':candidate['version_ids'],
+                'original_source':candidate['source'],'scope_inherited':False,'semantic_review_inherited':False,
+                'original_ids_preserved':True}
+            conn.execute('INSERT INTO historical_imports VALUES(?,?)',(plan_id,encoded(receipt)))
+        return receipt
 
     def assert_available(self, conn, row, seen=None):
         seen = set() if seen is None else seen

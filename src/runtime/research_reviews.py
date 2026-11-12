@@ -410,9 +410,13 @@ def review_page(index,conn,task_id,base,assets,max_chars,limit,after_seq,high,*,
     return result
 
 
-def report_appendix(index,task_id,content,assets=None):
+def report_appendix(index,task_id,content,assets=None,*,requested=False):
     with index.connection() as conn:snap=state(index,conn,task_id,assets)
     body_hash=hashlib.sha256(content.encode()).hexdigest()
+    if not snap['claims'] and not requested:
+        return content,{'baseline':snap['baseline'],'body_sha256':body_hash,
+            'full_text_review':'not_requested','gaps':snap['gaps'],
+            'projection_transforms':[],'dependency_versions':[]}
     reviews=[r for r in snap['records'] if r['_kind']=='report_review' and r['report_sha256']==body_hash and r['baseline']==snap['baseline']]
     def cell(text):return ' '.join(str(text).replace('|',r'\|').splitlines())
     # 编号按固定版本和摘录范围去重，仅改变展示，不改账本和原始资料。
