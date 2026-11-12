@@ -170,7 +170,10 @@ def execute_media_plan(bundle: MediaBundle, plan: MediaActionPlan, *, language=N
                     asset = cached['asset']
                     if not Path(asset['path']).is_file() or file_sha(asset['path']) != asset['sha256']:
                         cached = None
+                from runtime.execution_context import record_execution_progress
+                record_execution_progress('download')
                 asset = cached['asset'] if cached else acquire_media_ref(ref)
+                record_execution_progress('download_complete', download_s=asset.get('download_s',0))
                 result['artifacts'].append(asset)
                 check_execution()
                 if operation == MediaOperation.SAMPLE_FRAMES:

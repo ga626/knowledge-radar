@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "ef1aea8344534582f23f53eb348f2ac068a1d758f3253bf091e27ddbc56335b0",
+  "contract_hash": "f9e72b0773519d754b2147da2b553de8b5f1e85370ecba65b52a864f14ff203f",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -616,6 +616,21 @@
             "description": "后台任务返回的固定ID。",
             "title": "Task Id",
             "type": "string"
+          },
+          "timeout_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。",
+            "title": "Timeout S"
           }
         },
         "required": [
@@ -2346,7 +2361,7 @@
           },
           "deadline_s": {
             "default": 600,
-            "description": "增强任务总deadline秒数，含排队；到期停止自有worker。",
+            "description": "增强任务总期限秒数，含排队；长视频可能超过180秒。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。",
             "maximum": 3600,
             "minimum": 1,
             "title": "Deadline S",
@@ -4527,6 +4542,35 @@
             "title": "ApplyArchiveLayout",
             "type": "object"
           },
+          "ArchiveAudit": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "archive_audit",
+                "title": "Action",
+                "type": "string"
+              },
+              "cursor": {
+                "default": "",
+                "maxLength": 110,
+                "pattern": "^[A-Za-z0-9_.-]*$",
+                "title": "Cursor",
+                "type": "string"
+              },
+              "limit": {
+                "default": 50,
+                "maximum": 100,
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "ArchiveAudit",
+            "type": "object"
+          },
           "ArchiveStatus": {
             "additionalProperties": false,
             "properties": {
@@ -4569,6 +4613,45 @@
               "task_id"
             ],
             "title": "ArchiveTask",
+            "type": "object"
+          },
+          "AttachEvidence": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "attach_evidence",
+                "title": "Action",
+                "type": "string"
+              },
+              "project_id": {
+                "maxLength": 200,
+                "minLength": 1,
+                "title": "Project Id",
+                "type": "string"
+              },
+              "task_id": {
+                "maxLength": 96,
+                "minLength": 1,
+                "title": "Task Id",
+                "type": "string"
+              },
+              "version_ids": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "Version Ids",
+                "type": "array"
+              }
+            },
+            "required": [
+              "action",
+              "project_id",
+              "task_id",
+              "version_ids"
+            ],
+            "title": "AttachEvidence",
             "type": "object"
           },
           "Authorize": {
@@ -4653,6 +4736,19 @@
                 "description": "Codex选择的Vault项目目录；同一项目跨任务复用。初次绑定遇已有目录时必须明确提供，不自动加序号新建项目。",
                 "title": "Vault Project Dir",
                 "type": "string"
+              },
+              "vault_required": {
+                "anyOf": [
+                  {
+                    "type": "boolean"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "省略时沿用本项目已有的Vault交付要求；true必须有Vault授权，false仅对新任务显式选择仅本地保存。",
+                "title": "Vault Required"
               }
             },
             "required": [
@@ -4745,6 +4841,35 @@
               "delivery_id"
             ],
             "title": "DeliveryStatus",
+            "type": "object"
+          },
+          "OrphanReportScan": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "scan_orphan_reports",
+                "title": "Action",
+                "type": "string"
+              },
+              "cursor": {
+                "default": "",
+                "maxLength": 12,
+                "pattern": "^\\d*$",
+                "title": "Cursor",
+                "type": "string"
+              },
+              "limit": {
+                "default": 100,
+                "maximum": 500,
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "OrphanReportScan",
             "type": "object"
           },
           "PlanArchiveLayout": {
@@ -5086,8 +5211,10 @@
             "discriminator": {
               "mapping": {
                 "apply_archive_layout": "#/$defs/ApplyArchiveLayout",
+                "archive_audit": "#/$defs/ArchiveAudit",
                 "archive_status": "#/$defs/ArchiveStatus",
                 "archive_task": "#/$defs/ArchiveTask",
+                "attach_evidence": "#/$defs/AttachEvidence",
                 "authorize_destination": "#/$defs/Authorize",
                 "bind_context": "#/$defs/BindContext",
                 "deliver": "#/$defs/Deliver",
@@ -5098,6 +5225,7 @@
                 "restore_research": "#/$defs/RestoreResearch",
                 "retry_archive": "#/$defs/RetryArchive",
                 "revoke_destination": "#/$defs/Revoke",
+                "scan_orphan_reports": "#/$defs/OrphanReportScan",
                 "snapshot_research": "#/$defs/SnapshotResearch",
                 "submit_report": "#/$defs/SubmitReport",
                 "upgrade_index": "#/$defs/Reindex"
@@ -5107,6 +5235,9 @@
             "oneOf": [
               {
                 "$ref": "#/$defs/RegisterReport"
+              },
+              {
+                "$ref": "#/$defs/AttachEvidence"
               },
               {
                 "$ref": "#/$defs/Authorize"
@@ -5146,6 +5277,12 @@
               },
               {
                 "$ref": "#/$defs/ApplyArchiveLayout"
+              },
+              {
+                "$ref": "#/$defs/OrphanReportScan"
+              },
+              {
+                "$ref": "#/$defs/ArchiveAudit"
               },
               {
                 "$ref": "#/$defs/SnapshotResearch"
@@ -6018,6 +6155,91 @@
       "group": "knowledge",
       "input_schema": {
         "$defs": {
+          "EvaluationRead": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "evaluation",
+                "title": "Action",
+                "type": "string"
+              },
+              "after": {
+                "default": 0,
+                "minimum": 0,
+                "title": "After",
+                "type": "integer"
+              },
+              "candidate_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Candidate Id",
+                "type": "string"
+              },
+              "case_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Case Id",
+                "type": "string"
+              },
+              "example_index": {
+                "default": 0,
+                "maximum": 99,
+                "minimum": 0,
+                "title": "Example Index",
+                "type": "integer"
+              },
+              "limit": {
+                "default": 20,
+                "maximum": 100,
+                "minimum": 1,
+                "title": "Limit",
+                "type": "integer"
+              },
+              "max_chars": {
+                "default": 4000,
+                "maximum": 8000,
+                "minimum": 1,
+                "title": "Max Chars",
+                "type": "integer"
+              },
+              "role": {
+                "default": "input_hash",
+                "enum": [
+                  "input_hash",
+                  "bad_hash",
+                  "good_hash"
+                ],
+                "title": "Role",
+                "type": "string"
+              },
+              "start": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Start",
+                "type": "integer"
+              },
+              "view": {
+                "default": "overview",
+                "enum": [
+                  "overview",
+                  "cases",
+                  "changes",
+                  "feedback",
+                  "queue",
+                  "candidates",
+                  "members",
+                  "example"
+                ],
+                "title": "View",
+                "type": "string"
+              }
+            },
+            "required": [
+              "action"
+            ],
+            "title": "EvaluationRead",
+            "type": "object"
+          },
           "Fetch": {
             "additionalProperties": false,
             "properties": {
@@ -6276,6 +6498,7 @@
           "request": {
             "discriminator": {
               "mapping": {
+                "evaluation": "#/$defs/EvaluationRead",
                 "fetch": "#/$defs/Fetch",
                 "research": "#/$defs/ResearchRead",
                 "search": "#/$defs/Search"
@@ -6291,6 +6514,9 @@
               },
               {
                 "$ref": "#/$defs/ResearchRead"
+              },
+              {
+                "$ref": "#/$defs/EvaluationRead"
               }
             ],
             "title": "Request"
@@ -6568,9 +6794,9 @@
           }
         ]
       },
-      "purpose": "检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。",
+      "purpose": "检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。action=evaluation读取评测观察、候选、维护谱系、等待Agent队列和题卡样本片段；只读，不启动评测。",
       "read_only": true,
-      "usage": "检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。"
+      "usage": "检索本机固定证据和报告；按命中版本/位置渐进读取，不扫描私人目录。action=evaluation读取评测观察、候选、维护谱系、等待Agent队列和题卡样本片段；只读，不启动评测。"
     },
     {
       "error_schema": {
@@ -6759,7 +6985,7 @@
           },
           "host_batch_id": {
             "default": "",
-            "description": "宿主搜索交回：先用 update_research(request={action:host_request,task_id:研究ID,text:查询}) 登记批次，再提供批次ID；tool填真实宿主工具，candidates保留host_reference。宿主声明不冒充原生工具回执。",
+            "description": "可选既有宿主批次ID；无须搜索前登记。宿主工具交回时可留空并提供实际query，candidates保留真实host_reference。宿主声明不冒充KR原生取证。",
             "title": "Host Batch Id",
             "type": "string"
           },
@@ -6789,7 +7015,7 @@
           },
           "query": {
             "default": "",
-            "description": "本次实际查询；只即时计算 HMAC 指纹，绝不写入账本。",
+            "description": "本次实际查询。普通候选仅存HMAC指纹；宿主结果无预登记批次时必填，显式批次保存该查询和公开引用。勿传凭据或个人敏感信息。",
             "title": "Query",
             "type": "string"
           },
@@ -9679,6 +9905,194 @@
             "title": "Dependency",
             "type": "object"
           },
+          "EvaluationWrite": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "const": "evaluation",
+                "default": "evaluation",
+                "title": "Action",
+                "type": "string"
+              },
+              "actor": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Actor",
+                "type": "string"
+              },
+              "candidate_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Candidate Id",
+                "type": "string"
+              },
+              "card": {
+                "additionalProperties": true,
+                "title": "Card",
+                "type": "object"
+              },
+              "case_id": {
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+                "title": "Case Id",
+                "type": "string"
+              },
+              "change_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Change Id",
+                "type": "string"
+              },
+              "context_id": {
+                "default": "unknown",
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Context Id",
+                "type": "string"
+              },
+              "coverage_map": {
+                "additionalProperties": true,
+                "title": "Coverage Map",
+                "type": "object"
+              },
+              "disposition": {
+                "default": "",
+                "enum": [
+                  "",
+                  "linked_existing_case",
+                  "rejected",
+                  "needs_evidence",
+                  "disputed"
+                ],
+                "title": "Disposition",
+                "type": "string"
+              },
+              "evidence": {
+                "items": {
+                  "type": "string"
+                },
+                "maxItems": 100,
+                "minItems": 1,
+                "title": "Evidence",
+                "type": "array"
+              },
+              "expected_revision": {
+                "minimum": 0,
+                "title": "Expected Revision",
+                "type": "integer"
+              },
+              "feedback_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Feedback Id",
+                "type": "string"
+              },
+              "human": {
+                "default": false,
+                "title": "Human",
+                "type": "boolean"
+              },
+              "mode": {
+                "default": "apply",
+                "enum": [
+                  "apply",
+                  "shadow"
+                ],
+                "title": "Mode",
+                "type": "string"
+              },
+              "operation": {
+                "enum": [
+                  "upsert",
+                  "state",
+                  "merge",
+                  "compensate",
+                  "lock",
+                  "unlock",
+                  "resolve_feedback",
+                  "review_candidate",
+                  "review_task_audit",
+                  "report_signal"
+                ],
+                "title": "Operation",
+                "type": "string"
+              },
+              "patch": {
+                "additionalProperties": true,
+                "title": "Patch",
+                "type": "object"
+              },
+              "reason": {
+                "maxLength": 2000,
+                "minLength": 1,
+                "title": "Reason",
+                "type": "string"
+              },
+              "reopen_when": {
+                "default": "",
+                "maxLength": 2000,
+                "title": "Reopen When",
+                "type": "string"
+              },
+              "request_id": {
+                "pattern": "^[A-Za-z0-9_.:-]{1,128}$",
+                "title": "Request Id",
+                "type": "string"
+              },
+              "review": {
+                "additionalProperties": true,
+                "title": "Review",
+                "type": "object"
+              },
+              "rule_version": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Rule Version",
+                "type": "string"
+              },
+              "signal": {
+                "additionalProperties": true,
+                "title": "Signal",
+                "type": "object"
+              },
+              "skill_version": {
+                "maxLength": 128,
+                "minLength": 1,
+                "title": "Skill Version",
+                "type": "string"
+              },
+              "target_id": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Target Id",
+                "type": "string"
+              },
+              "target_revision": {
+                "default": 0,
+                "minimum": 0,
+                "title": "Target Revision",
+                "type": "integer"
+              },
+              "task_key": {
+                "default": "",
+                "maxLength": 128,
+                "title": "Task Key",
+                "type": "string"
+              }
+            },
+            "required": [
+              "operation",
+              "case_id",
+              "expected_revision",
+              "request_id",
+              "actor",
+              "rule_version",
+              "skill_version",
+              "reason",
+              "evidence"
+            ],
+            "title": "EvaluationWrite",
+            "type": "object"
+          },
           "EvidenceRef": {
             "additionalProperties": false,
             "properties": {
@@ -10757,6 +11171,7 @@
                 "claim": "#/$defs/ClaimWrite",
                 "coverage": "#/$defs/CoverageWrite",
                 "decision": "#/$defs/ResearchWrite",
+                "evaluation": "#/$defs/EvaluationWrite",
                 "exploration": "#/$defs/ExplorationWrite",
                 "exploration_disposition": "#/$defs/ExplorationDisposition",
                 "fold": "#/$defs/ResearchWrite",
@@ -10814,6 +11229,9 @@
               },
               {
                 "$ref": "#/$defs/InvestigationWrite"
+              },
+              {
+                "$ref": "#/$defs/EvaluationWrite"
               }
             ],
             "title": "Request"
@@ -10838,9 +11256,9 @@
         "additionalProperties": true,
         "type": "object"
       },
-      "purpose": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。",
+      "purpose": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。",
       "read_only": false,
-      "usage": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"
+      "usage": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report自动附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"
     }
   ]
 }

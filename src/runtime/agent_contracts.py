@@ -79,7 +79,15 @@ def compact_evidence(value):
         if len(json.dumps(raw,ensure_ascii=False))<=1800:continue
         ref=by_kind[key]
         result[key]=raw[:800] if isinstance(raw,str) else raw[:2]
-        disclosed.append({'part':key,'version_id':ref['version_id'],'read_tool':'read_knowledge','request':{'action':'fetch','version_id':ref['version_id']},'original_retained':True})
+        part = {'part':key,'version_id':ref['version_id'],'read_tool':'read_knowledge',
+                'request':{'action':'fetch','version_id':ref['version_id']},'original_retained':True}
+        if isinstance(raw,str):
+            part.update(total_chars=len(raw), displayed_chars=len(result[key]), next_start=len(result[key]),
+                        locator_unit='unicode_code_point')
+            part['request']['start'] = len(result[key])
+        else:
+            part.update(total_items=len(raw), displayed_items=len(result[key]))
+        disclosed.append(part)
     if disclosed:result['disclosure']={'partial_view':True,'parts':disclosed,'meaning':'View is shortened; source coverage is unchanged.'}
     if 'media_ledger' in by_kind and isinstance(result.get('downloaded_media'),list):
         rows=result.pop('downloaded_media')

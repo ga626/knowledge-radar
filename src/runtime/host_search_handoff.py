@@ -28,12 +28,15 @@ def register(task_id, query, *, batch_id='', index=None):
     return {**value, 'next_action':'Run the host search tool, then submit its candidate URLs and real host references with this batch_id.'}
 
 
-def submit(task_id, batch_id, items, *, host_tool, host_outcome='', index=None):
+def submit(task_id, batch_id, items, *, host_tool, host_outcome='', query='', index=None):
     import json
     from kr_core.source_urls import public_evidence_payload
     from generic_web.url_policy import public_addresses
-    if not batch_id or host_tool not in {'web.run','codex_web_search','codex_builtin_web_search'}:
-        raise ValueError('registered_host_batch_and_known_host_tool_required')
+    if host_tool not in {
+        'web.run', 'codex_web_search', 'codex_builtin_web_search',
+        'mcp__codex_apps__search_service_web_run',
+    }:
+        raise ValueError('known_host_tool_required')
     if not isinstance(items, list) or len(items) > 50:
         raise ValueError('host_candidates_must_be_a_list_of_up_to_50')
     outcome = host_outcome or ('results' if items else '')
@@ -52,6 +55,14 @@ def submit(task_id, batch_id, items, *, host_tool, host_outcome='', index=None):
                     ('url','title','snippet','host_reference','retrieved_at')}))
     digest = hashlib.sha256(encoded([host_tool,rows,outcome]).encode()).hexdigest()
     index = index or ResearchIndex()
+    # 搜索许可属于宿主Agent；登记可在搜索完成后进行。先校验全部载荷，
+    # 再按查询和实际结果身份创建批次，避免失败请求留下空壳或覆盖下一轮。
+    if not batch_id:
+        clean_query = query.strip()
+        if not clean_query or len(clean_query) > 500:
+            raise ValueError('host_query_must_be_1_to_500_characters')
+        batch_id = 'host-' + hashlib.sha256(encoded([clean_query,digest]).encode()).hexdigest()[:24]
+        register(task_id, clean_query, batch_id=batch_id, index=index)
     with index.connection(write=True) as conn:
         row = conn.execute("SELECT value FROM current WHERE task_id=? AND kind='host_batch' AND object_id=?", (task_id,batch_id)).fetchone()
         if not row:

@@ -330,7 +330,7 @@ def trace_tool_call(tool_name: str, *, strategy: str = "", metadata: Optional[Di
             retry_count=0,
             failure_code=failure_code,
             failure_tags=structured_failure_tags(result, exc),
-            metadata=metadata or {},
+            metadata={**(metadata or {}), **({'research_task_key':hashlib.sha256(research_task_id.encode()).hexdigest()[:24]} if research_task_id else {})},
         )
         get_tool_trace_recorder().record(event)
         if research_task_id:

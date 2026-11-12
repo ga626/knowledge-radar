@@ -65,7 +65,7 @@ def invoke_page(*, session, operation, expression="", url="", wait_selector="", 
                     with httpx.Client(timeout=1,trust_env=False) as client:
                         status=client.get('http://127.0.0.1:19825/status',headers={'X-OpenCLI':'1'},
                             params={'contextId':config['context_id']}).json()
-                    return status.get('daemonVersion')=='2.0.2' and status.get('extensionConnected') is True
+                    return status.get('daemonVersion')=='2.0.2' and status.get('extensionConnected') is True and not status.get('profileDisconnected') and extension_supported(status.get('extensionVersion'))
                 except (httpx.HTTPError,ValueError):
                     return False
             readiness=ensure_borrowed_browser(connected,timeout_s=18)
@@ -80,13 +80,31 @@ def invoke_page(*, session, operation, expression="", url="", wait_selector="", 
             "steps": steps or [], "manualWait": manual_wait, "passiveManualLogin": passive_manual_login,
             "isolatedWork": isolated_work}
         # Reuse the same execution context's outer site lease; other tasks still contend.
+        run_id = 'kr-' + uuid.uuid4().hex
+        payload['runId'] = run_id
+        from runtime.browser_sessions import observe_borrowed_call
+        from runtime.tool_trace import current_tool_trace
+        def observed(result):
+            return observe_borrowed_call(result, platform=browser_site_key(session).removeprefix('daily-chrome:'),
+                context_id=config['context_id'], session=session, run_id=run_id, operation=operation,
+                task_id=current_tool_trace().get('research_task_id', ''))
         lease = nullcontext() if browser_site_key(session) in _HELD_SITES.get() else resource.lease(operation)
         with lease:
-            response = silent_subprocess_run([node, str(runner)], cwd=str(root), input=json.dumps(payload, ensure_ascii=False),
-                capture_output=True, encoding="utf-8", timeout=60)
-        result = json.loads(response.stdout)
-        result.setdefault("metadata", {}).update(transport="opencli", ownership="borrowed", browser_process_owned=False)
-        return result
+            try:
+                response = silent_subprocess_run([node, str(runner)], cwd=str(root), input=json.dumps(payload, ensure_ascii=False),
+                    capture_output=True, encoding='utf-8', timeout=60)
+            except subprocess.TimeoutExpired:
+                return observed({'ok':False,'code':'opencli_caller_timeout','request_executed':True})
+            except OSError:
+                return observed({'ok':False,'code':'opencli_process_unavailable','request_executed':False})
+            try:
+                result = json.loads(response.stdout)
+                if not isinstance(result, dict): raise ValueError('invalid_result')
+            except (ValueError, TypeError):
+                return observed({'ok':False,'code':'opencli_dependency_or_output_invalid','request_executed':True})
+            result.setdefault('metadata', {}).update(transport='opencli', ownership='borrowed', browser_process_owned=False)
+            # 回执落盘后才释放站点租约，防止迟到记录覆盖后续登录/关闭观察。
+            return observed(result)
     except subprocess.TimeoutExpired:
         return {"ok": False, "code": "opencli_caller_timeout", "request_executed": True}
     except (OSError, ValueError, TypeError):

@@ -28,6 +28,15 @@
   const formatDuration=(seconds       )=>Number.isFinite(seconds)&&seconds>0?(seconds<60?Math.round(seconds)+' 秒':Math.round(seconds/60)+' 分钟'):'未记录';
   const truncate=(value       ,max=80)=>value.length>max?value.slice(0,max-1)+'…':value;
   const statusLabel=(value       )=>states[value]||'状态待确认';
+  const archiveLabel=(task             )=>{
+    const a=task.archive;
+    if(!a)return '';
+    if(a.delivery_gap==='archive_context_missing')return '归档未绑定';
+    if(a.delivery_gap==='vault_grant_required')return '缺少资料库授权';
+    if(a.error_code)return '归档异常，待处理';
+    if(a.completion!=='complete')return '归档尚未完成';
+    return a.summary==='local_only'?'仅保存本地':'报告与资料已归档';
+  };
   const statusClass=(value       )=>value==='recorded'||value==='available'||value==='accepted_for_decision'?'available':value==='recorded_with_gaps'||value==='missing'||value==='needs_repair'?'missing':'pending';
   const sourceLabel=(value        )=>ecologies[String(value)]||'其他来源';
   const titleOf=(task             )=>task.readable_summary?.title||truncate(task.objective||'未命名研究',33);
@@ -204,7 +213,7 @@
       const node=button('',()=>void inspect(task.research_task_id));node.dataset.taskId=task.research_task_id;node.title=task.objective;
       node.setAttribute('aria-pressed',String(selected?.research_task_id===task.research_task_id));
       const title=document.createElement('span'),meta=document.createElement('small');title.className='research-task-title';meta.className='research-task-meta';
-      title.textContent=titleOf(task);meta.textContent=projectOf(task)+' · '+statusLabel(task.status)+' · '+formatDate(task.updated_at);node.append(title,meta);target.append(node);
+      title.textContent=titleOf(task);meta.textContent=projectOf(task)+' · '+statusLabel(task.status)+' · '+formatDate(task.updated_at)+(archiveLabel(task)?' · '+archiveLabel(task):'');node.append(title,meta);target.append(node);
     };
     if(historyMode==='project'){
       let current='';
@@ -220,7 +229,7 @@
       const task             =await call({action:'inspect',task_id:id});
       if(generation!==inspectGeneration)return;
       if(task.status==='unknown_task')throw Error('记录已不可读取，请刷新列表。');
-      if(background&&selected?.research_task_id===id&&selected.updated_at===task.updated_at&&JSON.stringify(selected.deliveries)===JSON.stringify(task.deliveries)&&JSON.stringify(selected.files)===JSON.stringify(task.files))return;
+      if(background&&selected?.research_task_id===id&&selected.updated_at===task.updated_at&&JSON.stringify(selected.deliveries)===JSON.stringify(task.deliveries)&&JSON.stringify(selected.files)===JSON.stringify(task.files)&&JSON.stringify(selected.archive)===JSON.stringify(task.archive))return;
       if(selected?.research_task_id!==id){
         for(const details of element('research-detail').querySelectorAll                    ('details'))details.open=false;
       }
@@ -232,7 +241,19 @@
       const budgets                      ={fast:'快速核对',balanced:'常规调研',deep:'深入调研',diagnostic:'诊断核查'};
       text('research-state-detail',(budgets[task.budget]||'研究记录')+' · 更新于 '+formatDate(task.updated_at));
       const deliveries=task.deliveries||[];
-      text('research-deliveries',deliveries.map(d=>(d.status==='local_committed'?'本地已核验':d.status==='conflict'?'目标有修改，已保留':d.status)+' · '+(d.path||'')).join('\n')||'暂无交付回执；本地完成不代表云同步完成。');
+      const receipt=task.archive?.delivery_receipt;
+      const archiveLines=[archiveLabel(task)];
+      if(receipt){
+        archiveLines.push('项目：'+(receipt.project_id||projectOf(task)));
+        for(const [key,label] of [['local','本地报告'],['vault','Obsidian资料库']]){
+          const endpoint=receipt[key]||{};
+          archiveLines.push(label+'：'+(endpoint.status==='local_committed'?'已核验':endpoint.status==='not_configured'?'未配置':'尚未完成')+
+            (endpoint.path?' · '+endpoint.path:endpoint.relative_path?' · '+endpoint.relative_path:''));
+          if(endpoint.grant_id)archiveLines.push(label+'授权：'+endpoint.grant_id);
+          if(endpoint.sha256)archiveLines.push(label+' SHA-256：'+endpoint.sha256);
+        }
+      }
+      text('research-deliveries',[...archiveLines,...deliveries.map(d=>(d.status==='local_committed'?'本地已核验':d.status==='conflict'?'目标有修改，已保留':d.status)+' · '+(d.path||''))].filter(Boolean).join('\n')||'暂无交付回执；本地完成不代表云同步完成。');
       drawTaskList();renderFacts(task);renderCloseout(task);renderProgress(task);renderRounds(task);renderMetrics(task);renderFiles(rows(task.files)                  );
     }catch(error){if(generation===inspectGeneration)showError(error);}
   };

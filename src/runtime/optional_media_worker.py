@@ -86,7 +86,7 @@ def _detected_transcript(result):
 
 def native_asr(request):
     """单实例CPU INT8、逐30秒块检测与转写；外语整次失败，不归档部分正文。"""
-    from runtime.execution_context import check_execution, current_execution
+    from runtime.execution_context import check_execution, current_execution, record_execution_progress
     from runtime.media_decode import audio_chunks
     from runtime.operation_checkpoint import OperationCheckpoint
     from runtime.media_cache import media_cache_subdir
@@ -97,14 +97,21 @@ def native_asr(request):
     if request.get('device', 'cpu') != 'cpu':
         raise ValueError('unsupported_asr_device:CPU_INT8_required')
     model_started = time.monotonic()
-    model, hit = _load_asr_model(request['model_root'], request['model_identity'], request.get('threads', 4))
-    load_s = time.monotonic() - model_started
+    record_execution_progress('model_loading')
+    try:
+        model, hit = _load_asr_model(request['model_root'], request['model_identity'], request.get('threads', 4))
+    finally:
+        load_s = time.monotonic() - model_started
+        record_execution_progress('model_loading', model_load_s=round(load_s,3))
+    record_execution_progress('audio_decode', model_load_s=round(load_s,3), model_cache_hit=hit)
     identity = {key: request[key] for key in ('input_sha256', 'model_identity', 'language', 'device', 'threads')}
     identity.update(engine=ASR_ENGINE, chunk_seconds=30, max_tokens=1024, language_contract=3,
                     implementation=file_sha(__file__))
     checkpoint = OperationCheckpoint(media_cache_subdir('asr_checkpoints'), identity, identity)
     rows = checkpoint.read().get('chunks', [])
     reused = len(rows)
+    record_execution_progress('audio_decode', resumed_chunks=reused, completed_chunks=reused,
+                              processed_audio_s=rows[-1]['end_s'] if rows else 0)
     inference_s, decode_s, count = 0., 0., 0
     decode_started = time.monotonic()
     for index, (start, samples, rate) in enumerate(audio_chunks(request['input_path'])):
@@ -119,8 +126,13 @@ def native_asr(request):
             # 始终auto；语言偏好仅用于字幕/缓存，不能预填覆盖真实音频语言。
             stream.accept_waveform(rate, samples)
             inference_started = time.monotonic()
-            model.decode_stream(stream)
-            inference_s += time.monotonic() - inference_started
+            record_execution_progress('transcription', audio_decode_s=round(decode_s,3))
+            try:
+                model.decode_stream(stream)
+            finally:
+                inference_s += time.monotonic() - inference_started
+                record_execution_progress('transcription', transcription_s=round(inference_s,3),
+                                          worker_total_s=round(time.monotonic()-started,3))
             check_execution()  # native返回前保留租约；取消后不读回、不保存迟到块。
             result = stream.result
             if len(result.tokens) >= 1024:
@@ -131,6 +143,8 @@ def native_asr(request):
             checkpoint.write({'chunks': rows, 'writer_attempt': context.get('attempt_id', ''),
                               'writer_execution': context.get('execution_id', '')})
         count += 1
+        record_execution_progress('audio_decode', completed_chunks=count,
+                                  processed_audio_s=end, audio_decode_s=round(decode_s,3))
         decode_started = time.monotonic()
     if count != len(rows):
         raise ValueError('asr_checkpoint_duration_mismatch')
@@ -144,6 +158,8 @@ def native_asr(request):
         cursor += len(row['text']) + 1
     duration = rows[-1]['end_s'] if rows else 0
     languages = sorted({row['language'] for row in rows if row.get('language')})
+    record_execution_progress('transcript_complete', completed_chunks=count, processed_audio_s=duration,
+                              worker_total_s=round(time.monotonic()-started,3))
     return {'status': 'acquired', 'text': '\n'.join(parts), 'source_kind': 'asr', 'component': request['component'],
         'speech_status': 'speech_detected' if parts else 'no_speech_detected' if count else 'no_decoded_audio',
         'content_locators': locators, 'timestamp_precision': 'input_chunk_only', 'word_timestamps': 'not_acquired',

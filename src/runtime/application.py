@@ -131,7 +131,7 @@ def research_workflow_identity():
     digest = hashlib.sha256(skill.read_bytes()).hexdigest() if skill.is_file() else ''
     return {'skill_sha256': digest, 'packaged_skill': 'present' if digest else 'missing',
             'host_loaded_skill': 'unverified',
-            'workflow': 'Declare project and question scope; associate actions; read fixed evidence; assess meaning and gaps; deliver with explicit limits.'}
+            'workflow': 'Codex owns research decisions. Host search needs no KR admission; use KR capabilities and fixed evidence as needed, then deliver to explicit project targets. Investigation and review records are optional aids, not answer gates.'}
 
 
 def catalog(name="", *, full=False):

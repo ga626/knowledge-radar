@@ -140,11 +140,12 @@ def build_tool_surface() -> Dict[str, Any]:
                 "side_effect_boundary": "plan_only is local-only; first_wave uses low-risk search tools; deep_route is a planning envelope and does not auto-run browser/login/media-heavy detail.",
                 "host_internal_web_policy": {
                     "schema": "knowledgeradar-host-internal-web-policy/v1",
-                    "principle": "Built-in host web/search is a finger inside the KnowledgeRadar hand, not an independent parallel path.",
-                    "admission": "Call kr_research or otherwise obtain a KR web_search route plan before using built-in web/search for KR-eligible research.",
+                    "principle": "Codex owns search decisions; official host search complements KR special acquisition and fixed evidence.",
+                    "admission": "agent_selected_no_prior_route_required",
                     "wave_id": "host_internal_web_wave",
                     "strategy_tree": "web_search.provider_wave",
-                    "required_trace_fields": ["wave_id", "strategy_tree", "relationship_to_kr", "reason"],
+                    "required_trace_fields": [],
+                    "post_search_handoff": "Optional record_research_candidates_tool with query, actual host tool and real host_reference; never a search prerequisite.",
                 },
             }
         },

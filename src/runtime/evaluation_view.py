@@ -20,6 +20,45 @@ def evaluation_store(root: Path) -> Path:
     return root / "local/evaluation"
 
 
+def evaluation_dashboard(root: Path | None = None) -> dict:
+    """刷新只读投影，不启动试次、Agent、浏览器或外部调用。"""
+    from .evaluation_maintenance import Maintenance, LAYERS, digest
+    root = Path(root or os.environ.get('KR_PROJECT_ROOT') or Path(__file__).resolve().parents[2])
+    maintenance = Maintenance().view()
+    from .evaluation_candidates import observation_summary
+    summary = evaluation_summary(root)
+    quality, quality_state = [], 'missing'
+    path = evaluation_store(root)/'quality-summary.json'
+    if path.is_file():
+        try:
+            raw = json.loads(path.read_text(encoding='utf-8'))
+            if raw.get('integrity') != digest({k:v for k,v in raw.items() if k!='integrity'}):
+                raise ValueError('quality_summary_integrity')
+            quality, quality_state = raw['trials'], 'historical_only'
+        except (OSError, ValueError, KeyError, TypeError):
+            quality_state = 'invalid'
+    levels = []
+    for key,label in LAYERS.items():
+        trials = [r for r in quality if r.get('layer')==key]
+        levels.append({'key':key,'label':label,'assessment':'NOT_MEASURED',
+                       'historical_trials':len(trials),'last':trials[-1] if trials else None,
+                       'boundary':'historical_trial_is_not_current_installed_acceptance'})
+    cards = maintenance['cases']
+    risks = [r for r in cards if r.get('reevaluation') or r['runnability']=='oracle_disputed'][:2]
+    seed = datetime.now(timezone.utc).date().isoformat()
+    ranked = sorted((r for r in cards if r not in risks),key=lambda r:digest([seed,r['case_id'],r['revision']]))
+    random_sample = ranked[:2]
+    used = {r['case_id'] for r in risks+random_sample}
+    strata = Counter(r['layer'] for r in cards)
+    rare = sorted((r for r in cards if r['case_id'] not in used), key=lambda r:(strata[r['layer']],r['case_id']))[:1]
+    queue = [{'case_id':r['case_id'],'title':r['title'],'revision':r['revision'], 'reason':why}
+             for group,why in ((risks,'风险或争议'),(random_sample,'独立随机抽查，含高置信题'),(rare,'稀有层覆盖')) for r in group]
+    return {**summary,'levels':levels,'maintenance':maintenance,'observations':observation_summary(),
+            'audit_queue':queue,'audit_scope':'当前可见题页；更多题可分页检查','quality_trials':quality,
+            'quality_availability':quality_state, 'quality_boundary':'历史分层判断；未证明当前正式安装质量',
+            'feedback_delivery':'waiting_for_agent','comparison':'固定锚点配对；换题、换判据、换裁判必须断线'}
+
+
 def _digest(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
 

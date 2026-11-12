@@ -8,7 +8,7 @@ import uuid
 from contextvars import ContextVar
 import threading
 import subprocess
-from typing import Any, Dict, Iterable, List
+from typing import Any, Dict, Iterable, List, Optional
 
 _HELD_SITES=ContextVar("kr_browser_held_sites",default=frozenset())
 
@@ -110,12 +110,15 @@ def ensure_borrowed_browser(connected, *, timeout_s=8):
             time.sleep(.1)
 
 
-def browser_resource_contract(*, ownership, resource_id, generation, driver):
+def browser_resource_contract(*, ownership, resource_id, generation, driver, pid=None,
+                             profile_id="", profile_dir_hash="", window_id=None, hwnd=None):
     """描述权限，不接管驱动或替站点判断登录。代际未确认时不能关闭进程。"""
     if ownership not in {"owned", "borrowed"} or not resource_id:
         raise ValueError("invalid_browser_resource_contract")
     return {"schema": "knowledgeradar-browser-resource/v1", "ownership": ownership,
             "resource_id": resource_id, "generation": generation, "driver": driver,
+            "pid": pid, "profile_id": profile_id, "profile_dir_hash": profile_dir_hash,
+            "window_id": window_id, "hwnd": hwnd,
             "may_close_process": ownership == "owned" and bool(generation),
             "may_close_owned_tabs": True}
 
@@ -133,6 +136,10 @@ class BorrowedBrowser:
     generation: str
     driver: str = ""
     ownership: str = "borrowed"
+    profile_id: str = ""
+    pid: Optional[int] = None
+    window_id: Optional[int] = None
+    hwnd: Optional[int] = None
 
     def __post_init__(self):
         if self.ownership != "borrowed":
@@ -140,7 +147,9 @@ class BorrowedBrowser:
 
     def resource_contract(self):
         return browser_resource_contract(ownership=self.ownership,
-            resource_id=self.context_id + ":" + self.session, generation=self.generation, driver=self.driver)
+            resource_id=self.context_id + ":" + self.session, generation=self.generation, driver=self.driver,
+            pid=self.pid, profile_id=self.profile_id or self.context_id,
+            window_id=self.window_id, hwnd=self.hwnd)
 
     @contextmanager
     def lease(self, operation: str):

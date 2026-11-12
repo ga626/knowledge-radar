@@ -210,8 +210,10 @@ def run_optional(payload):
                'model_identity': file_sha(receipt_root() / (component + '.json')),
                'device': 'cpu', 'threads': threads}
     from runtime.resource_concurrency import acquire_resource
-
+    from runtime.execution_context import record_execution_progress
+    record_execution_progress('waiting_resource')
     with acquire_resource("local_heavy") as lease:
+        record_execution_progress('processing', resource_wait_s=round(float(lease.get('lease_wait_s',0))+float(lease.get('wait_s',0)),3))
         worker_started = time.monotonic()
         from runtime.optional_media_worker import execute
         from runtime.execution_context import check_execution

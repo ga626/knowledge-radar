@@ -40,7 +40,7 @@ def render_console_page(token: str) -> str:
     styles = [_asset('console.css'), _asset('research_workspace.css'), _asset('runtime_status.css')]
     if developer:
         scripts.extend([_asset('evaluation_summary.js'), _asset('developer_console.js')])
-        styles.append(_asset('developer_console.css'))
+        styles.extend([_asset('developer_console.css'), _asset('evaluation.css')])
     values = {
         'TITLE': 'KnowledgeRadar 开发版' if role == 'dev' else 'KnowledgeRadar',
         'ROLE': html.escape(role, quote=True), 'DEVELOPER': str(developer).lower(),
@@ -49,6 +49,7 @@ def render_console_page(token: str) -> str:
         'STYLE': '\n'.join(styles),
         'SCRIPT': '\n'.join(scripts).replace('__TOKEN_JSON__', json.dumps(token)).replace('__TOKEN__', token),
         'RESEARCH_HTML': _asset('research_workspace.html'),
+        'EVALUATION_HTML': _asset('evaluation.html') if developer else '',
         'DEVELOPER_HTML': _asset('developer_console.html') if developer else '',
         'DEVELOPER_NAV': '<button type="button" data-view="developer" aria-selected="false"><span class="nav-icon">07</span><span>开发者中心</span></button>' if developer else '',
         'DEV_NOTICE': '<p class="notice">KnowledgeRadar 开发版 · 研究记录只读，配置与缓存独立</p>' if role == 'dev' else '',

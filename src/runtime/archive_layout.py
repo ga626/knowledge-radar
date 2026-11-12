@@ -11,14 +11,27 @@ from runtime.file_write_lock import file_write_lock
 from runtime.knowledge import encoded, guarded_path
 from runtime.research_archive import calendar_layout, sha, _hash_file
 from runtime.knowledge_delivery import identity
+from runtime.project_identity import canonical_project_id
 
 
 def _binding(engine, root, owner):
-    key=engine._owner_key(root,owner)
+    owners=[owner]
+    if owner[0] in {'project','year','task'}:
+        # 只查同一稳定项目的既存owner，计划不分配目录、不改历史键。
+        with engine._connection() as c:
+            aliases={json.loads(raw).get('project_id','') for (raw,) in c.execute('SELECT payload FROM research_context')}
+        aliases.add(canonical_project_id(owner[1]))
+        owners += [[owner[0],alias,*owner[2:]] for alias in sorted(aliases)
+                   if alias!=owner[1] and canonical_project_id(alias)==canonical_project_id(owner[1])]
     with engine._connection() as c:
-        row=c.execute('SELECT payload FROM archive_display_names WHERE owner=?',(key,)).fetchone()
-    if not row:raise ValueError('archive_directory_ownership_required')
-    return key, engine._find_committed(root,json.loads(row[0]))
+        matches=[(key,json.loads(row[0])) for value in owners
+                 for key in [engine._owner_key(root,value)]
+                 for row in c.execute('SELECT payload FROM archive_display_names WHERE owner=?',(key,))]
+    if not matches:raise ValueError('archive_directory_ownership_required')
+    if len({str(Path(record['path'])).casefold() for _,record in matches})>1:
+        raise ValueError('archive_project_alias_conflict_requires_explicit_resolution')
+    key,record=matches[0]
+    return key, engine._find_committed(root,record)
 
 
 def _inventory(root, folder):
@@ -36,7 +49,7 @@ def _inventory(root, folder):
 
 def _plan(engine, request):
     context=engine._context(request.task_id)
-    if not context or context['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+    if not context or canonical_project_id(context['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
     if not context.get('vault_grant_id'):raise ValueError('vault_grant_required')
     root=engine._grant(context['vault_grant_id'],request.project_id)
     task_key,folder=_binding(engine,root,['task',request.project_id,request.task_id])
@@ -105,7 +118,7 @@ def _source_link_plan(engine, request):
     """只预览完整单文件来源的基址修复；原文、报告、分卷及人改不覆盖。"""
     from runtime.research_archive import _source_markdown_links
     context=engine._context(request.task_id)
-    if not context or context['project_id']!=request.project_id:
+    if not context or canonical_project_id(context['project_id'])!=request.project_id:
         raise ValueError('research_project_mismatch_use_new_task')
     root=engine._grant(context['vault_grant_id'],request.project_id)
     _,folder=_binding(engine,root,['task',request.project_id,request.task_id])
@@ -165,7 +178,7 @@ def apply_source_links(engine, request):
     from runtime.research_archive import _read_safe
     with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
         context=engine._context(request.task_id)
-        if not context or context['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        if not context or canonical_project_id(context['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
         root=engine._grant(context['vault_grant_id'],request.project_id)
         with engine._connection() as c:
             c.execute('CREATE TABLE IF NOT EXISTS archive_source_link_repairs(plan_id TEXT PRIMARY KEY,task_id TEXT,payload TEXT)')
@@ -284,7 +297,7 @@ def apply(engine,request):
     """journal先落盘，rename保留文件身份；重复调用对账同一事务。"""
     with file_write_lock(engine.root/('archive-'+sha(request.task_id.encode()))):
         context=engine._context(request.task_id)
-        if not context or context['project_id']!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
+        if not context or canonical_project_id(context['project_id'])!=request.project_id:raise ValueError('research_project_mismatch_use_new_task')
         root=engine._grant(context['vault_grant_id'],request.project_id)
         with engine._connection() as c:
             c.execute('CREATE TABLE IF NOT EXISTS archive_layout_transactions(plan_id TEXT PRIMARY KEY,task_id TEXT,payload TEXT)')

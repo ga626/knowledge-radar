@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 from pathlib import Path
 from collections import Counter
 from runtime.paths import runtime_state_dir
@@ -49,10 +50,17 @@ class ResearchRecords:
         for path in paths[:limit]:
             try:
                 row = self.snapshot(path.stem)
+                from runtime.research_archive import ResearchArchive
+                from runtime.knowledge_delivery import DeliveryStore
+                try:
+                    archive = ResearchArchive(DeliveryStore(self.root, self.assets)).status(path.stem)
+                except (ValueError, OSError, sqlite3.Error) as exc:
+                    archive = {'completion':'unknown', 'delivery_gap':'archive_status_unavailable', 'error_code':type(exc).__name__}
                 rows.append({
                     key: row.get(key)
                     for key in ('research_task_id', 'objective', 'budget', 'status', 'project_name', 'project_id', 'project_context', 'created_at', 'updated_at')
-                } | {'readable_summary': summarize_task(row), 'metrics': task_metrics(row)})
+                } | {'readable_summary': summarize_task(row), 'metrics': task_metrics(row),
+                     'archive':{key:archive.get(key) for key in ('summary','completion','delivery_gap','error_code','source_delivery','next_action','delivery_receipt')}})
             except (ValueError, OSError):
                 unreadable += 1
         return {

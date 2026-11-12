@@ -52,6 +52,9 @@ def user_projection(result):
     """普通用户只收到产品信息；内部原始账本不随隐藏面板下发。"""
     keep = {'schema','status','research_task_id','objective','budget','project_name','created_at','updated_at','tasks','unreadable_records','read_only','readable_summary','metrics','rounds','files','closeout','view_model','items','asset','text','locator','locators','next_start','truncated','candidate_pool','claim_gaps','pending_submissions','gap_assessment','deliveries','next_cursor','generation','ranking','unavailable_count'}
     projected = {key:value for key,value in result.items() if key in keep}
+    if 'archive' in result:
+        projected['archive'] = {key:value for key,value in result['archive'].items()
+                                if key in {'summary','completion','delivery_gap','error_code','source_delivery','next_action','delivery_receipt'}}
     if 'tasks' in projected: projected['tasks'] = [user_projection(row) for row in projected['tasks']]
     if 'metrics' in projected: projected['metrics'] = {key:value for key,value in projected['metrics'].items() if key not in {'tools','event_count','planned_source_ecologies'}}
     if 'files' in projected: projected['files'] = [{key:value for key,value in row.items() if key not in {'path','raw_sha256'}} for row in projected['files'] if row.get('type') in {'report','fixed_evidence'}]
@@ -71,5 +74,5 @@ def user_projection(result):
         ]
         counts = assessment.get('counts') if isinstance(assessment.get('counts'), dict) else {}
         projected['gap_assessment']['counts'] = {key:counts[key] for key in ('candidate_count','upgraded_count','pending_submission_count') if key in counts}
-    if 'closeout' in projected: projected['closeout'] = {key:value for key,value in projected['closeout'].items() if key in {'missing_outcomes','critical_claims_without_support','critical_claims_without_receipts','pending_background_tasks','unavailable_evidence_versions'}}
+    if 'closeout' in projected: projected['closeout'] = {key:value for key,value in projected['closeout'].items() if key in {'missing_outcomes','critical_claims_without_support','critical_claims_without_receipts','pending_background_tasks','unavailable_evidence_versions','completion_facts'}}
     return projected

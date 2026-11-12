@@ -152,8 +152,39 @@ def supervise(executable, marker, receipt, *, isolated_profile=None, lifetime_s=
     return state
 
 
+def process_browser_observation(process_id):
+    """仅对已绑定窗口PID读取启动属性；不返回命令行、账号、路径或Cookie。"""
+    from runtime.process import silent_subprocess_run
+    import hashlib
+    if os.name != 'nt' or not isinstance(process_id, int) or process_id <= 0:
+        return {'profile_proof':'unavailable'}
+    try:
+        script = ("$ErrorActionPreference='Stop'; Get-CimInstance Win32_Process -Filter \"ProcessId="
+                  + str(process_id) + "\" | Select-Object ExecutablePath,CommandLine | ConvertTo-Json -Compress")
+        reply = silent_subprocess_run(['powershell.exe','-NoProfile','-NonInteractive','-Command',script],
+                                     capture_output=True, text=True, encoding='utf-8', timeout=3)
+        data = json.loads(reply.stdout) if reply.returncode==0 else {}
+        command = (data or {}).get('CommandLine') or ''
+        executable = (data or {}).get('ExecutablePath') or ''
+        if not command:return {'profile_proof':'process_attributes_unavailable'}
+        def argument(name):
+            found = re.search(r'--'+name+r'(?:=|\s+)(?:"([^"]+)"|([^\s"]+))',command)
+            return (found.group(1) or found.group(2)) if found else ''
+        root, profile = argument('user-data-dir'), argument('profile-directory')
+        digest=lambda text:hashlib.sha256(text.casefold().encode('utf-8')).hexdigest() if text else ''
+        return {'browser_kind':'chrome' if Path(executable).name.lower()=='chrome.exe' else 'unknown',
+                'headless':bool(re.search(r'--headless\b',command)),
+                'remote_debugging':bool(re.search(r'--remote-debugging',command)),
+                'custom_user_data_dir':bool(root), 'user_data_dir_hash':digest(root),
+                'profile_dir_hash':digest(root+'|'+profile) if profile else '',
+                'profile_proof':'explicit_launch_argument' if profile else 'context_bound; exact_profile_not_exposed'}
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return {'profile_proof':'process_attributes_unavailable'}
+
+
 def window_presentation(request, *, windows=None):
     """只管理以随机标题核验过的KR工作窗；不枚举后随意收起Chrome。"""
+    injected_windows = windows is not None
     windows = windows or Windows()
     rows = windows.list()
     if request.get('action') == 'bind':
@@ -169,17 +200,36 @@ def window_presentation(request, *, windows=None):
             rows = windows.list()
         if len(matches) != 1:
             raise ValueError('work_window_not_unique')
-        return {'handle': matches[0]['handle'], 'pid': matches[0]['pid']}
+        from runtime.process_identity import process_identity
+        return {'handle': matches[0]['handle'], 'pid': matches[0]['pid'],
+                'process_identity':process_identity(matches[0]['pid']),
+                **(process_browser_observation(matches[0]['pid']) if not injected_windows else {})}
     identity = request.get('identity') or {}
     current = next((r for r in rows if r['handle'] == identity.get('handle') and r['pid'] == identity.get('pid')), None)
     title = request.get('title')
     current_title = current['title'].lstrip('\u200e\u200f') if current else ''
     if not current or not title or not (current_title == title or current_title.startswith(title + ' - ')):
         raise ValueError('work_window_identity_changed')
+    from runtime.process_identity import process_identity
+    if identity.get('process_identity') and identity['process_identity'] != process_identity(current['pid']):
+        raise ValueError('work_window_identity_changed')
     if request.get('action') != 'present' or not isinstance(request.get('foreground'), bool):
         raise ValueError('invalid_window_presentation')
     windows.present(identity, request['foreground'])
-    return {'requested_foreground': request['foreground'], 'mechanism': 'kr_windows_presentation'}
+    # ShowWindowAsync只表示发出请求。有限观察回执与请求分开，不能把希望
+    # 最小化写成已最小化；超时后不循环、不前置重试。
+    deadline = time.monotonic() + .3
+    while True:
+        observed = next((r for r in windows.list() if r['handle']==identity['handle'] and r['pid']==identity['pid']), None)
+        focused = windows.foreground()==identity['handle'] if hasattr(windows,'foreground') else None
+        minimized = observed.get('minimized') if observed else None
+        confirmed = (minimized is False and focused is True) if request['foreground'] else (minimized is True and focused is False)
+        if confirmed or time.monotonic()>=deadline:break
+        time.sleep(.03)
+    return {'requested_foreground':request['foreground'], 'mechanism':'kr_windows_presentation',
+            'hwnd':identity['handle'], 'pid':identity['pid'], 'process_identity':identity.get('process_identity',''),
+            'observed_visibility':'minimized' if minimized is True else 'visible' if minimized is False else 'unknown',
+            'focused':focused, 'presentation_confirmed':confirmed}
 
 
 def main():

@@ -249,6 +249,16 @@ def _run(operation, **kwargs):
         if pending.get("expires_at", 0) > time.time():
             kwargs["idleTimeoutS"] = max(1, int(pending["expires_at"] - time.time()))
     payload = {"pythonExecutable": sys.executable, "root": str(root), "operation": operation, "contextId": context, **kwargs}
+    import uuid
+    run_id = 'kr-' + uuid.uuid4().hex
+    payload['runId'] = run_id
+    from runtime.browser_sessions import observe_borrowed_call
+    from runtime.tool_trace import current_tool_trace
+    def observed(result):
+        if operation == 'inventory': return result
+        return observe_borrowed_call(result, platform='xiaohongshu', context_id=context,
+            session='kr:xiaohongshu', run_id=run_id, operation=operation,
+            task_id=current_tool_trace().get('research_task_id', ''))
     started = time.monotonic()
     if operation != "inventory" or start_service:
         ready = _ensure_daemon(root, node)
@@ -265,19 +275,19 @@ def _run(operation, **kwargs):
             input=json.dumps(payload, ensure_ascii=False), capture_output=True,
             encoding="utf-8", timeout=150, cwd=str(root))
     except subprocess.TimeoutExpired:
-        return _failure("opencli_caller_timeout")
+        return observed(_failure("opencli_caller_timeout"))
     except OSError:
-        return _failure("opencli_process_unavailable", executed=False)
+        return observed(_failure("opencli_process_unavailable", executed=False))
     try:
         result = json.loads(response.stdout)
     except (ValueError, TypeError):
-        return _failure("opencli_invalid_output")
+        return observed(_failure("opencli_invalid_output"))
     if not result.get("ok"):
         diagnostic = result.get('diagnostic')
         runner_metadata = result.get('metadata') or {}
         result = _failure(str(result.get("code") or "opencli_failed"), data=result.get("data"), executed=bool(result.get("request_executed")))
         for key in ('browser_timings', 'cleanup_warnings', 'work_session', 'work_page_closed',
-                    'retained_for_interaction', 'retention_max_s', 'automatic_retry'):
+                    'retained_for_interaction', 'retention_max_s', 'automatic_retry', 'run_id', 'window_observation', 'connection_observation', 'attention', 'presentation'):
             if key in runner_metadata:
                 result['metadata'][key] = runner_metadata[key]
         if isinstance(diagnostic, dict):
@@ -286,7 +296,7 @@ def _run(operation, **kwargs):
     result.setdefault("metadata", {}).update(transport="opencli", upstream_sha=UPSTREAM_SHA,
         adapter_sha256=fingerprint, elapsed_s=round(time.monotonic()-started, 3),
         fallback_used=False, ownership="borrowed", browser_process_owned=False)
-    return result
+    return observed(result)
 
 def _ensure_daemon(root, node):
     from runtime.opencli_bridge import ensure_daemon
@@ -366,6 +376,11 @@ def complete_login():
     pending = _json(state_dir() / "login.json")
     if pending.get("context") and pending["context"] != browser().context_id:
         return _failure("browser_generation_changed", executed=False)
+    if (response.get('metadata') or {}).get('work_page_closed') is not True:
+        # 登录已确认不等于窗口已回收；保留交接供下一次明确请求对账，
+        # 不自动轮询，也不清掉等待记录后伪称收口。
+        return {**_failure('manual_window_cleanup_unconfirmed',executed=False),
+                'authenticated':True, 'metadata':response.get('metadata',{})}
     _save(state_dir() / "auth.json", {"revision": time.time()})
     _observe_account("auth_verified")
     for name in ("stop.json", "login.json"):

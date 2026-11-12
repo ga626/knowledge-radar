@@ -8,12 +8,19 @@ from pathlib import Path
 import re
 import sqlite3
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from kr_core.evidence_assets import EvidenceAssets
+from runtime.project_identity import canonical_project_id
+from .evaluation_maintenance import EvaluationRead
 
 
 class Contract(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    @field_validator("project_id", mode="before", check_fields=False)
+    @classmethod
+    def normalize_project_id(cls, value: str) -> str:
+        return canonical_project_id(value) if isinstance(value, str) else value
 
 
 class Search(Contract):
@@ -52,7 +59,7 @@ class ResearchRead(Contract):
     query: str = Field(default="",max_length=500)
 
 
-ReadRequest = Annotated[Search | Fetch | ResearchRead, Field(discriminator="action")]
+ReadRequest = Annotated[Search | Fetch | ResearchRead | EvaluationRead, Field(discriminator="action")]
 
 
 class AssetRef(BaseModel):
@@ -123,6 +130,7 @@ def search(assets: EvidenceAssets, request: Search):
         raise ValueError("too_many_query_terms")
     fingerprint = hashlib.sha256(encoded(request.model_dump(exclude={"cursor", "max_chars", "limit"})).encode()).hexdigest()
     with assets.connection() as conn:
+        conn.create_function('kr_project_id', 1, canonical_project_id, deterministic=True)
         if not conn.in_transaction: conn.execute("BEGIN")
         if not conn.execute("SELECT 1 FROM sqlite_master WHERE name='knowledge_meta'").fetchone():
             return SearchResult(status="upgrade_required").model_dump()
@@ -146,7 +154,7 @@ def search(assets: EvidenceAssets, request: Search):
             params.append(high)
             if request.project_id or request.task_id:
                 scope=["ns.version_id=newer.version_id", "ns.rowid<=?"];params.append(scope_high)
-                if request.project_id:scope.append("ns.project_id=?");params.append(request.project_id)
+                if request.project_id:scope.append("kr_project_id(ns.project_id)=kr_project_id(?)");params.append(request.project_id)
                 if request.task_id:scope.append("ns.task_id=?");params.append(request.task_id)
                 newer.append("EXISTS(SELECT 1 FROM asset_scopes ns WHERE "+" AND ".join(scope)+")")
             if request.captured_after is not None:newer.append("newer.captured_at>=?");params.append(request.captured_after)
@@ -154,7 +162,7 @@ def search(assets: EvidenceAssets, request: Search):
             where.append("NOT EXISTS(SELECT 1 FROM assets newer WHERE "+" AND ".join(newer)+")")
         if request.project_id or request.task_id:
             scope = ["sc.version_id=a.version_id", "sc.rowid<=?"]; params.append(scope_high)
-            if request.project_id: scope.append("sc.project_id=?"); params.append(request.project_id)
+            if request.project_id: scope.append("kr_project_id(sc.project_id)=kr_project_id(?)"); params.append(request.project_id)
             if request.task_id: scope.append("sc.task_id=?"); params.append(request.task_id)
             where.append("EXISTS(SELECT 1 FROM asset_scopes sc WHERE " + " AND ".join(scope) + ")")
         if request.kind: where.append("a.kind=?"); params.append(request.kind)
@@ -228,6 +236,9 @@ def search(assets: EvidenceAssets, request: Search):
 
 
 def read(request: ReadRequest, assets=None):
+    if isinstance(request, EvaluationRead):
+        from .evaluation_maintenance import Maintenance
+        return Maintenance().read(request)
     assets = assets or EvidenceAssets(read_only=True)
     if isinstance(request, ResearchRead):
         from runtime.research_index import ResearchIndex
@@ -259,6 +270,7 @@ def guarded_path(root, path, *, require_file=False):
 
 
 def register_report(*, assets, input_path, approved_input_root, input_sha256, project_id, task_id, report_id, title, derived_from):
+    project_id = canonical_project_id(project_id)
     if not project_id or not task_id or not report_id: raise ValueError("project_task_report_identity_required")
     path = guarded_path(approved_input_root, input_path, require_file=True)
     if path.suffix.lower() not in {".md", ".txt"}: raise ValueError("report_text_required")

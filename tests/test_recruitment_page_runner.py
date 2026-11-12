@@ -63,7 +63,7 @@ export class BrowserBridge {
         target = tmp_path / 'dist/src/browser' / filename
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding='utf8')
-    (tmp_path/'window-helper-fixture.mjs').write_text("import cp from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {PassThrough} from 'node:stream';\nimport {appendFileSync} from 'node:fs';\ncp.execFile=(exe,args,options,callback)=>{\n const stdin=new PassThrough();let input='';\n stdin.on('data',chunk=>input+=chunk);\n stdin.on('end',()=>{\n  const r=JSON.parse(input);\n  if(r.action==='present')globalThis.fixtureWindowShown=r.foreground;\n  appendFileSync(process.env.KR_RUNNER_FIXTURE_LOG,JSON.stringify({kind:'window-helper',...r})+'\\n');\n  callback(null,JSON.stringify(r.action==='bind'?{handle:1,pid:2}:{}));\n });return {stdin};\n};\nsyncBuiltinESMExports();\n",encoding='utf-8')
+    (tmp_path/'window-helper-fixture.mjs').write_text("import cp from 'node:child_process';\nimport {syncBuiltinESMExports} from 'node:module';\nimport {PassThrough} from 'node:stream';\nimport {appendFileSync} from 'node:fs';\ncp.execFile=(exe,args,options,callback)=>{\n const stdin=new PassThrough();let input='';\n stdin.on('data',chunk=>input+=chunk);\n stdin.on('end',()=>{\n  const r=JSON.parse(input);\n  if(r.action==='present')globalThis.fixtureWindowShown=r.foreground;\n  appendFileSync(process.env.KR_RUNNER_FIXTURE_LOG,JSON.stringify({kind:'window-helper',...r})+'\\n');\n  callback(null,JSON.stringify(r.action==='bind'?{handle:1,pid:2}:{presentation_confirmed:true,observed_visibility:r.foreground?'visible':'minimized',focused:r.foreground}));\n });return {stdin};\n};\nsyncBuiltinESMExports();\n",encoding='utf-8')
     return tmp_path, log
 
 
@@ -270,14 +270,15 @@ def test_navigation_explicitly_keeps_background_mode(bridge_fixture, monkeypatch
     assert result['ok']
     assert all(c['windowMode']=='background' for c in calls if c['kind'] in {'connect','goto'})
 
-def test_visibility_is_resolved_before_one_business_read_without_replay(bridge_fixture, monkeypatch):
+def test_background_visibility_never_foregrounds_and_reads_once_without_replay(bridge_fixture, monkeypatch):
     result, calls = run(bridge_fixture, monkeypatch, 'visibility', steps=[])
     assert result['ok']
     reads = [i for i, c in enumerate(calls) if c.get('business')]
     assert len(reads) == 1
-    foreground = next(i for i, c in enumerate(calls) if c.get('kind') == 'window-helper' and c.get('foreground'))
     background = max(i for i, c in enumerate(calls) if c.get('kind') == 'window-helper' and c.get('foreground') is False)
-    assert foreground < reads[0] < background
+    assert background < reads[0]
+    assert not any(c.get('kind')=='window-helper' and c.get('foreground') is True for c in calls)
+    assert result['metadata']['attention']['foreground_suppressed']
     assert not any(c['kind'] in {'goto', 'action'} for c in calls)
 
 
