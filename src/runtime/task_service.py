@@ -629,9 +629,10 @@ class TaskService:
                     result={**result, "task": compact_task_ref(task)},
                     association="explicit_background_task", receipt_kind="background_completion",
                     research_action=(task.get('metadata') or {}).get('research_action') if research_id == (task.get('metadata') or {}).get('research_task_id') else None)
-                if recorded.get("receipt", {}).get("status") == "partial" and (
-                        status != "partial" or recorded.get('reason') == 'receipt_identity_conflict'):
-                    # 兼容旧版把等待和终态写到同一 trace 的记录，保留历史而非覆盖。
+                if recorded.get('reason') == 'receipt_identity_conflict' or (
+                        recorded.get("receipt", {}).get("status") == "partial" and status != "partial"):
+                    # 兼容旧等待记录及旧失败产物的终态投影，保留历史而非覆盖。
+                    # 只补一个确定性身份；该身份仍冲突时保留缺口，不无限换ID。
                     recorded = submit_tool_result(
                         task_id=research_id, trace_id=task_id + ":result:" + status, tool=tool,
                         status=status, failure_code=task.get("error_code", ""),
