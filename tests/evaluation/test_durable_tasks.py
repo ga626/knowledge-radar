@@ -615,6 +615,57 @@ def test_legacy_recording_is_backfilled_without_new_execution_or_receipt(service
     assert service.store.managed_tasks(adapter='durable_process', recording_pending=True) == []
 
 
+@pytest.mark.parametrize('alternate_conflict', [False, True])
+def test_legacy_failed_completion_projection_keeps_history_and_settles_once(service, alternate_conflict):
+    import hashlib
+    import json
+    from runtime import research_ledger as ledger
+    from runtime.tasks import compact_task_ref
+
+    research = ledger.open_task(objective='旧媒体终态关联迁移', budget='fast', considered=[])
+    task_id = 'durable-legacy-failed-projection'
+    result = {'content': '保留简介', 'enhancement_status': 'queued',
+              'content_coverage': {'request_satisfied': False,
+                                   'parts': {'transcript': {'status': 'queued'}}}}
+    artifact = {'schema': 'knowledgeradar-task-artifact/v1', 'task_id': task_id,
+                'attempt_id': 'original-attempt', 'identity': {'source': 'original-source'}, 'result': result}
+    path = service.root / task_id / 'collection.json'
+    path.parent.mkdir(parents=True)
+    raw = json.dumps(artifact, ensure_ascii=False).encode('utf-8')
+    path.write_bytes(raw)
+    service.store.upsert_task(task_id, 'durable_content_detail', 'fixture', result_path=str(path),
+        metadata={'adapter': 'durable_process', 'attempt_id': 'original-attempt',
+                  'source_identity': 'original-source', 'artifact_sha256': hashlib.sha256(raw).hexdigest(),
+                  'research_task_id': research['research_task_id']})
+    row = service.store.mark_failed(task_id, 'original deadline', error_code='deadline_exceeded')
+    original = ledger.submit_tool_result(task_id=research['research_task_id'], trace_id=task_id + ':result',
+        tool='get_content_detail', status='failed', failure_code='deadline_exceeded',
+        result={**result, 'task': compact_task_ref(row)}, association='explicit_background_task',
+        receipt_kind='background_completion')['receipt']
+    if alternate_conflict:
+        ledger.submit_tool_result(task_id=research['research_task_id'], trace_id=task_id + ':result:failed',
+            tool='get_content_detail', status='failed', result={'content': '不同的既存资料'})
+    before = ledger.read_task(task_id=research['research_task_id'])['tool_receipts']
+
+    service.maintain_once()
+    service.maintain_once()
+    after = ledger.read_task(task_id=research['research_task_id'])['tool_receipts']
+    row = service.store.get_task(task_id)
+    assert after[0] == original and path.read_bytes() == raw
+    assert row['status'] == 'failed' and row['error_code'] == 'deadline_exceeded'
+    assert row['attempts'] == 0  # 补关联不重新执行媒体任务。
+    assert len(after) == 2
+    if alternate_conflict:
+        assert after == before  # 第二个确定性身份冲突仍阻断，不能无限换ID绕过。
+        assert row['metadata']['research_recording']['status'] == 'recording_failed'
+        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True)
+    else:
+        assert row['metadata']['research_recording']['status'] == 'recorded'
+        assert after[-1]['trace_id'] == task_id + ':result:failed'
+        assert after[-1]['submission_sha256'] != original['submission_sha256']
+        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True) == []
+
+
 def test_execution_completion_does_not_claim_requested_coverage_is_satisfied(service, monkeypatch):
     from dataclasses import asdict
     from types import SimpleNamespace
