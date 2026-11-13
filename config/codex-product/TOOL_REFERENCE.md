@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`d08b53a32bfbb190537b3a593f38bbc845163452d54353b9fdf96742ebd4d9f7`
+合同指纹：`04d288cba9472471be198b4269377c63df1c560592ca5553c68b8b69b688ab30`
 
 ## advance_research_candidate
 
@@ -4821,6 +4821,12 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "title": "Adopt Legacy Scopes",
             "type": "boolean"
           },
+          "allow_shared_local_root": {
+            "default": false,
+            "description": "仅当不同真实项目明确共用已授权本地根时设置；调研主题/新对话不能据此新建项目。",
+            "title": "Allow Shared Local Root",
+            "type": "boolean"
+          },
           "local_grant_id": {
             "title": "Local Grant Id",
             "type": "string"
@@ -5325,8 +5331,8 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "type": "string"
           },
           "content": {
+            "default": "",
             "maxLength": 2097152,
-            "minLength": 1,
             "title": "Content",
             "type": "string"
           },
@@ -5334,6 +5340,18 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "default": false,
             "title": "Include Review",
             "type": "boolean"
+          },
+          "input_path": {
+            "default": "",
+            "description": "已授权本地根内的UTF-8报告文件；按精确字节读取，不重排换行。",
+            "title": "Input Path",
+            "type": "string"
+          },
+          "input_sha256": {
+            "default": "",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Input Sha256",
+            "type": "string"
           },
           "local_report_path": {
             "default": "",
@@ -5344,6 +5362,13 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "maxLength": 200,
             "minLength": 1,
             "title": "Project Id",
+            "type": "string"
+          },
+          "replace_pending_report_version": {
+            "default": "",
+            "description": "显式替换未交付当前稿时，必须匹配当前固定版本；原稿及失败状态留历史，不覆盖文件。",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Replace Pending Report Version",
             "type": "string"
           },
           "report_id": {
@@ -5367,6 +5392,13 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
             "title": "Source Round",
             "type": "string"
           },
+          "source_version_id": {
+            "default": "",
+            "description": "同项目同任务的已固定报告版本；不重新序列化。",
+            "pattern": "^(?:[a-f0-9]{64})?$",
+            "title": "Source Version Id",
+            "type": "string"
+          },
           "task_id": {
             "maxLength": 96,
             "minLength": 1,
@@ -5384,8 +5416,7 @@ full 可能较慢；summary/light/lite 返回轻量摘要。
           "action",
           "task_id",
           "project_id",
-          "title",
-          "content"
+          "title"
         ],
         "title": "SubmitReport",
         "type": "object"

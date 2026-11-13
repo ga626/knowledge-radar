@@ -188,7 +188,7 @@ class ResearchIndex:
                 item = {**item, "provider_provenance": item.get("provider_provenance") or (item.get("raw") or {}).get("provider_provenance",[])}
                 cid = (aliases or {}).get(identity(item, ecology), identity(item, ecology))
                 safe = public_evidence_payload({k: item[k] for k in
-                    ("url", "title", "snippet", "published_at", "source_provider", "provider_provenance", "detail_capability", "parent_id", "host_reference", "retrieved_at", "visible_scope", "truncated", "visible_version_ids") if k in item})
+                    ("url", "title", "snippet", "published_at", "source_provider", "provider_provenance", "detail_capability", "parent_id", "host_reference", "host_identity", "retrieved_at", "visible_scope", "truncated", "visible_version_ids") if k in item})
                 safe = {k: str(v)[:4000] if isinstance(v, str) else v for k, v in safe.items()}
                 fulltext_ref = (item.get('raw') or {}).get('fulltext_ref') or item.get('fulltext_ref')
                 if isinstance(fulltext_ref, dict) and fulltext_ref.get('version_id'):

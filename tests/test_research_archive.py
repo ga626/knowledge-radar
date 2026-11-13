@@ -636,12 +636,13 @@ def assert_readable_tree(root):
         if path.is_file():assert path.suffix=='.md',path
 
 
-def bind_another(engine, local, vault, project, task, project_name='同名项目',task_title='完整测试'):
+def bind_another(engine, local, vault, project, task, project_name='同名项目',task_title='完整测试',allow_shared_local_root=False):
     local_grant=engine.store.authorize(Authorize(action='authorize_destination',approved_root=str(local),project_id=project))
     vault_grant=engine.store.authorize(Authorize(action='authorize_destination',approved_root=str(vault),project_id=project))
     ledger.open_task(objective='验证自动命名',budget='fast',considered=[],task_id=task,project_id=project,project_name=project_name)
     request=BindContext(action='bind_context',task_id=task,project_id=project,project_name=project_name,task_title=task_title,
-        local_grant_id=local_grant['grant_id'],local_report_path=str(local/(task+'.md')),vault_grant_id=vault_grant['grant_id'])
+        local_grant_id=local_grant['grant_id'],local_report_path=str(local/(task+'.md')),vault_grant_id=vault_grant['grant_id'],
+        allow_shared_local_root=allow_shared_local_root)
     return request,engine.bind(request)
 
 
@@ -673,7 +674,7 @@ def test_same_project_reuses_directory_and_new_project_collision_requires_explic
     engine,_,local,vault=archive
     # 两个项目同名；同一项目两个任务也同名。
     with pytest.raises(ValueError,match='project_directory_exists_bind_context'):
-        bind_another(engine,local,vault,'project-b','task-b')
+        bind_another(engine,local,vault,'project-b','task-b',allow_shared_local_root=True)
     bind_another(engine,local,vault,'project-a','task-c')
     assert (vault/'同名项目'/TASK_RELATIVE).is_dir()
     assert (vault/'同名项目'/TASK_RELATIVE.parent/(TASK_STAMP+'（2）')).is_dir()
@@ -685,7 +686,7 @@ def test_existing_user_folder_is_not_adopted_or_overwritten(archive):
     engine,_,local,vault=archive
     user=vault/'私人项目';user.mkdir();(user/'自己的笔记.md').write_text('用户原件',encoding='utf-8')
     with pytest.raises(ValueError,match='project_directory_exists_bind_context'):
-        bind_another(engine,local,vault,'project-b','task-b',project_name='私人项目')
+        bind_another(engine,local,vault,'project-b','task-b',project_name='私人项目',allow_shared_local_root=True)
     assert not (vault/'私人项目（2）').exists()
     assert (user/'自己的笔记.md').read_text(encoding='utf-8')=='用户原件'
     assert list(user.iterdir())==[user/'自己的笔记.md']
@@ -727,7 +728,7 @@ def test_multiple_reports_and_supplements_keep_short_human_names(archive):
 
 def test_opaque_ids_and_reserved_titles_do_not_leak_into_display(archive):
     engine,_,local,vault=archive
-    _,bound=bind_another(engine,local,vault,'f'*64,'a'*64,project_name='b'*64,task_title='CON')
+    _,bound=bind_another(engine,local,vault,'f'*64,'a'*64,project_name='b'*64,task_title='CON',allow_shared_local_root=True)
     assert (vault/'未命名调研'/TASK_RELATIVE.parent/calendar_layout({'created_at':'2026-11-02T00:00:00+00:00'},'CON')['directory_title']).is_dir()
     ref=engine.assets.put('https://example.org/opaque','保留原文',title='index')
     engine.assets.reference_many([ref['version_id']],'a'*64,project_id='f'*64,task_id='a'*64)

@@ -559,7 +559,7 @@ def test_counterevidence_is_not_resolved_by_merely_citing_it(review):
 def test_fixed_report_exposes_new_review_without_rewriting_old_file(review):
     engine,index,_,_=review
     body='# 决策报告\n仍需验证付费意愿。'
-    req=SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='固定稿',content=body)
+    req=SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',title='固定稿',content=body,include_review=True)
     first=engine.submit(req)
     old=Path(first['local']['path']); original=old.read_bytes()
     assert first['review_projection_stale'] is False
@@ -576,7 +576,7 @@ def test_fixed_report_exposes_new_review_without_rewriting_old_file(review):
     # 人工改稿不覆盖；更新审阅显式另存新固定稿，双端保持一致。
     old.write_text('用户自己的修改',encoding='utf-8')
     newer=engine.submit(SubmitReport(action='submit_report',task_id='task-a',project_id='project-a',
-        report_id='reviewed-v2',local_report_path=str(old.with_name('reviewed-v2.md')),title='已审阅稿',content=body))
+        report_id='reviewed-v2',local_report_path=str(old.with_name('reviewed-v2.md')),title='已审阅稿',content=body,include_review=True))
     assert newer['review_projection_stale'] is False
     assert newer['report']['review_snapshot']['full_text_review']=='recorded'
     assert '全文关键结论核对：已记录' in Path(newer['local']['path']).read_text(encoding='utf-8')
