@@ -12,6 +12,16 @@ def await_terminal(service, task_id, timeout=12):
         row = service.result(task_id)
         if row["status"] not in {"queued", "running"}:
             task = service.store.get_task(task_id) or {}
+            # A v2 worker publishes terminal status before its execution clock
+            # is settled in the monitor finally block.  Wait for that bounded
+            # handoff so this helper does not race a read-only artifact check.
+            metadata = task.get("metadata") or {}
+            if (task.get("status") in {"completed", "failed", "cancelled", "interrupted"}
+                    and metadata.get("limits_version") == 2
+                    and metadata.get("execution_id")
+                    and not metadata.get("execution_released_at")):
+                time.sleep(.04)
+                continue
             if not (task.get('metadata') or {}).get('research_task_id') or row.get('research_receipt', {}).get('status') in {'recorded', 'recording_failed'}:
                 return row
         time.sleep(.04)
@@ -42,6 +52,135 @@ def test_process_result_idempotency_and_integrity(service):
     artifact = Path(service.store.get_task(row["task_id"])["result_path"])
     artifact.write_text("{}", encoding="utf-8")
     assert service.result(row["task_id"])["status"] == "artifact_corrupt"
+
+
+def test_queue_wait_does_not_consume_execution_budget(service, monkeypatch):
+    import runtime.task_service as module
+    calls = []
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda fn, *args: calls.append((fn, args)))
+    row = service.submit('fixture_echo', {'value': 'after queue'}, timeout_s=1,
+                         overall_timeout_s=120, queue_timeout_s=60)
+    fn, args = calls.pop()
+    args[0]['submitted_at'] -= 5  # elapsed queue time, without a real sleep
+    fn(*args)
+    assert service.result(row['task_id'])['status'] == 'completed'
+    timing = service.result(row['task_id'])['limits']
+    assert timing['execution_budget_s'] == 1
+    assert timing['overall_deadline_at'] > timing['submitted_at']
+
+
+def test_queue_expiry_is_distinct_from_attempt_expiry(service, monkeypatch):
+    import runtime.task_service as module
+    calls = []
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda fn, *args: calls.append((fn, args)))
+    row = service.submit('fixture_echo', {'value': 'queue expiry'}, timeout_s=60,
+                         overall_timeout_s=120, queue_timeout_s=1)
+    fn, args = calls.pop()
+    service.store._mark(row['task_id'], 'queued', metadata={'queue_entered_at': time.time()-5})
+    fn(*args)
+    assert service.result(row['task_id'])['task']['error_code'] == 'queue_deadline_exceeded'
+
+
+def test_large_collected_body_handoff_uses_verified_reference(service):
+    body = '正文资料' * 140000
+    row = service.submit('fixture_staged', {'value': body}, timeout_s=20)
+    result = await_terminal(service, row['task_id'], timeout=20)
+    assert result['status'] == 'completed'
+    assert result['result']['value'] == body
+    import json
+    job = json.loads((service.root/row['task_id']/'input.json').read_text(encoding='utf-8'))
+    assert len(json.dumps(job).encode()) < 1024*1024
+    assert job['payload_ref']['sha256']
+
+
+def test_overall_expiry_cannot_be_bypassed_by_fresh_execution_budget(service, monkeypatch):
+    import runtime.task_service as module
+    calls = []
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda fn, *args: calls.append((fn, args)))
+    row = service.submit('fixture_echo', {'value': 'expired'}, timeout_s=60,
+                         overall_timeout_s=1, queue_timeout_s=60)
+    fn, args = calls.pop()
+    service.store._mark(row['task_id'], 'queued', metadata={'overall_deadline_at': time.time()-1})
+    fn(*args)
+    assert service.result(row['task_id'])['task']['error_code'] == 'overall_deadline_exceeded'
+
+
+def test_stage_clock_settles_terminal_once_and_rejects_stale_writer(service, monkeypatch):
+    import runtime.task_service as module
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda *a: None)
+    row = service.submit('fixture_echo', {'value': 'clock'}, timeout_s=60)
+    task_id = row['task_id']
+    writer = {'attempt_id': row['metadata']['attempt_id'], 'execution_id': 'clock-execution'}
+    service.store.claim_queued(task_id, writer)
+    service.store.mark_failed(task_id, 'stopped', error_code='fixture', metadata=writer)
+    service.store.settle_execution_clock(task_id, writer, 100, 103)
+    service.store.settle_execution_clock(task_id, writer, 100, 103)
+    service.store.settle_execution_clock(task_id, {**writer, 'execution_id': 'stale'}, 100, 999)
+    task = service.store.get_task(task_id)
+    assert task['status'] == 'failed' and task['error_code'] == 'fixture'
+    assert task['metadata']['execution_used_s'] == 3
+    assert task['metadata']['execution_released_at'] == 103
+
+
+def test_user_wait_gets_own_clock_without_spending_execution_budget(service, monkeypatch):
+    import runtime.task_service as module
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda *a: None)
+    row = service.submit('fixture_echo', {'value': 'login'}, timeout_s=60,
+                         user_wait_timeout_s=600, overall_timeout_s=1200)
+    task_id = row['task_id']; now = time.time()
+    writer = {'attempt_id': row['metadata']['attempt_id'], 'execution_id': 'wait-execution'}
+    service.store.claim_queued(task_id, writer)
+    service.store._mark(task_id, 'waiting_for_user', metadata=writer)
+    service.store.settle_execution_clock(task_id, writer, now-2, now)
+    meta = service.store.get_task(task_id)['metadata']
+    assert meta['execution_used_s'] == 2
+    assert meta['deadline_at'] == now + 600
+
+
+def test_only_real_progress_renews_opted_in_execution_window(service, monkeypatch):
+    import runtime.task_service as module
+    from runtime.execution_context import execution_scope, record_execution_progress
+    monkeypatch.setattr(module._MONITORS, 'submit', lambda *a: None)
+    row = service.submit('fixture_echo', {'value': 'progress'}, timeout_s=10, progress_timeout_s=60, overall_timeout_s=120)
+    task_id=row['task_id']; now=time.time()
+    writer={'attempt_id':row['metadata']['attempt_id'],'execution_id':'progress-execution'}
+    service.store.claim_queued(task_id, writer)
+    service.store._mark(task_id,'running',metadata={'deadline_at':now+10,**writer})
+    with execution_scope({'store':service.store,'KR_DURABLE_TASK_ID':task_id,'deadline_at':now+10,**writer}):
+        record_execution_progress('model_loading')
+        assert service.store.get_task(task_id)['metadata']['deadline_at'] == now+10
+        record_execution_progress('audio_decode',completed_chunks=1,processed_audio_s=30)
+        extended=service.store.get_task(task_id)['metadata']['deadline_at']
+        assert now+59 <= extended <= now+61
+        record_execution_progress('audio_decode',completed_chunks=1,processed_audio_s=30)
+        assert service.store.get_task(task_id)['metadata']['deadline_at'] == extended
+
+
+def test_duplicate_monitor_cannot_reopen_running_execution(service, monkeypatch):
+    import runtime.task_service as module
+    captured=[]
+    monkeypatch.setattr(module._MONITORS,'submit',lambda fn,*args:captured.append((fn,args)))
+    row=service.submit('fixture_echo',{'value':'owned'},timeout_s=60)
+    writer={'attempt_id':row['metadata']['attempt_id'],'execution_id':'real-owner'}
+    service.store.claim_queued(row['task_id'],writer)
+    fn,args=captured.pop();fn(*args)
+    current=service.store.get_task(row['task_id'])
+    assert current['status']=='running' and current['metadata']['execution_id']=='real-owner'
+
+
+def test_monitor_error_does_not_fail_another_execution(service, monkeypatch):
+    import runtime.task_service as module
+    import runtime.task_process as process
+    captured=[]
+    monkeypatch.setattr(module._MONITORS,'submit',lambda fn,*args:captured.append((fn,args)))
+    row=service.submit('fixture_echo',{'value':'handoff'},timeout_s=60)
+    writer={'attempt_id':row['metadata']['attempt_id'],'execution_id':'other-owner'}
+    def switched(*a,**kw):
+        service.store.claim_queued(row['task_id'],writer)
+        raise ValueError('stale monitor failed')
+    monkeypatch.setattr(process,'execute_job',switched)
+    fn,args=captured.pop();fn(*args)
+    assert service.store.get_task(row['task_id'])['status']=='running'
 
 
 def test_stage_handoff_exposes_body_and_keeps_collection_capacity(service):

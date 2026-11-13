@@ -280,16 +280,19 @@ def _run_wave(
             if provider is None:
                 errors.append({"provider": name, "type": "unknown_provider", "message": "Unknown provider. Read the available capability catalog and select a registered connection."})
                 continue
-            futures[executor.submit(copy_context().run, _search_provider, request, provider)] = name
+            futures[executor.submit(copy_context().run, _observed_search_provider, request, provider)] = name
         pending = set(futures)
         while pending:
             check_execution()
             if time.monotonic() >= float(request.options.get('_deadline') or float('inf')):
                 for future in pending:
                     cancelled = future.cancel()
+                    if not cancelled:
+                        _retain_late_future(future, request)
                     errors.append({'provider':futures[future], 'type':'deadline_exceeded',
                                    'execution_state':'not_sent' if cancelled else 'draining',
-                                   'retryable':False, 'message':'No new send; running request may still finish within its network timeout.'})
+                                   'retryable':False, 'late_results':'retained_in_research_candidates_if_task_bound_and_not_cancelled',
+                                   'message':'No new send; running request may still finish within its network timeout.'})
                 break
             done, pending = wait(pending, timeout=.1, return_when=FIRST_COMPLETED)
             if not done:
@@ -301,6 +304,33 @@ def _run_wave(
             future.cancel()
         executor.shutdown(wait=False, cancel_futures=True)
     return results, errors, attempted, concurrency
+
+
+def _observed_search_provider(request, provider):
+    from .concurrency import record_provider_outcome
+    started = time.monotonic()
+    failed = True
+    try:
+        result = _search_provider(request, provider)
+        error = result[2] or {}
+        failed = bool(error) and error.get('type') not in {'empty_results','not_configured','disabled_or_unauthorized','unsupported_constraint'}
+        return result
+    finally:
+        record_provider_outcome(provider.name, elapsed_s=time.monotonic()-started, failed=failed)
+
+
+def _retain_late_future(future, request):
+    """收尾只收已有请求的候选；不延长网络请求、不重发、不改变已返回结果。"""
+    context = copy_context()
+    def retain(done):
+        if done.cancelled():
+            return
+        try:
+            _consume_future(done, request, {}, [])
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning('late_search_candidate_not_recorded:%s', type(exc).__name__)
+    future.add_done_callback(lambda done: context.run(retain, done))
 
 
 def _consume_future(future, request, results, errors):

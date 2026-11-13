@@ -231,13 +231,15 @@
     const observedAll=empty||(!loading&&nodes.length>0&&!expanders&&Number.isFinite(count)&&count===nodes.length);
     const orderSupported=!scope.order||['relevance','score'].includes(scope.order);
     const exhausted=observedAll&&!omitted;
-    const satisfied=observedAll&&orderSupported;
+    // A bounded request is satisfied at its cap without claiming source exhaustion.
+    const windowReached=rows.length>=limit || rows.filter(x=>!x.is_reply).length>=rootLimit;
+    const satisfied=!loading&&orderSupported&&(observedAll||windowReached);
     return {...pageState(),comments:rows,empty_confirmed:empty,request_satisfied:satisfied,
       exhausted,has_more:!exhausted,limit,comment_source:'normal_reader_dom',
       coverage:{scope:'visible_reader_threads',actual_order:'platform_default',order_applied:orderSupported,root_count:rows.filter(x=>!x.is_reply).length,
         reply_count:rows.filter(x=>x.is_reply).length,observed_comment_count:nodes.length,
         displayed_total:Number.isFinite(count)?count:null,expanders_remaining:expanders,
-        stop_reason:!orderSupported?'requested_order_not_applied':loading?'reader_loading':exhausted?'visible_reader_exhausted':omitted?'requested_limit':'reader_window_not_exhausted'},
+        stop_reason:!orderSupported?'requested_order_not_applied':loading?'reader_loading':exhausted?'visible_reader_exhausted':windowReached?'requested_limit':'reader_window_not_exhausted'},
       comment_diagnostics:{transport:'normal_reader_dom',direct_api_requests:0,parent_identity:'unknown_for_nested_replies',
         reader_state:loading?'loading':empty?'explicit_zero':rows.length?'rows_observed':'zero_unverified',
         permission_observed:false,panel_present:true,panel_visible:true,document_state:document.readyState,

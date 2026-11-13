@@ -10,11 +10,12 @@ from runtime.file_write_lock import file_write_lock
 
 
 class OperationCheckpoint:
-    def __init__(self, root, request, identity):
+    def __init__(self, root, request, identity, *, max_age_s=86400):
         from generic_web.url_policy import public_evidence_payload
         self.key = hashlib.sha256(json.dumps(public_evidence_payload(request), sort_keys=True,
             ensure_ascii=False, default=str).encode()).hexdigest()
         self.identity = public_evidence_payload(identity)
+        self.max_age_s = max_age_s
         self.path = Path(root) / (self.key + ".json")
         self._revision = self._load().get("revision", 0)
 
@@ -34,7 +35,8 @@ class OperationCheckpoint:
             data = self._load()
             self._revision = data.get("revision", 0)
             if (data.get("identity") != self.identity or not isinstance(data.get("at"), (int, float))
-                    or time.time() - data["at"] > 86400 or not isinstance(data.get("data"), dict)):
+                    or (self.max_age_s is not None and time.time() - data["at"] > self.max_age_s)
+                    or not isinstance(data.get("data"), dict)):
                 return {}
             return data.get("data") or {}
 

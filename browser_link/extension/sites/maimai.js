@@ -19,6 +19,48 @@ const json = async (path, params, signal) => {
  // Only the public retry deadline crosses the bridge; never return auth/CSRF headers.
  return {http_status:r.status,data,headers:{'retry-after':r.headers.get('Retry-After')}};
 };
+// Decode only JSON literals already delivered by the page; never execute Flight scripts.
+const literal = (text,start) => {
+ if(!['{','['].includes(text[start]))return null;
+ const stack=[];let quote=false,escape=false;
+ for(let i=start;i<text.length;i++){
+  const c=text[i];if(quote){if(escape)escape=false;else if(c==='\\')escape=true;else if(c==='"')quote=false;continue;}
+  if(c==='"'){quote=true;continue;}
+  if(c==='{'||c==='[')stack.push(c);
+  if(c==='}'||c===']'){stack.pop();if(!stack.length){try{return JSON.parse(text.slice(start,i+1));}catch{return null;}}}
+ }
+ return null;
+};
+const bodySnapshot = () => {
+ const match=location.pathname.match(/\/(feed|gossip)-detail\/([^/]+)\/?$/);
+ if(!match)return null;
+ const [,kind,id]=match;let total=0,chunks=[];
+ for(const node of document.querySelectorAll('script')){
+  const script=node.textContent||'';total+=script.length;
+  if(total>2000000)break;
+  for(const m of script.matchAll(/self\.__next_f\.push\(\s*/g)){
+   const value=literal(script,m.index+m[0].length);
+   if(Array.isArray(value)&&typeof value[1]==='string')chunks.push(value[1]);
+  }
+ }
+ const text=chunks.join('');
+ const keys=kind==='feed'?['feedData']:['data','gossipData'];
+ for(const key of keys)for(const m of text.matchAll(new RegExp('"'+key+'"\\s*:\\s*','g'))){
+  const raw=literal(text,m.index+m[0].length);if(!raw||Array.isArray(raw))continue;
+  const nested=['feed','gossip','style44','style35','style1'].map(k=>raw[k]).find(x=>x&&typeof x==='object');
+  const row={...raw,...nested};
+  const rowId=String(row.fid||row.gid||row.id||'').replace(/^gossip_/,'');
+  const body=row.text||row.content||row.summary||row.title||row.t;
+  if(rowId===id&&typeof body==='string'&&body.trim())return {
+   schema:'maimai-body/v1',kind,target_id:id,text:body.slice(0,200000).trim(),title:String(row.title||'').slice(0,300),
+   source:'matched_flight',truncated:body.length>200000};
+ }
+ const element=document.querySelector('article,[class*="postContent"],[class*="feedContent"],[class*="gossipContent"]');
+ const body=(element?.innerText||'').trim();
+ if(body&&element.getBoundingClientRect().width>0&&element.getBoundingClientRect().height>0)return {
+  schema:'maimai-body/v1',kind,target_id:id,text:body.slice(0,200000),title:'',source:'visible_dom',truncated:body.length>200000};
+ return null;
+};
 globalThis.KRSites.maimai = {
  async extract(op, payload, signal, progress=()=>{}) {
   let d=state(); if (d.risk || d.login) return d;
@@ -52,12 +94,9 @@ globalThis.KRSites.maimai = {
    author:(e.querySelector('.font-bold')?.innerText||'').trim(),id:e.getAttribute('data-id')||'',
    replies:[...e.querySelectorAll('[data-rich-text]')].slice(1).map(r=>({content:(r.innerText||'').trim()}))})).filter(x=>x.content)};})();
   }
-  const flight=[...document.querySelectorAll('script')].filter(e=>e.textContent.includes('self.__next_f.push(')).map(e=>e.textContent).join('\n');
-  return {...d,html:flight.slice(0,600000),
-    html_truncated:flight.length>600000,
-    dom_content:(document.querySelector('article,[class*="postContent"],[class*="feedContent"],[class*="gossipContent"]')?.innerText||'').trim()};
+  return {...d,body_snapshot:bodySnapshot()};
  },
  singleShotOps: ['search','probe','auth_verify','comments'],
- ready: (d,op) => ['search','probe','auth_verify'].includes(op) ? !!d.probe : op==='comments' ? true : !!d.dom_content || /feedData|gossipData/.test(d.html || ''),
+ ready: (d,op) => ['search','probe','auth_verify'].includes(op) ? !!d.probe : op==='comments' ? true : !!d.body_snapshot?.text,
 };
 })();

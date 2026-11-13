@@ -12,13 +12,38 @@ from runtime.tasks import TaskStore, TERMINAL_STATUSES
 from runtime.process_identity import process_identity
 
 
+def _read_reference(folder, ref):
+    """任务自有目录内的有界、哈希绑定正文；不接受调用者任意路径。"""
+    from pathlib import Path
+    name = str(ref.get('file', ''))
+    if not name or Path(name).name != name or '/' in name or '\\' in name:
+        raise ValueError('task_payload_reference_invalid')
+    path = folder/name
+    if path.is_symlink() or path.is_junction() or not path.resolve().is_relative_to(folder.resolve()):
+        raise ValueError('task_payload_reference_invalid')
+    if path.stat().st_size > 32*1024*1024:
+        raise ValueError('task_payload_reference_oversize')
+    with path.open('rb') as stream:
+        raw = stream.read(32*1024*1024+1)
+    if len(raw) > 32*1024*1024:
+        raise ValueError('task_payload_reference_oversize')
+    if hashlib.sha256(raw).hexdigest() != ref.get('sha256'):
+        raise ValueError('task_payload_reference_corrupt')
+    return json.loads(raw)
+
+
+def read_job_payload(job, folder):
+    return _read_reference(folder, job['payload_ref']) if job.get('payload_ref') else job['payload']
+
+
 def execute_job(input_path, *, execution_input=None, stage="collection", execution_id=None):
     folder = input_path.resolve().parent
     job = json.loads(input_path.read_text(encoding="utf-8"))
-    job['payload'] = json.loads(execution_input) if execution_input is not None else job['payload']
+    job['payload'] = json.loads(execution_input) if execution_input is not None else read_job_payload(job, folder)
     collected = None
     if stage == 'enhancement':
-        collected = job['payload']['collected']
+        collected = (_read_reference(folder, job['payload']['collected_ref'])['result']
+                     if job['payload'].get('collected_ref') else job['payload']['collected'])
         job['payload'] = job['payload']['request']
     store = TaskStore(job["db_path"])
     task_id = job["task_id"]
@@ -38,7 +63,8 @@ def execute_job(input_path, *, execution_input=None, stage="collection", executi
     thread.start()
     from runtime.execution_context import execution_scope, check_execution
     context = execution_scope({'store': store, **writer,
-        'deadline_at': job.get('submitted_at', time.time()) + job.get('timeout_s', 600),
+        'deadline_at': ((store.get_task(task_id).get('metadata') or {}).get('deadline_at')
+                        if job.get('limits') else job.get('submitted_at', time.time()) + job.get('timeout_s', 600)),
         'KR_DURABLE_WORKER': '1', 'KR_DURABLE_TASK_ID': task_id,
         'KR_TASK_DB_PATH': store.db_path, 'KR_PAID_TASK_SCOPE': job.get('billing_scope_id') or task_id})
     context.__enter__()
@@ -181,6 +207,13 @@ def execute_job(input_path, *, execution_input=None, stage="collection", executi
             store.queue_resource_wait(task_id, job["attempt_id"], exc.resource_kind, execution_id=writer["execution_id"])
             return
         code = getattr(exc, "error_code", "worker_execution_error")
+        if isinstance(exc, ValueError) and str(exc) in {
+            'document_page_budget_exceeded','document_too_large','document_expansion_budget_exceeded',
+            'asr_token_budget_exhausted_no_complete_transcript','task_payload_reference_corrupt',
+            'task_payload_reference_oversize','task_payload_reference_invalid',
+            'audio_duration_exceeds_budget',
+        }:
+            code = str(exc)
         message = str(exc) if code in {'unsupported_language', 'asr_language_detection_failed'} else type(exc).__name__
         diagnostic = {"failure_type": code, "next_action": exc.next_action, "ocr_attempted": False} if code in {
             'document_password_required', 'document_password_incorrect', 'document_corrupt'} else {}

@@ -113,8 +113,10 @@ def execute_media_plan(bundle: MediaBundle, plan: MediaActionPlan, *, language=N
                 'device': execution_value('KR_ASR_DEVICE', 'cpu'),
                 'threads': execution_value('KR_LOCAL_MODEL_THREADS', '4'),
                 'implementation': {name: file_sha(Path(__file__).with_name(name + '.py'))
-                                   for name in ('media_execution', 'media_decode', 'optional_media_worker')},
+                                   for name in ('media_execution', 'media_decode')},
                 'scope': execution_value('KR_PAID_TASK_SCOPE', '')}
+    from runtime.optional_media_worker import asr_implementation_identity
+    identity['asr_implementation'] = asr_implementation_identity()
     checkpoint = OperationCheckpoint(media_cache_subdir('media_steps'), identity, identity)
     saved = checkpoint.read().get('completed', {})
     def persist(key, value):
@@ -159,6 +161,8 @@ def execute_media_plan(bundle: MediaBundle, plan: MediaActionPlan, *, language=N
             result['status'] = 'partial'
             result['steps'].append({'operation': operation.value, 'status': 'failed', 'error_code': 'required_media_reference_missing'})
         for ref in refs:
+            from dataclasses import replace
+            ref = replace(ref, metadata={**ref.metadata, 'video_height': plan.budget.metadata.get('video_height',480)})
             check_execution()
             started = time.monotonic()
             try:
@@ -177,12 +181,16 @@ def execute_media_plan(bundle: MediaBundle, plan: MediaActionPlan, *, language=N
                 result['artifacts'].append(asset)
                 check_execution()
                 if operation == MediaOperation.SAMPLE_FRAMES:
-                    frames = cached['frames'] if cached else sample_frames(asset['path'], max_frames=plan.budget.max_frames or 8)
+                    frames = cached['frames'] if cached else sample_frames(asset['path'], max_frames=plan.budget.max_frames or 8,
+                        frame_times_s=plan.budget.metadata.get('frame_times_s'), image_max_side=plan.budget.metadata.get('image_max_side',640))
                     if not frames:
                         raise ValueError('no_usable_video_frames')
                     result['frames'] = frames
                     persist(key, {'asset': asset, 'frames': frames})
-                    detail = {'frame_count': len(frames), 'frame_pts_s': [frame['pts_s'] for frame in frames]}
+                    detail = {'frame_count': len(frames), 'frame_pts_s': [frame['pts_s'] for frame in frames],
+                              'coverage': 'sample_only', 'source_exhausted': False,
+                              'continuation': 'request explicit frame_times_s for uncovered sections',
+                              'image_max_side': plan.budget.metadata.get('image_max_side',640)}
                 else:
                     component = ASR_COMPONENT if operation == MediaOperation.RUN_ASR else CLOUD_OCR_COMPONENT
                     detail = process_local_asset(asset, component, language=language,

@@ -144,7 +144,10 @@ def test_default_search_bindings_do_not_depend_on_facade(monkeypatch, platform, 
     target = register_default_adapters(target_registry=PlatformRegistry())
     result = target.get(platform).search(SearchRequest(keyword="同一输入", platform=platform, limit=3))
     assert result.items[0].title == "fixture"
-    assert calls == [("同一输入", {"page_size" if platform == "B站" else "limit": 3})]
+    expected_kwargs = {"page_size" if platform == "B站" else "limit": 3}
+    if platform == "B站":
+        expected_kwargs["page"] = 1
+    assert calls == [("同一输入", expected_kwargs)]
     assert observations == []
     if platform == "知乎":
         target.after_detail(platform, {"content": "fixture"})
@@ -367,7 +370,8 @@ def test_public_detail_handoff_preserves_flags_scope_and_one_preparation(monkeyp
     monkeypatch.setattr(registry, "prepare_detail", lambda req: calls.append("prepare") or req)
     class Service:
         def submit(self, operation, payload, **kw):
-            assert operation == "content_detail" and kw == {"timeout_s": 73, "scope": {**scope.to_metadata(), "research_task_id": "research"}}
+            assert operation == "content_detail" and kw == {"timeout_s": 73, "scope": {**scope.to_metadata(), "research_task_id": "research"},
+                "queue_timeout_s": 3600, "user_wait_timeout_s": 86400, "overall_timeout_s": 86400, "progress_timeout_s": None}
             payload = asdict(registry.prepare_detail(DetailRequest(**payload)))
             calls.append(payload)
             return {"task_id": "durable-fixture", "status": "queued"}
@@ -475,7 +479,9 @@ def test_local_evidence_submission_keeps_selected_component_identity_and_scope(
             assert payload == {"input_path": str(source), "approved_input_root": str(tmp_path), "input_sha256": sha,
                                "component": component, "language": "en", 'timeout_s': timeout_s,
                                'document': document or {'page_numbers': None, 'include_ocr': None, 'storage_allowed': True}}
-            assert kw == {"scope": {"research_task_id": "research"}, "timeout_s": timeout_s}
+            assert kw == {"scope": {"research_task_id": "research"}, "timeout_s": timeout_s,
+                          "queue_timeout_s": 3600, "user_wait_timeout_s": 86400,
+                          "overall_timeout_s": 86400, "progress_timeout_s": None}
             return {"task_id": "local", "status": "queued"}
     monkeypatch.setattr(task_service, "TaskService", Service)
     result = server.process_local_evidence(input_path=str(source), approved_input_root=str(tmp_path),

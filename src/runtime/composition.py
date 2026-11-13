@@ -17,7 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pydantic import Field
 from runtime.application import application_tool
 from runtime.agent_contracts import DetailResult, TaskStatusResult, ResearchWorkflowResult
-from runtime.read_options import DocumentReadOptions, CommentReadOptions
+from runtime.read_options import DocumentReadOptions, CommentReadOptions, TaskLimitOptions, MediaReadOptions
 from runtime.research_queries import ResearchQuery, ResearchQuestion
 from collectors.platform.github_content import GitHubReadOptions
 from runtime.xhs_opencli import XhsReadOptions
@@ -210,7 +210,7 @@ def _runtime_log_dir() -> str:
 RUNTIME_LOG_DIR = _runtime_log_dir()
 MCP_SERVER_LOG_PATH = os.path.join(RUNTIME_LOG_DIR, "knowledgeradar-mcp-server.log")
 DECISION_LOG_PATH = os.path.join(RUNTIME_LOG_DIR, "knowledgeradar-decisions.jsonl")
-XHS_DEFAULT_SEARCH_LIMIT = int(os.environ.get("KR_XHS_DEFAULT_SEARCH_LIMIT", "10"))
+XHS_DEFAULT_SEARCH_LIMIT = int(os.environ.get("KR_XHS_DEFAULT_SEARCH_LIMIT", "20"))
 XHS_PROBE_SEARCH_LIMIT = int(os.environ.get("KR_XHS_PROBE_SEARCH_LIMIT", "1"))
 XHS_DETAIL_SUCCESS_RATE_DISABLE_THRESHOLD = float(os.environ.get("KR_XHS_DETAIL_DISABLE_SUCCESS_RATE", "0.3"))
 decision_logger = DecisionLogger(DECISION_LOG_PATH)
@@ -346,8 +346,14 @@ _NODE_PATH = None
 
 
 def _record_search_evidence(platform: str, query: str, response: Dict) -> None:
+    metadata = response.setdefault('metadata', {})
+    if isinstance(metadata.get('acquired_items'), list):
+        response['acquired_items'] = metadata['acquired_items']
+    if not metadata.get('continuation') and not metadata.get('pagination'):
+        metadata['continuation'] = {'status': 'continuation_unavailable',
+            'source_exhausted': False, 'meaning': 'This tool response does not establish source exhaustion.'}
     try:
-        evidence_store.append_search(platform=platform, query=query, response=response)
+        evidence_store.append_search(platform=platform, query=query, response={**response, 'items':response.get('acquired_items') or response.get('items',[])})
     except Exception as exc:
         response.setdefault('evidence_storage_gaps', []).append({'part':'repository','reason':type(exc).__name__,'retry':'resubmit_fixed_result_without_search'})
         log.debug(f"搜索证据仓库写入失败: platform={platform}, error={type(exc).__name__}")
@@ -1540,6 +1546,7 @@ def search_youtube(
     keyword: Annotated[str, Field(description="YouTube 视频搜索关键词。返回公开视频标题、URL、频道、摘要、发布时间等元数据。")],
     limit: Annotated[int, Field(description="返回视频数量。", ge=1, le=25)] = 10,
     research_task_id: Annotated[str, Field(description="可选的 kr_research 任务 ID；提供后返回 research_receipt。")]= "",
+    page_token: Annotated[str, Field(max_length=4096, description="上次next_page_token；保持相同关键词，不根据短页判断穷尽。")]= "",
 ) -> Dict:
     """YouTube 公开视频搜索。
 
@@ -1548,7 +1555,7 @@ def search_youtube(
     """
     clean_limit = max(1, min(int(limit or 10), 25))
     log.info("search_youtube: query_fingerprint=%s limit=%s", privacy_fingerprint(keyword), clean_limit)
-    result = youtube_collectors.search_youtube(keyword, limit=clean_limit)
+    result = youtube_collectors.search_youtube(keyword, limit=clean_limit, **({'page_token':page_token} if page_token else {}))
     result.setdefault("platform", "YouTube")
     result.setdefault("metadata", {})
     result["metadata"].setdefault("actual_mcp_tool", "search_youtube")
@@ -1653,13 +1660,14 @@ def process_local_evidence(
     task_id: Annotated[str, Field(description='已有后台任务 ID；提供时只读取该任务结果，不重复执行。')]='',
     document: DocumentReadOptions | None = None,
     timeout_s: Annotated[float,Field(ge=1,le=3600)] = 600,
+    task_limits: TaskLimitOptions | None = None,
 ) -> DetailResult:
     """解析授权文件并保留固定版本；图片/扫描件上传云端 OCR，文字PDF本地解析。"""
     from use_cases.local_evidence import request_local_evidence
     return request_local_evidence(
         input_path=input_path, approved_input_root=approved_input_root,
         input_sha256=input_sha256, component=component, language=language,
-        research_task_id=research_task_id, task_id=task_id, document=document, timeout_s=timeout_s,
+        research_task_id=research_task_id, task_id=task_id, document=document, timeout_s=timeout_s, task_limits=task_limits,
     )
 
 
@@ -1706,14 +1714,15 @@ def search_bilibili(
     keyword: Annotated[str, Field(description="B站搜索关键词。返回视频标题、URL、UP 主、简介、播放/互动数据和发布时间等元数据。")],
     page_size: Annotated[int, Field(description="返回视频数量。", ge=1, le=30)] = 10,
     research_task_id: Annotated[str, Field(description="可选的 kr_research 任务 ID；提供后返回 research_receipt。")]= "",
+    page: Annotated[int, Field(ge=1, le=1000, description="同关键词的来源页号；无结束信号时不声称穷尽。")]=1,
 ) -> Dict:
     """B站视频搜索。
 
     返回视频标题、URL、UP 主、简介、播放/互动数据、发布时间和平台元数据。
     登录态、平台验证或页面结构变化可能导致结果为空或降级。
     """
-    request = SearchRequest(keyword=keyword, limit=page_size, platform="B站")
-    result = _cached_search("B站", keyword, page_size, lambda: registry.get("B站").search(request).to_mcp_dict())
+    request = SearchRequest(keyword=keyword, limit=page_size, platform="B站", options={"page": page})
+    result = _cached_search("B站", keyword, page_size, lambda: registry.get("B站").search(request).to_mcp_dict(), search_type=f"page:{page}")
     _record_search_evidence("B站", keyword, result)
     return result
 
@@ -2199,7 +2208,11 @@ def get_capabilities(
     """
     from runtime.agent_contracts import catalog
     if tool_name or summary:
-        return catalog(tool_name)
+        result = catalog(tool_name)
+        if tool_name in {'get_content_detail','process_local_evidence','control_task','search_bilibili','search_youtube','search_xiaohongshu'}:
+            from runtime.cost_latency import acquisition_limits_catalog
+            result['effective_acquisition_limits'] = acquisition_limits_catalog(xhs_max_limit=XHS_DEFAULT_SEARCH_LIMIT)
+        return result
     result = build_capabilities(
         decision_log_path=DECISION_LOG_PATH,
         provider_status=provider_status,
@@ -2811,7 +2824,7 @@ def get_content_detail(
     include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
     include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
     language: Annotated[str | None, Field(description="本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。")] = None,
-    deadline_s: Annotated[float, Field(description="增强任务总期限秒数，含排队；长视频可能超过180秒。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。", ge=1, le=3600)] = 600,
+    deadline_s: Annotated[float, Field(description="增强任务有效执行预算秒数；排队和用户等待单独计时。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。", ge=1, le=3600)] = 600,
     academic_reference: Annotated[str, Field(description="search_academic返回的fulltext_ref.version_id。提供时按固定文献卡提交独立学术全文任务，url须与该卡片一致；用get_task_status和read_knowledge读取结果。", pattern='^(?:[a-f0-9]{64})?$')] = '',
     academic_refresh: Annotated[bool, Field(description="学术全文显式要求重新核验来源；默认允许复用一天内同文献卡、同处理版本的固定证据，并说明未重新联网核验。")]=False,
     github: Annotated[GitHubReadOptions | None, Field(description="GitHub对象范围；普通URL可不填。主页默认目录概览，kind=readme读说明，file/tree配path；非默认分支URL用ref消歧。评论默认每流一页，按next_page续读。异步任务沿固定commit和已完成页恢复。")]=None,
@@ -2819,6 +2832,8 @@ def get_content_detail(
     wechat: Annotated[WechatReadOptions | None, Field(description="微信读取窗口：默认HTTP；明确transport=opencli借用获准日常浏览器，不自动绕过验证。image_indexes为零基图片范围，include_attachments取公开PDF；增强在持久任务中执行。")]=None,
     document: DocumentReadOptions | None = None,
     comments: CommentReadOptions | None = None,
+    task_limits: TaskLimitOptions | None = None,
+    media: MediaReadOptions | None = None,
 ) -> DetailResult:
     """详情页正文抽取。
 
@@ -2827,7 +2842,7 @@ def get_content_detail(
     音视频处理和多媒体处理可能导致失败、降级或耗时增加。
     """
     if academic_reference:
-        if github is not None or xhs is not None or wechat is not None:
+        if github is not None or xhs is not None or wechat is not None or task_limits is not None or media is not None:
             raise ValueError('academic_reference_and_platform_options_are_mutually_exclusive')
         from use_cases.academic_fulltext import request_academic_fulltext
         return request_academic_fulltext(academic_reference, research_task_id=research_task_id,
@@ -2840,7 +2855,7 @@ def get_content_detail(
         auto_multimodal=auto_multimodal, research_session_id=research_session_id,
         work_scope_id=work_scope_id, task_scope_id=task_scope_id, research_task_id=research_task_id,
         include_transcript=include_transcript, include_comments=include_comments,
-        include_ocr=include_ocr, language=language, deadline_s=deadline_s, github=github, xhs=xhs, wechat=wechat, document=document, comments=comments,
+        include_ocr=include_ocr, language=language, deadline_s=deadline_s, github=github, xhs=xhs, wechat=wechat, document=document, comments=comments, task_limits=task_limits, media=media,
     )
 
 
@@ -2930,7 +2945,7 @@ def manage_research_artifacts(request: ArtifactRequest) -> Dict:
 @application_tool( group="runtime")
 def control_task(task_id: Annotated[str, Field(description="后台任务返回的固定ID。")],
                  action: Literal["cancel", "resume"],
-                 timeout_s: Annotated[float | None, Field(ge=1,le=3600,description="仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。")]=None) -> TaskStatusResult:
+                 timeout_s: Annotated[float | None, Field(ge=1,le=3600,description="仅resume使用：显式设置本次重试有效执行预算（不含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。")]=None) -> TaskStatusResult:
     """显式取消或恢复已接受任务；不与状态查询混用，恢复沿原费用幂等范围。"""
     from runtime.task_service import TaskService
     if action == 'cancel' and timeout_s is not None:

@@ -49,6 +49,39 @@ def estimate_json_bytes(value: Any) -> int:
         return len(str(value).encode("utf-8", errors="ignore"))
 
 
+def acquisition_limits_catalog(*, xhs_max_limit=20):
+    """有效限制与来源的只读说明；不探测平台，不修改额度或质量状态。"""
+    import inspect
+    from runtime.task_service import TaskService
+    from runtime.read_options import TaskLimitOptions, MediaReadOptions
+    from runtime.pdf_text import MAX_PDF_BYTES, MAX_PDF_PAGES, MAX_TEXT_CHARS
+    from runtime.media_cache import DEFAULT_TTL_SECONDS
+    parameters = inspect.signature(TaskService.submit).parameters
+    return {
+        'schema': 'knowledgeradar-acquisition-limits/v2',
+        'task': {'execution_budget_s': parameters['timeout_s'].default,
+                 **TaskLimitOptions().model_dump(), 'source': 'TaskService.submit/TaskLimitOptions',
+                 'legacy_tasks': 'retain original deadline; no retroactive extension',
+                 'renewal': 'opt-in; completed chunks/audio progress only; bounded by overall'},
+        'payload': {'inline_bytes': 1024*1024, 'referenced_bytes': 32*1024*1024,
+                    'source': 'TaskService.submit/task_process._read_reference', 'integrity': 'task-local SHA256'},
+        'media': {**MediaReadOptions().model_dump(), 'cache_ttl_s': DEFAULT_TTL_SECONDS,
+                  'active_task_pins': True, 'asr_checkpoint_age_limit_s': None,
+                  'source': 'MediaReadOptions/StorageLeases/ASR input+model+implementation identity'},
+        'document': {'max_bytes': MAX_PDF_BYTES, 'max_selected_pages': MAX_PDF_PAGES,
+                     'max_text_chars': MAX_TEXT_CHARS, 'source': 'runtime.pdf_text',
+                     'large_original': 'requires explicit bounded selected pages'},
+        'search': {'xiaohongshu_max_limit': xhs_max_limit,
+                   'xiaohongshu_source': 'KR_XHS_DEFAULT_SEARCH_LIMIT' if 'KR_XHS_DEFAULT_SEARCH_LIMIT' in os.environ else 'default 20',
+                   'continuation': 'explicit page/token; unavailable is not source exhaustion',
+                   'public_adaptation': 'only reduces concurrency after observed errors/latency; five-minute window'},
+        'unchanged_safety': ['independent paid quotas','unknown send outcome is not replayed','authentication',
+                             'browser ownership','local_heavy=1','platform throttling','document memory/expansion guards'],
+        'retired_environment_keys': ['KR_XHS_TIKHUB_BREAK_GLASS_DRY_RUN','KR_XHS_ALLOW_LEGACY_PROFILE_FALLBACK'],
+        'declaration_boundary': 'cost profiles are planning descriptions, not independent enforced deadlines',
+    }
+
+
 @dataclass(frozen=True)
 class CapabilityCostProfile:
     capability_id: str

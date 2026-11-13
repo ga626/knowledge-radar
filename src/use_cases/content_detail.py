@@ -25,13 +25,13 @@ def resolve_detail_response(request: DetailRequest, *, strategy, collected=None,
     return response
 
 
-def submit_detail_task(request: DetailRequest, *, scope=None, timeout_s=600):
+def submit_detail_task(request: DetailRequest, *, scope=None, timeout_s=600, task_limits=None):
     """委托既有任务服务准备、冻结及提交；这里不重复准备请求。"""
     from dataclasses import asdict
     from runtime.task_service import TaskService
 
     service = TaskService()
-    task = service.submit("content_detail", asdict(request), timeout_s=timeout_s, scope=scope)
+    task = service.submit("content_detail", asdict(request), timeout_s=timeout_s, scope=scope, **(task_limits or {}))
     return task, service.result(task["task_id"])
 
 
@@ -39,7 +39,7 @@ def request_content_detail(
     url, *, infer_platform, execute_sync, enable_deep_analysis=False,
     enable_comment_filtering=False, auto_multimodal=False, research_session_id="",
     work_scope_id="", task_scope_id="", research_task_id="", include_transcript=None,
-    include_comments=None, include_ocr=None, language=None, deadline_s=600, github=None, xhs=None, wechat=None, document=None, comments=None,
+    include_comments=None, include_ocr=None, language=None, deadline_s=600, github=None, xhs=None, wechat=None, document=None, comments=None, task_limits=None, media=None,
 ):
     """接收详情请求并选择短调用或持久任务；平台采集和任务调度各守原边界。"""
     from runtime.redaction import redact_url
@@ -47,7 +47,9 @@ def request_content_detail(
     from runtime.task_scope import make_task_scope
     from runtime.tasks import compact_task_ref
 
-    from runtime.read_options import DocumentReadOptions, CommentReadOptions, normalized_options
+    from runtime.read_options import DocumentReadOptions, CommentReadOptions, TaskLimitOptions, MediaReadOptions, normalized_options
+    task_limits = normalized_options(TaskLimitOptions, task_limits)
+    media = normalized_options(MediaReadOptions, media)
     document = normalized_options(DocumentReadOptions, document)
     comments_explicit=comments is not None
     comments = normalized_options(CommentReadOptions, comments)
@@ -86,7 +88,7 @@ def request_content_detail(
         platform=platform, research_session_id=scope.research_session_id_alias,
         work_scope_id=scope.work_scope_id, task_scope_id=scope.task_scope_id,
         scope_kind=scope.scope_kind,
-        options={"document":document,"comments":comments,"timeout_s":deadline_s,"task_scope": scope.compact(), "research_task_id": research_task_id,
+        options={"media":media,"document":document,"comments":comments,"timeout_s":deadline_s,"task_scope": scope.compact(), "research_task_id": research_task_id,
                  "language": effective_language,
                  "include_transcript": include_transcript if include_transcript is not None else (auto_multimodal or enable_deep_analysis),
                  "include_comments": include_comments if include_comments is not None else enable_comment_filtering,
@@ -100,7 +102,7 @@ def request_content_detail(
         request.options.get(k) for k in ("include_transcript", "include_comments", "include_ocr")
     ):
         task, response = submit_detail_task(
-            request, timeout_s=deadline_s,
+            request, timeout_s=deadline_s, task_limits=task_limits,
             scope={**scope.to_metadata(), "research_task_id": research_task_id},
         )
         if response.get("status") == "completed":

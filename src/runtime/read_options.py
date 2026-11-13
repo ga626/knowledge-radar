@@ -22,6 +22,30 @@ class DocumentReadOptions(BaseModel):
         return value
 
 
+class TaskLimitOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    queue_timeout_s: float = Field(default=3600, gt=0, le=604800, description='排队期限，不消耗执行预算。')
+    user_wait_timeout_s: float = Field(default=86400, gt=0, le=604800, description='用户交互等待期限；不自动处理验证码。')
+    overall_timeout_s: float = Field(default=86400, gt=0, le=604800, description='本次任务绝对授权期限，包含全部阶段。')
+    progress_timeout_s: float | None = Field(default=None, ge=1, le=3600, description='显式允许真实完成块进展续期；心跳不续期，始终受overall约束。')
+
+
+class MediaReadOptions(BaseModel):
+    model_config = ConfigDict(extra='forbid', strict=True)
+    max_frames: int = Field(default=8, ge=1, le=32)
+    frame_times_s: list[float] | None = Field(default=None, max_length=32, description='明确疑点的秒位置；未填按全片增量采样。')
+    image_max_side: int = Field(default=640, ge=640, le=1920)
+    video_height: int = Field(default=480, ge=480, le=1080, description='明确需要细节时提高下载分辨率；下载大小保护不变。')
+
+    @field_validator('frame_times_s')
+    @classmethod
+    def valid_times(cls, value):
+        import math
+        if value is not None and (not value or any(not math.isfinite(x) or x < 0 for x in value) or len(set(value)) != len(value)):
+            raise ValueError('invalid_frame_times')
+        return value
+
+
 class CommentReadOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     root_limit: int = Field(default=20, ge=1, le=100)

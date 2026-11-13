@@ -29,14 +29,24 @@
   async function extract(message, controller) {
     void send({kind:'content-started',request_id:message.request_id,generation:message.generation,platform});
     const signal=controller.signal;
-    const progress=phase=>void send({kind:'content-progress',request_id:message.request_id,
-      generation:message.generation,platform,phase});
+    let lastPhase='content_started',terminal=false;
+    const current=()=>requests.get(message.request_id)===controller;
+    const finish=async payload=>{if(terminal||!current())return;terminal=true;await send({kind:'content-result',request_id:message.request_id,generation:message.generation,platform,...payload});};
+    const progress=phase=>{lastPhase=phase;void send({kind:'content-progress',request_id:message.request_id,
+      generation:message.generation,platform,phase});};
     const deadline=Date.now()+Math.max(1,Math.min(18000,message.timeout_ms || 18000));
-    const cancel=()=>controller.abort();const timer=setTimeout(cancel,Math.max(1,deadline-Date.now()));
+    const started=Date.now();
+    const expire=()=>{
+      if(!current()||signal.aborted||terminal)return;
+      void finish({ok:false,code:'content_deadline_exceeded',data:{diagnostics:{
+        phase:lastPhase,elapsed_ms:Date.now()-started,replay_safe:false,result_known:false}}});
+      controller.abort();requests.delete(message.request_id);
+    };
+    const timer=setTimeout(expire,Math.max(1,deadline-Date.now()));
     try {
       if(message.operation==='login'){
         if(site.login)site.login();
-        await send({kind:'content-result',request_id:message.request_id,generation:message.generation,platform,ok:true,data:{manual_wait:true,url:location.href}});
+        await finish({ok:true,data:{manual_wait:true,url:location.href}});
         return;
       }
       let data, presented=false,manualAttention=false;
@@ -67,13 +77,14 @@
         if(singleShot)break;
         progress('dom_wait');await change(signal,300);
       } while(Date.now()<deadline);
-      if(signal.aborted || requests.get(message.request_id)!==controller)return;
+      if(Date.now()>=deadline){expire();return;}
+      if(signal.aborted || !current())return;
       if(data?.authenticated_ui && !KRVisibilityPolicy.observe().interaction.visible)data.attention_resolved=true;
       const payload={kind:'content-result', request_id:message.request_id, generation:message.generation, platform, ok:true,data};
       if(new TextEncoder().encode(JSON.stringify(payload)).length>900000) throw new Error('content_payload_too_large');
-      await send(payload);
+      await finish(payload);
     } catch(error) {
-      if(!signal.aborted) await send({kind:'content-result',request_id:message.request_id,generation:message.generation,platform,ok:false,code:error.message || 'content_failed'});
+      if(!signal.aborted) await finish({ok:false,code:error.message || 'content_failed'});
     } finally {clearTimeout(timer);if(requests.get(message.request_id)===controller)requests.delete(message.request_id);}
   }
   chrome.runtime.onMessage.addListener((message,sender) => {

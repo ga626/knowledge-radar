@@ -166,11 +166,11 @@ class EvidenceStore:
                 except (OSError, ValueError) as exc:
                     response.setdefault("evidence_storage_gaps", []).append({"part": kind, "reason": str(exc)})
         if response.get('evidence_storage_allowed') is not False:
-            if isinstance(response.get('document'), dict) and response['document'].get('page_ledger'):
+            if isinstance(response.get('document'), dict) and (response['document'].get('page_ledger') or response['document'].get('document_audit')):
                 try:
                     refs.append(self.assets.put(asset_url, json.dumps(response['document'], ensure_ascii=False),
                         kind='document_receipt', title=str(response.get('title') or ''),
-                        metadata={'extractor':'common-pdf-receipt', 'coverage':'processing_facts_not_semantic_quality'}))
+                        metadata={'extractor':'common-document-receipt', 'coverage':'processing_facts_not_semantic_quality'}))
                 except (OSError, ValueError) as exc:
                     response.setdefault('evidence_storage_gaps', []).append({'part':'document_receipt', 'reason':str(exc)})
             for part in ('comments', 'images', 'tables', 'media_manifest', 'media_ledger', 'comment_media_ledger', 'answer_directory'):

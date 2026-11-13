@@ -393,3 +393,35 @@ test('manual handoff survives expiry and idle without background login polling',
  assert.equal(s.removed.length,0);assert.equal(s.content.length,actions);assert.equal(s.windowUpdates.length,windows);
  assert.ok(!readFileSync(new URL('../browser_link/extension/content.js',import.meta.url),'utf8').includes('watchInteraction'));
 });
+
+
+async function contentDeadline({ready=false, hung=false, cancel=false}={}) {
+ let now=0,n=0,listener;const timers=new Map(),sent=[];
+ const context=vm.createContext({
+  chrome:{runtime:{id:'test-extension',sendMessage:async m=>{sent.push(m);},onMessage:{addListener:f=>listener=f}}},
+  location:{hostname:'maimai.cn',href:'https://maimai.cn/community/gossip-detail/fixture'},
+  KRSiteRoutes:{maimai:['maimai.cn']},KRSites:{maimai:{extract:()=>hung?new Promise(()=>{}):Promise.resolve({url:'fixture'}),ready:()=>ready}},
+  KRVisibilityPolicy:{observe:()=>({interaction:{visible:true},visibility:{}}),decide:()=>({action:'none'})},
+  Date:{now:()=>now},AbortController,TextEncoder,Map,Set,Promise,
+  MutationObserver:class{observe(){}disconnect(){}},document:{documentElement:{},querySelector:()=>null},
+  setTimeout:(fn,ms)=>{const id=++n;timers.set(id,{at:now+ms,fn});return id;},clearTimeout:id=>timers.delete(id)
+ });
+ vm.runInContext(readFileSync(new URL('../browser_link/extension/content.js',import.meta.url),'utf8'),context);
+ const base={request_id:'fixture',generation:'g',platform:'maimai'};
+ listener({...base,kind:'extract',operation:'detail',timeout_ms:1000},{id:'test-extension'});
+ if(cancel)listener({...base,kind:'cancel'},{id:'test-extension'});
+ for(let i=0;i<25;i++){
+  for(let j=0;j<15;j++)await Promise.resolve();
+  if(!timers.size)break;
+  const [id,t]=[...timers].sort((a,b)=>a[1].at-b[1].at)[0];timers.delete(id);now=t.at;t.fn();
+ }
+ for(let j=0;j<20;j++)await Promise.resolve();
+ return sent.filter(x=>x.kind==='content-result');
+}
+for(const hung of [false,true])test(`content deadline produces one terminal even hung=${hung}`,async()=>{
+ const result=await contentDeadline({hung});assert.equal(result.length,1);
+ assert.equal(result[0].ok,false);assert.equal(result[0].code,'content_deadline_exceeded');
+ assert.equal(result[0].data.diagnostics.replay_safe,false);
+});
+test('content explicit cancel produces no late terminal',async()=>assert.equal((await contentDeadline({hung:true,cancel:true})).length,0));
+test('content success produces one terminal',async()=>{const r=await contentDeadline({ready:true});assert.equal(r.length,1);assert.equal(r[0].ok,true);});

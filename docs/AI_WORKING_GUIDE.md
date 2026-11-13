@@ -21,3 +21,17 @@ Required closeout:
 4. Run python scripts/verify_package_integrity.py.
 5. Do not hand-edit KR-GENERATED blocks.
 <!-- KR-GENERATED:AI-STRUCTURE-RULES:END -->
+## 获取窗口、任务期限和接续
+
+获取广度由研究需要决定。工具返回的一批、采样帧、处理页集和预览窗口都不自动表示来源穷尽。
+
+- `get_content_detail.deadline_s`、`process_local_evidence.timeout_s`是有效执行预算。`task_limits`分别设置排队、用户交互等待和绝对总期限；默认分别为3600、86400、86400秒。历史任务保持原有期限，不自动迁移或重新执行。
+- 长媒体可显式设置`task_limits.progress_timeout_s`，让完成块数/已处理音频的真实进展续期，始终受绝对总期限限制。加载、心跳、重复报告相同进度不能续期。未指定时不自动延长。
+- 用`get_task_status`查看`limits`、分段媒体进度和确切停止原因。取消后原生计算仍在返回途中时标为`draining`，保持资源租约；不得按终态立即并发启动另一个重型模型。
+- `search_bilibili.page`和`search_youtube.page_token`按响应中的continuation接续；保持相同关键词和过滤条件。空页/短页但有token仍可接续；重复token、未知结束和不支持续页各自明确返回。B站返回窗口外已抓到的候选保留在`acquired_items`，不因翻页丢弃。
+- PDF原件超过500页时，必须给出不超过500页的明确工作集；字节、解压、内存和文本保护不变。OCR按批次与页账本恢复，未知发送结果不自动重发。
+- 视频`media`可指定`frame_times_s`、`max_frames`、`image_max_side`及`video_height`。默认8帧、640缩略图、480p下载；需要细节时显式提高，仍有32帧、1920图边和1080p/下载大小保护。采样只覆盖返回的PTS，不声称理解全片。
+- 大正文以任务目录内文件+SHA交接，不通过放大MCP/Native协议消息上限解决。固定证据回读仍沿`next_start`；报告沿已有`submit_report`的`input_path`/`input_sha256`合同提交。
+- `get_capabilities(tool_name="get_content_detail")`等展开入口提供`effective_acquisition_limits`，说明默认值、配置来源、保护和接续。费用策略、登录/验证码、浏览器所有权、单站节流及重型模型并发不因本次调整放宽。
+
+公开搜索只在观测到近期错误/高延迟后降低并行度，五分钟窗口后自然恢复到既有硬上限。外层期限后只归集已经发出的请求返回；明确取消/执行失效后不写迟到证据，不重发。候选入库不等于正文已取得。

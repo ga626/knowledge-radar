@@ -576,6 +576,8 @@ class TaskStore:
             if int(meta.get('cooldown_attempts',0))>=int(meta.get('cooldown_limit',3)):return False
             meta['cooldown_attempts']=int(meta.get('cooldown_attempts',0))+1
             meta['phase']='cooldown_probe_queued'
+            if meta.get('limits_version') == 2:
+                meta.update(queue_entered_at=timestamp,deadline_at=min(meta['overall_deadline_at'],timestamp+meta['queue_timeout_s']))
             conn.execute("UPDATE runtime_tasks SET status='queued',updated_at=?,metadata_json=? WHERE task_id=? AND status='waiting_cooldown'",(timestamp,_json_dumps(meta),task_id))
             return True
 
@@ -613,6 +615,29 @@ class TaskStore:
             cur = conn.execute("UPDATE runtime_tasks SET status='running', started_at=COALESCE(started_at, ?), updated_at=?, attempts=attempts+?, metadata_json=? WHERE task_id=? AND status='queued'",
                                (now_ts(), now_ts(), 0 if owner.get("stage") == "enhancement" else 1, _json_dumps(meta), task_id))
             return cur.rowcount == 1
+
+    def settle_execution_clock(self, task_id, writer, started, ended):
+        """仅结算同代执行计时；允许终态诊断更新，但从不重开状态或覆盖结果。"""
+        self.initialize()
+        with self._lock, self._connect() as conn:
+            conn.execute('BEGIN IMMEDIATE')
+            row = conn.execute('SELECT status,metadata_json FROM runtime_tasks WHERE task_id=?',(task_id,)).fetchone()
+            meta = _json_loads(row['metadata_json']) if row else {}
+            if (not row or meta.get('limits_version') != 2
+                or any(meta.get(k) != writer.get(k) for k in ('attempt_id','execution_id'))
+                or meta.get('clock_settled_execution') == writer['execution_id']):
+                return False
+            elapsed = max(0, ended-started)
+            meta.update(execution_used_s=meta.get('execution_used_s',0)+elapsed,
+                last_execution_s=elapsed, execution_released_at=ended,
+                clock_settled_execution=writer['execution_id'])
+            if row['status'] == 'queued':
+                meta.update(queue_entered_at=ended, deadline_at=min(meta['overall_deadline_at'],ended+meta['queue_timeout_s']))
+            elif row['status'] in {'waiting_for_user','waiting_cooldown'}:
+                meta.update(wait_entered_at=ended, deadline_at=min(meta['overall_deadline_at'],ended+meta['user_wait_timeout_s']))
+            conn.execute('UPDATE runtime_tasks SET metadata_json=?,updated_at=? WHERE task_id=?',
+                         (_json_dumps(meta),now_ts(),task_id))
+            return True
 
     def _mark(
         self,

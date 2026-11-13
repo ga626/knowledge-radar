@@ -164,7 +164,7 @@ def test_reader_clicks_only_target_once_and_waits_for_page_render(dom_browser):
 def test_reader_limit_and_unexpanded_replies_never_claim_exhaustion(dom_browser):
     html=reader_html('<div class="Comments-container">2 条评论<div data-id="1"><div class="CommentContent">甲</div><div data-id="2"><div class="CommentContent">乙</div></div></div><button>展开更多回复</button></div>')
     value=_isolated_extract(dom_browser,html,URL,'comments',{'target':ANSWER_TARGET,'limit':1})
-    assert len(value['comments'])==1 and not value['exhausted'] and not value['request_satisfied']
+    assert len(value['comments'])==1 and not value['exhausted'] and value['request_satisfied']
 
 
 @pytest.mark.parametrize('markup,kind',[
@@ -232,3 +232,16 @@ def test_reader_reacquires_answer_after_react_replaces_node(dom_browser):
     html=reader_html('<button onclick="const n=this.parentElement.cloneNode(true);n.innerHTML=\'<div class=&quot;Comments-container&quot;>1 条评论<div data-id=&quot;9&quot;><div class=&quot;CommentContent&quot;>替换后</div></div></div>\';this.parentElement.replaceWith(n)">1 条评论</button>')
     value=_isolated_extract(dom_browser,html,URL,'comments',{'target':ANSWER_TARGET})
     assert value['comments'][0]['content']=='替换后'
+
+
+@pytest.mark.parametrize('limit,scope,count,expected', [
+    (20, {}, 25, True),
+    (100, {'root_limit': 2}, 5, True),
+    (20, {}, 3, False),
+])
+def test_reader_window_is_independent_of_source_exhaustion(dom_browser, limit, scope, count, expected):
+    nodes=''.join(f'<div data-id="{i+1}"><div class="CommentContent">评论{i}</div></div>' for i in range(count))
+    html=reader_html('<div class="Comments-container">100 条评论'+nodes+'<button>加载更多</button></div>')
+    value=_isolated_extract(dom_browser,html,URL,'comments',{'target':ANSWER_TARGET,'limit':limit,'scope':scope})
+    assert value['request_satisfied'] is expected
+    assert not value['exhausted'] and value['has_more']

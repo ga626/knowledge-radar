@@ -116,7 +116,10 @@ def acquire_media_ref(ref: MediaRef):
         raise MediaAccessError('unsupported_media_location')
     from generic_web.url_policy import validate_detail_target, canonical_url
     validate_detail_target(ref.uri, '')
-    identity = hashlib.sha256((canonical_url(ref.uri) + '|' + ref.kind.value).encode()).hexdigest()
+    height = ref.metadata.get('video_height',480)
+    if type(height) is not int or not 480 <= height <= 1080:
+        raise ValueError('invalid_video_resolution')
+    identity = hashlib.sha256((canonical_url(ref.uri) + '|' + ref.kind.value + ('|height:'+str(height) if ref.kind == MediaKind.VIDEO else '')).encode()).hexdigest()
     folder = media_cache_subdir('acquired', content_id=identity)
     from runtime.file_write_lock import file_write_lock
     from runtime.resource_concurrency import acquire_resource
@@ -154,7 +157,7 @@ def acquire_media_ref(ref: MediaRef):
                 admit_bytes(folder,1024*1024)
                 if int(event.get('downloaded_bytes') or 0)>256*1024*1024:
                     raise MediaAccessError('download_missing_or_exceeds_limit')
-            options = {'format': 'bestaudio/best' if ref.kind == MediaKind.AUDIO else 'bestvideo[height<=480]/best[height<=480]',
+            options = {'format': 'bestaudio/best' if ref.kind == MediaKind.AUDIO else f'bestvideo[height<={height}]/best[height<={height}]',
                 'outtmpl': str(Path(temporary_dir) / 'source.%(ext)s'), 'noplaylist': True, 'playlist_items': '1',
                 'socket_timeout': 15, 'retries': 0, 'fragment_retries': 0,
                 'max_filesize': 256 * 1024 * 1024, 'quiet': True, 'no_warnings': True,

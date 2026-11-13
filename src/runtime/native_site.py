@@ -98,7 +98,7 @@ class NativeSite:
                                     retry_after_s=gate['retry_after_s'])
             uncertain = response.get('request_executed') is not False and code in {
                 'native_command_timeout', 'native_host_unreachable', 'browser_disconnected', 'native_host_disconnected',
-                'opencli_caller_timeout', 'COMMAND_RESULT_UNKNOWN'}
+                'opencli_caller_timeout', 'COMMAND_RESULT_UNKNOWN', 'content_deadline_exceeded'}
             if code == 'SECURITY_BLOCK' or uncertain:
                 with file_write_lock(self.state_path()):
                     current = self.state()
@@ -114,6 +114,9 @@ class NativeSite:
             if isinstance(diagnostics, dict):
                 result['metadata']['browser_diagnostics'] = {key: diagnostics[key] for key in
                     ('last_stage','stage_elapsed_ms','command_elapsed_ms','tab_id','retained','phase_count') if key in diagnostics}
+            if isinstance(data.get('diagnostics'), dict):
+                result['metadata']['content_diagnostics'] = {key:data['diagnostics'][key] for key in
+                    ('phase','elapsed_ms','replay_safe','result_known') if key in data['diagnostics']}
             result['metadata']['failure_boundary'] = 'outcome_unknown' if uncertain else 'reported_failure'
             if isinstance(response.get('browser_readiness'), dict):
                 result['browser_readiness'] = response['browser_readiness']
@@ -141,7 +144,7 @@ class NativeSite:
         observed = receipt.get('result') or {}
         if resolution == 'accept_result' and (receipt.get('status') != 'recorded' or not isinstance(observed.get('ok'),bool) or
                 (observed.get('code') or observed.get('failure_type')) in {'COMMAND_RESULT_UNKNOWN','native_command_timeout',
-                    'native_host_unreachable','browser_disconnected','native_host_disconnected','opencli_caller_timeout'}):
+                    'native_host_unreachable','browser_disconnected','native_host_disconnected','opencli_caller_timeout','content_deadline_exceeded'}):
             return {**result,'status':'unknown','reason':'original_result_not_conclusive'}
         with file_write_lock(self.state_path()):
             if self.state() != state:
