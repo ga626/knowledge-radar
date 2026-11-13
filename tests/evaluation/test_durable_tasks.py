@@ -12,6 +12,16 @@ def await_terminal(service, task_id, timeout=12):
         row = service.result(task_id)
         if row["status"] not in {"queued", "running"}:
             task = service.store.get_task(task_id) or {}
+            # A v2 worker publishes terminal status before its execution clock
+            # is settled in the monitor finally block.  Wait for that bounded
+            # handoff so this helper does not race a read-only artifact check.
+            metadata = task.get("metadata") or {}
+            if (task.get("status") in {"completed", "failed", "cancelled", "interrupted"}
+                    and metadata.get("limits_version") == 2
+                    and metadata.get("execution_id")
+                    and not metadata.get("execution_released_at")):
+                time.sleep(.04)
+                continue
             if not (task.get('metadata') or {}).get('research_task_id') or row.get('research_receipt', {}).get('status') in {'recorded', 'recording_failed'}:
                 return row
         time.sleep(.04)

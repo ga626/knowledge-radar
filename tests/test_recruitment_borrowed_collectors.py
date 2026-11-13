@@ -125,7 +125,9 @@ def test_maimai_detail_comments_keep_body_when_risk_stops(monkeypatch):
     calls = []
     def invoke(**kw):
         calls.append(kw)
-        return {'ok': True, 'data': {'url': url, 'html': html}} if kw['operation'] == 'detail' else {'ok': False, 'code': 'SECURITY_BLOCK', 'request_executed': True}
+        return {'ok': True, 'data': {'url': url, 'body_snapshot': {
+            'schema': 'maimai-body/v1', 'target_id': '12', 'kind': 'feed',
+            'text': '真实正文', 'source': 'fixture'}}} if kw['operation'] == 'detail' else {'ok': False, 'code': 'SECURITY_BLOCK', 'request_executed': True}
     patch_native(monkeypatch, invoke)
     result = maimai.discussion_detail(url, include_comments=True)
     assert result['status'] == 'ok' and result['content'] == '真实正文'
