@@ -17,6 +17,19 @@ MAX_CACHE_ENTRIES = 32
 PARSER_CONTRACT = 'local-html-pdf-page-ocr-wechat-v9-job-field-provenance'
 
 
+class AcquisitionDeadlineExceeded(httpx.TimeoutException):
+    """本地总预算到期，与某个网络阶段的 timeout 分开。"""
+
+
+def failure_diagnostics(exc, *, attempts=0, elapsed_s=0):
+    phase = next((name for cls, name in (
+        (AcquisitionDeadlineExceeded, 'local_deadline'), (httpx.ConnectTimeout, 'connect'),
+        (httpx.ConnectError, 'connect'), (httpx.ReadTimeout, 'read'),
+        (httpx.WriteTimeout, 'write'), (httpx.PoolTimeout, 'pool')) if isinstance(exc, cls)), 'http_exchange')
+    return {'phase': phase, 'attempts': attempts, 'elapsed_s': round(max(0, elapsed_s), 3),
+            'exception_type': type(exc).__name__, 'root_cause': 'unconfirmed'}
+
+
 def _eligible(url, headers):
     from .url_policy import SENSITIVE
     parsed = urlsplit(url)
@@ -53,18 +66,29 @@ def fetch(request, headers, fetcher):
         for source, target in [('etag','If-None-Match'),('last-modified','If-Modified-Since')]:
             if row['response'].headers.get(source):
                 conditional[target] = row['response'].headers[source]
+    started = time.monotonic()
+    attempts = 0
+    failures = []
     for attempt in range(2):
         check_execution()
         remaining = min(request.timeout,request.deadline_at-time.monotonic()) if request.deadline_at else request.timeout
         if remaining <= 0:
-            raise httpx.TimeoutException('acquisition deadline exceeded')
+            exc = AcquisitionDeadlineExceeded('acquisition deadline exceeded')
+            exc.acquisition_diagnostics = failure_diagnostics(exc, attempts=attempts, elapsed_s=time.monotonic()-started)
+            exc.acquisition_diagnostics['prior_failures'] = failures
+            raise exc
         try:
+            attempts += 1
+            attempt_started = time.monotonic()
             response = fetcher(request.url, timeout=remaining, max_bytes=request.max_bytes, headers=conditional)
             break
-        except httpx.ConnectError:
+        except httpx.RequestError as exc:
             # Anonymous GET only: one bounded retry for a connection/TLS setup
             # failure, never for a refusal/challenge or a POST's unknown result.
-            if attempt:
+            exc.acquisition_diagnostics = failure_diagnostics(exc, attempts=attempts, elapsed_s=time.monotonic()-started)
+            failures.append(failure_diagnostics(exc, attempts=attempts, elapsed_s=time.monotonic()-attempt_started))
+            exc.acquisition_diagnostics['prior_failures'] = list(failures)
+            if not isinstance(exc, httpx.ConnectError) or attempt:
                 raise
     check_execution()
     if len(response.content) > request.max_bytes:
@@ -79,7 +103,9 @@ def fetch(request, headers, fetcher):
         if len(response.content) > request.max_bytes:
             from .url_policy import URLPolicyError
             raise URLPolicyError('response exceeds bounded extraction size')
-    response.extensions.update(acquisition_cache=cache_status, acquisition_fetch_count=attempt+1)
+    response.extensions.update(acquisition_cache=cache_status, acquisition_fetch_count=attempts,
+                               acquisition_elapsed_s=round(time.monotonic()-started, 3),
+                               acquisition_prior_failures=failures)
     control = response.headers.get('cache-control','').lower()
     import re
     age = re.search(r'(?:^|,)\s*max-age\s*=\s*"?(\d+)', control)

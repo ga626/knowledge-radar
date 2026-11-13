@@ -246,11 +246,11 @@ def normalize_comments(data, *, platform, source_url, options=None):
             "identity_gaps": gaps,
             "original_coverage": coverage,
             "streams": pagination,
-            "actual_order": "platform_default"
-            if platform in {"知乎", "小红书", "微信"}
+            "actual_order": old.get('actual_order') or structured.get('actual_order') or ("platform_default"
+            if platform in {"知乎", "小红书", "微信", "V2EX"}
             else "chronological_stream"
             if platform == "GitHub"
-            else options.get("order", "relevance"),
+            else "unknown"),
             "media_scope": "only_observed_references; no_hidden_attachments_assertion",
         },
     )

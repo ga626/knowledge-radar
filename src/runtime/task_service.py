@@ -560,9 +560,15 @@ class TaskService:
                                  enhancement_error_code=task.get('error_code') or task['status'])
                 coverage = value.get('content_coverage') or {}
                 for part in (coverage.get('parts') or {}).values():
-                    if isinstance(part,dict) and part.get('status') in {'queued','pending','running'}:
-                        part.update(status=task['status'], missing_reason=task.get('error_code') or task['status'])
+                    if isinstance(part,dict) and any(part.get(key) in {'queued','pending','running'} for key in ('state','status')):
+                        for key in ('state','status'):
+                            if key in part:part[key] = task['status']
+                        part['missing_reason'] = task.get('error_code') or task['status']
                         coverage['request_satisfied'] = False
+                response['available_evidence'] = value.get('evidence_assets') or []
+                response['next_action'] = ('Read the available fixed evidence and component coverage before deciding '
+                    'whether control_task can resume the missing part. Do not repeat successful ASR or infer '
+                    'source exhaustion from a failed comments request.')
         recording = (task.get("metadata") or {}).get("research_recording") or {}
         if self._recording_matches(task, recording) and recording.get('handoff_version') == 1:
             response["research_receipt"] = recording["response"]

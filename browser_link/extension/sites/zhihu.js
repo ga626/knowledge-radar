@@ -196,7 +196,11 @@
       comment_diagnostics:{target_connected:node.isConnected,panel_present:!!p,panel_visible:visible(p),
         matching_panel_count:document.querySelectorAll('.Comments-container').length,document_state:document.readyState}};
     const text=clean(p);
-    if(/加载失败|无权|禁止访问/.test(text)&&!p.querySelector('.CommentContent'))return {...pageState(),failure_type:'reader_comments_load_failed'};
+    const loading=/加载中|正在加载/.test(text), permission=/无权|禁止访问|权限不足/.test(text);
+    if((/加载失败/.test(text)||permission)&&!p.querySelector('.CommentContent'))return {...pageState(),
+      failure_type:permission?'reader_comments_permission_denied':'reader_comments_load_failed',
+      comment_diagnostics:{reader_state:permission?'permission_denied':'load_failed',permission_observed:permission,
+        panel_present:true,panel_visible:true,document_state:document.readyState,direct_api_requests:0}};
     const nodes=[...p.querySelectorAll('[data-id]')].filter(e=>/^\d+$/.test(e.getAttribute('data-id')||'')&&visible(e)&&
       [...e.querySelectorAll('.CommentContent')].some(c=>c.closest('[data-id]')===e));
     const roots=nodes.filter(e=>!e.parentElement.closest('[data-id]')), rows=[],seen=new Set();
@@ -221,10 +225,10 @@
       const replies=nodes.filter(e=>e!==root&&root.contains(e));omitted||=replies.length>replyLimit;
       for(const reply of replies.slice(0,replyLimit)){if(rows.length>=limit){omitted=true;break;}read(reply,root.getAttribute('data-id'));}
     }
-    const empty=rows.length===0&&advertisedTotal!==null&&advertisedTotal===0&&/暂无评论|还没有评论/.test(text);
+    const empty=!loading&&rows.length===0&&advertisedTotal!==null&&advertisedTotal===0&&/暂无评论|还没有评论/.test(text);
     const count=Number(text.match(/(\d+)\s*条评论/)?.[1]??NaN);
     const expanders=[...p.querySelectorAll('button,a,[role="button"]')].filter(e=>visible(e)&&/展开.*回复|查看.*回复|加载更多/.test(clean(e))).length;
-    const observedAll=empty||(!expanders&&Number.isFinite(count)&&count===nodes.length);
+    const observedAll=empty||(!loading&&nodes.length>0&&!expanders&&Number.isFinite(count)&&count===nodes.length);
     const orderSupported=!scope.order||['relevance','score'].includes(scope.order);
     const exhausted=observedAll&&!omitted;
     const satisfied=observedAll&&orderSupported;
@@ -233,8 +237,11 @@
       coverage:{scope:'visible_reader_threads',actual_order:'platform_default',order_applied:orderSupported,root_count:rows.filter(x=>!x.is_reply).length,
         reply_count:rows.filter(x=>x.is_reply).length,observed_comment_count:nodes.length,
         displayed_total:Number.isFinite(count)?count:null,expanders_remaining:expanders,
-        stop_reason:!orderSupported?'requested_order_not_applied':exhausted?'visible_reader_exhausted':omitted?'requested_limit':'reader_window_not_exhausted'},
-      comment_diagnostics:{transport:'normal_reader_dom',direct_api_requests:0,parent_identity:'unknown_for_nested_replies'}};
+        stop_reason:!orderSupported?'requested_order_not_applied':loading?'reader_loading':exhausted?'visible_reader_exhausted':omitted?'requested_limit':'reader_window_not_exhausted'},
+      comment_diagnostics:{transport:'normal_reader_dom',direct_api_requests:0,parent_identity:'unknown_for_nested_replies',
+        reader_state:loading?'loading':empty?'explicit_zero':rows.length?'rows_observed':'zero_unverified',
+        permission_observed:false,panel_present:true,panel_visible:true,document_state:document.readyState,
+        advertised_total:advertisedTotal,observed_nodes:nodes.length}};
   }
 
   globalThis.KRSites.zhihu={

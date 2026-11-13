@@ -1512,8 +1512,8 @@
     },
     {
       "case_id": "task.durable",
-      "version": 11,
-      "oracle_version": 11,
+      "version": 12,
+      "oracle_version": 12,
       "capabilities": [
         "task.lifecycle"
       ],
@@ -1543,7 +1543,10 @@
         "tests/test_task_cooldown.py",
         "tests/test_platform_risk.py",
         "tests/test_hardening_regressions.py",
-        "tests/test_recruitment_diagnostic_regressions.py"
+        "tests/test_recruitment_diagnostic_regressions.py",
+        "tests/test_platform_failure_contracts.py",
+        "tests/test_web_timeout_diagnostics.py",
+        "tests/test_native_site.py"
       ],
       "layer": "integration",
       "auto": true,
@@ -1625,10 +1628,13 @@
         "src/runtime/pdf_worker.py",
         "src/runtime/recruitment_governance.py",
         "tests/test_recruitment_diagnostic_regressions.py",
-        "scripts/product_console_launcher.py"
+        "scripts/product_console_launcher.py",
+        "tests/test_platform_failure_contracts.py",
+        "tests/test_web_timeout_diagnostics.py",
+        "tests/test_native_site.py"
       ],
       "success": "真实隔离进程deadline/取消/重启/幂等；轻探针不被重调用堵塞；转写失败不可完成，已失效缓存可重执行，结果无自身阻塞引用。 对话研究、普通工具回执、固定原文回读和同账本完成检查连通；网页拒绝研究状态写入。 现行视频采集/增强真实边界下失败转写不进入证据，基础正文及真实子任务保留。 研究停止记录保留中文重开条件，报告检查未知不冒充通过。 风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。 招聘交接：监督者Host路径与预览隔离、明确冷却不转人工、明确人工不后台重探、终态投影不残留等待。 仅离线回归，不证明正式安装或真实平台已恢复。",
-      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。 2026-11-12招聘短诊断回归：招聘交接：监督者Host路径与预览隔离、明确冷却不转人工、明确人工不后台重探、终态投影不残留等待。"
+      "change_reason": "2026-11-07全链修复：将本轮真实缺陷回归纳入既有评测合同。风控持久冷却、释放执行槽、原deadline、取消和重启、有界单探测租约；登录和未知执行结果不重放。 2026-11-12招聘短诊断回归：招聘交接：监督者Host路径与预览隔离、明确冷却不转人工、明确人工不后台重探、终态投影不残留等待。 2026-11-13：评论分页预算与实际排序、部分失败固定资料、超时分型和浏览器阶段回执离线回归。"
     },
     {
       "case_id": "account.facts",

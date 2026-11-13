@@ -548,7 +548,7 @@ def test_retirement_restores_unconditional_https_downgrade_guard(monkeypatch, lo
     from urllib.parse import urlsplit
     from generic_web import url_policy as policy
     monkeypatch.setattr(policy,"public_addresses",lambda u,**k:(urlsplit(u),urlsplit(u).hostname,["93.184.216.34"]))
-    monkeypatch.setattr("runtime.proxy_config.get_httpx_proxy",lambda:None)
+    monkeypatch.setattr("runtime.proxy_config.httpx_options",lambda *a,**kw:{'trust_env':False})
     actual=httpx.Client
     sent=[]
     def respond(req):

@@ -181,6 +181,16 @@ def test_reader_empty_requires_visible_explicit_message(dom_browser):
     assert value['empty_confirmed'] and value['exhausted']
 
 
+def test_reader_unverified_zero_and_permission_have_distinct_diagnostics(dom_browser):
+    value=_isolated_extract(dom_browser,reader_html('<button>4 条评论</button><div class="Comments-container">加载中</div>'),URL,'comments',{'target':ANSWER_TARGET})
+    assert not value['empty_confirmed'] and not value['exhausted']
+    assert value['comment_diagnostics']['reader_state']=='loading'
+    assert value['coverage']['stop_reason']=='reader_loading'
+    denied=_isolated_extract(dom_browser,reader_html('<div class="Comments-container">无权访问评论</div>'),URL,'comments',{'target':ANSWER_TARGET})
+    assert denied['failure_type']=='reader_comments_permission_denied'
+    assert denied['comment_diagnostics']['permission_observed'] is True
+
+
 def test_reader_rejects_unrelated_answer_even_when_linked(dom_browser):
     html=f'<div class="AnswerItem" data-answer-id="42"><a href="{URL}">引用</a><button>1 条评论</button></div>'
     value=_isolated_extract(dom_browser,html,URL,'comments',{'target':ANSWER_TARGET})

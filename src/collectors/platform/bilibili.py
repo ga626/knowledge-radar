@@ -441,13 +441,16 @@ def collect_comments(bvid, *, options=None):
     scope = normalized_options(CommentReadOptions, options)
     headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bilibili.com/'}
     rows, gaps, seen, replies = [], [], set(), []
-    pages, roots, cursor, exhausted = 0, 0, 0, False
-    def get(path, params):
-        nonlocal pages
+    pages, metadata_requests, roots, cursor, exhausted = 0, 0, 0, 0, False
+    def get(path, params, *, comment_page=True):
+        nonlocal pages, metadata_requests
         check_execution()
-        if pages >= scope['max_pages']:
+        if comment_page and pages >= scope['max_pages']:
             raise ValueError('comment_page_budget')
-        pages += 1
+        if comment_page:
+            pages += 1
+        else:
+            metadata_requests += 1
         response = httpx.get('https://api.bilibili.com'+path, params=params, headers=headers, timeout=15)
         response.raise_for_status()
         data = response.json()
@@ -469,7 +472,7 @@ def collect_comments(bvid, *, options=None):
             'images': [picture.get('img_src') for picture in content.get('pictures') or [] if picture.get('img_src')],
             'media_observation': 'content.pictures; unobserved_audio_video_not_asserted'})
     try:
-        info = get('/x/web-interface/view', {'bvid': bvid})
+        info = get('/x/web-interface/view', {'bvid': bvid}, comment_page=False)
         aid = info['aid']
         while roots < scope['root_limit'] and len(rows) < scope['total_limit']:
             data = get('/x/v2/reply/main', {'oid': aid, 'type': 1, 'mode': 3 if scope['order']=='relevance' else 2,
@@ -518,7 +521,9 @@ def collect_comments(bvid, *, options=None):
     return {'comments':rows,'comments_complete':satisfied,'comments_exhausted':source_done,
         'comments_empty_confirmed':source_done and not rows,
         'comments_coverage':'observed_zero_comments' if source_done and not rows else 'bounded_api_window',
-        'comments_metadata':{'pages':pages,'returned_roots':roots,'reply_coverage':reply_coverage,'gaps':gaps,
+        'comments_metadata':{'pages':pages,'metadata_requests':metadata_requests,
+            'requests':pages+metadata_requests,'actual_order':scope['order'],
+            'returned_roots':roots,'reply_coverage':reply_coverage,'gaps':gaps,
             'next_root_cursor':cursor,'stop_reason':gaps[0]['reason'] if gaps else 'source_exhausted' if source_done else 'requested_window'}}
 
 

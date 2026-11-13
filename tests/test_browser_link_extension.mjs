@@ -6,6 +6,20 @@ import vm from 'node:vm';
 const source=readFileSync(new URL('../browser_link/extension/background.js',import.meta.url),'utf8');
 const event=()=>{const listeners=new Set();return {addListener:f=>listeners.add(f),emit:(...a)=>[...listeners].forEach(f=>f(...a))};};
 const tick=async()=>{for(let i=0;i<100;i++)await Promise.resolve();};
+
+test('bounded phase acknowledgements survive timeout and reject other document or generation',async()=>{
+ const s=await setup();s.command('phases','maimai','detail',{url:'https://maimai.cn/community/home/recommended'});await tick();
+ const sender={id:'ext',frameId:0,documentId:'doc',tab:{id:7}};
+ const phase=generation=>s.runtime.onMessage.emit({kind:'content-progress',request_id:'phases',generation,
+  platform:'maimai',phase:'site_api_wait'},sender,()=>{});
+ phase('wrong');await tick();phase('gen');await tick();
+ s.result('phases','maimai');await tick();
+ const result=s.sent.find(x=>x.type==='result'&&x.request_id==='phases');
+ assert.equal(result.data.browser_diagnostics.last_stage,'content_result');
+ assert.ok(result.data.browser_diagnostics.phase_count>=1);
+ assert.ok(result.data.browser_diagnostics.command_elapsed_ms>=0);
+ assert.equal(s.storage.browserDiagnostics.filter(x=>x.stage==='site_api_wait').length,1);
+});
 async function setup({paired=true,profile='paired-id',startupRace=false,create,sendMessage,stored=[],history=[]}={}){
  const sent=[],content=[],created=[],updated=[],removed=[],alarms=[],windowCreates=[],windowUpdates=[],groups=new Map(),timers=new Map(),tabsById=new Map();
  const storage={ownedTabs:stored,browserDiagnostics:history};let nextId=7,timerId=0,connections=0,reloads=0,errorReads=0;

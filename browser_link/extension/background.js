@@ -10,6 +10,7 @@ const OPS=new Set(['search','detail','comments','login','attention','probe','aut
 // Session-only, bounded diagnostics: no page text, query, account or credentials.
 let diagnosticEvents=[],diagnosticWrite=Promise.resolve();
 function record(p,stage,{code='',host=''}={}) {
+  if(stage===p.lastStage)p.stageAt=Date.now();
   const row={at:Date.now(),request_id:String(p.id || '').slice(0,96),platform:p.platform,
     operation:p.operation || '',tab_id:p.tabId ?? null,stage};
   if(p.documentId)row.document_id=p.documentId;
@@ -134,7 +135,9 @@ function finish(p,ok,data={},code='',notify=true) {
     void persist();
   }
   if(notify)post(p.port,{type:'result',request_id:p.id,platform:p.platform,generation:p.generation,ok,
-    data:{...data,browser_diagnostics:{last_stage:p.lastStage || 'command_received',tab_id:p.tabId,retained:!!item?.retained}},
+    data:{...data,browser_diagnostics:{last_stage:p.lastStage || 'command_received',tab_id:p.tabId,retained:!!item?.retained,
+      stage_elapsed_ms:Math.max(0,Date.now()-(p.stageAt||p.startedAt||Date.now())),
+      command_elapsed_ms:Math.max(0,Date.now()-(p.startedAt||Date.now())),phase_count:p.phaseCount||0}},
     code,request_executed:!!p.dispatched || !!p.navigated});
   if(code==='cancelled')void backgroundAttention(p.platform).catch(()=>{});
   if(reloadPending && !pending.size)void finishUpdate();
@@ -244,6 +247,7 @@ async function execute(message,port) {
     timeout:Math.max(1,Math.min(20000,Number(message.timeout_ms)||20000))};
   pending.set(id,p);locks.add(platform);
   record(p,'command_received');
+  p.startedAt=Date.now();
   p.timer=setTimeout(()=>finish(p,false,{},'native_command_timeout'),p.timeout);
   try {
     if(['release','release_login'].includes(p.operation)){
@@ -326,6 +330,15 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       p.documentId=sender.documentId || p.documentId;
       p.lastStage='content_started';record(p,p.lastStage);
     }
+  }
+  if(message?.kind==='content-progress'){
+    const p=pending.get(message.request_id);
+    if(!p || sender.tab?.id!==p.tabId || sender.frameId!==0 || message.platform!==p.platform || message.generation!==p.generation)return;
+    if(p.documentId && sender.documentId && p.documentId!==sender.documentId)return;
+    if(!['adapter_started','adapter_returned','dom_wait','site_api_wait','site_api_received','comments_control','comments_wait','comments_parse'].includes(message.phase))return;
+    if((p.phaseCount||0)>=32)return;
+    p.phaseCount=(p.phaseCount||0)+1;p.documentId=sender.documentId||p.documentId;
+    p.lastStage=message.phase;record(p,p.lastStage);
   }
   if(message?.kind==='content-result'){
     const p=pending.get(message.request_id);
