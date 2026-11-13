@@ -225,7 +225,7 @@ def run_optional(payload):
     metrics = result.get('asr_metrics') or {}
     no_speech = (component == 'qwen3-asr-0.6b' and result.get('speech_status') == 'no_speech_detected'
                  and metrics.get('chunks', 0) > 0 and metrics.get('audio_duration_s', 0) > 0)
-    if result.get('status') != 'acquired' or (not str(result.get('text') or '').strip() and not no_speech):
+    if result.get('status') not in ({'acquired', 'partial'} if component == 'docling' else {'acquired'}) or (not str(result.get('text') or '').strip() and not no_speech):
         raise ValueError('optional_component_empty_or_failed')
     result['execution_timings'] = {'input_validation_s': validation_s,
         'receipt_validation_s': receipt_validation_s, 'processing_s': worker_s,
@@ -239,20 +239,25 @@ def _save_result(result, payload, *, receipt=None, started=None):
 
     result["content"] = result["text"]
     component = result["component"]
-    if component == 'pypdf':
+    result['input_sha256'] = payload['input_sha256']
+    if component in {'pypdf', 'docling'}:
         result['document'] = {key: result[key] for key in (
             'input_sha256', 'page_count', 'pages_read', 'requested_pages', 'page_ledger',
             'request_satisfied', 'source_pages_exhausted', 'processing_identity', 'resume',
             'original_asset', 'coverage', 'processing_method', 'missing_text_pages',
-            'quality_warnings') if key in result}
+            'quality_warnings', 'document_audit') if key in result}
     result["collector"] = component
     result['input_sha256'] = payload['input_sha256']
     result['coverage'] = result.get('coverage') or ('processed_audio_chunks' if result.get('source_kind') == 'asr' else 'partial')
     result['content_coverage'] = content_coverage(result)
     result['content_coverage']['parts']['content']['coverage'] = result['coverage']
+    if component == 'docling' and result.get('request_satisfied') is False:
+        result['content_coverage']['request_satisfied'] = False
+        result['content_coverage']['required_gaps'] = list(dict.fromkeys([*result['content_coverage'].get('required_gaps', []), 'content']))
+        result['content_coverage']['parts']['content']['missing_reason'] = 'docx_table_retention_unverified'
     # 新归档合同生成新证据版本；不改写旧版本的未知覆盖结论。
     result['detail_metadata'] = {**(result.get('detail_metadata') or {}),
-                                 'strategy': ('local-evidence/page-ledger-ocr-v4:' if component == 'pypdf' else 'local-evidence/v2:') + component}
+                                 'strategy': ('local-evidence/page-ledger-ocr-v4:' if component == 'pypdf' else 'local-evidence/docx-retention-v3:' if component == 'docling' else 'local-evidence/v2:') + component}
     identity_url = "https://local-evidence.invalid/sha256/" + payload["input_sha256"]
     archive_started = time.monotonic()
     EvidenceStore().record_detail(

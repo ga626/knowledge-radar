@@ -53,3 +53,23 @@ def test_auth_protocol_failure_is_not_a_login_prompt(probe, expected_failure):
     assert result['manual_action_required'] is False
     assert not result['error'].get('login_required')
     assert 'login_required' not in result['error']['failure_tags']
+
+
+@pytest.mark.parametrize('key,kind', [('data','gossip'),('gossipData','gossip'),('feedData','feed')])
+def test_detail_snapshot_is_ready_only_for_matching_body(key, kind):
+    from pathlib import Path
+    node,_=compute_driver_executable()
+    harness=r"""
+const fs=require('fs'),vm=require('vm'),input=JSON.parse(fs.readFileSync(0,'utf8'));
+const url='https://maimai.cn/community/'+input.kind+'-detail/123?egid=fixture';
+const script='self.__next_f.push('+JSON.stringify([1,'0:'+JSON.stringify({[input.key]:{id:'123',text:'目标正文 \"quoted\" \\ path'}})])+')';
+const context=vm.createContext({KRSites:{},URL,URLSearchParams,AbortController,location:{href:url,pathname:new URL(url).pathname},
+ document:{querySelectorAll:s=>s==='script'?[{textContent:script}]:[],querySelector:()=>null}});
+vm.runInContext(input.code,context);
+context.KRSites.maimai.extract('detail',{},new AbortController().signal).then(d=>process.stdout.write(JSON.stringify({ready:context.KRSites.maimai.ready(d,'detail'),snapshot:d.body_snapshot})));
+"""
+    code=(Path(__file__).resolve().parents[1]/'browser_link/extension/sites/maimai.js').read_text(encoding='utf-8')
+    proc=subprocess.run([str(node),'-e',harness],input=json.dumps(dict(code=code,key=key,kind=kind)),capture_output=True,text=True,encoding='utf-8',check=True)
+    value=json.loads(proc.stdout)
+    assert value['ready'] and value['snapshot']['text']=='目标正文 \"quoted\" \\ path'
+    assert value['snapshot']['target_id']=='123'

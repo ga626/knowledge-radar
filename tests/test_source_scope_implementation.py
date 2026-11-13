@@ -199,18 +199,9 @@ def test_maimai_search_preserves_gossip_and_feed_context_not_contacts():
     assert all(row["content_type"] == "community_discussion_candidate" and not row["job_verified"] for row in rows)
 
 
-def test_maimai_detail_flight_binds_requested_post_not_another_post():
-    flight = '0:{"feedData":{"efid":"e","feed":{"id":12,"text":"帖子正文"}}}\n1:{"feedData":{"feed":{"id":99,"text":"另一个帖子"}}}'
-    html = '<script>self.__next_f.push(' + json.dumps([1, flight]) + ')</script>'
-    assert maimai._detail_data(html, "https://maimai.cn/community/feed-detail/12?efid=e")["text"] == "帖子正文"
-    assert maimai._detail_data(html, "https://maimai.cn/community/feed-detail/100?efid=e") == {}
-
-
-def test_maimai_gossip_search_and_detail_share_normalized_identifier():
-    rows = maimai._search_items({"gossips": [{"gid": "gossip_34", "egid": "token", "text": "社区讨论"}]}, 5)
-    assert "/gossip-detail/34?" in rows[0]["url"]
-    html = '<script>self.__next_f.push(' + json.dumps([1, '0:{"data":{"gid":"gossip_34","text":"社区正文"}}']) + ')</script>'
-    assert maimai._detail_data(html, rows[0]["url"])["text"] == "社区正文"
+def test_maimai_gossip_search_normalizes_identifier():
+    rows=maimai._search_items({'gossips':[{'gid':'gossip_34','egid':'token','text':'社区讨论'}]},5)
+    assert '/gossip-detail/34?' in rows[0]['url']
 
 
 @pytest.mark.parametrize("url", ["https://maimai.cn.evil.example/community/feed-detail/12", "https://maimai.cn@evil.example/community/feed-detail/12", "file:///private", "https://maimai.cn/community/home/recommended"])
@@ -246,7 +237,7 @@ def test_nstrs_delayed_publication_is_not_current_fulltext(monkeypatch):
 @pytest.mark.parametrize("status,payload,expected,manual", [
     (401, {}, "login_required", True),
     (200, {"error_code": "not_login"}, "login_required", True),
-    (429, {}, "rate_limited", True),
+    (429, {}, "rate_limited", False),
     (403, {}, "access_denied", False),
 ])
 def test_maimai_search_session_loss_is_classified_after_successful_auth(monkeypatch,status,payload,expected,manual):
@@ -336,10 +327,9 @@ def test_retired_zhilian_has_no_search_detail_or_login_browser(monkeypatch):
 def test_maimai_dynamic_body_waits_for_requested_post(monkeypatch):
     url='https://maimai.cn/community/feed-detail/12?efid=e';calls=[]
     html='<script>self.__next_f.push('+json.dumps([1,'0:{"feedData":{"feed":{"id":12,"text":"真实正文"}}}'])+')</script>'
-    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {'ok':True,'data':{'url':url,'html':html}})
+    patch_native(monkeypatch,lambda **kw:calls.append(kw) or {'ok':True,'data':{'url':url,'body_snapshot':{'schema':'maimai-body/v1','kind':'feed','target_id':'12','text':'真实正文','source':'matched_flight'}}})
     assert maimai.discussion_detail(url)['content']=='真实正文'
     assert calls[0]['operation']=='detail' and calls[0]['url']==url
-    assert maimai._detail_data(html,url.replace('/12?','/13?'))=={}
 
 
 def test_maimai_comment_failure_preserves_post_body(monkeypatch):
@@ -357,3 +347,24 @@ def test_maimai_temporary_page_and_operation_released_when_navigation_fails(monk
     lease=g.acquire_platform_lease('maimai')
     assert lease.acquired
     g.release_platform_lease(lease.lease_id)
+
+
+@pytest.mark.parametrize('target,expected', [('12','ok'),('13','failed')])
+def test_maimai_backend_validates_normalized_body_snapshot(monkeypatch,target,expected):
+    url='https://maimai.cn/community/gossip-detail/12?egid=fixture'
+    patch_native(monkeypatch, lambda **kw:{'ok':True,'data':{'url':url,'body_snapshot':{
+        'schema':'maimai-body/v1','target_id':target,'kind':'gossip','text':'已取得正文','title':'标题','source':'matched_flight'}}})
+    result=maimai.discussion_detail(url)
+    assert result['status']==expected
+    if expected=='ok': assert result['content']=='已取得正文'
+    else: assert result['failure_type']=='page_identity_changed'
+
+
+
+def test_content_deadline_retains_unknown_operation_and_phase(monkeypatch):
+    patch_native(monkeypatch,lambda **kw:{'ok':False,'code':'content_deadline_exceeded','request_id':'fixture-deadline',
+        'request_executed':True,'data':{'diagnostics':{'phase':'adapter_started','elapsed_ms':18000,'replay_safe':False,'result_known':False}}})
+    result=maimai._detail('https://maimai.cn/community/gossip-detail/12?egid=fixture')
+    assert result['failure_type']=='request_outcome_unknown'
+    assert result['metadata']['content_diagnostics']['phase']=='adapter_started'
+    assert maimai.admission()['reason']=='outcome_latched'

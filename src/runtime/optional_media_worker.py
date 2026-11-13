@@ -193,6 +193,97 @@ def _load_asr_model(root, identity, threads):
     return model, False
 
 
+def audit_docx_tables(source, result):
+    """有界检查正文表格文字保留；不推断排版，不改源文件，不读取外部关系。"""
+    import html
+    import re
+    import zipfile
+    from xml.etree import ElementTree as ET
+
+    result = {**result, 'document_blocks': list(result.get('document_blocks') or []),
+              'quality_warnings': list(result.get('quality_warnings') or [])}
+    audit = {'schema': 'docx-table-retention/v1', 'scope': 'main_document_table_cell_text_only',
+             'status': 'checked', 'tables': [], 'unretained_cells': 0, 'layout_verified': False}
+    result['document_audit'] = audit
+    normalize = lambda text: re.sub(r'[\s|*_`\\]', '', html.unescape(str(text)))
+    converted = normalize(result.get('text', '') + '\n' + '\n'.join(str(b.get('text', '')) for b in result['document_blocks']))
+    try:
+        with zipfile.ZipFile(source) as archive:
+            if len(archive.infolist()) > 4096:
+                raise ValueError('member_budget')
+            info = archive.getinfo('word/document.xml')
+            if info.file_size > 8 * 1024 * 1024:
+                raise ValueError('xml_budget')
+            with archive.open(info) as stream:
+                xml = stream.read(8 * 1024 * 1024 + 1)
+        if len(xml) > 8 * 1024 * 1024 or b'<!DOCTYPE' in xml.upper() or b'<!ENTITY' in xml.upper():
+            raise ValueError('xml_unsafe_or_oversize')
+        root = ET.fromstring(xml)
+        parents = {}; stack = [(root, 0)]; count = 0
+        while stack:
+            node, depth = stack.pop(); count += 1
+            if depth > 128 or count > 100000:
+                raise ValueError('xml_structure_budget')
+            for child in node:
+                parents[child] = node; stack.append((child, depth + 1))
+        ns = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+        def owner(node, tag):
+            node = parents.get(node)
+            while node is not None:
+                if node.tag == ns + tag: return node
+                node = parents.get(node)
+            return None
+        def number(node):
+            value = int(node.get(ns + 'val', '0')) if node is not None else 0
+            if not 0 <= value <= 10000: raise ValueError('grid_value_budget')
+            return value
+        cells_seen = 0; text_size = 0; salvaged = []
+        for table_no, table in enumerate(root.iter(ns + 'tbl'), 1):
+            grid = table.find(ns + 'tblGrid'); declared = len(grid) if grid is not None else 0
+            record = {'table': table_no, 'declared_columns': declared, 'inferred_columns': 0,
+                      'structural_risks': []}
+            audit['tables'].append(record)
+            if not declared: record['structural_risks'].append('missing_grid')
+            rows = [r for r in table.iter(ns + 'tr') if owner(r, 'tbl') is table]
+            for row_no, row in enumerate(rows, 1):
+                width = number(row.find(ns + 'trPr/' + ns + 'gridBefore')) + number(row.find(ns + 'trPr/' + ns + 'gridAfter'))
+                cells = [c for c in row.iter(ns + 'tc') if owner(c, 'tr') is row and owner(c, 'tbl') is table]
+                for cell_no, cell in enumerate(cells, 1):
+                    cells_seen += 1
+                    if cells_seen > 8000: raise ValueError('cell_budget')
+                    width += max(1, number(cell.find(ns + 'tcPr/' + ns + 'gridSpan')))
+                    paragraphs = []
+                    for paragraph in cell.iter(ns + 'p'):
+                        if owner(paragraph, 'tbl') is table:
+                            paragraphs.append(''.join(t.text or '' for t in paragraph.iter(ns + 't')))
+                    text = '\n'.join(paragraphs).strip(); text_size += len(text)
+                    if text_size > 2000000: raise ValueError('text_budget')
+                    if text and normalize(text) not in converted:
+                        audit['unretained_cells'] += 1
+                        block = {'kind': 'raw_table_cell', 'text': f'[原始单元格文字；排版未恢复] {text}',
+                                 'table_id': str(table_no), 'row': row_no, 'column': cell_no,
+                                 'locator': {'table': table_no, 'row': row_no, 'cell': cell_no},
+                                 'processing_method': 'raw_ooxml_cell_text_not_layout'}
+                        salvaged.append(block)
+                record['inferred_columns'] = max(record['inferred_columns'], width)
+            if declared and record['inferred_columns'] > declared:
+                record['structural_risks'].append('short_grid')
+        result['document_blocks'].extend(salvaged)
+        if salvaged:
+            result['text'] = str(result.get('text') or '') + '\n\n[原始单元格文字；表格排版未恢复]\n' + '\n'.join(
+                f"表{b['locator']['table']} 行{b['locator']['row']} 单元格{b['locator']['cell']}: {b['text']}" for b in salvaged)
+            result['quality_warnings'].append('docx_table_text_unverified_in_primary_conversion')
+        result['request_satisfied'] = not bool(salvaged)
+    except (ValueError, KeyError, OSError, zipfile.BadZipFile, ET.ParseError) as exc:
+        audit['status'] = 'failed'; audit['failure_type'] = type(exc).__name__
+        result['quality_warnings'].append('docx_table_retention_audit_failed')
+        result['request_satisfied'] = False
+    if not result['request_satisfied']:
+        result['coverage'] = 'partial'
+        result['status'] = 'partial'
+    return result
+
+
 def docling_blocks(document):
     blocks = []
     for item, _level in document.iterate_items():
@@ -230,12 +321,27 @@ def execute(request):
 
         # Office/HTML 使用无模型解析；PDF 唯一分流由 pypdf/云端 OCR 承担。
         allowed = [InputFormat.DOCX, InputFormat.XLSX, InputFormat.PPTX, InputFormat.HTML, InputFormat.MD]
-        result = DocumentConverter(allowed_formats=allowed).convert(source)
-        return {
+        is_docx = Path(source).suffix.lower() == '.docx'
+        preflight = audit_docx_tables(source, {'status':'partial', 'text':'', 'document_blocks':[],
+                                             'source_kind':'document_parse', 'component':component}) if is_docx else None
+        if preflight and preflight['document_audit']['status'] == 'failed':
+            return preflight
+        try:
+            result = DocumentConverter(allowed_formats=allowed).convert(source)
+        except Exception as exc:
+            if not preflight or not preflight.get('text'):
+                raise
+            preflight['quality_warnings'].append('docling_conversion_failed_raw_table_text_only')
+            preflight['document_audit']['conversion_failure'] = type(exc).__name__
+            return preflight
+        converted = {
             "status": "acquired",
             "text": result.document.export_to_markdown(),
             "document_blocks": docling_blocks(result.document),
             "source_kind": "document_parse",
             "component": component,
+            "processing_identity": {"docling-slim":importlib.metadata.version('docling-slim'),
+                                    "docling-core":importlib.metadata.version('docling-core')},
         }
+        return audit_docx_tables(source, converted) if Path(source).suffix.lower() == '.docx' else converted
     raise ValueError("unsupported_component")

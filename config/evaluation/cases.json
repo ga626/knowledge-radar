@@ -1713,8 +1713,8 @@
     },
     {
       "case_id": "content.contracts",
-      "version": 12,
-      "oracle_version": 12,
+      "version": 13,
+      "oracle_version": 13,
       "capabilities": [
         "mcp.get_content_detail"
       ],
@@ -1733,7 +1733,9 @@
         "tests/test_opencli_readiness.py",
         "tests/test_xhs_runner_contract.py",
         "tests/test_wechat_chain.py",
-        "tests/test_maimai_csrf.py"
+        "tests/test_maimai_csrf.py",
+        "tests/test_source_scope_implementation.py",
+        "tests/test_real_chain_remediation.py"
       ],
       "layer": "fixture",
       "auto": true,
@@ -1800,9 +1802,14 @@
         "browser_link/extension/sites/maimai.js",
         "src/generic_web/acquisition.py",
         "src/generic_web/collector.py",
-        "src/understanding/evidence.py"
+        "src/understanding/evidence.py",
+        "tests/test_zhihu_dom.py",
+        "tests/test_source_scope_implementation.py",
+        "tests/test_real_chain_remediation.py",
+        "browser_link/extension/content.js",
+        "src/runtime/optional_media_worker.py"
       ],
-      "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份",
+      "success": "真实职位URL/媒体开关/图片归属/时长/缓存身份；评论窗口与穷尽分离、脉脉正文快照和超时终态、DOCX表格文字损失可见并保留。；真实隔离Chrome DOM用例单独运行，不混入禁浏览器的fixture执行器。",
       "change_reason": "2026-11-10 F39-01：错误壳不算取得正文；旧 acquired 重新核对；原件保留，归档排除诊断页；合法短文与代码反例。"
     },
     {
@@ -1944,8 +1951,8 @@
     },
     {
       "case_id": "model.local_chain",
-      "version": 3,
-      "oracle_version": 5,
+      "version": 4,
+      "oracle_version": 6,
       "capabilities": [
         "mcp.process_local_evidence",
         "mcp.get_capabilities"
@@ -1959,7 +1966,8 @@
         "tests/test_asr_language_contract.py",
         "tests/test_inprocess_media_recovery.py",
         "tests/test_youtube_transcript_deadline.py",
-        "tests/test_media_execution_boundary.py"
+        "tests/test_media_execution_boundary.py",
+        "tests/test_real_chain_remediation.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -1983,9 +1991,12 @@
         "src/runtime/media_execution.py",
         "src/runtime/media_acquisition.py",
         "src/runtime/xhs_opencli.py",
-        "tests/test_media_execution_boundary.py"
+        "tests/test_media_execution_boundary.py",
+        "tests/test_real_chain_remediation.py",
+        "browser_link/extension/content.js",
+        "browser_link/extension/sites/maimai.js"
       ],
-      "success": "本地模型职责唯一、混合PDF不丢页、受管FFmpeg绝对路径、ASR/Office互斥、旧配置迁移保留凭据、卸载不删除证据；真实质量另需样本回执。",
+      "success": "本地模型职责唯一、混合PDF不丢页、受管FFmpeg绝对路径、ASR/Office互斥、旧配置迁移保留凭据、卸载不删除证据；真实质量另需样本回执。；评论窗口与穷尽分离、脉脉正文快照和超时终态、DOCX表格文字损失可见并保留。",
       "change_reason": "阶段一二：应用装配独立、跨入口请求回执、批量恢复、公共网页真实worker及媒体复用。 PR前扫尾：测试样本及断言对齐公共媒体、评论覆盖和可读归档合同，保留完整性与回读检查。"
     },
     {

@@ -97,3 +97,77 @@ def test_provider_receipt_uses_wave_and_provider_without_query(monkeypatch) -> N
         ("provider_attempt", "codex_web_search", 2),
     ]
     assert all("query" not in item["metadata"] for _, item in calls)
+
+
+
+def _docx_xml(tmp_path, rows, grid=''):
+    import zipfile
+    source=tmp_path/'table.docx'
+    xml='<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:tbl>'+grid+rows+'</w:tbl></w:body></w:document>'
+    with zipfile.ZipFile(source,'w') as archive: archive.writestr('word/document.xml',xml)
+    return source
+
+
+def _cell(text, properties=''):
+    return '<w:tc><w:tcPr>'+properties+'</w:tcPr><w:p><w:r><w:t>'+text+'</w:t></w:r></w:p></w:tc>'
+
+
+def test_docx_missing_grid_salvages_text_but_does_not_claim_layout(tmp_path):
+    from runtime.optional_media_worker import audit_docx_tables
+    source=_docx_xml(tmp_path,'<w:tr>'+_cell('甲方')+_cell('金额9800')+'</w:tr>')
+    result=audit_docx_tables(source,{'text':'前言','document_blocks':[]})
+    assert not result['request_satisfied'] and result['coverage']=='partial'
+    assert '金额9800' in result['text']
+    assert 'missing_grid' in result['document_audit']['tables'][0]['structural_risks']
+    assert result['document_blocks'][-1]['kind']=='raw_table_cell'
+    assert result['document_blocks'][-1]['locator']['cell']==2
+    assert result['document_blocks'][-1]['column']==2
+
+
+def test_docx_short_grid_detects_unretained_last_column(tmp_path):
+    from runtime.optional_media_worker import audit_docx_tables
+    source=_docx_xml(tmp_path,'<w:tr>'+_cell('首列')+_cell('末列')+'</w:tr>','<w:tblGrid><w:gridCol/></w:tblGrid>')
+    result=audit_docx_tables(source,{'text':'首列','document_blocks':[]})
+    assert 'short_grid' in result['document_audit']['tables'][0]['structural_risks']
+    assert result['document_audit']['unretained_cells']==1 and '末列' in result['text']
+
+
+def test_docx_flattened_table_and_merged_grid_do_not_false_warn(tmp_path):
+    from runtime.optional_media_worker import audit_docx_tables
+    source=_docx_xml(tmp_path,'<w:tr><w:trPr><w:gridBefore w:val="1"/></w:trPr>'+_cell('合并 单元格','<w:gridSpan w:val="2"/>')+'</w:tr>',
+                     '<w:tblGrid><w:gridCol/><w:gridCol/><w:gridCol/></w:tblGrid>')
+    result=audit_docx_tables(source,{'text':'合并 单元格','document_blocks':[]})
+    assert result['request_satisfied'] and not result['quality_warnings']
+    assert result['document_audit']['tables'][0]['inferred_columns']==3
+
+
+def test_docx_audit_failure_is_visible(tmp_path):
+    from runtime.optional_media_worker import audit_docx_tables
+    source=tmp_path/'bad.docx';source.write_bytes(b'not zip')
+    result=audit_docx_tables(source,{'text':'已取得正文','document_blocks':[]})
+    assert result['text']=='已取得正文' and not result['request_satisfied']
+    assert result['document_audit']['status']=='failed'
+
+
+def test_docx_wrapped_rows_and_nested_tables_have_distinct_locators(tmp_path):
+    from runtime.optional_media_worker import audit_docx_tables
+    nested='<w:tbl><w:tr>'+_cell('内表')+'</w:tr></w:tbl>'
+    source=_docx_xml(tmp_path,'<w:sdt><w:sdtContent><w:tr>'+_cell('外表')[:-7]+nested+'</w:tc></w:tr></w:sdtContent></w:sdt>')
+    result=audit_docx_tables(source,{'text':'','document_blocks':[]})
+    assert len(result['document_audit']['tables'])==2
+    assert {x['locator']['table'] for x in result['document_blocks']}=={1,2}
+
+
+
+def test_docx_audit_survives_fixed_asset_archival(monkeypatch,tmp_path):
+    from runtime import optional_media
+    from kr_core.evidence_store import EvidenceStore
+    monkeypatch.setenv('KR_DATA_ROOT',str(tmp_path/'data'))
+    result=optional_media._save_result({'component':'docling','status':'partial','text':'原文与挽救文字',
+        'request_satisfied':False,'coverage':'partial','quality_warnings':['docx_table_text_unverified_in_primary_conversion'],
+        'document_audit':{'schema':'docx-table-retention/v1','status':'checked','unretained_cells':1},
+        'document_blocks':[{'text':'挽救文字','kind':'raw_table_cell'}]}, {'input_sha256':'synthetic'})
+    assert result['status']=='partial' and not result['request_satisfied']
+    assert not result['content_coverage']['request_satisfied']
+    refs=result['evidence_assets']
+    assert any(r['kind']=='document_receipt' for r in refs)

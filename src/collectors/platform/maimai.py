@@ -95,40 +95,6 @@ def parse_target_query(target):
     return parse_qs(urlsplit(target).query)
 
 
-def _flight_objects(html, key):
-    """读取页面中已到达的 Next Flight 数据，不执行页面脚本。"""
-    decoder = json.JSONDecoder()
-    chunks = []
-    for match in re.finditer(r"self\.__next_f\.push\(", html):
-        try:
-            value, _ = decoder.raw_decode(html[match.end():])
-            if isinstance(value, list) and len(value) > 1 and isinstance(value[1], str):
-                chunks.append(value[1])
-        except ValueError:
-            continue
-    text = "".join(chunks)
-    for match in re.finditer('"' + re.escape(key) + r'"\s*:\s*', text):
-        try:
-            value, _ = decoder.raw_decode(text[match.end():])
-            yield value
-        except ValueError:
-            continue
-
-
-def _detail_data(html, url):
-    path = urlsplit(url).path
-    identifier = path.rstrip("/").split("/")[-1]
-    key = "feedData" if "/feed-detail/" in path else "data"
-    for data in _flight_objects(html, key):
-        if not isinstance(data, dict):
-            continue
-        data = _discussion_row(data, "feed" if key == "feedData" else "gossip")
-        row_id = str(data.get("id") or "")
-        if row_id == identifier:
-            return data
-    return {}
-
-
 def public_discussion_detail(url: str) -> Dict:
     """Read an anonymous share, never turn a login shell into discussion evidence."""
     from urllib.parse import urlsplit
@@ -230,13 +196,20 @@ def _detail(url):
         return {**response,'url':url}
     payload=response['data']
     if urlsplit(payload.get('url','')).path!=urlsplit(url).path:return _failure('page_identity_changed','帖子跳转至其他页面，停止取数。')
-    data=_detail_data(payload.get('html',''),url)
-    text=str(data.get('text') or data.get('content') or payload.get('dom_content') or '').strip()
+    data=payload.get('body_snapshot') or {}
+    kind='feed' if '/feed-detail/' in urlsplit(url).path else 'gossip'
+    identifier=urlsplit(url).path.rstrip('/').split('/')[-1]
+    if data and (data.get('schema')!='maimai-body/v1' or data.get('target_id')!=identifier or data.get('kind')!=kind):
+        return _failure('page_identity_changed','正文快照与请求目标不一致，停止取数。')
+    text=str(data.get('text') or '').strip()
     if not text:return _failure('detail_response_unparsed','未取得帖子正文：结构变化、不可见或帖子失效；不能当作零内容。')
+    truncated=bool(data.get('truncated'))
     return {'platform':'脉脉','status':'ok','url':url,'title':str(data.get('title') or text[:100]),'content':text,
         'content_type':'community_discussion','body_verified':True,'job_verified':False,'comments_collected':False,
-        'metadata':{**response.get('metadata',{}),'html_truncated':bool(payload.get('html_truncated')),
-            'body_source':'matched_flight' if data else 'visible_dom','coverage':'visible_discussion_not_full_archive'}}
+        'request_satisfied':not truncated,
+        'metadata':{**response.get('metadata',{}),'body_truncated':truncated,
+            'body_source':data.get('source'),'body_contract':'maimai-body/v1','coverage':'visible_discussion_not_full_archive'}}
+
 
 
 def _comments(url,limit):
