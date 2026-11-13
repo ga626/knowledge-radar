@@ -43,7 +43,7 @@ const mode=process.env.KR_RUNNER_FIXTURE_MODE;
 let acted=false,active='login-target',viewportFixed=false,created=false,listed=0,visibilityPresented=false;
 globalThis.fixtureNavigate=()=>{viewportFixed=false;};
 const page={
- evaluate:async js=>{if(js.includes('const title=document.title')){const old=globalThis.fixtureTitle||'Research';globalThis.fixtureTitle=JSON.parse(js.match(/document.title=(".*?");/)[1]);return old;}if(js.startsWith('document.title=')){globalThis.fixtureTitle=JSON.parse(js.split('document.title=')[1]);return;}log({kind:'evaluate',business:js==='fixture-state'});if(js.includes('kr:visibility')&&mode==='visibility')return {visibility:{hidden:!globalThis.fixtureWindowShown,dom_ready:true,reason:globalThis.fixtureWindowShown?'':'explicit_visibility_notice'}};return js.includes('kr:viewport')?{width:viewportFixed?1280:0,height:viewportFixed?800:0}:{risk:mode==='risk'||(mode==='late-risk'&&acted),login:false};},
+ evaluate:async js=>{if(js.includes('const title=document.title')){const old=globalThis.fixtureTitle||'Research';globalThis.fixtureTitle=JSON.parse(js.match(/document.title=(".*?");/)[1]);return old;}if(js.startsWith('document.title=')){globalThis.fixtureTitle=JSON.parse(js.split('document.title=')[1]);return;}log({kind:'evaluate',business:js==='fixture-state'});if(js.includes('kr:visibility')&&mode==='visibility')return {visibility:{hidden:!globalThis.fixtureWindowShown,dom_ready:true,reason:globalThis.fixtureWindowShown?'':'explicit_visibility_notice'}};return js==='fixture-auth'?{authenticated_ui:true,risk:false,login:false}:js.includes('kr:viewport')?{width:viewportFixed?1280:0,height:viewportFixed?800:0}:{risk:mode==='risk'||(mode==='late-risk'&&acted),login:false};},
  getActivePage:()=>active, setActivePage:id=>{active=id;log({kind:'bind',page:id});},
  tabs:async()=>{listed++;log({kind:'tabs-list'});return mode==='closed'||(mode==='gone-before-nav'&&listed>1)||(mode==='empty-work'&&!created)?[]:mode==='ambiguous'?[{page:'one'},{page:'two'}]:[{page:'login-target',url:'https://example.test/login'}];},
  newTab:async url=>{created=true;log({kind:'new-tab',url});return 'login-target';},
@@ -103,6 +103,15 @@ def test_manual_wait_uses_upstream_persistent_session(bridge_fixture, monkeypatc
     assert result['ok']
     assert calls[0]['siteSession'] == 'persistent'
     assert not any(c['kind'] in {'action', 'goto'} for c in calls)
+
+
+def test_verified_login_releases_manual_session_before_last_verification_tab(bridge_fixture, monkeypatch):
+    result,calls=run(bridge_fixture,monkeypatch,'ready',operation='auth_verify',
+        passiveManualLogin=True,isolatedWork=True,steps=[],expression='fixture-auth')
+    close_manual=next((i for i,c in enumerate(calls) if c.get('action')=='close-owned-tab' and c.get('session')=='kr:boss:login'),None)
+    assert close_manual is not None
+    assert close_manual < next(i for i,c in enumerate(calls) if c['kind']=='close-owned')
+    assert result['metadata']['manual_session_cleanup']=={'confirmed':True,'session':'kr:boss:login'}
 
 
 @pytest.mark.parametrize('operation', ['login', 'attention'])

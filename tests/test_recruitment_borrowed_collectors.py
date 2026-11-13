@@ -255,6 +255,20 @@ def test_failed_manual_hold_release_persists_auth_but_blocks_until_cleanup(monke
     assert boss.admission()['allowed']
 
 
+def test_verified_same_call_cleanup_does_not_reconnect_closed_browser(monkeypatch):
+    native_site.write_state(boss.state_path(), {'expires_at': 1})
+    calls=[]
+    def invoke(**kw):
+        calls.append(kw['operation'])
+        assert kw['operation']=='auth_verify'
+        return {'ok':True,'data':{'authenticated_ui':True},'metadata':{
+            'manual_session_cleanup':{'confirmed':True,'session':'kr:boss:login'}}}
+    patch_native(monkeypatch,invoke)
+    assert boss.complete_login()['status']=='ok'
+    assert calls==['auth_verify']
+    assert boss.admission()['allowed']
+
+
 @pytest.mark.parametrize('change',[{'cancelled':True},{'risk':True},{'expires_at':999},{'navigation_loop':True}])
 def test_late_auth_result_cannot_overwrite_new_interaction(monkeypatch,change):
     native_site.write_state(boss.state_path(), {'expires_at': 1})

@@ -200,7 +200,9 @@ class NativeSite:
             # Keep the manual hold durable until ownership-aware release succeeds.
             # A crash or failed release is resumed by the next related request, never a timer.
             write_state(self.state_path(), prepared)
-        released = self.invoke('release_login')
+        cleanup=(result.get('metadata') or {}).get('manual_session_cleanup') or {}
+        released = ({'ok':True} if self.transport_name()=='opencli' and cleanup.get('confirmed') is True
+                    and cleanup.get('session')=='kr:'+self.platform+':login' else self.invoke('release_login'))
         if not released.get('ok'):
             with file_write_lock(self.state_path()):
                 if self.state() == prepared:

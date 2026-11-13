@@ -13,7 +13,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import quote, urlsplit, urljoin
 from typing import Literal
-from pydantic import Field
+from pydantic import Field, model_validator
 from runtime.execution_context import check_execution
 from runtime.file_write_lock import file_write_lock, read_observed
 from runtime.knowledge import Contract, encoded, guarded_path
@@ -33,6 +33,7 @@ class BindContext(Contract):
     vault_required: bool | None = Field(default=None, description='省略时沿用本项目已有的Vault交付要求；true必须有Vault授权，false仅对新任务显式选择仅本地保存。')
     vault_project_dir: str = Field(default='', description='Codex选择的Vault项目目录；同一项目跨任务复用。初次绑定遇已有目录时必须明确提供，不自动加序号新建项目。')
     adopt_legacy_scopes: bool = False
+    allow_shared_local_root: bool = Field(default=False,description='仅当不同真实项目明确共用已授权本地根时设置；调研主题/新对话不能据此新建项目。')
 
 
 class SubmitReport(Contract):
@@ -40,13 +41,25 @@ class SubmitReport(Contract):
     task_id: str = Field(min_length=1, max_length=96)
     project_id: str = Field(min_length=1, max_length=200)
     title: str = Field(min_length=1, max_length=200)
-    content: str = Field(min_length=1, max_length=2*1024*1024)
+    content: str = Field(default='', max_length=2*1024*1024)
+    input_path: str = Field(default='', description='已授权本地根内的UTF-8报告文件；按精确字节读取，不重排换行。')
+    input_sha256: str = Field(default='', pattern=r'^(?:[a-f0-9]{64})?$')
+    source_version_id: str = Field(default='', pattern=r'^(?:[a-f0-9]{64})?$', description='同项目同任务的已固定报告版本；不重新序列化。')
+    replace_pending_report_version: str = Field(default='', pattern=r'^(?:[a-f0-9]{64})?$', description='显式替换未交付当前稿时，必须匹配当前固定版本；原稿及失败状态留历史，不覆盖文件。')
     report_id: str = Field(default='final',min_length=1,max_length=200)
     report_role: Literal['final','stage'] = 'final'
     local_report_path: str = ''
     # 固定归档轮次可作为大批引用的句柄，不要求AI传巨型版本数组。
     source_round: str = ''
     include_review: bool = False
+
+    @model_validator(mode='after')
+    def report_input(self):
+        if sum(bool(x) for x in (self.content,self.input_path,self.source_version_id)) != 1:
+            raise ValueError('exactly_one_report_input_required')
+        if bool(self.input_path) != bool(self.input_sha256):
+            raise ValueError('file_report_sha256_required')
+        return self
 
 
 class ArchiveTask(Contract):
@@ -612,6 +625,20 @@ class ResearchArchive:
         with file_write_lock(self.root/('archive-'+sha(request.task_id.encode()))):
             local = self._grant(request.local_grant_id, request.project_id)
             target = guarded_path(local, request.local_report_path)
+            # Compare existing explicit bindings, never infer project identity
+            # from KR's process cwd, installation path, or a research title.
+            with self._connection() as c:
+                known=c.execute('SELECT payload FROM research_context').fetchall()
+            conflicts=set()
+            for (raw_context,) in known:
+                prior=json.loads(raw_context)
+                pid=canonical_project_id(prior.get('project_id',''))
+                if not pid or pid==request.project_id:continue
+                try:prior_root=self._grant_root_even_revoked(prior['local_grant_id'],pid)
+                except ValueError:continue
+                if prior_root.resolve()==local.resolve():conflicts.add(pid)
+            if conflicts and not request.allow_shared_local_root:
+                raise ValueError('local_root_project_identity_conflict:'+','.join(sorted(conflicts)))
             if target.suffix.lower() != '.md':
                 raise ValueError('local_report_must_be_markdown')
             vault = self._grant(request.vault_grant_id, request.project_id) if request.vault_grant_id else None
@@ -631,6 +658,8 @@ class ResearchArchive:
                 observed_revision=0, retry_at=0, attempts=0, error_code='', remote_synced='not_applicable',display_layout=DISPLAY_LAYOUT,
                 vault_required=required,
                 directory_title=task_display_title(self._ledger(request.task_id),request.task_title))
+            context['project_identity']={'source':'explicit_shared_local_root' if conflicts else 'explicit_project_binding',
+                'host_verified':False,'project_id':request.project_id,'local_root':str(local)}
             if not old:context.update(calendar_layout(self._ledger(request.task_id),request.task_title))
             context['vault_relative']=str(Path(request.vault_project_dir or _safe_name(request.project_name,'未命名项目'))/_safe_name(request.task_title,'未命名调研'))
             if old:
@@ -729,7 +758,7 @@ class ResearchArchive:
         fixed_review=(context.get('report') or {}).get('review_snapshot')
         current_review=None
         review_stale=False
-        if fixed_review:
+        if fixed_review and (context.get('report') or {}).get('include_review',fixed_review.get('full_text_review')!='not_requested'):
             from runtime.research_index import ResearchIndex
             from runtime.research_reviews import state
             index=ResearchIndex()
@@ -739,7 +768,9 @@ class ResearchArchive:
                 and r['baseline']==snap['baseline'] for r in snap['records'])
             current_review={'baseline':snap['baseline'],'full_text_review':'recorded' if reviewed else 'unreviewed_or_stale'}
             review_stale=any(current_review[k]!=fixed_review.get(k) for k in current_review)
-        return {key:context.get(key) for key in ('task_id','project_id','project_name','context_revision','summary','research','local','vault','vault_required','report','error_code','failure_kind','retry_at','remote_synced')} | {'status':'tracked','rounds':rounds,'report_count':len(context.get('report_history',[]))+(1 if context.get('report') else 0),
+        elif fixed_review:
+            current_review={'full_text_review':'not_requested'}
+        return {key:context.get(key) for key in ('task_id','project_id','project_name','project_identity','context_revision','summary','research','local','vault','vault_required','report','error_code','failure_kind','retry_at','remote_synced')} | {'status':'tracked','rounds':rounds,'report_count':len(context.get('report_history',[]))+(1 if context.get('report') else 0),
             'completion':'complete' if complete else 'incomplete',
             'delivery_gap':gap,'delivery_receipt':{
                 'project_id':canonical_project_id(context['project_id']), 'task_id':task,
@@ -802,7 +833,27 @@ class ResearchArchive:
                 raise ValueError('bind_archive_context_first')
             if canonical_project_id(context['project_id'])!=request.project_id:
                 raise ValueError('research_project_mismatch_use_new_task')
-            input_sha=sha(request.content.encode('utf-8'))
+            body=request.content
+            if request.input_path:
+                path=guarded_path(self._grant(context['local_grant_id'],request.project_id),request.input_path,require_file=True)
+                if path.suffix.lower()!='.md':raise ValueError('local_report_must_be_markdown')
+                with path.open('rb') as handle:original=handle.read(2*1024*1024+1)
+                if len(original)>2*1024*1024:raise ValueError('report_too_large')
+                if sha(original)!=request.input_sha256:raise ValueError('input_changed')
+                body=original.decode('utf-8')
+            elif request.source_version_id:
+                with self._assets_connection() as c:
+                    row=c.execute('SELECT a.* FROM assets a JOIN asset_scopes s USING(version_id) WHERE a.version_id=? AND a.kind=? AND s.task_id=? AND kr_project_id(s.project_id)=kr_project_id(?)',
+                        (request.source_version_id,'report',request.task_id,request.project_id)).fetchone()
+                    if not row:raise ValueError('report_version_outside_task')
+                    body=self.assets._verified_text(dict(row))
+            if not body:raise ValueError('report_content_required')
+            input_sha=sha(body.encode('utf-8'))
+            replacing=bool(request.replace_pending_report_version)
+            if replacing and (not context.get('report') or context['report']['version_id']!=request.replace_pending_report_version):
+                raise ValueError('pending_report_version_changed')
+            if replacing and context.get('summary') in {'delivered','local_only'}:
+                raise ValueError('delivered_report_requires_new_explicit_path')
             if context.get('report') and context['report']['report_id']==request.report_id:
                 if 'include_review' in context['report'] and context['report']['include_review']!=request.include_review:
                     raise ValueError('report_projection_request_changed_use_new_report_id')
@@ -811,7 +862,7 @@ class ResearchArchive:
                 return self.status(request.task_id)
             from runtime.research_reviews import report_appendix
             from runtime.research_index import ResearchIndex
-            content,review_snapshot=report_appendix(ResearchIndex(),request.task_id,request.content,self.assets,
+            content,review_snapshot=report_appendix(ResearchIndex(),request.task_id,body,self.assets,
                 requested=request.include_review)
             raw=content.encode('utf-8')
             if len(raw)>2*1024*1024:
@@ -831,14 +882,14 @@ class ResearchArchive:
             history=context.get('report_history',[])
             if any(x['report']['report_id']==request.report_id for x in history):
                 raise ValueError('report_id_already_fixed_use_new_report_id_and_explicit_path')
-            local_path=request.local_report_path or (context['local_report_path'] if not context.get('report') else '')
+            local_path=request.local_report_path or (context['local_report_path'] if not context.get('report') or replacing else '')
             if not local_path:raise ValueError('new_report_requires_explicit_local_path')
             guarded_path(self._grant(context['local_grant_id'],request.project_id),local_path)
             if Path(local_path).suffix.lower()!='.md':raise ValueError('local_report_must_be_markdown')
             if context.get('report'):
-                if context['local']['status']!='local_committed' or context['vault']['status'] not in {'local_committed','not_configured'}:
+                if not replacing and (context['local']['status']!='local_committed' or context['vault']['status'] not in {'local_committed','not_configured'}):
                     raise ValueError('previous_report_delivery_pending_retry_first')
-                history.append({key:context[key] for key in ('report','local','vault')})
+                history.append({key:context.get(key) for key in ('report','local','vault','error_code','failure_kind')})
                 context['report_history']=history
                 context.update(local={'status':'pending'},vault={'status':'pending' if context['vault_grant_id'] else 'not_configured'})
             ref=self.assets.put('kr-report:'+sha(encoded([request.project_id,request.task_id,request.report_id]).encode()),content,kind='report',title=request.title,
@@ -1292,7 +1343,7 @@ class ResearchArchive:
                 with self._assets_connection() as c:
                     rev=c.execute('SELECT revision FROM archive_dirty WHERE task_id=?',(task,)).fetchone()
                     context['observed_revision']=rev[0] if rev else 0
-                context.update(retry_at=0,attempts=0)
+                context.update(retry_at=0,attempts=0,failure_kind='')
             except (OSError,ValueError,TimeoutError) as exc:
                 from runtime.execution_context import ExecutionStopped
                 if isinstance(exc,ExecutionStopped):raise

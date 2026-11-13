@@ -14,6 +14,7 @@ let verificationClosed = false;
 let workClosed = false;
 let retainedForInteraction = false;
 let output, attention, windowControl, connectionObservation;
+let manualSessionCleanup;
 const cleanupWarnings = [];
 const passiveLogin = request.passiveManualLogin && ['login','attention','release_login'].includes(request.operation);
 const isolatedWork = request.isolatedWork && ['search','detail','comments','probe','auth_verify'].includes(request.operation);
@@ -166,6 +167,14 @@ try {
       if (state.risk) stop('SECURITY_BLOCK');
       if (state.login && !['login','attention'].includes(request.operation)) stop('AUTH_REQUIRED');
       if (request.operation === 'auth_verify') {
+        // The verification window keeps the extension connected while the old
+        // login session is released. Closing it first can tear down Chrome and
+        // make a second cleanup call fail forever despite valid authentication.
+        if(request.passiveManualLogin && state.authenticated_ui===true){
+          const manualSession=request.session+':login';
+          await client.sendCommand('close-owned-tab',{session:manualSession,surface:'adapter',contextId:request.contextId});
+          manualSessionCleanup={confirmed:true,session:manualSession};
+        }
         if (viewportOverride) {
           await page.cdp('Emulation.clearDeviceMetricsOverride', {});
           viewportOverride = false;
@@ -229,6 +238,7 @@ if (cleanupWarnings.length) {
     ...(retainedForInteraction?{retention_max_s:idleTimeout,automatic_retry:false}: {})};
 }
 output.metadata={...output.metadata,run_id:runId || request.runId,
+  ...(manualSessionCleanup?{manual_session_cleanup:manualSessionCleanup}:{}),
   ...(windowControl?.observation?{window_observation:windowControl.observation()}:{}),
   ...(connectionObservation?{connection_observation:connectionObservation}:{})};
 process.stdout.write(JSON.stringify(output));
