@@ -32,14 +32,30 @@ def test_search_interval_does_not_block_detail_but_risk_does(monkeypatch):
     assert not g.check_search_gate('boss', operation='detail')['allowed']
 
 
-def test_admission_rejection_not_a_site_request(monkeypatch):
+@pytest.mark.parametrize('reason, expected_verifications', [
+    ('pending_manual_interaction', 1),
+    ('risk_control', 0),
+])
+def test_admission_rejection_not_a_site_request(monkeypatch, reason, expected_verifications):
     from runtime import recruitment_governance as g
-    monkeypatch.setattr(g, 'check_platform_admission', lambda *a, **kw: {'allowed': False, 'reason_code': 'pending_manual_interaction', 'manual_action_required': True})
+    from collectors.platform import maimai
+    verifications = []
+    monkeypatch.setattr(maimai, 'complete_login', lambda: verifications.append('verify') or {
+        'status': 'not_verified', 'failure_type': 'login_required'})
+    monkeypatch.setattr(g, 'check_platform_admission', lambda *a, **kw: {
+        'allowed': False, 'reason_code': reason, 'manual_action_required': True})
     result = g.execute_operation('maimai', 'search', lambda: pytest.fail('must not access site'))
     assert result['manual_action_required']
+    assert len(verifications) == expected_verifications
+    assert result['metadata']['request_executed'] is False
+    if expected_verifications:
+        assert result['metadata']['admission']['interaction_verification']['status'] == 'not_verified'
     conn = g._get_conn()
     assert conn.execute('SELECT COUNT(*) FROM recruitment_search_gate').fetchone()[0] == 0
     conn.close()
+    lease = g.acquire_platform_lease('maimai')
+    assert lease.acquired
+    g.release_platform_lease(lease.lease_id)
 
 
 def test_exception_recorded_and_lease_released(monkeypatch):
