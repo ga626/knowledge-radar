@@ -517,7 +517,9 @@ def execute_operation(platform, operation, call, *, keyword='', city='', resourc
             'manual_action_required': manual, 'retryable': False, 'retry_after_s': retry,
             'market_claim_allowed': False, 'salary_claim_allowed': False,
             'metadata': {'admission': admission, 'request_executed': False}}
-    if not admission.get('allowed'):
+    pending_login = (platform in LEASED_BROWSER_PLATFORMS and resource == 'browser'
+                     and admission.get('reason_code') == 'pending_manual_interaction')
+    if not admission.get('allowed') and not pending_login:
         return blocked(admission.get('reason_code', 'search_gate_blocked'), bool(admission.get('manual_action_required')), admission.get('retry_after_s', 0))
     lease = acquire_platform_lease(platform, keyword=keyword, city=city) if platform in LEASED_BROWSER_PLATFORMS and resource == 'browser' else None
     if lease and not lease.acquired:
@@ -539,6 +541,17 @@ def execute_operation(platform, operation, call, *, keyword='', city='', resourc
         # 第二次准入在独占租约内，防止并行请求同时通过频控。
         if lease:
             admission = check_platform_admission(platform, keyword=keyword, city=city, operation=operation, resource=resource)
+            if admission.get('reason_code') == 'pending_manual_interaction':
+                # 仅真实新业务动作触发一次核验，放在独占租约内；纯状态查询
+                # 不探站，不建定时器，也不把风控/未知结果当作登录等待重放。
+                from importlib import import_module
+                site = import_module('collectors.platform.' + platform)
+                verification = site.complete_login()
+                admission = check_platform_admission(platform, keyword=keyword, city=city, operation=operation, resource=resource)
+                if not admission.get('allowed'):
+                    admission = {**admission, 'interaction_verification': {
+                        'status': verification.get('status', 'unknown'),
+                        'failure_type': verification.get('failure_type', '')}}
             if not admission.get('allowed'):
                 return blocked(admission.get('reason_code', 'search_gate_blocked'), bool(admission.get('manual_action_required')))
         try:
@@ -578,7 +591,7 @@ def execute_browser_operation(platform, call):
     from importlib import import_module
     site = import_module('collectors.platform.' + platform)
     admission = site.admission()
-    if not admission.get('allowed'):
+    if not admission.get('allowed') and admission.get('reason') != 'pending_manual_interaction':
         return site._site().failure(admission.get('reason', 'browser_blocked'), request_executed=False)
     lease = acquire_platform_lease(platform)
     if not lease.acquired:
@@ -586,6 +599,12 @@ def execute_browser_operation(platform, call):
         defer_browser_busy(platform, 'platform_lease_busy')
         return site._site().failure('platform_lease_busy', request_executed=False)
     try:
+        admission = site.admission()
+        if admission.get('reason') == 'pending_manual_interaction':
+            site.complete_login()
+            admission = site.admission()
+        if not admission.get('allowed'):
+            return site._site().failure(admission.get('reason', 'browser_blocked'), request_executed=False)
         return call()
     finally:
         release_platform_lease(lease.lease_id)

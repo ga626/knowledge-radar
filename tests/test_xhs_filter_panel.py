@@ -6,6 +6,32 @@ import shutil
 import pytest
 
 
+def test_background_search_uses_unicode_insert_without_visible_keypress():
+    from runtime.process import silent_subprocess_run
+    node = shutil.which('node')
+    if not node:
+        pytest.skip('Node runtime unavailable')
+    module = (Path(__file__).resolve().parents[1] / 'src/runtime/xhs_search_filters.mjs').as_uri()
+    script = r'''
+import assert from 'node:assert/strict';
+import {insertSearchQuery} from MODULE;
+const inserted=[];
+const page={
+  insertText:async text=>inserted.push(text),
+  pressKey:async()=>assert.fail('minimized page cannot receive native keypress'),
+  cdp:async()=>assert.fail('no visibility guard bypass'),
+};
+await insertSearchQuery(page,'选品工具 100%');
+assert.deepEqual(inserted,['选品工具 100%']);
+let attempts=0;
+await assert.rejects(insertSearchQuery({insertText:async()=>{attempts++;throw Error('unknown outcome');}},'x'),/unknown outcome/);
+assert.equal(attempts,1);
+'''.replace('MODULE', json.dumps(module))
+    result = silent_subprocess_run([node, '--input-type=module'], input=script,
+        capture_output=True, encoding='utf-8', timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 def test_filter_panel_reopens_without_replaying_filter_or_accepting_inactive_chip():
     from runtime.process import silent_subprocess_run
     node = shutil.which('node')

@@ -53,6 +53,12 @@ async function presentAttention(p, signals) {
   if(!item || !(await ownedTab(item)))return {action:'none'};
   const decision=KRVisibilityPolicy.decide(signals,{presented:!!item.autoAttention});
   if(decision.action!=='foreground')return decision;
+  // A rendering workaround must not interrupt the desktop. Only a concrete
+  // login/challenge may request the user's attention; keep other gaps visible.
+  if(!decision.manual){
+    record(p,'attention_suppressed',{code:decision.reason});
+    return {action:'none',manual:false,reason:decision.reason,suppressed:true};
+  }
   // Record before focusing so our own focus event is not mistaken for takeover.
   item.autoAttention={reason:decision.reason,manual:decision.manual,request_id:p.id,until:Date.now()+300000};
   item.retained=decision.manual;item.retainUntil=item.autoAttention.until;

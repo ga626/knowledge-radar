@@ -298,13 +298,16 @@ test('only a concrete visible challenge foregrounds once and resolution returns 
  assert.equal(s.updated.filter(x=>x.url).length,navigations);
 });
 
-test('confirmed hidden renderer failure gets one foreground attempt then returns on completion',async()=>{
+test('ordinary hidden renderer repair stays background and records suppression',async()=>{
  const s=await setup();s.command('hidden');await tick();
  attentionMessage(s,'hidden',{visibility:{hidden:true,dom_ready:true,stalled:true,reason:'zero_viewport'}});await tick();
- assert.equal(s.windowUpdates.at(-1).focused,true);
+ assert.equal(s.windowUpdates.filter(x=>x.focused).length,0);
  s.result('hidden','liepin',{content:'same page'});await tick();
- assert.equal(s.windowUpdates.at(-1).state,'minimized');
+ assert.equal(s.windowUpdates.length,0);
  assert.equal(s.created.length,1);
+ s.command('diagnostics','liepin','probe',{diagnostics_only:true});await tick();
+ const diagnostic=s.sent.find(x=>x.request_id==='diagnostics');
+ assert.ok(diagnostic.data.events.some(x=>x.stage==='attention_suppressed' && x.code==='visibility_zero_viewport'));
 });
 
 test('foreign frame and stale generation cannot trigger presentation',async()=>{

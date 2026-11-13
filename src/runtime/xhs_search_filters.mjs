@@ -44,6 +44,12 @@ const searchFill = `const prototype = input instanceof HTMLTextAreaElement ? HTM
         input.dispatchEvent(new Event('input', { bubbles: true }));
         input.dispatchEvent(new Event('change', { bubbles: true }));`;
 
+export async function insertSearchQuery(page, text) {
+  // 扩展的Unicode插入可作用于已绑定的后台输入框；End是无关的可见页
+  // 键盘操作，会在最小化窗口抛错。提交仍由后续同页校验/唯一按钮完成。
+  await page.insertText(text);
+}
+
 export async function evaluateSearchNavigation(evaluate, insertText, expression, query) {
   if (typeof expression !== 'string' || !expression.includes('ambiguous_or_missing_search_button')) return evaluate(expression);
   if (expression.split(searchFill).length !== 2) {
