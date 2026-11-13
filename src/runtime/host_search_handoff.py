@@ -5,6 +5,52 @@ import hashlib
 from runtime.research_index import ResearchIndex, encoded
 
 
+def _host_identity(item):
+    """核对宿主实际交回的身份字段；缺字段不猜测，也不反向请求宿主。"""
+    from generic_web.url_policy import public_addresses
+    from kr_core.source_urls import canonical_url
+
+    def url(value):
+        if not isinstance(value,str) or not value or len(value)>2000:
+            raise ValueError('host_snapshot_identity_url_required_and_bounded')
+        public_addresses(value,resolve=False)
+        return canonical_url(value)
+
+    source=url(item['url'])
+    identity={'identity_status':'unverified'}
+    requested=url(item['requested_url']) if 'requested_url' in item else source
+    observed=url(item['observed_url']) if 'observed_url' in item else None
+    if observed is None and requested!=source:
+        raise ValueError('host_snapshot_identity_mismatch: requested_url differs without observed source')
+    if 'requested_url' in item:identity['requested_url']=requested
+    if observed is not None:
+        identity['observed_url']=observed
+        if observed!=source:
+            raise ValueError('host_snapshot_identity_mismatch: observed_url differs from evidence url')
+    reference=item.get('observed_reference')
+    if reference is not None:
+        if not isinstance(reference,str) or not reference.strip() or len(reference)>2000:
+            raise ValueError('host_snapshot_identity_reference_required_and_bounded')
+        if reference!=item['host_reference']:
+            raise ValueError('host_snapshot_identity_mismatch: observed_reference differs from host_reference')
+        identity['observed_reference']=reference
+    chain=item.get('redirect_chain')
+    if chain is not None:
+        if not isinstance(chain,list) or not 2<=len(chain)<=8:
+            raise ValueError('host_snapshot_identity_redirect_chain_required_and_bounded')
+        chain=[url(value) for value in chain]
+        if observed is None or chain[0]!=requested or chain[-1]!=observed:
+            raise ValueError('host_snapshot_identity_mismatch: redirect endpoints disagree')
+        identity['redirect_chain']=chain
+    if observed is not None and requested!=observed:
+        if chain is None:
+            raise ValueError('host_snapshot_identity_mismatch: requested_url differs without observed redirect chain')
+        identity['identity_status']='host_declared_redirect'
+    elif observed is not None:
+        identity['identity_status']='host_declared_aligned' if reference is not None else 'host_declared_url_only'
+    return identity
+
+
 def register(task_id, query, *, batch_id='', index=None):
     from runtime.research_ledger import read_task
     if read_task(task_id=task_id).get('status') == 'unknown_task':
@@ -54,6 +100,9 @@ def submit(task_id, batch_id, items, *, host_tool, host_outcome='', query='', in
         public_addresses(item['url'], resolve=False)
         row=public_evidence_payload({k:str(item.get(k) or '')[:2000] for k in
                     ('url','title','snippet','host_reference','retrieved_at')})
+        identity=_host_identity(item)
+        if identity!={'identity_status':'unverified'}:
+            row['host_identity']=identity
         if 'visible_text' in item:
             from datetime import datetime
             text=item['visible_text'];scope=item.get('visible_scope')
@@ -101,13 +150,19 @@ def submit(task_id, batch_id, items, *, host_tool, host_outcome='', query='', in
     assets=EvidenceAssets();references=[];projected=[]
     for row in rows:
         candidate={key:value for key,value in row.items() if key!='visible_text'}
+        identity=row.get('host_identity',{'identity_status':'unverified'})
+        candidate['host_identity']=identity
         if 'visible_text' in row:
+            # 旧批次原样重交仍指向旧版本；新增身份声明须使用新批次，不能改旧证据。
+            evidence_identity=[host_tool,batch_id,row['host_reference'],row['retrieved_at'],row['visible_scope'],row['truncated']]
+            if 'host_identity' in row:evidence_identity.append(identity)
             ref=assets.put(row['url'],row['visible_text'],kind='host_snapshot',title=row['title'],metadata={
-                'extractor':'host-visible-snapshot/v1','coverage':'host_visible_'+row['visible_scope'],
-                'evidence_identity':encoded([host_tool,batch_id,row['host_reference'],row['retrieved_at'],row['visible_scope'],row['truncated']]),
+                'extractor':'host-visible-snapshot/v2' if 'host_identity' in row else 'host-visible-snapshot/v1','coverage':'host_visible_'+row['visible_scope'],
+                'evidence_identity':encoded(evidence_identity),
                 'provenance':{'host':{'tool':host_tool,'reference':row['host_reference'],
                     'retrieved_at':row['retrieved_at'],'scope':row['visible_scope'],'truncated':row['truncated'],
-                    'query':value['query'],'batch_id':batch_id,'verification':'host_declared_not_native_verified'}}})
+                    'query':value['query'],'batch_id':batch_id,'verification':'host_declared_not_native_verified',
+                    **identity}}})
             references.append(ref);candidate['visible_version_ids']=[ref['version_id']]
         projected.append(candidate)
     index.candidates(task_id, projected, 'generic_web_ecology', '', query=value['query'])
@@ -118,4 +173,6 @@ def submit(task_id, batch_id, items, *, host_tool, host_outcome='', query='', in
     return {'status':'recorded','batch_id':batch_id,'candidate_count':len(rows),
             'evidence_assets':references,
             'host_outcome':outcome,
-            'verification':value['verification'], 'next_action':'Select URLs for public detail acquisition; use read_knowledge to read archived evidence.'}
+            'verification':value['verification'],
+            'identity_unverified_count':sum(row.get('host_identity',{}).get('identity_status','unverified')=='unverified' for row in rows),
+            'next_action':'Select URLs for public detail acquisition; use read_knowledge to read archived evidence. Preserve observed_url and observed_reference from the host payload; absent identity remains unverified. Do not attach mismatched pages to the requested source.'}

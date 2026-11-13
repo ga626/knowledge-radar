@@ -29,6 +29,8 @@
   async function extract(message, controller) {
     void send({kind:'content-started',request_id:message.request_id,generation:message.generation,platform});
     const signal=controller.signal;
+    const progress=phase=>void send({kind:'content-progress',request_id:message.request_id,
+      generation:message.generation,platform,phase});
     const deadline=Date.now()+Math.max(1,Math.min(18000,message.timeout_ms || 18000));
     const cancel=()=>controller.abort();const timer=setTimeout(cancel,Math.max(1,deadline-Date.now()));
     try {
@@ -42,7 +44,9 @@
       let signature='', stableAt=Date.now();
       do {
         if(signal.aborted)return;
-        data=await site.extract(message.operation,message.payload || {},signal);
+        progress('adapter_started');
+        data=await site.extract(message.operation,message.payload || {},signal,progress);
+        progress('adapter_returned');
         if(data.risk || data.login || data.detail_login_required){
           const decision=await attention(message,data,{presented});
           presented ||= decision.action==='foreground';manualAttention=decision.manual===true;
@@ -61,7 +65,7 @@
         if(ready && (message.operation!=='search' || singleShot || Date.now()-stableAt>=600))break;
         // A community API operation runs exactly once; never repeat it as a DOM poll.
         if(singleShot)break;
-        await change(signal,300);
+        progress('dom_wait');await change(signal,300);
       } while(Date.now()<deadline);
       if(signal.aborted || requests.get(message.request_id)!==controller)return;
       if(data?.authenticated_ui && !KRVisibilityPolicy.observe().interaction.visible)data.attention_resolved=true;

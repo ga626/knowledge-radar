@@ -20,6 +20,7 @@ _DNS_LOCK = threading.Lock()
 def _public_dns_for_fake_ip(host):
     """仅Fake-IP域名走固定HTTPS解析器；绝不直接放行保留地址。"""
     from runtime.proxy_config import httpx_options
+    from .acquisition import AcquisitionDeadlineExceeded
     with _DNS_LOCK:
         old = _DNS_CACHE.get(host)
         if old and old[0] > time.monotonic():
@@ -177,12 +178,12 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
         check_execution()
         remaining = deadline-time.monotonic()
         if remaining <= 0:
-            raise httpx.TimeoutException('acquisition deadline exceeded')
+            raise AcquisitionDeadlineExceeded('acquisition deadline exceeded')
         parsed, host, addresses = public_addresses(url)
         check_execution()
         remaining = deadline-time.monotonic()
         if remaining <= 0:
-            raise httpx.TimeoutException('acquisition deadline exceeded during DNS')
+            raise AcquisitionDeadlineExceeded('acquisition deadline exceeded during DNS')
         ip = addresses[0]
         ip_host = f"[{ip}]" if ":" in ip else ip
         port = parsed.port
@@ -227,7 +228,7 @@ def guarded_fetch(url, *, timeout=20, max_bytes=MAX_RESPONSE_BYTES, headers=None
                 for chunk in response.iter_bytes(chunk_size=65536):
                     check_execution()
                     if time.monotonic() >= deadline:
-                        raise httpx.TimeoutException('acquisition deadline exceeded')
+                        raise AcquisitionDeadlineExceeded('acquisition deadline exceeded during read')
                     body.extend(chunk)
                     if len(body) > max_bytes:
                         raise URLPolicyError("response exceeds bounded extraction size")

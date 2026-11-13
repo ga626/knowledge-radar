@@ -472,7 +472,7 @@ def collect_comments(video_id, *, options=None):
     return {'comments': rows, 'comments_complete': satisfied, 'comments_exhausted': source_done,
             'comments_empty_confirmed': source_done and not rows,
             'comments_coverage': 'observed_zero_comments' if source_done and not rows else 'bounded_api_window',
-            'comments_metadata': {'pages': pages, 'returned_roots': roots, 'reply_coverage': reply_coverage,
+            'comments_metadata': {'pages': pages, 'actual_order':scope['order'], 'returned_roots': roots, 'reply_coverage': reply_coverage,
                 'gaps': gaps, 'next_root_token': token, 'stop_reason': gaps[0]['reason'] if gaps else 'source_exhausted' if source_done else 'requested_window',
                 'relationship_scope': 'api_parent_is_top_level; UI_mentions_do_not_define_deeper_parent'}}
 

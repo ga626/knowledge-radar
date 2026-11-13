@@ -109,7 +109,12 @@ class NativeSite:
                         'operation': operation if uncertain else current.get('operation', ''),
                         'at': time.time(), 'retry_at': max(time.time()+60, float(current.get('retry_at') or 0))})
             result = self.failure('outcome_latched' if uncertain else code,
-                request_executed=response.get('request_executed', False))
+                request_executed=response.get('request_executed'), operation_id=response.get('request_id', ''))
+            diagnostics = data.get('browser_diagnostics') or response.get('browser_diagnostics') or {}
+            if isinstance(diagnostics, dict):
+                result['metadata']['browser_diagnostics'] = {key: diagnostics[key] for key in
+                    ('last_stage','stage_elapsed_ms','command_elapsed_ms','tab_id','retained','phase_count') if key in diagnostics}
+            result['metadata']['failure_boundary'] = 'outcome_unknown' if uncertain else 'reported_failure'
             if isinstance(response.get('browser_readiness'), dict):
                 result['browser_readiness'] = response['browser_readiness']
             result['metadata']['transport_failure'] = code
@@ -200,7 +205,9 @@ class NativeSite:
             # Keep the manual hold durable until ownership-aware release succeeds.
             # A crash or failed release is resumed by the next related request, never a timer.
             write_state(self.state_path(), prepared)
-        released = self.invoke('release_login')
+        cleanup=(result.get('metadata') or {}).get('manual_session_cleanup') or {}
+        released = ({'ok':True} if self.transport_name()=='opencli' and cleanup.get('confirmed') is True
+                    and cleanup.get('session')=='kr:'+self.platform+':login' else self.invoke('release_login'))
         if not released.get('ok'):
             with file_write_lock(self.state_path()):
                 if self.state() == prepared:

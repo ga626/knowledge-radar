@@ -21,8 +21,13 @@ def chrome_command(executable, marker, *, isolated_profile=None):
     if isolated_profile is not None:
         command.append('--user-data-dir=' + str(isolated_profile))
     # No page script/network, remote debugging, authentication or extension flags.
-    # An app window gives this blank bootstrap an unambiguous OS-visible title.
-    return command + ['--app=data:text/html,<title>' + marker + '</title>']
+    # Keep the normal daily-Chrome window identity, not a separate app/globe
+    # taskbar surface. The random title still establishes exact cleanup scope.
+    return command + ['--new-window', 'data:text/html,<title>' + marker + '</title>']
+
+
+def is_bootstrap_title(title, marker):
+    return bool(re.fullmatch(r'KR-startup-[a-f0-9]{32}',marker)) and title in {marker,marker+' - Google Chrome'}
 
 
 def start(executable):
@@ -83,7 +88,7 @@ class Windows:
 
     def close_if_owned(self, identity, marker):
         current = next((row for row in self.list() if row['handle'] == identity['handle']), None)
-        if not current or current['pid'] != identity['pid'] or current['title'] != marker:
+        if not current or current['pid'] != identity['pid'] or current['title'] != identity['title'] or not is_bootstrap_title(current['title'],marker):
             return False
         if self.foreground() == current['handle']:
             return False  # The user took this window; relinquish it.
@@ -108,7 +113,7 @@ def supervise(executable, marker, receipt, *, isolated_profile=None, lifetime_s=
     try:
         while True:
             rows = windows.list()
-            current = next((r for r in rows if r['title'] == marker), None)
+            current = next((r for r in rows if is_bootstrap_title(r['title'],marker)), None)
             if current and identity is None:
                 identity = current
                 state.update(bootstrap_seen=True, minimized_at_discovery=current['minimized'])

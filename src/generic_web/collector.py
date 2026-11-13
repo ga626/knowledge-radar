@@ -40,6 +40,9 @@ class GenericWebError(Exception):
         if self.status_code is not None:
             data["status_code"] = self.status_code
         data['retryable'] = self.error_type in {'rate_limited', 'upstream_error', 'network_error'}
+        data['automatic_retry'] = False
+        if getattr(self, 'diagnostics', None):
+            data['diagnostics'] = self.diagnostics
         data['next_action'] = {'authentication_required': 'Use an explicitly authorized account route.',
             'access_forbidden': 'Check access policy; do not assume login or bypass restrictions.',
             'not_found': 'Check URL or choose another source.', 'rate_limited': 'Respect retry_after before a new job.',
@@ -67,8 +70,18 @@ def collect_url(request: GenericWebRequest) -> GenericWebResponse:
     # 微信状态在任何通用解析/远端Reader之前判定；所有入口共用同一已下载字节。
     from collectors.platform.wechat import article_url, parse_html
     if article_url(request.url) or article_url(str(artifact[0].url)):
-        data = parse_html(artifact[0].text, str(artifact[0].url))
-        return _wechat_response(request, data, str(artifact[0].url))
+        try:
+            _remaining(request)
+            data = parse_html(artifact[0].text, str(artifact[0].url))
+        except GenericWebError as exc:
+            return _error_response(request, started, exc, strategy=strategy)
+        response = _wechat_response(request, data, str(artifact[0].url))
+        response.metadata['acquisition'] = {
+            'fetch_count':artifact[0].extensions.get('acquisition_fetch_count',1),
+            'elapsed_s':artifact[0].extensions.get('acquisition_elapsed_s'),
+            'prior_failures':artifact[0].extensions.get('acquisition_prior_failures',[]),
+            'bytes':len(artifact[0].content), 'phase':'wechat_parse_complete'}
+        return _with_elapsed(response, started, errors=[], strategy=strategy)
     from .acquisition import parsed_key, get_parsed, put_parsed
     parse_key = parsed_key(request, artifact[0])
     parsed = get_parsed(parse_key)
@@ -203,13 +216,14 @@ def _fetch_html(request: GenericWebRequest, *, collector: str):
         "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
     }
     try:
-        from .acquisition import fetch
+        from .acquisition import fetch, AcquisitionDeadlineExceeded, failure_diagnostics
         _remaining(request)
         response = fetch(request, headers, guarded_fetch)
-    except (httpx.ConnectError, httpx.TimeoutException) as exc:
-        raise GenericWebError("network_error", str(exc), collector=collector) from exc
     except httpx.RequestError as exc:
-        raise GenericWebError("network_error", str(exc), collector=collector) from exc
+        error = GenericWebError('deadline_exceeded' if isinstance(exc, AcquisitionDeadlineExceeded) else 'network_error',
+                                type(exc).__name__, collector=collector)
+        error.diagnostics = getattr(exc, 'acquisition_diagnostics', None) or failure_diagnostics(exc)
+        raise error from exc
 
     _check_status(response.status_code, collector=collector, retry_after=response.headers.get('retry-after', ''))
 

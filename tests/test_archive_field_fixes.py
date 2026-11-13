@@ -1,9 +1,71 @@
 import pytest
+import hashlib
 
 from kr_core.evidence_assets import EvidenceAssets
 from runtime.knowledge_delivery import Authorize, DeliveryStore
 from runtime.research_archive import BindContext, ResearchArchive, SubmitReport
 from runtime import research_ledger as ledger
+
+
+@pytest.mark.parametrize('raw', [b'# Exact\n\n', b'# Exact\r\n\r\n'])
+def test_submit_existing_file_preserves_exact_bytes(monkeypatch, tmp_path, raw):
+    engine, request, local = _engine(monkeypatch, tmp_path, with_vault=True)
+    engine.bind(request)
+    path = local / 'report.md'
+    path.write_bytes(raw)
+    result = engine.submit(SubmitReport(action='submit_report', task_id=request.task_id,
+        project_id='project', title='Exact', input_path=str(path), input_sha256=hashlib.sha256(raw).hexdigest()))
+    assert result['completion'] == 'complete'
+    assert path.read_bytes() == raw
+    assert engine.assets.fetch(result['report']['version_id'])['text'].encode('utf-8') == raw
+    assert not result['review_projection_stale']
+    assert result['current_review']['full_text_review'] == 'not_requested'
+
+
+def test_recovered_delivery_clears_current_failure_but_retains_history(monkeypatch, tmp_path):
+    engine, request, local = _engine(monkeypatch, tmp_path)
+    engine.bind(request)
+    path = local / 'report.md'; path.write_text('# Existing\n\n', encoding='utf-8')
+    first = engine.submit(SubmitReport(action='submit_report', task_id=request.task_id,
+        project_id='project', title='Original', content='# Existing\n'))
+    assert first['error_code'] == 'destination_modified_preserved'
+    version = first['report']['version_id']
+    raw = path.read_bytes()
+    result = engine.submit(SubmitReport(action='submit_report', task_id=request.task_id,
+        project_id='project', title='Exact', report_id='exact-file', input_path=str(path),
+        input_sha256=hashlib.sha256(raw).hexdigest(), replace_pending_report_version=version))
+    assert result['completion'] == 'complete'
+    assert not result.get('failure_kind') and not result['error_code']
+    assert 'review' not in result['next_action']
+    old = engine._context(request.task_id)['report_history'][0]
+    assert old['report']['version_id'] == version and old['error_code'] == 'destination_modified_preserved'
+    assert engine.assets.fetch(version)['text'] == '# Existing\n'
+
+
+def test_file_report_requires_matching_hash_and_explicit_input(monkeypatch, tmp_path):
+    engine, request, local = _engine(monkeypatch, tmp_path); engine.bind(request)
+    path = local/'report.md'; path.write_bytes(b'# Changed\n')
+    with pytest.raises(ValueError, match='input_changed'):
+        engine.submit(SubmitReport(action='submit_report', task_id=request.task_id, project_id='project',
+            title='Changed', input_path=str(path), input_sha256='0'*64))
+    assert not engine._context(request.task_id)['report']
+    with pytest.raises(ValueError, match='exactly_one_report_input'):
+        SubmitReport(action='submit_report', task_id=request.task_id, project_id='project',
+            title='Ambiguous', content='# Two', input_path=str(path), input_sha256='0'*64)
+
+
+def test_known_project_local_root_cannot_silently_create_topic_project(monkeypatch,tmp_path):
+    engine,request,local=_engine(monkeypatch,tmp_path);engine.bind(request)
+    ledger.open_task(objective='new topic',budget='fast',considered=[],task_id='topic-task',project_id='new-topic')
+    grant=engine.store.authorize(Authorize(action='authorize_destination',approved_root=str(local),project_id='new-topic'))
+    other=BindContext(action='bind_context',task_id='topic-task',project_id='new-topic',project_name='Topic',
+        task_title='new topic',local_grant_id=grant['grant_id'],local_report_path=str(local/'topic.md'))
+    with pytest.raises(ValueError,match='local_root_project_identity_conflict'):
+        engine.bind(other)
+    assert engine._context('topic-task') is None
+    allowed=engine.bind(other.model_copy(update={'allow_shared_local_root':True}))
+    assert allowed['project_identity']['source']=='explicit_shared_local_root'
+    assert allowed['project_identity']['host_verified'] is False
 
 
 def _engine(monkeypatch, tmp_path, *, with_vault=False):

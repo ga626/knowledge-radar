@@ -98,3 +98,11 @@ def test_street_level_location_is_not_full_address() -> None:
     assert result["address_precision"] == "street"
     assert result["address_text"] == ""
     assert result["district_claim_allowed"] is True
+def test_web_fallback_address_does_not_claim_native_list_dom():
+    from runtime.recruitment_collection import format_search_response
+    row={'title':'产品经理','url':'https://www.liepin.com/job/123.shtml',
+         'source':'web_search_fallback_after_native_route_failure','snippet':'北京 产品岗位'}
+    result=format_search_response('猎聘',[row])['items'][0]
+    assert result['address_source']=='web_search_index'
+    assert result['market_claim_allowed'] is False
+    assert result['salary_claim_allowed'] is False

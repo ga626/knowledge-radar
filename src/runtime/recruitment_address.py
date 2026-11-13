@@ -203,6 +203,8 @@ def _source_for(item: dict[str, Any], provided_source: str) -> str:
     source_text = " ".join(_clean(item.get(key)) for key in ("source", "strategy"))
     metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
     source_text = " ".join(part for part in (source_text, _clean(metadata.get("strategy")), _clean(metadata.get("fallback_from"))) if part)
+    if "web_search_fallback" in source_text:
+        return "web_search_index"
     if "network_search" in source_text or "network_json" in source_text:
         return "network_json"
     if _clean(item.get("address_text")):

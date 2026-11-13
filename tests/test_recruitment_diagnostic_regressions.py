@@ -9,6 +9,47 @@ import pytest
 from runtime.tasks import TaskStore, compact_task_ref
 
 
+@pytest.mark.parametrize('verified', [True, False])
+@pytest.mark.parametrize('entry', ['business', 'browser_fallback'])
+def test_business_entry_rechecks_pending_login_once_inside_lease(monkeypatch, verified, entry):
+    from runtime import recruitment_governance as governance
+    from collectors.platform import boss
+    events=[]
+    ready=False
+    def admission(*args, **kwargs):
+        return {'allowed':ready,'reason_code':'ok' if ready else 'pending_manual_interaction',
+                'manual_action_required':not ready}
+    def complete():
+        nonlocal ready
+        events.append('verify')
+        ready=verified
+        return {'status':'ok' if verified else 'not_verified'}
+    monkeypatch.setattr(governance,'check_platform_admission',admission)
+    monkeypatch.setattr(boss,'admission',lambda: {**admission(), 'reason':admission()['reason_code']})
+    monkeypatch.setattr(boss,'complete_login',complete)
+    monkeypatch.setattr(governance,'acquire_platform_lease',lambda *a,**k:
+        events.append('lease') or SimpleNamespace(acquired=True,lease_id='test'))
+    monkeypatch.setattr(governance,'release_platform_lease',lambda *a:events.append('release'))
+    monkeypatch.setattr(governance,'record_search_outcome',lambda *a,**k:None)
+    monkeypatch.setattr('runtime.borrowed_observations.observe_borrowed_result',lambda p,r:r)
+    call=lambda: events.append('search') or {'items':[{'title':'job'}]}
+    result=(governance.execute_operation('boss','search',call,keyword='推荐算法')
+        if entry=='business' else governance.execute_browser_operation('boss',call))
+    assert events == (['lease','verify','search','release'] if verified else ['lease','verify','release'])
+    assert bool(result['items']) is verified
+
+
+@pytest.mark.parametrize('reason', ['request_outcome_unknown','platform_cooldown'])
+def test_blocked_non_login_does_not_probe_or_replay(monkeypatch, reason):
+    from runtime import recruitment_governance as governance
+    from collectors.platform import boss
+    monkeypatch.setattr(governance,'check_platform_admission',lambda *a,**k:
+        {'allowed':False,'reason_code':reason,'manual_action_required':False})
+    monkeypatch.setattr(boss,'complete_login',lambda:pytest.fail('non-login failure probed'))
+    result=governance.execute_operation('boss','search',lambda:pytest.fail('blocked business replayed'))
+    assert result['failure_type']==reason
+
+
 @pytest.mark.parametrize("role", ["stable", "dev"])
 def test_console_supervisor_uses_its_own_native_host_path(tmp_path, monkeypatch, role):
     path = Path(__file__).resolve().parents[1] / "scripts/product_console_launcher.py"

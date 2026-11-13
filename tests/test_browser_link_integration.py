@@ -74,6 +74,16 @@ def test_daily_chrome_launch_preserves_default_profile_and_has_no_debugger(monke
     args=browser_bootstrap.chrome_command('chrome.exe','KR-startup-'+'a'*32)
     assert not any('user-data-dir' in arg or 'remote-debugging' in arg for arg in args)
     assert '--no-startup-window' not in args
+    assert not any(arg.startswith('--app=') for arg in args)
+    assert '--new-window' in args
+
+
+def test_normal_chrome_bootstrap_title_is_owned_but_similar_user_title_is_not():
+    from runtime.browser_bootstrap import is_bootstrap_title
+    marker='KR-startup-'+'a'*32
+    assert is_bootstrap_title(marker+' - Google Chrome',marker)
+    assert is_bootstrap_title(marker,marker)  # An in-flight old helper may finish.
+    assert not is_bootstrap_title(marker+' - User notes - Google Chrome',marker)
 
 
 def test_quiet_bootstrap_minimizes_without_activation_and_closes_only_its_window(monkeypatch,tmp_path):

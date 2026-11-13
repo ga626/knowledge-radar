@@ -32,7 +32,7 @@ def test_internal_vault_rebinds_identity_and_display_ownership(archive,tmp_path)
     from runtime import research_ledger
     research_ledger.open_task(objective='路径迁移',budget='balanced',considered=[],task_id='internal',project_id='project-internal',project_name='内部项目')
     engine.bind(BindContext(action='bind_context',task_id='internal',project_id='project-internal',project_name='内部项目',task_title='路径迁移',
-        local_grant_id=localgrant['grant_id'],local_report_path=str(local/'internal.md'),vault_grant_id=grant['grant_id']))
+        local_grant_id=localgrant['grant_id'],local_report_path=str(local/'internal.md'),vault_grant_id=grant['grant_id'],allow_shared_local_root=True))
     folder=engine._task_directory(engine._context('internal'))
     from runtime.archive_layout import plan,apply
     from runtime.research_archive import PlanArchiveLayout,ApplyArchiveLayout

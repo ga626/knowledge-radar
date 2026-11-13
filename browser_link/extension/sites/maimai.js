@@ -20,19 +20,19 @@ const json = async (path, params, signal) => {
  return {http_status:r.status,data,headers:{'retry-after':r.headers.get('Retry-After')}};
 };
 globalThis.KRSites.maimai = {
- async extract(op, payload, signal) {
+ async extract(op, payload, signal, progress=()=>{}) {
   let d=state(); if (d.risk || d.login) return d;
   if (['search','probe','auth_verify'].includes(op)) {
    const path = op === 'search' ? '/community/api/common/search' : '/community/api/common/get-user-info';
    const params = op === 'search' ? {frm:'website',query:payload.keyword || '',__platform:'community_web',lim:Math.max(1,Math.min(20,payload.limit || 10))} : {};
-   const probe=await json(path,params,signal);
+   progress('site_api_wait');const probe=await json(path,params,signal);progress('site_api_received');
    return {...state(),probe,authenticated_api:probe.http_status===200 && probe.data?.result==='ok' && !!probe.data?.user};
   }
   if (op === 'comments') {
    const check=()=>{const s=state();if(s.risk || s.login) throw new Error(s.risk?'SECURITY_BLOCK':'AUTH_REQUIRED');};
    check(); (() => {const heading=[...document.querySelectorAll('div')].find(e=>e.children.length===0&&(e.innerText||'').trim()==='评论');heading?.scrollIntoView({block:'center'});return {clicked:!!heading};})();
    // One bounded observer wait for lazy comments, not blind refresh/retry.
-   await globalThis.KRWaitFor(".bg-background.px-6.py-3 > .relative.mt-4 [data-rich-text],[data-testid=\"comment-item\"], [class*=\"commentItem\"], [class*=\"comment-item\"], [class*=\"CommentItem\"]",signal,3000);
+   progress('comments_wait');await globalThis.KRWaitFor(".bg-background.px-6.py-3 > .relative.mt-4 [data-rich-text],[data-testid=\"comment-item\"], [class*=\"commentItem\"], [class*=\"comment-item\"], [class*=\"CommentItem\"]",signal,3000);
    for(let i=0;i<2;i++) {check(); const action=(() => {const e=[...document.querySelectorAll('button,a,[role="button"],span')].find(e=>e.getBoundingClientRect().width&&/^(查看更多评论|加载更多评论|查看更多回复|展开回复|查看\d+条回复)$/.test((e.innerText||'').trim()));e?.click();return {clicked:!!e};})(); if(!action.clicked)break; await globalThis.KRWaitForChange(signal,800);}
    check();return (() => {const state=(() => {
  const visible=e=>e&&e.getBoundingClientRect().width>0&&e.getBoundingClientRect().height>0;

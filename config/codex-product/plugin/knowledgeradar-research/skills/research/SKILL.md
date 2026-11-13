@@ -33,6 +33,8 @@ description: 用 KnowledgeRadar 获取学术全文、视频字幕与转写、登
 
 需要持久成果时，尽早建立一个研究任务并把 `research_task_id` 传给相关 KR 调用；`research_context` 可关联已有动作，没登记的语义关系保持未知，不补造计划。官方结果可在搜索后一次性交回 `record_research_candidates_tool`，保留真实 `host_reference`、实际 `query` 和工具名；无载荷用 `unavailable`，确认零命中才用 `no_results`。宿主声明不是 KR 原生取证。已打开页面的实际可见文字可随批次附 `visible_text`、`visible_scope`（excerpt/page_text）、`truncated` 与带时区 `retrieved_at`；保存为可回读快照，不把摘要或截断内容称全文。
 
+交回官方页面时，保留宿主实际返回的 `observed_url`、`observed_reference`；如请求了特定页，另附 `requested_url`。`url` 必须对应实际页面，发生重定向只附实际观察到的 `redirect_chain`，不凭猜测补齐。URL/ref错配先停止挂接；缺少这些字段只能标身份未核验，不能把错页正文挂到目标来源。KR不能替宿主证明引用真实性。
+
 需要维护评测时，可用 `read_knowledge`/`update_research` 的 `action=evaluation` 处理现有队列并保留判定依据；界面纠错待 Agent 接手，不会自动启动研究或付费评分。
 
 按所属项目规则明确稳定 `project_id` 和精确本地报告路径，用 `bind_context` 绑定已获准目标。收尾用 `submit_report` 提交 Codex 实际生成的总结，并读投递回执；没有报告也如实简写。有效取得的转译材料（含未引用与反证）一并保留。Vault 未投递、缺目标或冲突要明确告知；不覆盖用户修改、不自动重建用户删除的文件。新任务按项目／年／月／日／时间任务归档；任务名只留时间，恢复沿原研究日期。已有文件先计划核对后原地登记；旧固定版本受控导入保留原ID，不继承旧评审。普通总结不自动追加空审阅表，需要时显式 `include_review`。归档完成不等于研究充分。

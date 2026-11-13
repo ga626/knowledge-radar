@@ -2,7 +2,7 @@
 import { pathToFileURL } from 'node:url';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
-import {repairFilterEvaluation,evaluateSearchNavigation} from './xhs_search_filters.mjs';
+import {repairFilterEvaluation,evaluateSearchNavigation,insertSearchQuery} from './xhs_search_filters.mjs';
 import {waitForBoundBrowser,presentOwnedPage,requireOfficialExtension,extensionSupported,attentionController,officialWindowController,ensureOwnedViewport,navigateOwnedPage} from './opencli_readiness.mjs';
 let input = '';
 for await (const chunk of process.stdin) input += chunk;
@@ -137,10 +137,8 @@ try {
       const {command} = await load('clis/xiaohongshu/search.js');
       const evaluate = page.evaluate.bind(page);
       page.evaluate = async expression => {
-        const execute=()=>evaluateSearchNavigation(evaluate,async text=>{
-          await page.insertText(text);
-          await page.pressKey('End');
-        },repairFilterEvaluation(expression),request.keyword);
+        const execute=()=>evaluateSearchNavigation(evaluate,text=>insertSearchQuery(page,text),
+          repairFilterEvaluation(expression),request.keyword);
         const result = typeof expression==='string' && expression.includes('ambiguous_or_missing_search_button')
           ? await attention.withNativeInput(execute) : await execute();
         if (result?.navigation) searchNavigation = result.navigation;

@@ -64,12 +64,17 @@ class BrowserLink:
         return None
 
     def health(self) -> dict[str, Any]:
+        import hashlib
+        state = _read_state(self.state_file)
+        observation = {'driver':'content_script_native_messaging', 'observed_at':time.time(),
+            'expected_generation':state.get('generation',''),
+            'profile_id_hash':hashlib.sha256(str(state.get('profile_id','')).encode()).hexdigest()[:16]
+                if state.get('profile_id') else ''}
         pending = self.distribution_status()
         if pending:
-            return {'ok': False, 'connected': False, 'code': pending, 'request_executed': False}
-        state = _read_state(self.state_file)
+            return {'ok': False, 'connected': False, 'code': pending, 'request_executed': False, 'observation':observation}
         if not state.get("port") or not state.get("token"):
-            return {"ok": False, "code": "native_host_unavailable", "connected": False}
+            return {"ok": False, "code": "native_host_unavailable", "connected": False, 'observation':observation}
         try:
             with self._session() as client:
                 response = client.get(self._url(state, "/health"), headers=self._headers(state), timeout=2)
@@ -77,11 +82,11 @@ class BrowserLink:
             if not isinstance(payload, dict):
                 raise ValueError('invalid_health_result')
             if not self.explicit_state and payload.get('extension_version')!=json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8')).get('extension_version'):
-                return {**payload,'ok':False,'code':'browser_extension_reload_required'}
-            return {**payload, "ok": response.is_success and bool(payload.get("connected")) and payload.get("protocol") == 1
+                return {**payload,'ok':False,'code':'browser_extension_reload_required','observation':observation}
+            return {**payload, 'observation':observation, "ok": response.is_success and bool(payload.get("connected")) and payload.get("protocol") == 1
                     and not payload.get('draining') and payload.get('generation') == state.get('generation')}
         except (httpx.HTTPError, ValueError):
-            return {"ok": False, "code": "native_host_unreachable", "connected": False}
+            return {"ok": False, "code": "native_host_unreachable", "connected": False, 'observation':observation}
 
     def request(self, operation: str, payload: dict[str, Any], *, platform: str, timeout_s: float = 30.0) -> dict[str, Any]:
         pending = self.distribution_status()
@@ -122,7 +127,8 @@ class BrowserLink:
             payload['task_id'] = task_id
         if timeout_s <= 0:
             return self._failure('native_command_timeout', request_id, request_executed=False)
-        request_deadline = time.monotonic() + timeout_s
+        request_started = time.monotonic()
+        request_deadline = request_started + timeout_s
         last_health = self.health() if operation in {'search', 'detail', 'comments', 'login', 'auth_verify', 'attention'} else {'ok': True}
         if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
@@ -179,9 +185,12 @@ class BrowserLink:
             return result
         except httpx.ConnectError:
             return self._failure('native_host_unreachable',request_id,request_executed=False)
-        except httpx.TimeoutException:
+        except httpx.TimeoutException as exc:
             self.cancel(request_id)
-            return self._failure("native_command_timeout", request_id)
+            return self._failure("native_command_timeout", request_id,
+                browser_diagnostics={'last_stage':'native_host_http_wait',
+                    'command_elapsed_ms':round(max(0,time.monotonic()-request_started)*1000),
+                    'exception_type':type(exc).__name__, 'root_cause':'unconfirmed'})
         except (httpx.HTTPError, ValueError):
             return self._failure("native_host_unreachable", request_id)
 
