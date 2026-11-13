@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`04d288cba9472471be198b4269377c63df1c560592ca5553c68b8b69b688ab30`
+合同指纹：`30232ab03fdaf8f2d4ec61258ac4d277cecfaef4a3092030cc469e8106edf530`
 
 ## advance_research_candidate
 
@@ -635,7 +635,7 @@
           }
         ],
         "default": null,
-        "description": "仅resume使用：显式设置本次重试总期限（含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。",
+        "description": "仅resume使用：显式设置本次重试有效执行预算（不含排队），例如长视频从180秒增至900秒。省略沿原期限，不自动延长。",
         "title": "Timeout S"
       }
     },
@@ -2211,6 +2211,52 @@
         "title": "GitHubReadOptions",
         "type": "object"
       },
+      "MediaReadOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "frame_times_s": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "number"
+                },
+                "maxItems": 32,
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "明确疑点的秒位置；未填按全片增量采样。",
+            "title": "Frame Times S"
+          },
+          "image_max_side": {
+            "default": 640,
+            "maximum": 1920,
+            "minimum": 640,
+            "title": "Image Max Side",
+            "type": "integer"
+          },
+          "max_frames": {
+            "default": 8,
+            "maximum": 32,
+            "minimum": 1,
+            "title": "Max Frames",
+            "type": "integer"
+          },
+          "video_height": {
+            "default": 480,
+            "description": "明确需要细节时提高下载分辨率；下载大小保护不变。",
+            "maximum": 1080,
+            "minimum": 480,
+            "title": "Video Height",
+            "type": "integer"
+          }
+        },
+        "title": "MediaReadOptions",
+        "type": "object"
+      },
       "ResearchContext": {
         "additionalProperties": false,
         "properties": {
@@ -2240,6 +2286,52 @@
           }
         },
         "title": "ResearchContext",
+        "type": "object"
+      },
+      "TaskLimitOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "overall_timeout_s": {
+            "default": 86400,
+            "description": "本次任务绝对授权期限，包含全部阶段。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "Overall Timeout S",
+            "type": "number"
+          },
+          "progress_timeout_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "显式允许真实完成块进展续期；心跳不续期，始终受overall约束。",
+            "title": "Progress Timeout S"
+          },
+          "queue_timeout_s": {
+            "default": 3600,
+            "description": "排队期限，不消耗执行预算。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "Queue Timeout S",
+            "type": "number"
+          },
+          "user_wait_timeout_s": {
+            "default": 86400,
+            "description": "用户交互等待期限；不自动处理验证码。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "User Wait Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "TaskLimitOptions",
         "type": "object"
       },
       "WechatReadOptions": {
@@ -2390,7 +2482,7 @@
       },
       "deadline_s": {
         "default": 600,
-        "description": "增强任务总期限秒数，含排队；长视频可能超过180秒。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。",
+        "description": "增强任务有效执行预算秒数；排队和用户等待单独计时。到期任务停止接收结果，原生计算返回前仍保留资源租约，不自动延长或重试。",
         "maximum": 3600,
         "minimum": 1,
         "title": "Deadline S",
@@ -2483,6 +2575,17 @@
         "description": "本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。",
         "title": "Language"
       },
+      "media": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/MediaReadOptions"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
+      },
       "request_id": {
         "default": "",
         "description": "可选的调用者动作ID。写动作重试必须沿用原ID；不同意图用新ID。查询旧回执用get_task_status(receipt_request_id=...)。",
@@ -2514,6 +2617,17 @@
         "description": "可选的 kr_research 任务 ID；提供后返回 research_receipt。",
         "title": "Research Task Id",
         "type": "string"
+      },
+      "task_limits": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TaskLimitOptions"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
       },
       "task_scope_id": {
         "default": "",
@@ -5956,6 +6070,52 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         },
         "title": "ResearchContext",
         "type": "object"
+      },
+      "TaskLimitOptions": {
+        "additionalProperties": false,
+        "properties": {
+          "overall_timeout_s": {
+            "default": 86400,
+            "description": "本次任务绝对授权期限，包含全部阶段。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "Overall Timeout S",
+            "type": "number"
+          },
+          "progress_timeout_s": {
+            "anyOf": [
+              {
+                "maximum": 3600,
+                "minimum": 1,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "显式允许真实完成块进展续期；心跳不续期，始终受overall约束。",
+            "title": "Progress Timeout S"
+          },
+          "queue_timeout_s": {
+            "default": 3600,
+            "description": "排队期限，不消耗执行预算。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "Queue Timeout S",
+            "type": "number"
+          },
+          "user_wait_timeout_s": {
+            "default": 86400,
+            "description": "用户交互等待期限；不自动处理验证码。",
+            "exclusiveMinimum": 0,
+            "maximum": 604800,
+            "title": "User Wait Timeout S",
+            "type": "number"
+          }
+        },
+        "title": "TaskLimitOptions",
+        "type": "object"
       }
     },
     "additionalProperties": false,
@@ -6033,6 +6193,17 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
         "description": "已有后台任务 ID；提供时只读取该任务结果，不重复执行。",
         "title": "Task Id",
         "type": "string"
+      },
+      "task_limits": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TaskLimitOptions"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "default": null
       },
       "timeout_s": {
         "default": 600,
@@ -7944,6 +8115,14 @@ B站视频搜索。
         "title": "Keyword",
         "type": "string"
       },
+      "page": {
+        "default": 1,
+        "description": "同关键词的来源页号；无结束信号时不声称穷尽。",
+        "maximum": 1000,
+        "minimum": 1,
+        "title": "Page",
+        "type": "integer"
+      },
       "page_size": {
         "default": 10,
         "description": "返回视频数量。",
@@ -9224,6 +9403,13 @@ YouTube 公开视频搜索。
         "minimum": 1,
         "title": "Limit",
         "type": "integer"
+      },
+      "page_token": {
+        "default": "",
+        "description": "上次next_page_token；保持相同关键词，不根据短页判断穷尽。",
+        "maxLength": 4096,
+        "title": "Page Token",
+        "type": "string"
       },
       "request_id": {
         "default": "",

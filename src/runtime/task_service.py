@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import sys
@@ -45,6 +46,29 @@ class TaskService:
         self._enhancement_pending = {}
         self._enhancement_active = 0
         self._enhancement_dispatcher = None
+
+    @staticmethod
+    def _expired(job, task, now):
+        meta = task.get('metadata') or {}
+        if meta.get('limits_version') != 2:
+            return 'deadline_exceeded' if now >= job['submitted_at'] + job['timeout_s'] else ''
+        if now >= meta['overall_deadline_at']:
+            return 'overall_deadline_exceeded'
+        if task.get('status') == 'queued' and now >= meta.get('queue_entered_at', job['submitted_at']) + meta['queue_timeout_s']:
+            return 'queue_deadline_exceeded'
+        if task.get('status') == 'waiting_for_user' and now >= meta.get('wait_entered_at', now) + meta['user_wait_timeout_s']:
+            return 'user_wait_deadline_exceeded'
+        return ''
+
+    def _settle_stage_clock(self, job, writer, started):
+        self.store.settle_execution_clock(job['task_id'],writer,started,time.time())
+
+    @staticmethod
+    def _load_job(folder):
+        from runtime.task_process import read_job_payload
+        job = json.loads((folder/'input.json').read_text(encoding='utf-8'))
+        job['payload'] = read_job_payload(job, folder)
+        return job
 
     def start_maintenance(self, *, interval_s=5.0, keep_alive=False):
         """一个任务库一个进程内维护者；只由启动/接单入口调用，查询从不启动。"""
@@ -137,7 +161,8 @@ class TaskService:
         if task.get('status')!='waiting_cooldown':return
         meta=task.get('metadata') or {};now=time.time()
         if now>=float(meta.get('deadline_at',0)):
-            self.store.mark_failed(task_id,'cooldown exceeded original task deadline',error_code='deadline_exceeded')
+            code = ('overall_deadline_exceeded' if now >= meta['overall_deadline_at'] else 'cooldown_deadline_exceeded') if meta.get('limits_version') == 2 else 'deadline_exceeded'
+            self.store.mark_failed(task_id,'cooldown exceeded task phase deadline',error_code=code)
             self.record_completion(task_id);return
         if int(meta.get('cooldown_attempts',0))>=int(meta.get('cooldown_limit',3)):
             self.store.mark_failed(task_id,'bounded cooldown probes exhausted',error_code='cooldown_probe_exhausted')
@@ -150,7 +175,7 @@ class TaskService:
         if not grant.acquired:return
         try:
             folder=self.root/task_id
-            job=json.loads((folder/'input.json').read_text(encoding='utf-8'))
+            job=self._load_job(folder)
             payload=job['payload']
             if job['operation']=='content_detail':payload.setdefault('options',{})['resume_checkpoint']=True
             if not self.store.claim_cooldown_probe(task_id,now=now):
@@ -167,9 +192,14 @@ class TaskService:
         task = self.store.get_task(task_id)
         if not task or task["status"] != "waiting_for_user":
             return
+        meta = task.get('metadata') or {}
+        if meta.get('limits_version') == 2 and meta.get('execution_id') and not meta.get('execution_released_at'):
+            return  # 先等原执行者完成资源与时钟交接。
         deadline = float((task.get("metadata") or {}).get("deadline_at") or 0)
         if deadline and time.time() >= deadline:
-            self.store.mark_failed(task_id, "interaction exceeded task deadline", error_code="deadline_exceeded")
+            meta = task.get('metadata') or {}
+            code = ('overall_deadline_exceeded' if time.time() >= meta['overall_deadline_at'] else 'user_wait_deadline_exceeded') if meta.get('limits_version') == 2 else 'deadline_exceeded'
+            self.store.mark_failed(task_id, "interaction exceeded task deadline", error_code=code)
             self.record_completion(task_id)
             return
         if not deadline:
@@ -177,7 +207,7 @@ class TaskService:
         from runtime.platform_execution import ensure_bindings
         from kr_core.registry import registry
         ensure_bindings()
-        job = json.loads((self.root / task_id / "input.json").read_text(encoding="utf-8"))
+        job = self._load_job(self.root / task_id)
         from runtime.leases import get_runtime_lease_coordinator, default_owner
         coordinator = get_runtime_lease_coordinator()
         grant = coordinator.acquire_exclusive("task_resume", task_id,
@@ -195,12 +225,20 @@ class TaskService:
             current = self.store.get_task(task_id)
             if not current or current["status"] != "waiting_for_user":
                 return
-            remaining = float((current.get("metadata") or {}).get("deadline_at") or 0) - time.time()
+            current_meta = current.get('metadata') or {}
+            if current_meta.get('limits_version') == 2 and time.time() >= current_meta['overall_deadline_at']:
+                self.store.mark_failed(task_id, 'overall authorization expired', error_code='overall_deadline_exceeded')
+                self.record_completion(task_id)
+                return
+            remaining = (current_meta['execution_budget_s']-current_meta.get('execution_used_s',0)
+                if current_meta.get('limits_version') == 2 else float(current_meta.get('deadline_at') or 0)-time.time())
             if remaining <= 0:
                 self.store.mark_failed(task_id, "interaction exceeded task deadline", error_code="deadline_exceeded")
                 self.record_completion(task_id)
                 return
-            successor = self.retry(task_id, timeout_s=remaining)
+            successor = self.retry(task_id, timeout_s=remaining,
+                overall_timeout_s=max(.001,current_meta['overall_deadline_at']-time.time()) if current_meta.get('limits_version') == 2 else None,
+                authorization_deadline_at=current_meta.get('overall_deadline_at') or current_meta.get('deadline_at'))
             updated = self.store.mark_skipped(task_id, "continued_after_interaction",
                 metadata={"continuation_task_id": successor["task_id"]})
             if updated["status"] != "skipped":
@@ -231,8 +269,9 @@ class TaskService:
                     if current.get("status") in TERMINAL_STATUSES or not current:
                         self._enhancement_pending.pop(task_id, None)
                         continue
-                    if time.time() >= job["submitted_at"] + job["timeout_s"]:
-                        self.store.mark_failed(task_id, "deadline expired waiting for resource", error_code="deadline_exceeded")
+                    expired = self._expired(job, current, time.time())
+                    if expired:
+                        self.store.mark_failed(task_id, "deadline expired waiting for resource", error_code=expired)
                         self._enhancement_pending.pop(task_id, None)
                         self.record_completion(task_id)
                         continue
@@ -266,13 +305,22 @@ class TaskService:
                 self._enhancement_active -= 1
                 self._enhancement_condition.notify()
 
-    def submit(self, operation, payload, *, timeout_s=600, scope=None, retry_of="", billing_scope_id=""):
+    def submit(self, operation, payload, *, timeout_s=600, scope=None, retry_of="", billing_scope_id="",
+               overall_timeout_s=86400, queue_timeout_s=3600, user_wait_timeout_s=86400, progress_timeout_s=None,
+               authorization_deadline_at=None):
         if operation not in {"research_query", "platform_discovery", "academic_fulltext", "academic_discovery", "content_detail", "optional_media", "fixture_echo", "fixture_sleep", "fixture_staged"}:
             raise ValueError("unsupported durable operation")
         if operation.startswith("fixture_") and os.environ.get("KR_TASK_TEST_MODE") != "1":
             raise ValueError("fixture worker is disabled outside isolated tests")
-        if timeout_s <= 0 or timeout_s > 3600:
+        if not math.isfinite(timeout_s) or timeout_s <= 0 or timeout_s > 3600:
             raise ValueError("invalid task deadline")
+        for value in (overall_timeout_s, queue_timeout_s, user_wait_timeout_s):
+            if not math.isfinite(value) or not 0 < value <= 7*86400:
+                raise ValueError('invalid task phase deadline')
+        if progress_timeout_s is not None and (not math.isfinite(progress_timeout_s) or not 1 <= progress_timeout_s <= 3600):
+            raise ValueError('invalid progress window')
+        if authorization_deadline_at is not None and not math.isfinite(authorization_deadline_at):
+            raise ValueError('invalid inherited authorization deadline')
         payload = json.loads(json.dumps(payload))
         # 入队前冻结有效语言；worker重启或环境变化不能改变同一任务的语言合同。
         from runtime.asr_policy import AsrPolicy
@@ -291,7 +339,7 @@ class TaskService:
         from generic_web.url_policy import public_evidence_payload
         # 临时凭据只在本次执行内存中传递，绝不进入任务文件或命令行。
         execution_input = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        if len(execution_input) > 1024 * 1024:
+        if len(execution_input) > 32 * 1024 * 1024:
             raise ValueError("task input exceeds bounded worker size")
         payload = public_evidence_payload(payload)
         scope = public_evidence_payload(scope or {})
@@ -350,7 +398,10 @@ class TaskService:
         # 宿主代际属于运行证据，不属于业务输入；同一完成请求可跨server重启复用。
         canonical_payload = json.loads(json.dumps(payload))
         canonical_payload.get("options", {}).get("task_scope", {}).pop("server_run_id", None)
-        key = content_hash({"operation": operation, "payload": canonical_payload, "identity": identity,
+        limits = {'limits_version': 2, 'execution_budget_s': timeout_s, 'queue_timeout_s': queue_timeout_s,
+                  'user_wait_timeout_s': user_wait_timeout_s, 'overall_timeout_s': overall_timeout_s,
+                  'progress_timeout_s': progress_timeout_s, 'authorization_deadline_at':authorization_deadline_at}
+        key = content_hash({"operation": operation, "payload": canonical_payload, "identity": identity, 'limits': limits,
                             "research_task_id": scope.get("research_task_id", ""), "retry_of": retry_of})
         task_id = "durable-" + key[:32]
         with _SUBMIT_LOCK:
@@ -374,12 +425,23 @@ class TaskService:
                    "submitted_at": time.time(), "db_path": self.store.db_path, "scope": scope or {}}
             from runtime.application import current_request_id
             job['origin_request_id'] = current_request_id()
-            (folder / "input.json").write_text(json.dumps(job, ensure_ascii=False), encoding="utf-8")
+            job['limits'] = limits
+            overall_deadline = min(job['submitted_at']+overall_timeout_s, authorization_deadline_at or float('inf'))
+            persisted = dict(job)
+            payload_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
+            if len(payload_bytes) > 1024*1024:
+                (folder/'payload.json').write_bytes(payload_bytes)
+                persisted['payload'] = {}
+                persisted['payload_ref'] = {'file': 'payload.json', 'sha256': hashlib.sha256(payload_bytes).hexdigest()}
+            (folder / "input.json").write_text(json.dumps(persisted, ensure_ascii=False), encoding="utf-8")
             task = self.store.upsert_task(task_id, "durable_" + operation, payload.get("platform", "runtime"),
                     metadata={**(scope or {}), "adapter": "durable_process", "request_id": key, "origin_request_id": job['origin_request_id'], "attempt_id": job["attempt_id"],
                               "owner_pid": os.getpid(),
                               "owner_identity": process_identity(),
-                              "source_identity": identity["source"], "deadline_at": job["submitted_at"] + timeout_s,
+                              "source_identity": identity["source"], **limits, 'execution_used_s': 0,
+                              'submitted_at': job['submitted_at'], 'queue_entered_at': job['submitted_at'],
+                              'overall_deadline_at': overall_deadline,
+                              "deadline_at": min(job["submitted_at"]+queue_timeout_s, overall_deadline),
                               "phase": "queued", "blocks_final_report": True, "retry_of": retry_of})
             if retry_of:
                 self.store.link_continuation(retry_of, task_id)
@@ -398,22 +460,41 @@ class TaskService:
 
     def _monitor(self, job, folder, execution_input, stage="collection"):
         task_id = job["task_id"]
+        current = self.store.get_task(task_id) or {}
+        if current.get('status') != 'queued':
+            return
+        meta = current.get('metadata') or {}
+        started = time.time()
         deadline = job["submitted_at"] + job["timeout_s"]
+        if meta.get('limits_version') == 2:
+            deadline = min(meta['overall_deadline_at'], started + max(0, meta['execution_budget_s']-meta.get('execution_used_s', 0)))
         writer = {"attempt_id": job['attempt_id'], "execution_id": uuid.uuid4().hex}
         try:
-            if time.time() >= deadline:
-                self.store.mark_failed(task_id, "deadline expired in queue", error_code="deadline_exceeded")
+            expired = self._expired(job, current, started)
+            if expired or started >= deadline:
+                self.store.mark_failed(task_id, "task phase deadline exceeded", error_code=expired or 'deadline_exceeded')
                 return
             if (self.store.get_task(task_id) or {}).get("status") in TERMINAL_STATUSES:
                 return
+            if meta.get('limits_version') == 2:
+                reserved = self.store._mark(task_id, 'queued', metadata={'deadline_at': deadline,
+                    'execution_started_at': started, 'execution_released_at': 0,
+                    'queue_wait_s': meta.get('queue_wait_s', 0)+max(0, started-meta.get('queue_entered_at', started))},
+                    expected_updated_at=current['updated_at'])
+                if reserved.get('status') != 'queued' or reserved['metadata'].get('execution_started_at') != started:
+                    return
             stop = threading.Event()
             def watch_deadline():
                 while not stop.wait(.05):
                     current = self.store.get_task(task_id) or {}
                     if current.get('status') in TERMINAL_STATUSES:
                         return
-                    if time.time() >= deadline:
-                        self.store.mark_failed(task_id, 'task deadline exceeded', error_code='deadline_exceeded')
+                    if (current.get('metadata') or {}).get('execution_id') != writer['execution_id']:
+                        continue  # 未获执行权的monitor不能终止另一个执行者。
+                    effective_deadline = (current.get('metadata') or {}).get('deadline_at',deadline) if meta.get('limits_version') == 2 else deadline
+                    if time.time() >= effective_deadline:
+                        code = 'overall_deadline_exceeded' if meta.get('limits_version') == 2 and time.time() >= meta['overall_deadline_at'] else 'deadline_exceeded'
+                        self.store.mark_failed(task_id, 'task execution deadline exceeded', error_code=code)
                         self._cancel_platform_operation(task_id)
                         return
             watcher = threading.Thread(target=watch_deadline, daemon=True)
@@ -425,6 +506,7 @@ class TaskService:
             finally:
                 stop.set()
                 watcher.join(timeout=2)
+                self._settle_stage_clock(job, writer, started)
             current = self.store.get_task(task_id) or {}
             metadata = current.get('metadata') or {}
             # 冷却可在旧monitor收尾前被下一轮接走；不能把后继执行标为中断。
@@ -437,10 +519,10 @@ class TaskService:
                 if partial.get("status") in {"artifact_missing", "artifact_corrupt"}:
                     self.store.mark_failed(task_id, "collection handoff invalid", error_code="artifact_corrupt")
                     return
-                next_input = json.dumps({"request": json.loads(execution_input), "collected": partial["result"]}, ensure_ascii=False).encode("utf-8")
-                if len(next_input) > 1024 * 1024:
-                    self.store.mark_failed(task_id, "enhancement input exceeds bound", error_code="enhancement_input_too_large")
-                    return
+                artifact = self.store.get_task(task_id)
+                next_input = json.dumps({'request': json.loads(execution_input), 'collected_ref': {
+                    'file': Path(artifact['result_path']).name,
+                    'sha256': artifact['metadata']['artifact_sha256']}}, ensure_ascii=False).encode('utf-8')
                 self._queue_enhancement(job, folder, next_input)
                 return
             if current.get("status") == "queued" and (current.get("metadata") or {}).get("phase") == "waiting_resource":
@@ -450,7 +532,16 @@ class TaskService:
                 self.store.mark_interrupted(task_id, "worker_exited_without_committed_result",
                                             metadata={**writer, "executor": "inprocess"})
         except Exception as exc:
-            self.store.mark_failed(task_id, type(exc).__name__, error_code="worker_launch_error")
+            current = self.store.get_task(task_id) or {}
+            owned = current.get('metadata') or {}
+            if owned.get('execution_id') == writer['execution_id']:
+                self.store.mark_failed(task_id, type(exc).__name__, error_code="worker_launch_error", metadata=writer)
+            elif current.get('status') == 'queued' and (
+                    owned.get('execution_started_at') == started or
+                    (owned.get('limits_version') != 2 and not owned.get('execution_id'))):
+                # 启动尚未认领时用CAS；旧monitor不得改写后继执行。
+                self.store._mark(task_id, 'failed', finished=True, error=type(exc).__name__,
+                    error_code='worker_launch_error', expected_updated_at=current['updated_at'])
         finally:
             # 包括排队超时、启动异常和取消等无正文的终态。
             current = self.store.get_task(task_id) or {}
@@ -498,6 +589,16 @@ class TaskService:
         if continuation:
             return {**self.result(continuation, _visited=visited), "resumed_from": task_id}
         response = {"task": compact_task_ref(task), "status": task["status"]}
+        meta = task.get('metadata') or {}
+        if meta.get('limits_version') == 2:
+            response['limits'] = {k:meta[k] for k in ('limits_version','execution_budget_s','execution_used_s',
+                'overall_deadline_at','queue_timeout_s','user_wait_timeout_s','submitted_at','progress_timeout_s') if k in meta}
+            response['limits'].update(queue_wait_s=round(meta.get('queue_wait_s', 0),3),
+                current_queue_s=round(max(0,time.time()-meta.get('queue_entered_at',time.time())),3) if task['status']=='queued' else 0,
+                current_user_wait_s=round(max(0,time.time()-meta.get('wait_entered_at',time.time())),3) if task['status']=='waiting_for_user' else 0,
+                effective_deadline_at=meta.get('deadline_at'),
+                stop_reason=task.get('error_code') or '',
+                execution_state='draining' if task['status'] in TERMINAL_STATUSES and meta.get('worker_pid') and not meta.get('execution_released_at') else task['status'])
         progress = (task.get('metadata') or {}).get('media_progress')
         if progress:
             endpoint = task.get('finished_at') or time.time()
@@ -604,7 +705,7 @@ class TaskService:
         if (task.get("metadata") or {}).get("continuation_task_id"):
             return response
         if task["task_type"] == "durable_research_query":
-            job = json.loads((self.root / task_id / "input.json").read_text(encoding="utf-8"))
+            job = self._load_job(self.root / task_id)
             from runtime.research_index import ResearchIndex
             final = response.get("result") or {"error":task.get("error_code") or task["status"]}
             from runtime.research_index import query_outcome
@@ -631,7 +732,7 @@ class TaskService:
             if task['task_type'] == 'durable_academic_discovery':
                 tool = 'search_academic'
             if task['task_type'] == 'durable_platform_discovery':
-                discovery_job = json.loads((self.root / task_id / 'input.json').read_text(encoding='utf-8'))
+                discovery_job = self._load_job(self.root / task_id)
                 tool = discovery_job['payload']['tool']
             if task["task_type"] == "durable_research_query":
                 tool = {"academic_literature_ecology":"search_academic", "github_repository_ecology":"search_github_repositories",
@@ -711,7 +812,7 @@ class TaskService:
             interrupted.append(task["task_id"])
         return {"interrupted": interrupted, "automatic_reexecution": False}
 
-    def retry(self, task_id, *, timeout_s=None):
+    def retry(self, task_id, *, timeout_s=None, overall_timeout_s=None, authorization_deadline_at=None):
         task = self.store.get_task(task_id) or {}
         continuation = (task.get('metadata') or {}).get('continuation_task_id')
         if continuation:
@@ -720,11 +821,16 @@ class TaskService:
             return task
         if not task_id.startswith("durable-") or Path(task_id).name != task_id:
             raise ValueError("not a durable task")
-        job = json.loads((self.root / task_id / "input.json").read_text(encoding="utf-8"))
+        job = self._load_job(self.root / task_id)
         payload = job["payload"]
         if job["operation"] == "content_detail":
             payload.setdefault("options", {})["resume_checkpoint"] = True
         return self.submit(job["operation"], payload, timeout_s=timeout_s if timeout_s is not None else job["timeout_s"], scope=job["scope"], retry_of=task_id,
+                           overall_timeout_s=overall_timeout_s if overall_timeout_s is not None else (job.get('limits') or {}).get('overall_timeout_s',86400),
+                           queue_timeout_s=(job.get('limits') or {}).get('queue_timeout_s',3600),
+                           user_wait_timeout_s=(job.get('limits') or {}).get('user_wait_timeout_s',86400),
+                           progress_timeout_s=(job.get('limits') or {}).get('progress_timeout_s'),
+                           authorization_deadline_at=authorization_deadline_at,
                            billing_scope_id=job.get("billing_scope_id") or task_id)
 
     def cancel(self, task_id):

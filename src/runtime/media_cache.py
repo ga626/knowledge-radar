@@ -67,6 +67,12 @@ def media_cache_subdir(kind: str, *, content_id: str = "", task_id: str = "") ->
     path.mkdir(parents=True, exist_ok=True)
     from runtime.storage_lifecycle import StorageLeases
     StorageLeases().acquire(path)
+    from runtime.execution_context import current_execution
+    context = current_execution()
+    if context:
+        row = context['store'].get_task(context['KR_DURABLE_TASK_ID']) or {}
+        expires = (row.get('metadata') or {}).get('overall_deadline_at', context['deadline_at'])
+        StorageLeases().pin_task(path, context['KR_DURABLE_TASK_ID'], context['store'].db_path, expires)
     return path
 
 

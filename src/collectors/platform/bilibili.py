@@ -55,13 +55,16 @@ def extract_bvid(url: str) -> Optional[str]:
     return None
 
 
-def legacy_search_bilibili(keyword: str, page_size: int = 10) -> Dict:
+def legacy_search_bilibili(keyword: str, page_size: int = 10, page: int = 1) -> Dict:
+    if type(page) is not int or not 1 <= page <= 1000:
+        raise ValueError('invalid_bilibili_page')
+    page_size = max(1, min(int(page_size), 30))
     log.info("search_bilibili: request received; page_size=%s", page_size)
     trace = CollectionTrace("B站", ["http_api", "wbi_signature"])
     try:
         resp = httpx.get(
             "https://api.bilibili.com/x/web-interface/search/all/v2",
-            params={"keyword": keyword, "page": 1},
+            params={"keyword": keyword, "page": page, "page_size": page_size},
             headers=BILI_HEADERS,
             timeout=15,
         )
@@ -118,12 +121,18 @@ def legacy_search_bilibili(keyword: str, page_size: int = 10) -> Dict:
                         },
                     }
                 )
-                if len(items) >= page_size:
-                    break
-            if len(items) >= page_size:
-                break
         trace.add("http_api", "ok", item_count=len(items))
-        return _format_search_response("B站", items, trace=trace)
+        result = _format_search_response("B站", items[:page_size], trace=trace)
+        result.setdefault('metadata', {})['acquired_items'] = items
+        pagination = data.get('data') or {}
+        pages = pagination.get('numPages')
+        known = type(pages) is int and pages >= 0
+        result.setdefault('metadata', {})['continuation'] = {
+            'status': 'more_available' if known and page < pages else 'source_exhausted' if known else 'end_unverified',
+            'page': page, 'next_page': page+1 if not known or page < pages else None,
+            'effective_limit': page_size, 'acquired_count': len(items), 'scope': 'same_query_only',
+        }
+        return result
     except httpx.TimeoutException:
         log.error("B站搜索超时")
         trace.add("http_api", "failed", detail="timeout", error_type="request_failed", retryable=True)

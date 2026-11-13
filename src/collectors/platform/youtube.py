@@ -48,7 +48,9 @@ def canonical_youtube_url(video_id: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def search_youtube(keyword: str, limit: int = 10) -> Dict:
+def search_youtube(keyword: str, limit: int = 10, page_token: str = '') -> Dict:
+    if not isinstance(page_token, str) or len(page_token) > 4096:
+        raise ValueError('invalid_youtube_page_token')
     api_key = youtube_api_key()
     if not api_key:
         return _youtube_error("YOUTUBE_API_KEY is not configured", error_type="not_configured")
@@ -62,6 +64,7 @@ def search_youtube(keyword: str, limit: int = 10) -> Dict:
                     "q": keyword,
                     "type": "video",
                     "maxResults": limit,
+                    **({'pageToken': page_token} if page_token else {}),
                     "key": api_key,
                 },
             ),
@@ -99,6 +102,13 @@ def search_youtube(keyword: str, limit: int = 10) -> Dict:
             "total": len(items),
             "platform": "YouTube",
             "metadata": {
+                "continuation": {
+                    "status": ('cursor_not_advanced' if data.get('nextPageToken') == page_token and page_token
+                               else 'more_available' if data.get('nextPageToken') else 'source_exhausted'),
+                    "next_page_token": data.get('nextPageToken', ''),
+                    "requested_page_token": page_token, "effective_limit": limit,
+                    "scope": "same_query_and_filters_only",
+                },
                 "collection": {
                     "platform": "YouTube",
                     "strategy_tree": ["http_api", "youtube_data_api_v3", "search.list"],
@@ -107,7 +117,8 @@ def search_youtube(keyword: str, limit: int = 10) -> Dict:
             },
         }
     except Exception as exc:
-        return _youtube_error(str(exc), error_type=_youtube_error_type(exc))
+        error_type = _youtube_error_type(exc)
+        return _youtube_error('YouTube rejected the page token; select a fresh continuation' if error_type == 'invalid_page_token' else str(exc), error_type=error_type)
 
 
 def get_youtube_detail(video_id_or_url: str, *, include_transcript: bool = True, language: str | None = None) -> Dict:
@@ -318,6 +329,10 @@ class _YouTubeRateLimitError(RuntimeError):
     pass
 
 
+class _YouTubePageTokenError(RuntimeError):
+    pass
+
+
 def _youtube_get_once(url: str, params: Dict, *, api_key: str, timeout_s: float, proxy: str | None) -> Dict:
     timeout = httpx.Timeout(timeout_s, connect=min(timeout_s, 3.0), read=timeout_s, write=min(timeout_s, 3.0), pool=min(timeout_s, 3.0))
     headers = {"X-Goog-Api-Key": api_key} if api_key else {}
@@ -329,6 +344,8 @@ def _youtube_get_once(url: str, params: Dict, *, api_key: str, timeout_s: float,
             payload = resp.json()
         except Exception:
             payload = {}
+        if _invalid_page_token(payload):
+            raise _YouTubePageTokenError('YouTube rejected the page token')
         message = ((payload.get("error") or {}).get("message") if isinstance(payload, dict) else "") or resp.text[:300]
         if resp.status_code == 429:
             raise _YouTubeRateLimitError(f"YouTube API HTTP 429: {message}")
@@ -337,6 +354,14 @@ def _youtube_get_once(url: str, params: Dict, *, api_key: str, timeout_s: float,
 
 
 def _youtube_error_type(exc: Exception) -> str:
+    if isinstance(exc, _YouTubePageTokenError):
+        return 'invalid_page_token'
+    if isinstance(exc, httpx.HTTPStatusError):
+        try:
+            if _invalid_page_token(exc.response.json()):
+                return 'invalid_page_token'
+        except ValueError:
+            pass
     text = str(exc).lower()
     if isinstance(exc, _YouTubeRateLimitError) or "429" in text or "rate" in text or "quota" in text:
         return "rate_limited"
@@ -345,6 +370,12 @@ def _youtube_error_type(exc: Exception) -> str:
     if isinstance(exc, (httpx.ConnectError, httpx.ProxyError)):
         return "network_error"
     return type(exc).__name__
+
+
+def _invalid_page_token(payload) -> bool:
+    error = payload.get('error') if isinstance(payload, dict) else None
+    errors = error.get('errors', []) if isinstance(error, dict) else []
+    return isinstance(errors, list) and any(isinstance(item, dict) and item.get('reason') == 'invalidPageToken' for item in errors)
 
 
 def _best_thumbnail(thumbnails: Dict) -> str:
@@ -363,7 +394,7 @@ def _int_or_zero(value) -> int:
 
 
 def _youtube_error(message: str, *, error_type: str = "request_failed", url: str = "") -> Dict:
-    return {
+    result = {
         "items": [],
         "total": 0,
         "platform": "YouTube",
@@ -371,10 +402,13 @@ def _youtube_error(message: str, *, error_type: str = "request_failed", url: str
         "error": {
             "error": message,
             "type": error_type,
-            "retryable": error_type not in {"not_configured"},
+            "retryable": error_type not in {"not_configured", "invalid_page_token"},
             "hint": "Set YOUTUBE_API_KEY for YouTube Data API v3" if error_type == "not_configured" else "",
         },
     }
+    if error_type == 'invalid_page_token':
+        result['metadata'] = {'continuation': {'status': 'cursor_rejected', 'source_exhausted': False}}
+    return result
 
 
 def collect_video_detail(request):

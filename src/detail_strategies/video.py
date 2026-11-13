@@ -88,10 +88,12 @@ def enhance_video_detail(request, collected):
         operations.append(MediaOperation.SAMPLE_FRAMES)
     if request.options.get('include_ocr'):
         operations.append(MediaOperation.RUN_OCR)
+    from runtime.read_options import MediaReadOptions, normalized_options
+    media_options = normalized_options(MediaReadOptions, request.options.get('media'))
     plan = MediaActionPlan.from_bundle(bundle, source_mode=InformationSourceMode.DERIVED_TEXT,
         target_kinds=(MediaKind.AUDIO, MediaKind.VIDEO), operations=tuple(operations),
         provider='local', storage_policy=StoragePolicy.MEDIA_CACHE_TTL,
-        budget=MediaBudget(max_frames=8, timeout_seconds=600))
+        budget=MediaBudget(max_frames=media_options['max_frames'], timeout_seconds=request.options.get('timeout_s',600), metadata=media_options))
     result = execute_media_plan(bundle, plan, language=request.options.get('language'))
     for key in ('transcript', 'transcript_metadata', 'ocr_text', 'ocr_text_locators'):
         if key in result:

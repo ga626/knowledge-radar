@@ -1,6 +1,12 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-11-12",
+  "updated_at": "2026-11-13",
+  "acquisition_limits_contract": {
+    "clocks": "Durable v2 jobs separate cumulative active execution, resource queue, user wait and finite overall authorization. Historical v1 jobs retain their recorded deadline semantics.",
+    "payloads": "Large sanitized job payloads and committed collection bodies use task-local SHA-256 references; private tokens remain execution-memory-only. Reference paths, byte bounds and identity are validated before use.",
+    "continuation": "Window completion never claims source exhaustion. Search pagination and partial media coverage retain explicit continuation and unsupported boundaries.",
+    "safety": "Fees, unknown-result replay locks, account risk, user-file ownership, parser memory and transport protocol bounds remain enforced. Agent owns semantic sufficiency."
+  },
   "research_capability_contract": {
     "ownership": "Codex owns research framing, source selection, sufficiency and recommendations. Official host search requires no KR route admission; KR supplies special acquisition, durable execution and fixed evidence.",
     "skill": "The capability entry is concise; recruitment, customer evidence and media references are loaded on demand, not mandatory forms or platform quotas.",

@@ -28,6 +28,7 @@ class StorageLeases:
         self.path.parent.mkdir(parents=True,exist_ok=True)
         conn=sqlite3.connect(self.path,timeout=5)
         conn.execute("CREATE TABLE IF NOT EXISTS leases(path TEXT,pid INTEGER,expires REAL,PRIMARY KEY(path,pid))")
+        conn.execute("CREATE TABLE IF NOT EXISTS task_pins(path TEXT,task_id TEXT,db_path TEXT,expires REAL,PRIMARY KEY(path,task_id,db_path))")
         return conn
 
     def acquire(self,path,ttl_s=3600):
@@ -45,15 +46,38 @@ class StorageLeases:
         with self.connect() as conn:
             conn.execute("DELETE FROM leases WHERE pid=?", (os.getpid(),))
 
+    def pin_task(self, path, task_id, db_path, expires):
+        """活动任务的缓存引用与PID租约分开；不延长任务总授权期限。"""
+        if not Path(path).exists():
+            raise FileNotFoundError('cannot pin missing cache')
+        with self.connect() as conn:
+            conn.execute('DELETE FROM task_pins WHERE expires < ?', (time.time(),))
+            conn.execute('INSERT OR REPLACE INTO task_pins VALUES(?,?,?,?)',
+                         (str(Path(path).resolve()), task_id, str(Path(db_path).resolve()), expires))
+
     def protected(self,path,conn=None):
         from .mcp_observability import _pid_is_running
         resolved=Path(path).resolve()
         if conn is None:
             with self.connect() as reader:
                 rows=reader.execute("SELECT path,pid,expires FROM leases").fetchall()
+                pins=reader.execute('SELECT path,task_id,db_path,expires FROM task_pins').fetchall()
         else:
             rows=conn.execute("SELECT path,pid,expires FROM leases").fetchall()
-        return any((resolved==Path(p) or Path(p) in resolved.parents) and until>time.time() and _pid_is_running(pid) for p,pid,until in rows)
+            pins=conn.execute('SELECT path,task_id,db_path,expires FROM task_pins').fetchall()
+        if any((resolved==Path(p) or Path(p) in resolved.parents) and until>time.time() and _pid_is_running(pid) for p,pid,until in rows):
+            return True
+        for p, task_id, db_path, until in pins:
+            if until <= time.time() or not (resolved == Path(p) or Path(p) in resolved.parents):
+                continue
+            try:
+                with sqlite3.connect(Path(db_path).as_uri()+'?mode=ro', uri=True, timeout=1) as task_db:
+                    row = task_db.execute('SELECT status FROM runtime_tasks WHERE task_id=?', (task_id,)).fetchone()
+                if row and row[0] in {'queued', 'running', 'waiting_for_user', 'waiting_cooldown'}:
+                    return True
+            except sqlite3.Error:
+                return True  # 暂不可读时保守保护，有限expires防永久占用。
+        return False
 
 
 def quarantine_files(paths, *, cache_root, data_root):

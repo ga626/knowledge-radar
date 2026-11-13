@@ -45,10 +45,12 @@ def _extract_pdf_text(source, *, max_pages, max_bytes, max_chars, page_numbers):
     if reader.is_encrypted and not reader.decrypt(""):
         raise DocumentError('document_password_required') from None
     count = len(reader.pages)
-    if count > MAX_PDF_PAGES:
+    if count > MAX_PDF_PAGES and page_numbers is None and max_pages is None:
         raise ValueError('document_page_budget_exceeded')
     from runtime.document_contract import selected_pages
     selected = selected_pages(count, max_pages=max_pages, page_numbers=page_numbers)
+    if len(selected) > MAX_PDF_PAGES:
+        raise ValueError('document_page_budget_exceeded')
     limit = len(selected)
     blocks, empty_pages, suspicious_pages = [], [], []
     quality_warnings = []
@@ -183,6 +185,8 @@ def _process_pdf(source, *, max_pages=None, max_bytes=MAX_PDF_BYTES,
     requested = parsed.get('requested_pages') or list(range(1,parsed['pages_read']+1))
     parsed['requested_pages'] = requested
     parsed.setdefault('processed_pages', requested[:parsed['pages_read']])
+    from runtime.execution_context import record_execution_progress
+    record_execution_progress('document_text_ready', completed_pages=len(parsed['processed_pages']), requested_pages=len(requested))
     original_empty = parsed.get('text_layer_empty_pages',parsed.get('empty_pages',[]))
     parsed['text_layer_empty_pages'] = list(original_empty)
     missing = sorted((set(original_empty) | (set(parsed.get('suspicious_text_pages',[])) if enhance_suspicious else set())) - set(parsed.get('ocr_pages',[])))
@@ -242,6 +246,8 @@ def _process_pdf(source, *, max_pages=None, max_bytes=MAX_PDF_BYTES,
                 empty_pages=[p for p in original_empty if p not in parsed['ocr_pages']])
             if on_progress:
                 on_progress(parsed)
+            if event['stage'] == 'completed':
+                record_execution_progress('document_ocr', ocr_completed_pages=len(parsed['ocr_pages']))
         try:
             result = run_cloud_ocr(source,timeout_s=remaining,page_numbers=batch,
                                    allow_partial=True,on_progress=page_progress)

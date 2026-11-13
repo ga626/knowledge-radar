@@ -84,6 +84,35 @@ def _detected_transcript(result):
     return text.strip(), language
 
 
+def asr_implementation_identity():
+    """只绑定转写算法；Office等无关实现的改动不废弃音频断点。"""
+    import hashlib
+    import inspect
+    from runtime.media_decode import audio_chunks
+    return hashlib.sha256('\n'.join(inspect.getsource(fn) for fn in (
+        _detected_transcript, _decode_asr_segment, _load_asr_model,
+        _language_tokenizer, audio_chunks, native_asr)).encode()).hexdigest()
+
+
+def _decode_asr_segment(model, samples, rate, start, *, depth=0):
+    from runtime.execution_context import check_execution
+    check_execution()
+    stream = model.create_stream()
+    stream.accept_waveform(rate, samples)
+    model.decode_stream(stream)
+    check_execution()  # native未返回前不释放资源，取消后不保存迟到块。
+    if len(stream.result.tokens) >= 1024:
+        if depth >= 3 or len(samples) < rate:
+            raise ValueError('asr_token_budget_exhausted_no_complete_transcript')
+        middle = len(samples)//2
+        left, left_splits = _decode_asr_segment(model, samples[:middle], rate, start, depth=depth+1)
+        right, right_splits = _decode_asr_segment(model, samples[middle:], rate, start+middle/rate, depth=depth+1)
+        return left+right, 1+left_splits+right_splits
+    text, detected = _detected_transcript(stream.result)
+    return [{'text': text, 'language': detected, 'start_s': start,
+             'end_s': start+len(samples)/rate, 'kind': 'audio_chunk'}], 0
+
+
 def native_asr(request):
     """单实例CPU INT8、逐30秒块检测与转写；外语整次失败，不归档部分正文。"""
     from runtime.execution_context import check_execution, current_execution, record_execution_progress
@@ -106,13 +135,27 @@ def native_asr(request):
     record_execution_progress('audio_decode', model_load_s=round(load_s,3), model_cache_hit=hit)
     identity = {key: request[key] for key in ('input_sha256', 'model_identity', 'language', 'device', 'threads')}
     identity.update(engine=ASR_ENGINE, chunk_seconds=30, max_tokens=1024, language_contract=3,
-                    implementation=file_sha(__file__))
-    checkpoint = OperationCheckpoint(media_cache_subdir('asr_checkpoints'), identity, identity)
+                    implementation=asr_implementation_identity(), chunk_contract=2)
+    checkpoint = OperationCheckpoint(media_cache_subdir('asr_checkpoints'), identity, identity, max_age_s=None)
     rows = checkpoint.read().get('chunks', [])
+    if not rows:
+        # PR48与上一候选的ASR四个函数AST一致；只接纳这两个已核对实现（含CRLF）。
+        # 不接纳任意旧实现，输入/模型/语言/线程身份及逐块时间仍须完全匹配。
+        for implementation in (
+            '5f6bc27756b2ed4f87fd30ec4ed45a7fb784c9e60c172908c1263de0075f6bf5',
+            '9d9f1da393e8c91fe3d7b2085a158b29a5b97d7981201e098fb54a0f5acca97a',
+            '1790745abf823b63e3121578a0cdbae53f0678bac6da3a57e1d08696f984092f',
+            '3ed6ab9f06e2fae5b3c85b3e76560a4f3f54b99e5776bc846cb446be1650e72f',
+        ):
+            legacy = {k:v for k,v in identity.items() if k != 'chunk_contract'}
+            legacy['implementation'] = implementation
+            rows = OperationCheckpoint(media_cache_subdir('asr_checkpoints'),legacy,legacy,max_age_s=None).read().get('chunks',[])
+            if rows:
+                break
     reused = len(rows)
     record_execution_progress('audio_decode', resumed_chunks=reused, completed_chunks=reused,
                               processed_audio_s=rows[-1]['end_s'] if rows else 0)
-    inference_s, decode_s, count = 0., 0., 0
+    inference_s, decode_s, count, split_chunks = 0., 0., 0, 0
     decode_started = time.monotonic()
     for index, (start, samples, rate) in enumerate(audio_chunks(request['input_path'])):
         decode_s += time.monotonic() - decode_started
@@ -122,23 +165,19 @@ def native_asr(request):
             if rows[index]['start_s'] != start or rows[index]['end_s'] != end:
                 raise ValueError('asr_checkpoint_chunk_identity_mismatch')
         else:
-            stream = model.create_stream()
-            # 始终auto；语言偏好仅用于字幕/缓存，不能预填覆盖真实音频语言。
-            stream.accept_waveform(rate, samples)
             inference_started = time.monotonic()
             record_execution_progress('transcription', audio_decode_s=round(decode_s,3))
             try:
-                model.decode_stream(stream)
+                segments, splits = _decode_asr_segment(model, samples, rate, start)
+                split_chunks += splits
             finally:
                 inference_s += time.monotonic() - inference_started
                 record_execution_progress('transcription', transcription_s=round(inference_s,3),
                                           worker_total_s=round(time.monotonic()-started,3))
             check_execution()  # native返回前保留租约；取消后不读回、不保存迟到块。
-            result = stream.result
-            if len(result.tokens) >= 1024:
-                raise ValueError('asr_token_budget_exhausted_no_complete_transcript')
-            text, detected = _detected_transcript(result)
-            rows.append({'text': text, 'language': detected, 'start_s': start, 'end_s': end, 'kind': 'audio_chunk'})
+            rows.append({'text': '\n'.join(x['text'] for x in segments if x['text']),
+                         'language': segments[0]['language'], 'languages': sorted({x['language'] for x in segments if x['language']}),
+                         'start_s': start, 'end_s': end, 'kind': 'audio_chunk', 'segments': segments})
             context = current_execution() or {}
             checkpoint.write({'chunks': rows, 'writer_attempt': context.get('attempt_id', ''),
                               'writer_execution': context.get('execution_id', '')})
@@ -149,7 +188,7 @@ def native_asr(request):
     if count != len(rows):
         raise ValueError('asr_checkpoint_duration_mismatch')
     locators, cursor, parts = [], 0, []
-    for row in rows:
+    for row in [segment for row in rows for segment in row.get('segments', [row])]:
         if not row['text']:
             continue
         parts.append(row['text'])
@@ -157,7 +196,7 @@ def native_asr(request):
                          'start_s': row['start_s'], 'end_s': row['end_s'], 'kind': 'audio_chunk'})
         cursor += len(row['text']) + 1
     duration = rows[-1]['end_s'] if rows else 0
-    languages = sorted({row['language'] for row in rows if row.get('language')})
+    languages = sorted({lang for row in rows for lang in row.get('languages', [row.get('language')]) if lang})
     record_execution_progress('transcript_complete', completed_chunks=count, processed_audio_s=duration,
                               worker_total_s=round(time.monotonic()-started,3))
     return {'status': 'acquired', 'text': '\n'.join(parts), 'source_kind': 'asr', 'component': request['component'],
@@ -167,7 +206,7 @@ def native_asr(request):
         'language_hint': request.get('language') or 'auto', 'decoding_language': 'auto',
         'detected_languages': languages, 'detected_language': languages[0] if len(languages) == 1 else 'zh-en' if languages else '',
         'language_detection': 'qwen_generated_prefix/v1',
-        'asr_metrics': {'audio_duration_s': duration, 'chunks': count, 'resumed_chunks': reused,
+        'asr_metrics': {'audio_duration_s': duration, 'chunks': count, 'resumed_chunks': reused, 'split_chunks': split_chunks,
             'model_load_s': round(load_s, 3), 'model_cache_hit': hit,
             'audio_decode_s': round(decode_s, 3), 'transcription_s': round(inference_s, 3),
             'worker_total_s': round(time.monotonic() - started, 3),

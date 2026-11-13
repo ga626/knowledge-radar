@@ -36,4 +36,4 @@ class BilibiliAdapter(LegacySearchAdapterMixin):
 
 def search_from_request(request: SearchRequest):
     from collectors.platform.bilibili import legacy_search_bilibili
-    return legacy_search_bilibili(request.keyword, page_size=request.limit)
+    return legacy_search_bilibili(request.keyword, page_size=request.limit, page=request.options.get('page', 1))
