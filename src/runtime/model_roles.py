@@ -62,7 +62,7 @@ COMPONENTS = {
         "requirements": ["docling-slim==2.148.0"],
         "extras": ["format-office", "format-web", "convert-core"],
         "requirements_lock": "config/optional-docling-win-py312.lock",
-        "requirements_sha256": "54e7ce02b9aaa7ac4680f99c97955485d1c352b63cbbf777bca3fce81b8315cf",
+        "requirements_sha256": "de1c7699e95b274b78d97273daa597e7df031e588ae138135831cf7cc7091212",
         "code_license": "MIT",
         "weight_license": "not_applicable",
         "model_required": False,
