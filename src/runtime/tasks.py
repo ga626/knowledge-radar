@@ -422,7 +422,7 @@ class TaskStore:
         finally:
             conn.close()
 
-    def record_result_association(self, task, recording):
+    def record_result_association(self, task, recording, *, expected_recording=None):
         """执行侧补记回执；只注记同一状态/产物，不能覆盖并发取消或新代际。"""
         self.initialize()
         expected = task.get("metadata") or {}
@@ -432,6 +432,8 @@ class TaskStore:
             if row is None:
                 return False
             metadata = _json_loads(row["metadata_json"])
+            if expected_recording is not None and metadata.get('research_recording') != expected_recording:
+                return False
             if row["status"] != task["status"] or row['result_path'] != task.get('result_path', '') or any(
                 metadata.get(key) != expected.get(key) for key in ("attempt_id", "execution_id", "artifact_sha256", "research_task_id")
             ):
@@ -441,6 +443,28 @@ class TaskStore:
             conn.execute("UPDATE runtime_tasks SET metadata_json=? WHERE task_id=?",
                          (_json_dumps(metadata), task["task_id"]))
             return True
+
+    def quarantine_recording_conflicts(self):
+        """将同一终态的确定性身份冲突留作错误，不再当作可自动补写的活动工作。"""
+        classified = []
+        for task in self.managed_tasks(adapter='durable_process', statuses=TERMINAL_STATUSES,
+                                       recording_pending=True):
+            meta = task.get('metadata') or {}
+            recording = meta.get('research_recording') or {}
+            response = recording.get('response') or {}
+            if (recording.get('status') != 'recording_failed' or recording.get('handoff_version') != 1
+                    or len(recording.get('research_task_ids') or []) != 1
+                    or (meta.get('research_task_id') and meta['research_task_id'] != recording['research_task_ids'][0])
+                    or recording.get('task_status') != task['status']
+                    or not meta.get('attempt_id') or recording.get('attempt_id') != meta['attempt_id']
+                    or recording.get('artifact_sha256') != meta.get('artifact_sha256', '')
+                    or not isinstance(response, dict) or response.get('status') != 'recording_failed'
+                    or response.get('reason') != 'receipt_identity_conflict'):
+                continue
+            if self.record_result_association(task, {**recording, 'status': 'recording_conflict'},
+                                              expected_recording=recording):
+                classified.append(task['task_id'])
+        return classified
 
     def _ensure_column(self, conn: sqlite3.Connection, name: str, definition: str) -> None:
         columns = {row["name"] for row in conn.execute("PRAGMA table_info(runtime_tasks)").fetchall()}

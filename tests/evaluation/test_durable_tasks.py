@@ -796,13 +796,91 @@ def test_legacy_failed_completion_projection_keeps_history_and_settles_once(serv
     assert len(after) == 2
     if alternate_conflict:
         assert after == before  # 第二个确定性身份冲突仍阻断，不能无限换ID绕过。
-        assert row['metadata']['research_recording']['status'] == 'recording_failed'
-        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True)
+        assert row['metadata']['research_recording']['status'] == 'recording_conflict'
+        assert service.result(task_id)['research_receipt']['reason'] == 'receipt_identity_conflict'
+        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True) == []
+        service.recover()
+        assert ledger.read_task(task_id=research['research_task_id'])['tool_receipts'] == before
+        assert service.store.get_task(task_id)['metadata']['research_recording']['status'] == 'recording_conflict'
     else:
         assert row['metadata']['research_recording']['status'] == 'recorded'
         assert after[-1]['trace_id'] == task_id + ':result:failed'
         assert after[-1]['submission_sha256'] != original['submission_sha256']
         assert service.store.managed_tasks(adapter='durable_process', recording_pending=True) == []
+
+
+@pytest.mark.parametrize('variant', ['exact', 'transient', 'stale_attempt', 'stale_artifact', 'running', 'multiple_bindings'])
+def test_existing_conflict_classification_preserves_evidence_and_retryable_work(service, variant):
+    import copy
+    task_id = 'durable-existing-conflict'
+    task = service.store.upsert_task(task_id, 'durable_content_detail', 'fixture',
+        status='running' if variant == 'running' else 'failed',
+        metadata={'adapter': 'durable_process', 'attempt_id': 'attempt', 'artifact_sha256': 'fixed',
+                  'research_task_id': 'research'})
+    response = {'status': 'recording_failed', 'reason': 'receipt_identity_conflict'}
+    recording = {'status': 'recording_failed', 'handoff_version': 1, 'response': response,
+                 'research_task_ids': ['research']}
+    service.store.record_result_association(task, recording)
+    if variant == 'transient':
+        recording['response'] = {'status': 'recording_failed', 'error_type': 'OSError'}
+        service.store.record_result_association(task, recording)
+    elif variant == 'multiple_bindings':
+        recording['research_task_ids'] = ['research', 'other-research']
+        service.store.record_result_association(task, recording)
+    elif variant == 'stale_attempt':
+        meta = service.store.get_task(task_id)['metadata']
+        service.store.upsert_task(task_id, 'durable_content_detail', 'fixture', status='failed',
+                                 metadata={**meta, 'attempt_id': 'new-attempt'})
+    elif variant == 'stale_artifact':
+        meta = service.store.get_task(task_id)['metadata']
+        service.store.upsert_task(task_id, 'durable_content_detail', 'fixture', status='failed',
+                                 metadata={**meta, 'artifact_sha256': 'changed'})
+    before = copy.deepcopy(service.store.get_task(task_id))
+    expected = [task_id] if variant == 'exact' else []
+    assert service.store.quarantine_recording_conflicts() == expected
+    after = service.store.get_task(task_id)
+    if variant == 'exact':
+        assert after['metadata']['research_recording']['status'] == 'recording_conflict'
+        assert after['metadata']['research_recording']['response'] == response
+        before['metadata']['research_recording']['status'] = 'recording_conflict'
+        assert after == before
+        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True) == []
+    else:
+        assert after == before
+        assert service.store.managed_tasks(adapter='durable_process', recording_pending=True)
+    assert service.store.quarantine_recording_conflicts() == []
+
+
+def test_conflict_classification_cannot_overwrite_concurrent_success(service):
+    task = service.store.upsert_task('durable-race', 'durable_content_detail', 'fixture', status='failed',
+        metadata={'adapter': 'durable_process', 'attempt_id': 'attempt', 'research_task_id': 'research'})
+    old = {'status': 'recording_failed', 'handoff_version': 1,
+           'response': {'status': 'recording_failed', 'reason': 'receipt_identity_conflict'}}
+    service.store.record_result_association(task, old)
+    snapshot = service.store.get_task(task['task_id'])
+    service.store.record_result_association(snapshot, {'status': 'recorded', 'response': {'status': 'recorded'}})
+    assert service.store.record_result_association(snapshot, {**old, 'status': 'recording_conflict'},
+        expected_recording=snapshot['metadata']['research_recording']) is False
+    assert service.store.get_task(task['task_id'])['metadata']['research_recording']['status'] == 'recorded'
+
+
+def test_one_binding_conflict_cannot_hide_another_bindings_retryable_failure(service, monkeypatch):
+    from runtime import research_ledger as ledger
+    task = service.store.upsert_task('durable-two-bindings', 'durable_content_detail', 'fixture',
+        status='failed', metadata={'adapter': 'durable_process', 'attempt_id': 'attempt',
+                                   'research_task_id': 'first'})
+    calls = []
+    def submit(**kwargs):
+        calls.append(kwargs['task_id'])
+        if kwargs['task_id'] == 'first':
+            return {'status': 'recording_failed', 'reason': 'receipt_identity_conflict'}
+        raise OSError('transient fixture')
+    monkeypatch.setattr(ledger, 'submit_tool_result', submit)
+    service.record_completion(task['task_id'], research_task_ids=['first', 'second'])
+    assert service.store.get_task(task['task_id'])['metadata']['research_recording']['status'] == 'recording_failed'
+    assert service.store.managed_tasks(adapter='durable_process', recording_pending=True)
+    service.record_completion(task['task_id'])
+    assert calls.count('second') == 2
 
 
 def test_execution_completion_does_not_claim_requested_coverage_is_satisfied(service, monkeypatch):
