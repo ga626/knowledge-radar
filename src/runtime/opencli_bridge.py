@@ -57,7 +57,7 @@ def invoke_page(*, session, operation, expression="", url="", wait_selector="", 
         failure = ensure_daemon(root, node, state_root=config["state_root"])
         if failure:
             return {"ok": False, "code": failure}
-        if operation in {'search','detail','comments','auth_verify'}:
+        if operation in {'search','detail','comments','auth_verify','login'}:
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():
                 import httpx

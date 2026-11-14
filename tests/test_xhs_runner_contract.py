@@ -133,6 +133,16 @@ def test_unsigned_detail_on_opaque_work_page_requests_fresh_link_without_navigat
     assert result['metadata']['work_page_closed']
 
 
+def test_authenticated_login_confirmation_does_not_require_background_presentation(fixture_root,monkeypatch):
+    helper = fixture_root/'window-helper-fixture.mjs'
+    helper.write_text(helper.read_text(encoding='utf-8').replace(
+        'presentation_confirmed:true', 'presentation_confirmed:false'), encoding='utf-8')
+    result,calls=run(fixture_root,monkeypatch,operation='resume')
+    assert result['ok'] and result['data']['authenticated_ui']
+    assert result['metadata']['work_page_closed']
+    assert not any(c['kind']=='goto' for c in calls)
+
+
 def test_media_resume_without_a_loaded_body_still_uses_native_ready_path(fixture_root,monkeypatch):
     result,calls=run(fixture_root,monkeypatch,include_comments=False,checkpoint={
         'note_id':NOTE,'content':'已有正文','completed_stages':['body']})
