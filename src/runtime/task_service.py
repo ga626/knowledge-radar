@@ -718,6 +718,11 @@ class TaskService:
         research_ids = [*(research_task_ids or []), *recording.get('research_task_ids', []),
                         (task.get('metadata') or {}).get('research_task_id')]
         research_ids = list(dict.fromkeys(filter(None, research_ids)))
+        if response["status"] in {"artifact_missing", "artifact_corrupt"} and not research_ids:
+            # An unbound task has no research handoff to repair.  A read of a
+            # missing artifact must remain observational and must not create a
+            # synthetic research_recording side effect.
+            return response
         if response["status"] in {"artifact_missing", "artifact_corrupt"}:
             # 损坏产物不伪造成功归档；修复后由显式 recover 重补，避免无限空转。
             self.store.record_result_association(task, {"status": response["status"],
