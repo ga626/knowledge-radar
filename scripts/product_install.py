@@ -69,7 +69,10 @@ def installation_maintenance(function):
         active = load_active(install_root) if (install_root/'active.json').is_file() else None
         result = None
         handoff_error = None
+        recording_conflicts = []
         try:
+            if active:
+                recording_conflicts = settle_terminal_recording_conflicts(active)
             with runtime_handoff(active, install_root):
                 with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT) if active else nullcontext():
                     result = function(*args, **kwargs)
@@ -78,6 +81,8 @@ def installation_maintenance(function):
                 raise
             handoff_error = type(exc).__name__
         current = load_active(install_root) if (install_root/'active.json').is_file() else result.get('active')
+        if recording_conflicts:
+            result['maintenance_recording_conflicts'] = recording_conflicts
         if current:
             readiness = ({'status': 'unavailable', 'reason': 'runtime_user_session_handoff_failed',
                           'error_type': handoff_error} if handoff_error else complete_runtime_handoff(install_root, current))
@@ -93,6 +98,35 @@ def installation_maintenance(function):
 
 def runtime_handoff(active, install_root):
     return cli_lifecycle().runtime_manager_handoff(active, install_root=install_root, package_root=PACKAGE_ROOT)
+
+
+def settle_terminal_recording_conflicts(active):
+    """兼容旧内核的退出合同；只分类已证实的永久冲突，不执行任务或改写固定证据。"""
+    data_root = Path(active['data_root'])
+    if not (data_root / 'logs' / 'knowledgeradar-tasks.sqlite3').is_file():
+        return []
+    environment = dict(os.environ)
+    environment.update(cli_lifecycle().active_environment(active))
+    # Use this installer's code, not the old owner's implementation. Data paths
+    # still come from the selected active installation, never the checkout.
+    environment.update(PYTHONPATH=str(PACKAGE_ROOT/'src'), KR_SOURCE_ROOT=str(PACKAGE_ROOT/'src'),
+                       KR_PROJECT_ROOT=str(PACKAGE_ROOT))
+    command = [str(quiet_runtime_python(_active_runtime(Path(active['program_root']).parents[1], active))),
+        '-X', 'utf8', '-c', 'import json,sys; sys.path.insert(0,sys.argv[1]); '
+        'from runtime.tasks import TaskStore; '
+        'print(json.dumps(TaskStore(sys.argv[2]).quarantine_recording_conflicts()))',
+        str(PACKAGE_ROOT/'src'),
+        str(data_root/'logs'/'knowledgeradar-tasks.sqlite3')]
+    try:
+        process = subprocess.run(command, env=environment, cwd=PACKAGE_ROOT,
+            capture_output=True, text=True, encoding='utf-8', timeout=30, check=False,
+            **({'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}))
+        result = json.loads(process.stdout) if process.returncode == 0 else None
+        if not isinstance(result, list) or not all(isinstance(item, str) for item in result):
+            raise RuntimeError('terminal_recording_conflict_classification_failed')
+        return result
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError('terminal_recording_conflict_classification_failed') from exc
 
 
 def complete_runtime_handoff(install_root, active):

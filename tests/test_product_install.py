@@ -278,6 +278,7 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer, 'runtime_handoff', lambda *a, **k: nullcontext(), raising=False)
     monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *a, **k: {'status': 'ready', 'scope': 'fixture_only'}, raising=False)
     monkeypatch.setattr(installer, 'write_runtime_autostart', lambda *a, **k: None, raising=False)
+    monkeypatch.setattr(installer, 'settle_terminal_recording_conflicts', lambda *a: [], raising=False)
 
 
 def test_activation_handoff_restarts_after_maintenance_and_records_separate_readiness(tmp_path, monkeypatch):
@@ -298,13 +299,16 @@ def test_activation_handoff_restarts_after_maintenance_and_records_separate_read
         finally: events.append('unlocked')
     monkeypatch.setattr(installer, 'runtime_handoff', paused)
     monkeypatch.setattr(installer, 'cli_lifecycle', lambda: types.SimpleNamespace(maintenance=maintenance))
+    monkeypatch.setattr(installer, 'settle_terminal_recording_conflicts',
+                        lambda *args: events.append('conflicts-classified') or ['old-conflict'])
     monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *args: events.append('ready-checked') or {'status': 'ready'})
     @installer.installation_maintenance
     def operation(install_root):
         events.append('active-applied')
         return {'status': 'APPLIED', 'active': active}
     result = operation(tmp_path)
-    assert events == ['manager-paused', 'locked', 'active-applied', 'unlocked', 'manager-resumed', 'ready-checked']
+    assert events == ['conflicts-classified', 'manager-paused', 'locked', 'active-applied', 'unlocked', 'manager-resumed', 'ready-checked']
+    assert result['maintenance_recording_conflicts'] == ['old-conflict']
     assert result['runtime_readiness']['status'] == 'ready'
     assert result['native_host_binding']['status'] == 'not_revalidated'
 
@@ -319,6 +323,28 @@ def test_failed_handoff_readiness_never_claims_installation_complete(tmp_path, m
     result = operation(tmp_path)
     assert result['status'] == 'APPLIED_RUNTIME_NOT_READY'
     assert result['active'] == active  # 不伪装激活回滚
+
+
+def test_old_install_conflict_classification_uses_selected_data_and_new_installer_code(tmp_path, monkeypatch):
+    from runtime.tasks import TaskStore
+    actual = _load()
+    data = tmp_path/'selected-data'
+    store = TaskStore(str(data/'logs/knowledgeradar-tasks.sqlite3'))
+    task = store.upsert_task('durable-old', 'durable_content_detail', 'fixture', status='failed',
+        metadata={'adapter': 'durable_process', 'attempt_id': 'attempt', 'research_task_id': 'research'})
+    original_response = {'status': 'recording_failed', 'reason': 'receipt_identity_conflict'}
+    store.record_result_association(task, {'status': 'recording_failed', 'response': original_response,
+                                          'handoff_version': 1, 'research_task_ids': ['research']})
+    monkeypatch.setattr(actual, '_active_runtime', lambda *args: Path(sys.executable))
+    monkeypatch.setattr(actual, 'quiet_runtime_python', lambda path: path)
+    # Host overrides must not redirect the upgrade to an unrelated database.
+    monkeypatch.setenv('KR_TASK_DB_PATH', str(tmp_path/'unrelated.sqlite3'))
+    active = {'program_root': str(tmp_path/'install/app/old'), 'data_root': str(data)}
+    assert actual.settle_terminal_recording_conflicts(active) == ['durable-old']
+    recording = store.get_task(task['task_id'])['metadata']['research_recording']
+    assert recording['status'] == 'recording_conflict' and recording['response'] == original_response
+    assert not (tmp_path/'unrelated.sqlite3').exists()
+    assert actual.settle_terminal_recording_conflicts(active) == []
 
 
 def test_failed_os_task_resume_keeps_activation_but_reports_runtime_failure(tmp_path, monkeypatch):

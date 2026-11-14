@@ -712,6 +712,11 @@ class TaskService:
             state = query_outcome(final) if task["status"]=="completed" else "failed"
             ResearchIndex().query(job["payload"]["research_task_id"],job["payload"]["family"],status=state,result=final)
         recording = (task.get("metadata") or {}).get("research_recording") or {}
+        if (self._recording_matches(task, recording) and recording.get('handoff_version') == 1
+                and recording.get('status') == 'recording_conflict'
+                and recording['response'].get('reason') == 'receipt_identity_conflict'
+                and set(research_task_ids or []).issubset(recording.get('research_task_ids', []))):
+            return response
         if (not research_task_ids and self._recording_matches(task, recording)
                 and recording.get("status") == "recorded" and recording.get('handoff_version') == 1):
             return response
@@ -765,10 +770,17 @@ class TaskService:
             response["research_receipt"] = recorded
             recordings.append(recorded)
         if recordings:
-            failed = next((r for r in recordings if r["status"] != "recorded"), None)
+            # A conflict in one binding must not hide another binding's
+            # retryable I/O failure. Only an entirely non-retryable handoff
+            # may leave the automatic drain queue.
+            failed = next((r for r in recordings if r['status'] != 'recorded'
+                           and r.get('reason') != 'receipt_identity_conflict'), None)
+            failed = failed or next((r for r in recordings if r['status'] != 'recorded'), None)
             recorded = failed or recordings[-1]
             response["research_receipt"] = recorded
-            self.store.record_result_association(task, {"status": recorded["status"], "response": recorded,
+            recording_status = ('recording_conflict' if task['status'] in TERMINAL_STATUSES
+                and recorded.get('reason') == 'receipt_identity_conflict' else recorded['status'])
+            self.store.record_result_association(task, {"status": recording_status, "response": recorded,
                 "research_task_ids": research_ids, "handoff_version": 1})
         return response
 
