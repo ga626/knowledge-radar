@@ -1,6 +1,6 @@
 {
   "availability": "declared_not_live_probe",
-  "contract_hash": "30232ab03fdaf8f2d4ec61258ac4d277cecfaef4a3092030cc469e8106edf530",
+  "contract_hash": "b9e4e495e4025d8573696a2e052cc174e01f067d29498e6b74b86227fc04c130",
   "expand": {
     "arguments": {
       "tool_name": "<name>"
@@ -6068,7 +6068,7 @@
           },
           "component": {
             "default": "auto",
-            "description": "auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 qwen3-asr-0.6b。云失败明确报错，不转本地 OCR。",
+            "description": "auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 sherpa-onnx ASR。云失败明确报错，不转本地 OCR。",
             "title": "Component",
             "type": "string"
           },
@@ -11616,9 +11616,9 @@
         "additionalProperties": true,
         "type": "object"
       },
-      "purpose": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。",
+      "purpose": "按需维护研究记录或评测，不是搜索或交付许可。选择claim/审阅动作时才需声明同任务task_purpose及固定依赖；report_review绑定正文SHA256和baseline。action=evaluation维护现有题库。request_id幂等、expected_revision防并发；程序核身份与缺口，语义判断由Agent负责。",
       "read_only": false,
-      "usage": "记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"
+      "usage": "按需维护研究记录或评测，不是搜索或交付许可。选择claim/审阅动作时才需声明同任务task_purpose及固定依赖；report_review绑定正文SHA256和baseline。action=evaluation维护现有题库。request_id幂等、expected_revision防并发；程序核身份与缺口，语义判断由Agent负责。"
     }
   ]
 }

@@ -480,6 +480,24 @@ def active_mcp_block(active: dict[str, Any], python_exe: Path) -> str:
     return "\n".join(lines)
 
 
+def plugin_bundle_sha256(plugin_root: Path) -> str:
+    """Fingerprint every Skill resource and stable manifest metadata.
+
+    The derived version is excluded to avoid changing identity on every copy.
+    Relative paths and content hashes make rename/add/delete changes visible.
+    """
+    manifest = json.loads((plugin_root / '.codex-plugin/plugin.json').read_text(encoding='utf-8-sig'))
+    manifest.pop('version', None)
+    entries = {'.codex-plugin/plugin.json': hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, ensure_ascii=False, separators=(',', ':')).encode('utf-8')).hexdigest()}
+    for path in sorted((plugin_root / 'skills').rglob('*')):
+        if path.is_symlink():
+            raise RuntimeError('plugin_resource_symlink_not_supported')
+        if path.is_file():
+            entries[path.relative_to(plugin_root).as_posix()] = sha256_file(path)
+    return hashlib.sha256(json.dumps(entries, sort_keys=True, separators=(',', ':')).encode('utf-8')).hexdigest()
+
+
 def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
     source = program_root / "config" / "codex-product" / "plugin" / PLUGIN_NAME
     destination = codex_home / "plugins" / PLUGIN_NAME
@@ -490,7 +508,8 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
     skill = destination / "skills" / "research" / "SKILL.md"
     manifest = destination / ".codex-plugin" / "plugin.json"
     payload = json.loads(manifest.read_text(encoding="utf-8-sig"))
-    payload["version"] = f"{str(payload.get('version') or '0.0.0').split('+', 1)[0]}+codex.{sha256_file(skill)[:12]}"
+    bundle_hash = plugin_bundle_sha256(destination)
+    payload["version"] = f"{str(payload.get('version') or '0.0.0').split('+', 1)[0]}+codex.{bundle_hash[:12]}"
     manifest.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     marketplace = codex_home / ".agents" / "plugins" / "marketplace.json"
     existing = (
@@ -512,6 +531,7 @@ def copy_plugin(program_root: Path, codex_home: Path) -> dict[str, str]:
     return {
         "plugin_version": str(payload["version"]),
         "plugin_skill_sha256": sha256_file(skill),
+        "plugin_bundle_sha256": bundle_hash,
         "plugin_manifest_sha256": sha256_file(manifest),
     }
 

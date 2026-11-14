@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`30232ab03fdaf8f2d4ec61258ac4d277cecfaef4a3092030cc469e8106edf530`
+合同指纹：`b9e4e495e4025d8573696a2e052cc174e01f067d29498e6b74b86227fc04c130`
 
 ## advance_research_candidate
 
@@ -6128,7 +6128,7 @@ begin_claim 打开登录页；用户完成扫码后调用 confirm_claim 或 reco
       },
       "component": {
         "default": "auto",
-        "description": "auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 qwen3-asr-0.6b。云失败明确报错，不转本地 OCR。",
+        "description": "auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 sherpa-onnx ASR。云失败明确报错，不转本地 OCR。",
         "title": "Component",
         "type": "string"
       },
@@ -9689,7 +9689,7 @@ YouTube 公开视频搜索。
 
 ## update_research
 
-记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。
+按需维护研究记录或评测，不是搜索或交付许可。选择claim/审阅动作时才需声明同任务task_purpose及固定依赖；report_review绑定正文SHA256和baseline。action=evaluation维护现有题库。request_id幂等、expected_revision防并发；程序核身份与缺口，语义判断由Agent负责。
 
 ```json
 {

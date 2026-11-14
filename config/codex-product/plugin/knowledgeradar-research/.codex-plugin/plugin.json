@@ -1,7 +1,7 @@
 {
   "name": "knowledgeradar-research",
   "version": "0.1.0a22+codex",
-  "description": "KnowledgeRadar research perception for Codex.",
+  "description": "按需获取特殊来源、固定证据与交付研究成果；公开网页可直接使用官方搜索。",
   "author": {
     "name": "KnowledgeRadar"
   },
@@ -14,9 +14,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "KnowledgeRadar Research",
-    "shortDescription": "Research perception and evidence search for Codex",
-    "longDescription": "Use KnowledgeRadar as Codex's perception layer for external research and evidence-backed reports.",
+    "displayName": "KnowledgeRadar 研究能力",
+    "shortDescription": "学术全文、媒体转写、登录平台与固定证据",
+    "longDescription": "Codex 自主研究，公开网页直接使用官方搜索；需要特殊获取、持久执行或证据归档时使用 KR。",
     "developerName": "KnowledgeRadar",
     "category": "Productivity",
     "capabilities": [
@@ -24,7 +24,7 @@
       "Interactive"
     ],
     "defaultPrompt": [
-      "Research this with KnowledgeRadar and return an evidence-backed conclusion"
+      "自主判断研究路线，按需调用 KR 获取和保存材料，交付可追溯的结论"
     ],
     "brandColor": "#2563EB",
     "screenshots": []
