@@ -333,11 +333,16 @@ def invoke(operation, **kwargs):
             )
             if response.get("ok") and business_observed:
                 _observe_account("business_verified")
-            return response
     except RuntimeError as exc:
         if str(exc) != "browser_session_busy":
             raise
-        return _failure("browser_session_busy", executed=False)
+        response = _failure("browser_session_busy", executed=False)
+    if operation in {"search", "detail"}:
+        from platform_adapters.common import defer_browser_busy
+        code = response.get("failure_type") or response.get("code") or ""
+        defer_browser_busy("xiaohongshu", "platform_lease_busy" if code == "browser_session_busy" else code,
+            request_executed=response.get("request_executed"), resource="opencli:xiaohongshu")
+    return response
 
 def request_login():
     from runtime.leases import get_runtime_lease_coordinator, default_owner

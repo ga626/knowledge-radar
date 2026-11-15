@@ -2394,7 +2394,7 @@ def health_check(
             from runtime.xhs_opencli import request_login
             interaction = request_login()
         else:
-            interaction = request_browser_interaction(platform, reason)
+            interaction = request_browser_interaction(platform, reason, activate=True)
         return {
             "schema_version": "knowledgeradar-health-browser-interaction/v1",
             "summary": False,
