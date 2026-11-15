@@ -47,6 +47,8 @@ class VideoDetailStrategy:
             'rate_limited_or_ip_blocked', 'verification_required', 'private_or_authorization_required', 'region_restricted'}
         if blocked:
             data.update(enhancement_status='partial', failure_type=data['transcript_metadata']['failure_type'])
+            if data['transcript_metadata'].get('automatic_retry') is False:
+                data.update(automatic_retry=False, resume_policy='stop_no_auto_resume')
             return _response(request, data)
         if needs_media and request.options.get('_detail_stage') == 'collection':
             data.update(status='partial', enhancement_status='queued', _enhancement_pending=True)
@@ -55,6 +57,8 @@ class VideoDetailStrategy:
 
 
 def enhance_video_detail(request, collected):
+    if collected.get('part_details'):
+        return _enhance_parts(request, collected)
     from runtime.media_execution import execute_media_plan
     check_execution()
     started = time.monotonic()
@@ -104,6 +108,11 @@ def enhance_video_detail(request, collected):
         data['enhancement_status'] = 'partial'
     if request.options.get('include_transcript'):
         data['transcript_status'] = {'status': 'ok' if data.get('transcript') else 'failed'}
+        if data.get('part_scope'):
+            scope = data['part_scope']
+            complete = bool(data.get('transcript')) and result['status'] == 'acquired'
+            data['part_scope'] = {**scope, 'complete': complete,
+                'completed_pages': scope['selected_pages'] if complete else []}
     if visual and result.get('frames'):
         from runtime.video_analysis import analyze_video_evidence
         from runtime.resource_concurrency import ResourceDeferred
@@ -119,4 +128,51 @@ def enhance_video_detail(request, collected):
             data['enhancement_status'] = 'partial'
     data.setdefault('timings', {})['enhancement_wall_s'] = round(time.monotonic() - started, 3)
     data['status'] = 'completed' if data['enhancement_status'] == 'ok' else 'partial'
+    return _response(request, data)
+
+
+def _enhance_parts(request, collected):
+    """同一持久任务内逐P复用公共媒体检查点，不另起队列/模型/期限。"""
+    from dataclasses import replace
+    data = dict(collected)
+    completed, parts, segments, texts, outcomes = [], [], [], [], []
+    offset = 0
+    for row in data.pop('part_details'):
+        check_execution()
+        part_request = replace(request, url=row['url'])
+        failure = (row.get('transcript_metadata') or {}).get('failure_type')
+        if failure in {'verification_required', 'rate_limited_or_ip_blocked', 'private_or_authorization_required', 'region_restricted'}:
+            outcome = {**row, 'enhancement_status': 'partial', 'failure_type': failure}
+        else:
+            outcome = enhance_video_detail(part_request, row).data
+        outcomes.append(outcome)
+        text = outcome.get('transcript', '')
+        page = row.get('page', 1)
+        done = bool(text) and outcome.get('enhancement_status') == 'ok'
+        if done:
+            completed.append(page)
+        if text:
+            start = offset + (1 if texts else 0)
+            texts.append(text)
+            meta = outcome.get('transcript_metadata') or {}
+            for segment in meta.get('segments') or []:
+                if isinstance(segment, dict):
+                    segments.append({**segment,
+                        **({key: segment[key] + start for key in ('start', 'end') if isinstance(segment.get(key), int)}),
+                        'part': page, 'cid': row.get('cid'), 'source_url': row['url']})
+            parts.append({'page': page, 'cid': row.get('cid'), 'source_url': row['url'],
+                'start': start, 'end': start + len(text), 'unit': 'unicode_code_point',
+                'complete': done, 'source': meta.get('source'), 'language': meta.get('language')})
+            offset = start + len(text)
+    data['transcript'] = '\n'.join(texts)
+    scope = data['part_scope']
+    complete = len(completed) == len(scope['selected_pages'])
+    data['part_scope'] = {**scope, 'completed_pages': completed, 'complete': complete}
+    data['transcript_metadata'] = {'source': 'bilibili_multipart', 'parts': parts, 'segments': segments,
+        'complete': complete, 'timestamp_scope': 'part_local_seconds', 'requested_scope': scope['kind']}
+    data['part_results'] = [{'page': row.get('page'), 'url': row['url'],
+        'status': row.get('status'), 'enhancement_status': row.get('enhancement_status'),
+        'failure_type': row.get('failure_type') or (row.get('transcript_metadata') or {}).get('failure_type'),
+        'media_execution': row.get('media_execution', {})} for row in outcomes]
+    data.update(status='completed' if complete else 'partial', enhancement_status='ok' if complete else 'partial')
     return _response(request, data)

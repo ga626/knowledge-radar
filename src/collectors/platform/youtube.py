@@ -213,6 +213,7 @@ def fetch_youtube_transcript(video_id: str, preferred_languages: Optional[List[s
     timeout_s = max(1.0, float(os.environ.get("KR_YOUTUBE_TRANSCRIPT_TIMEOUT_S", "20")))
     deadline = started + timeout_s
     requests_log = []
+    phase = 'track_discovery'
 
     class TranscriptSession(Session):
         def request(self, method, url, **kwargs):
@@ -258,6 +259,7 @@ def fetch_youtube_transcript(video_id: str, preferred_languages: Optional[List[s
                     selected = available[0]
                 else:
                     raise
+            phase = 'caption_download'
             fetched = selected.fetch()
             transcript_language = getattr(fetched, 'language_code', '')
             snippets = list(fetched)
@@ -277,7 +279,10 @@ def fetch_youtube_transcript(video_id: str, preferred_languages: Optional[List[s
                 else "transcript_unavailable" if name in {"NoTranscriptFound", "TranscriptsDisabled", "VideoUnavailable"}
                 else "transcript_request_failed")
             result = {"status": status, "error_code": name, "failure_type": category,
-                      "error": f"{name}: {category}", "text": ""}
+                      "error": f"{name}: {category}", "text": "", 'failure_phase': phase,
+                      'automatic_retry': False}
+            if category == 'rate_limited_or_ip_blocked':
+                result['permitted_alternatives'] = ['author_transcript', 'authorized_local_media_asr', 'owner_oauth_captions']
     return {**result, "source": "youtube_transcript_api", "languages": languages,
             "elapsed_s": round(time.monotonic() - started, 3), "timeout_s": timeout_s,
             "requests": requests_log, "proxy_configured": bool(proxy)}

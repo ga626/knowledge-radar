@@ -162,6 +162,11 @@ def acquire_media_ref(ref: MediaRef):
                 'socket_timeout': 15, 'retries': 0, 'fragment_retries': 0,
                 'max_filesize': 256 * 1024 * 1024, 'quiet': True, 'no_warnings': True,
                 'progress_hooks': [progress], 'overwrites': True}
+            from urllib.parse import urlsplit, parse_qs
+            parsed = urlsplit(ref.uri)
+            if parsed.hostname in {'www.bilibili.com', 'bilibili.com'} and 'p' in parse_qs(parsed.query):
+                # yt-dlp按URL的p选择CID；playlist_items=1会覆盖此选择。
+                options.pop('playlist_items', None)
             proxy = get_yt_dlp_proxy()
             if proxy:
                 options['proxy'] = proxy

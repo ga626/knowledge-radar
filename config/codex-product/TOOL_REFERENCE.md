@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`30232ab03fdaf8f2d4ec61258ac4d277cecfaef4a3092030cc469e8106edf530`
+合同指纹：`956fefabc257dbb9c6fbac967e3ffaf4e14c03450f2d2a6774a0bbba595c6118`
 
 ## advance_research_candidate
 
@@ -2372,7 +2372,8 @@
             "type": "boolean"
           },
           "transport": {
-            "default": "http",
+            "default": "opencli",
+            "description": "默认借用日常Chrome读取公开文章；http为显式无浏览器路径。验证、登录与付费墙不自动换身份重试。",
             "enum": [
               "http",
               "opencli"

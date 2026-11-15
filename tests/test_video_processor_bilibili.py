@@ -31,3 +31,29 @@ def test_common_video_download_preserves_headers_proxy_and_cache(monkeypatch,tmp
     assert coordinator.resource_leases('media_asset')==[]
     assert media_acquisition.acquire_media_ref(ref)['cache_hit']
     assert len(calls)==1
+
+
+def test_explicit_part_does_not_force_playlist_item_one(monkeypatch, tmp_path):
+    monkeypatch.setenv('KR_DATA_ROOT', str(tmp_path))
+    monkeypatch.setenv('KR_MEDIA_CACHE_DIR', str(tmp_path / 'media'))
+    coordinator = leases.RuntimeLeaseCoordinator(tmp_path / 'leases.sqlite3')
+    monkeypatch.setattr(leases, '_COORDINATOR', coordinator)
+    monkeypatch.setattr(resource_concurrency, 'get_runtime_lease_coordinator', lambda: coordinator)
+    monkeypatch.setattr('generic_web.url_policy.validate_detail_target', lambda *a: None)
+    monkeypatch.setattr(proxy_config, 'get_yt_dlp_proxy', lambda: None)
+    seen = []
+    class Downloader:
+        def __init__(self, options): self.options = options
+        def __enter__(self): return self
+        def __exit__(self, *a): pass
+        def extract_info(self, url, download):
+            seen.append((url, self.options))
+            path = Path(self.options['outtmpl'].replace('%(ext)s', 'm4a'))
+            path.write_bytes(url.encode())
+            return {'requested_downloads': [{'filepath': str(path)}]}
+    monkeypatch.setitem(sys.modules, 'yt_dlp', SimpleNamespace(YoutubeDL=Downloader))
+    urls = ['https://www.bilibili.com/video/BV1ELGY6sExb?p=1', 'https://www.bilibili.com/video/BV1ELGY6sExb?p=2']
+    rows = [media_acquisition.acquire_media_ref(MediaRef(MediaKind.AUDIO, url)) for url in urls]
+    assert rows[0]['sha256'] != rows[1]['sha256']
+    assert 'playlist_items' not in seen[1][1]
+    assert seen[1][1]['noplaylist'] is True

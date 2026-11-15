@@ -9,6 +9,12 @@ from runtime.tasks import TaskStore, compact_task_ref
 from runtime.task_service import TaskService
 
 
+def test_explicit_no_retry_survives_rate_limit_classification():
+    assert cooldown_plan({'failure_type': 'rate_limited_or_ip_blocked',
+        'automatic_retry': False, 'resume_policy': 'stop_no_auto_resume'}, operation='content_detail') is None
+    assert cooldown_plan({'failure_type': 'rate_limited', 'retry_after_s': 30}, operation='content_detail', now=0)['not_before'] == 30
+
+
 @pytest.mark.parametrize('reason',['login_required','qr_required','request_outcome_unknown','cookie_expired','parse_failed'])
 def test_login_unknown_and_parser_errors_never_auto_replay(reason):
     assert cooldown_plan({'failure_type':reason,'retry_after_s':60},operation='content_detail') is None

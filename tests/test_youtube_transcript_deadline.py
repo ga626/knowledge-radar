@@ -46,3 +46,17 @@ def test_transcript_block_is_distinct_from_timeout(monkeypatch):
     monkeypatch.setattr(youtube_transcript_api, 'YouTubeTranscriptApi', Api)
     monkeypatch.setattr(youtube, 'get_httpx_proxy', lambda: None)
     assert youtube.fetch_youtube_transcript('video')['failure_type'] == 'rate_limited_or_ip_blocked'
+
+
+def test_transcript_block_explains_boundary_and_permitted_next_paths(monkeypatch):
+    class IpBlocked(Exception): pass
+    class Api:
+        def __init__(self, **kw): pass
+        def list(self, *a): raise IpBlocked('private proxy detail must not leak')
+    monkeypatch.setattr(youtube_transcript_api, 'YouTubeTranscriptApi', Api)
+    monkeypatch.setattr(youtube, 'get_httpx_proxy', lambda: None)
+    result = youtube.fetch_youtube_transcript('video')
+    assert result['automatic_retry'] is False
+    assert result['failure_phase'] == 'track_discovery'
+    assert result['permitted_alternatives'] == ['author_transcript', 'authorized_local_media_asr', 'owner_oauth_captions']
+    assert 'private proxy' not in str(result)

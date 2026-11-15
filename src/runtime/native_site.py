@@ -79,6 +79,13 @@ class NativeSite:
                 verified = self.complete_login()
                 if verified.get('status') == 'ok':
                     gate = self.admission()
+                else:
+                    failure = self.failure('pending_manual_interaction', request_executed=False)
+                    failure['metadata']['interaction_verification'] = {
+                        'status': verified.get('status'), 'failure_type': verified.get('failure_type')}
+                    failure['next_action'] = ('request_explicit_login_handoff'
+                        if verified.get('failure_type') == 'work_tab_unavailable' else 'inspect_platform_state')
+                    return failure
             if not gate['allowed']:
                 return self.failure(gate['reason'], request_executed=False, retry_after_s=gate.get('retry_after_s', 0))
         response = self.bridge().request(operation, {'url': url, **payload}, platform=self.platform)
@@ -169,7 +176,7 @@ class NativeSite:
     def request_login(self, *, activate=False):
         with file_write_lock(self.state_path()):
             current = self.state()
-            if current.get('expires_at') and not current.get('cancelled') and not activate:
+            if (current.get('expires_at') or 0) > time.time() and not current.get('cancelled') and not activate:
                 return {'status': 'waiting_for_user', 'platform': self.platform, 'expires_at': current['expires_at']}
             interaction = uuid.uuid4().hex
             write_state(self.state_path(), {**current, 'interaction_id': interaction, 'cancelled': False,
