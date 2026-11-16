@@ -113,6 +113,55 @@ def test_original_operation_receipt_is_read_only_and_does_not_replay(peer):
     assert peer.http('receipt',{'request_id':'never-sent'}).json()['status']=='unknown'
 
 
+def test_receipt_survives_host_restart_without_replaying(executable,tmp_path):
+    first=Peer(executable,tmp_path/'host.json')
+    assert first.hello()['type']=='hello_ack'
+    try:
+        with ThreadPoolExecutor() as pool:
+            future=pool.submit(first.command,'durable-original','zhihu')
+            command=first.next();first.result(command)
+            result=future.result().json()
+        first.close()
+        second=Peer(executable,first.path,scope=first.scope,profile=first.profile)
+        try:
+            assert second.hello()['type']=='hello_ack'
+            stored=second.http('receipt',{'request_id':'durable-original'}).json()
+            assert stored['status']=='recorded' and stored['result']==result
+            assert stored['result']['generation'] != second.state()['generation']
+            assert second.messages.empty()
+            duplicate=second.command('durable-original','zhihu').json()
+            assert duplicate['code']=='duplicate_request'
+        finally:second.close()
+    finally:first.close()
+
+
+def test_receipt_transport_failure_is_not_cancel_failure(monkeypatch,tmp_path):
+    from runtime.browser_link import BrowserLink
+    state=tmp_path/'host.json';state.write_text(json.dumps({'port':12345,'token':'test','generation':'new'}))
+    def respond(request):raise httpx.ReadTimeout('fixture')
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result=BrowserLink(state_file=state,client=client).receipt('old-operation')
+    assert result['status']=='unknown'
+    assert result['reason']=='receipt_transport_timeout'
+    assert result['generation']=='new'
+
+
+def test_receipt_disk_failure_after_execution_never_claims_not_executed(peer):
+    with ThreadPoolExecutor() as pool:
+        future=pool.submit(peer.command,'disk-failure','zhihu')
+        command=peer.next()
+        folder=peer.path.parent/'receipts'
+        folder.rename(peer.path.parent/'saved-receipts')
+        folder.write_text('fixture blocks receipt directory',encoding='utf-8')
+        peer.result(command)
+        result=future.result().json()
+    assert result['ok'] is True
+    assert result['receipt_persistence']=='failed'
+    assert result.get('request_executed') is not False
+    assert peer.http('receipt',{'request_id':'disk-failure'}).json()['result']==result
+    assert peer.messages.empty()
+
+
 def test_read_only_diagnostic_probe_uses_existing_host_protocol(peer):
     with ThreadPoolExecutor() as pool:
         future=pool.submit(peer.command,'diagnose','zhihu',operation='probe',payload={'diagnostics_only':True})

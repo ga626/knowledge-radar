@@ -141,7 +141,7 @@ class EvidenceAssets:
     def _ref(row):
         meta = json.loads(row['metadata'])
         provenance = meta.get('provenance') if isinstance(meta.get('provenance'), dict) else {}
-        provenance = {key: provenance[key] for key in ('provider_id', 'source_url', 'resolved_url', 'mode', 'coverage', 'pdf_processing', 'ocr_images', 'comments_metadata', 'academic', 'github', 'host', 'input_sha256', 'structure', 'reuse', 'location') if key in provenance}
+        provenance = {key: provenance[key] for key in ('provider_id', 'source_url', 'resolved_url', 'mode', 'coverage', 'pdf_processing', 'ocr_images', 'comments_metadata', 'academic', 'github', 'host', 'input_sha256', 'structure', 'reuse', 'location', 'salary_ocr', 'quality_warnings', 'asr_boundary_diagnostics') if key in provenance}
         provenance.update({key: meta[key] for key in ('parent_version_id', 'legacy_source_sha256', 'completeness_proven', 'derived_from', 'project_id', 'task_id', 'report_id', 'input_sha256') if key in meta})
         return {k: v for k, v in row.items() if k != 'metadata'} | {'locator_unit': 'unicode_code_point', 'coverage': meta.get('coverage', 'unknown'), 'extractor': meta.get('extractor', 'unknown'), 'locator_count': len(meta.get('locators') or []), 'provenance': provenance}
 

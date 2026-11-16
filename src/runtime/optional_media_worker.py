@@ -69,6 +69,8 @@ def _detected_transcript(result):
         return '', ''
     # 原词恰为language时也逐token还原，避免改写其他token拼出的KRlanguage。
     raw = ''.join('language' if token == 'KRlanguage' else token for token in result.tokens)
+    # Qwen协议结束后不再属于语音正文，连同尾文一起丢弃，不能仅删除标记。
+    raw = re.split(r'<\|(?:endoftext|im_end)\|>', raw, maxsplit=1)[0]
     match = re.fullmatch(r'language ([^<>]+)<asr_text>(.*)', raw, re.DOTALL)
     if not match:
         raise ASRLanguageDetectionFailed()
@@ -109,8 +111,17 @@ def _decode_asr_segment(model, samples, rate, start, *, depth=0):
         right, right_splits = _decode_asr_segment(model, samples[middle:], rate, start+middle/rate, depth=depth+1)
         return left+right, 1+left_splits+right_splits
     text, detected = _detected_transcript(stream.result)
+    raw = ''.join(stream.result.tokens)
+    import re
+    terminal = re.search(r'<\|(?:endoftext|im_end)\|>', raw)
+    diagnostic = {'protocol_terminated': terminal is not None}
+    if terminal and raw[terminal.end():].strip():
+        import hashlib
+        tail = raw[terminal.end():]
+        diagnostic.update(quality_warnings=['asr_post_eos_output_discarded'],
+                          discarded_tail_chars=len(tail), discarded_tail_sha256=hashlib.sha256(tail.encode()).hexdigest())
     return [{'text': text, 'language': detected, 'start_s': start,
-             'end_s': start+len(samples)/rate, 'kind': 'audio_chunk'}], 0
+             'end_s': start+len(samples)/rate, 'kind': 'audio_chunk', **diagnostic}], 0
 
 
 def native_asr(request):
@@ -134,24 +145,11 @@ def native_asr(request):
         record_execution_progress('model_loading', model_load_s=round(load_s,3))
     record_execution_progress('audio_decode', model_load_s=round(load_s,3), model_cache_hit=hit)
     identity = {key: request[key] for key in ('input_sha256', 'model_identity', 'language', 'device', 'threads')}
-    identity.update(engine=ASR_ENGINE, chunk_seconds=30, max_tokens=1024, language_contract=3,
-                    implementation=asr_implementation_identity(), chunk_contract=2)
+    identity.update(engine=ASR_ENGINE, chunk_seconds=30, max_tokens=1024, language_contract=4,
+                    implementation=asr_implementation_identity(), chunk_contract=3)
     checkpoint = OperationCheckpoint(media_cache_subdir('asr_checkpoints'), identity, identity, max_age_s=None)
     rows = checkpoint.read().get('chunks', [])
-    if not rows:
-        # PR48与上一候选的ASR四个函数AST一致；只接纳这两个已核对实现（含CRLF）。
-        # 不接纳任意旧实现，输入/模型/语言/线程身份及逐块时间仍须完全匹配。
-        for implementation in (
-            '5f6bc27756b2ed4f87fd30ec4ed45a7fb784c9e60c172908c1263de0075f6bf5',
-            '9d9f1da393e8c91fe3d7b2085a158b29a5b97d7981201e098fb54a0f5acca97a',
-            '1790745abf823b63e3121578a0cdbae53f0678bac6da3a57e1d08696f984092f',
-            '3ed6ab9f06e2fae5b3c85b3e76560a4f3f54b99e5776bc846cb446be1650e72f',
-        ):
-            legacy = {k:v for k,v in identity.items() if k != 'chunk_contract'}
-            legacy['implementation'] = implementation
-            rows = OperationCheckpoint(media_cache_subdir('asr_checkpoints'),legacy,legacy,max_age_s=None).read().get('chunks',[])
-            if rows:
-                break
+    # 旧协议未切断EOS，不能迁入新转写；旧固定原件仍保留供审计。
     reused = len(rows)
     record_execution_progress('audio_decode', resumed_chunks=reused, completed_chunks=reused,
                               processed_audio_s=rows[-1]['end_s'] if rows else 0)
@@ -200,6 +198,11 @@ def native_asr(request):
     record_execution_progress('transcript_complete', completed_chunks=count, processed_audio_s=duration,
                               worker_total_s=round(time.monotonic()-started,3))
     return {'status': 'acquired', 'text': '\n'.join(parts), 'source_kind': 'asr', 'component': request['component'],
+        'quality_warnings': sorted({w for row in rows for segment in row.get('segments', [row]) for w in segment.get('quality_warnings', [])}),
+        'asr_boundary_diagnostics': [
+            {'start_s': segment['start_s'], 'end_s': segment['end_s'],
+             **{k:segment[k] for k in ('protocol_terminated','discarded_tail_chars','discarded_tail_sha256') if k in segment}}
+            for row in rows for segment in row.get('segments', [row]) if segment.get('discarded_tail_chars')],
         'speech_status': 'speech_detected' if parts else 'no_speech_detected' if count else 'no_decoded_audio',
         'content_locators': locators, 'timestamp_precision': 'input_chunk_only', 'word_timestamps': 'not_acquired',
         'device': 'cpu', 'dtype': 'int8', 'engine': ASR_ENGINE,
@@ -307,6 +310,10 @@ def audit_docx_tables(source, result):
                 record['inferred_columns'] = max(record['inferred_columns'], width)
             if declared and record['inferred_columns'] > declared:
                 record['structural_risks'].append('short_grid')
+            if len(rows) == 1 and record['inferred_columns'] == 1:
+                record['structural_risks'].append('single_cell_layout')
+                if 'docx_single_cell_layout_not_verified' not in result['quality_warnings']:
+                    result['quality_warnings'].append('docx_single_cell_layout_not_verified')
         result['document_blocks'].extend(salvaged)
         if salvaged:
             result['text'] = str(result.get('text') or '') + '\n\n[原始单元格文字；表格排版未恢复]\n' + '\n'.join(
@@ -325,6 +332,7 @@ def audit_docx_tables(source, result):
 
 def docling_blocks(document):
     blocks = []
+    last_sheet = None
     for item, _level in document.iterate_items():
         kind = str(getattr(item, "label", "text")).split(".")[-1].lower()
         text = getattr(item, "text", "")
@@ -336,6 +344,20 @@ def docling_blocks(document):
             continue
         provenance = list(getattr(item, "prov", []) or [])
         block = {"text": str(text), "kind": kind}
+        parent = getattr(item, 'parent', None)
+        seen = set()
+        while parent is not None and id(parent) not in seen:
+            seen.add(id(parent))
+            group = parent.resolve(document)
+            if str(getattr(group, 'label', '')).split('.')[-1].lower() == 'sheet':
+                name = str(getattr(group, 'name', '') or '')
+                if name:
+                    block['sheet_name'] = name
+                    if name != last_sheet:
+                        blocks.append({'kind':'sheet_heading','text':name,'sheet_name':name})
+                        last_sheet = name
+                break
+            parent = getattr(group, 'parent', None)
         if provenance:
             prov = provenance[0]
             block["page"] = int(prov.page_no)
@@ -382,5 +404,10 @@ def execute(request):
             "processing_identity": {"docling-slim":importlib.metadata.version('docling-slim'),
                                     "docling-core":importlib.metadata.version('docling-core')},
         }
+        if Path(source).suffix.lower() == '.xlsx':
+            # 与结构块使用同一顺序；全文导出也保留真实工作表名。
+            converted['text'] = '\n\n'.join(
+                ('## ' if b['kind'] == 'sheet_heading' else '') + b['text']
+                for b in converted['document_blocks'])
         return audit_docx_tables(source, converted) if Path(source).suffix.lower() == '.docx' else converted
     raise ValueError("unsupported_component")

@@ -385,6 +385,10 @@ def readable_asset(assets, row):
         return None, '诊断页面（非正文）：' + observation['missing_reason']
     if kind in {'transcript_map','images','media_manifest'}:
         return None, '仅供机器定位或媒体引用'
+    if kind in {'media_ledger','document_receipt','processing_receipt'}:
+        return None, '已保存的机器诊断回执（非正文，不生成重复资料）'
+    if kind == 'academic_card':
+        return None, '学术候选元数据卡（非论文全文，保留在候选池与固定证据库）'
     if kind not in {'content','host_snapshot','video_description','transcript','ocr_text','pdf_text','document_text','academic_fulltext','readable_text','comments','tables','report'}:
         return None, '未知资料类型，需显式提供正文转换'
     rendered=text
@@ -447,7 +451,7 @@ def asset_header(row, *, include_title=False):
     if isinstance(original,(int,float)):
         original=datetime.fromtimestamp(original,timezone.utc).isoformat()
     kind=_presentation_kind(row,meta)
-    labels={'host_snapshot':'宿主可见文字','content':'正文','video_description':'视频简介','description':'简介','abstract':'摘要','index':'目录','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'论文正文','document_text':'论文正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
+    labels={'host_snapshot':'宿主可见文字','content':'正文','video_description':'视频简介','description':'简介','abstract':'摘要','index':'目录','transcript':'转写或字幕','ocr_text':'识图文字','comments':'评论','tables':'表格','pdf_text':'文档正文','document_text':'文档正文','academic_fulltext':'论文正文','readable_text':'整理正文'}
     coverage={'host_visible_excerpt':'宿主可见摘录（非全文）','host_visible_page_text':'宿主可见页面文字（不保证全文）','complete':'完整','partial':'部分','unknown':'未核验','complete_selectable_text':'完整可选文字'}
     observed_coverage=meta.get('coverage')
     if isinstance(observed_coverage,dict):

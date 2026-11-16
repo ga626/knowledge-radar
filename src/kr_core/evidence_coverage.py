@@ -169,4 +169,13 @@ def content_coverage(response, requested=None, *, task_lookup=None):
     if response.get('body_complete') is False and result['content']['requested'] is True:
         result['content'].update(coverage='partial', missing_reason=str(response.get('body_gap') or 'body_incomplete'))
         if 'content' not in gaps: gaps.append('content')
-    return {'schema': 'knowledgeradar-content-coverage/v1', 'parts': result, 'required_gaps': gaps, 'request_satisfied': not gaps, 'complete': False, 'image_understanding_proven': False}
+    elif response.get('body_complete') is True and result['content']['state']=='acquired':
+        result['content']['coverage']='requested_object'
+    available=[k for k,v in result.items() if v['state']=='acquired']
+    summary=('已取得：'+(', '.join(available) or '无')+'；'+
+             ('本次必需项已取得' if not gaps else '本次缺口：'+', '.join(gaps))+
+             '；整源穷尽未证明')
+    scope=response.get('part_scope') or response.get('requested_scope')
+    if scope:summary+='；本次范围：'+str(scope)
+    return {'schema': 'knowledgeradar-content-coverage/v1', 'parts': result, 'required_gaps': gaps,
+            'request_satisfied': not gaps, 'complete': False, 'image_understanding_proven': False, 'summary':summary}

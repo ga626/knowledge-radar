@@ -85,11 +85,20 @@ globalThis.KRSites.maimai = {
  return {risk,login,authenticated_ui,url:location.href};
 })();
  const heading=[...document.querySelectorAll('div')].find(e=>e.children.length===0&&(e.innerText||'').trim()==='评论');
- const scope=heading?.parentElement;
+ let scope=heading?.parentElement;
+ // 新版页面标题与评论列表隔了一层；只沿标题祖先找有评论的容器，不读整个信息流。
+ for(let depth=0;scope&&depth<3;depth++){
+  if(scope.querySelector('[data-rich-text],[data-testid="comment-item"],[class*="commentItem"],[class*="comment-item"],[class*="CommentItem"]')
+    ||/暂无评论|还没有评论/.test(scope.innerText||''))break;
+  if(!scope.parentElement||scope.parentElement===document.body)break;
+  scope=scope.parentElement;
+ }
  const modern=scope?[...scope.children].filter(e=>e.querySelector('[data-rich-text]')):[];
  const rows=modern.length?modern:[...document.querySelectorAll("[data-testid=\"comment-item\"], [class*=\"commentItem\"], [class*=\"comment-item\"], [class*=\"CommentItem\"]")];
- return {...state,comments_scope_found:!!scope,comments_empty_confirmed:!!scope&&/暂无评论|还没有评论/.test(scope.innerText||''),
+ return {...state,comments_scope_found:!!scope,comments_empty_confirmed:!!scope&&rows.length===0&&/暂无评论|还没有评论/.test(scope.innerText||''),
  comments_loading:!!scope&&/加载中/.test(scope.innerText||''),
+ comments_observation:{stage:'dom_snapshot',scope_found:!!scope,matched_rows:rows.length,
+   selector_family:modern.length?'rich_text_scope':'comment_item',source_exhausted:false},
  comments:rows.map(e=>({content:(e.querySelector('[data-rich-text]')?.innerText||e.innerText||'').trim(),
    author:(e.querySelector('.font-bold')?.innerText||'').trim(),id:e.getAttribute('data-id')||'',
    replies:[...e.querySelectorAll('[data-rich-text]')].slice(1).map(r=>({content:(r.innerText||'').trim()}))})).filter(x=>x.content)};})();

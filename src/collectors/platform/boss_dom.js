@@ -54,6 +54,10 @@
     const title = txt(document, ['.job-detail-box .job-name','h1','.job-name','.name']);
     const company = txt(document, ['.company-name','.company-info .name','.company-info a','.sider-company .company-info','.company-title','a[href*="/gongsi/"]']);
     const privateUse = /[\uE000-\uF8FF]/u.test(salary);
+    const salaryEl = ['.job-detail-box .job-salary','.salary','.job-salary'].map(s=>document.querySelector(s)).find(visible);
+    const salaryRect = salaryEl?.getBoundingClientRect();
+    const salaryCapture = privateUse && salaryRect && salaryRect.x>=0 && salaryRect.y>=0 ? {
+      x:salaryRect.x,y:salaryRect.y,width:salaryRect.width,height:salaryRect.height} : null;
     const detailGate = txt(document, ['.zp-more-info-layer-wrapper','.zp-more-info-layer-text']);
     const detailLogin = /登录.*(?:查看|更多|完整)|(?:查看|更多|完整).*登录/.test(detailGate);
     return {
@@ -62,6 +66,7 @@
       detail_login_required: detailLogin,
       salary_status: privateUse ? 'obfuscated_dom' : (salary ? 'readable_dom' : 'missing'),
       salary_raw: salary,
+      salary_capture: salaryCapture,
       content_type: 'recruitment_job_detail', platform: 'BOSS直聘'
     };
   };

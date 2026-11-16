@@ -113,7 +113,9 @@ def _query_terms(query: str) -> List[str]:
 
 
 def _normalize_text(value: str) -> str:
-    return re.sub(r"\s+", " ", str(value or "").strip().lower())
+    text = re.sub(r"\s+", " ", str(value or "").strip().lower())
+    # 排版插入的汉字间空白只影响匹配视图，原始标题与英文词界保持不变。
+    return re.sub(r'(?<=[\u4e00-\u9fff])\s+(?=[\u4e00-\u9fff])', '', text)
 
 
 def _profile_overlap_penalty(work: AcademicWork, profiles: dict[str, AcademicProviderProfile]) -> float:

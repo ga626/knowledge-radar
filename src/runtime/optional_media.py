@@ -238,6 +238,7 @@ def _save_result(result, payload, *, receipt=None, started=None):
     from kr_core.evidence_coverage import content_coverage
 
     result["content"] = result["text"]
+    result.setdefault('title', Path(payload['input_path']).name if payload.get('input_path') else '本地资料 '+payload['input_sha256'][:12])
     component = result["component"]
     result['input_sha256'] = payload['input_sha256']
     if component in {'pypdf', 'docling'}:
@@ -256,8 +257,10 @@ def _save_result(result, payload, *, receipt=None, started=None):
         result['content_coverage']['required_gaps'] = list(dict.fromkeys([*result['content_coverage'].get('required_gaps', []), 'content']))
         result['content_coverage']['parts']['content']['missing_reason'] = 'docx_table_retention_unverified'
     # 新归档合同生成新证据版本；不改写旧版本的未知覆盖结论。
-    result['detail_metadata'] = {**(result.get('detail_metadata') or {}),
-                                 'strategy': ('local-evidence/page-ledger-ocr-v4:' if component == 'pypdf' else 'local-evidence/docx-retention-v3:' if component == 'docling' else 'local-evidence/v2:') + component}
+    suffix=Path(payload.get('input_path','')).suffix.lower().lstrip('.') or 'document'
+    strategy=('local-evidence/page-ledger-ocr-v4:' if component=='pypdf' else
+              'local-evidence/'+suffix+'-structure-v4:' if component=='docling' else 'local-evidence/boundary-v3:')
+    result['detail_metadata'] = {**(result.get('detail_metadata') or {}),'strategy':strategy+component}
     identity_url = "https://local-evidence.invalid/sha256/" + payload["input_sha256"]
     archive_started = time.monotonic()
     EvidenceStore().record_detail(

@@ -35,7 +35,7 @@ def test_ttl_cache_summary_tracks_hit_rate_and_saved_time() -> None:
     assert summary["stats"]["estimated_saved_s"] >= 1.25
 
 
-def test_health_summary_uses_cache_for_sidecar_health(monkeypatch) -> None:
+def test_health_summary_is_cached_without_probing_sidecars(monkeypatch) -> None:
     calls = {"gh": 0}
     monkeypatch.setenv("KR_HEALTH_SUMMARY_TTL_S", "60")
     monkeypatch.setenv("KR_HEALTH_SUMMARY_COLD_STATIC", "false")
@@ -57,12 +57,16 @@ def test_health_summary_uses_cache_for_sidecar_health(monkeypatch) -> None:
 
     monkeypatch.setattr(server.gh_cli_sidecar, "health", fake_health)
 
+    from runtime.cost_latency import TTLCache
+    monkeypatch.setattr(server,'get_ttl_cache',lambda *a,**kw:cache)
+    cache=TTLCache('fixture.health.summary',ttl_s=60,max_items=8)
     first = server._health_check_agent_summary()
     second = server._health_check_agent_summary()
 
-    assert first["schema_version"] == "knowledgeradar-health-agent-summary/v1"
+    assert first["schema_version"] == "knowledgeradar-health-agent-summary/v2"
     assert second["runtime"]["cache"]["hit"] is True
-    assert calls["gh"] == 1
+    assert first['providers']=='not_probed' and first['browser']=='not_probed'
+    assert calls["gh"] == 0
 
 
 def test_github_search_cache_and_rest_metadata(monkeypatch) -> None:

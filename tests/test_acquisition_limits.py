@@ -142,7 +142,7 @@ def test_explicit_frame_workset_can_read_high_resolution(tmp_path):
     assert Image.open(io.BytesIO(base64.b64decode(rows[0]['image_base64']))).width == 1280
 
 
-def test_asr_reuses_verified_legacy_completed_chunk(tmp_path, monkeypatch):
+def test_asr_does_not_reuse_pre_eos_contract_chunks(tmp_path, monkeypatch):
     import numpy as np
     from runtime import optional_media_worker as worker, media_decode
     from runtime.operation_checkpoint import OperationCheckpoint
@@ -158,9 +158,19 @@ def test_asr_reuses_verified_legacy_completed_chunk(tmp_path, monkeypatch):
     old=OperationCheckpoint(media_cache_subdir('asr_checkpoints'),identity,identity)
     old.write({'chunks':[{'text':'previous speech','language':'en','start_s':0,'end_s':1,'kind':'audio_chunk'}]})
     class Model:
-        def create_stream(self):pytest.fail('completed compatible chunk must not be inferred again')
-    monkeypatch.setattr(worker,'_load_asr_model',lambda *a:(Model(),True))
-    assert worker.native_asr(request)['text'] == 'previous speech'
+        def create_stream(self):return SimpleNamespace(accept_waveform=lambda *a:None,
+            result=SimpleNamespace(text='new speech',tokens=['language English<asr_text>new speech<|endoftext|>']))
+        def decode_stream(self, stream):pass
+    model=[Model()]
+    monkeypatch.setattr(worker,'_load_asr_model',lambda *a:(model[0],True))
+    result=worker.native_asr(request)
+    assert result['text']=='new speech' and result['asr_metrics']['resumed_chunks']==0
+    assert old.read()['chunks'][0]['text']=='previous speech'  # 原件不改写。
+    class NoReinfer:
+        def create_stream(self):pytest.fail('same new contract must resume completed chunk')
+    model[0]=NoReinfer()
+    result=worker.native_asr(request)
+    assert result['text']=='new speech' and result['asr_metrics']['resumed_chunks']==1
 
 
 def test_bilibili_server_overflow_remains_available(monkeypatch):

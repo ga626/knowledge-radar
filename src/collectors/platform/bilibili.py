@@ -494,6 +494,8 @@ def collect_comments(bvid, *, options=None):
     headers = {'User-Agent': 'Mozilla/5.0', 'Referer': 'https://www.bilibili.com/'}
     rows, gaps, seen, replies = [], [], set(), []
     pages, metadata_requests, roots, cursor, exhausted = 0, 0, 0, 0, False
+    page_observations = []
+    root_pages, reply_pages = 0, 0
     def get(path, params, *, comment_page=True):
         nonlocal pages, metadata_requests
         check_execution()
@@ -504,6 +506,8 @@ def collect_comments(bvid, *, options=None):
         else:
             metadata_requests += 1
         response = httpx.get('https://api.bilibili.com'+path, params=params, headers=headers, timeout=15)
+        if response.status_code in {401,403,429}:
+            raise ValueError({401:'login_required',403:'anti_bot_verification',429:'rate_limited'}[response.status_code])
         response.raise_for_status()
         data = response.json()
         if data.get('code') != 0:
@@ -529,6 +533,7 @@ def collect_comments(bvid, *, options=None):
         while roots < scope['root_limit'] and len(rows) < scope['total_limit']:
             data = get('/x/v2/reply/main', {'oid': aid, 'type': 1, 'mode': 3 if scope['order']=='relevance' else 2,
                 'next': cursor, 'ps': min(20, scope['root_limit']-roots, scope['total_limit']-len(rows))})
+            root_pages += 1
             previous = len(seen)
             for item in data.get('replies') or []:
                 if roots >= scope['root_limit'] or len(rows) >= scope['total_limit']:
@@ -541,10 +546,17 @@ def collect_comments(bvid, *, options=None):
             state = data.get('cursor') or {}
             exhausted = state.get('is_end') is True
             next_cursor = state.get('next')
+            page_observations.append({'kind':'roots','request_cursor':cursor,'next_cursor':next_cursor,
+                'raw_count':len(data.get('replies') or []),'new_ids':len(seen)-previous,
+                'returned_roots':roots,'source_end_observed':exhausted})
+            if roots >= scope['root_limit']:
+                cursor = next_cursor
+                break
             if exhausted:
                 break
             if next_cursor is None or next_cursor == cursor or previous == len(seen):
-                gaps.append({'reason': 'root_pagination_unconfirmed'}); break
+                gaps.append({'reason': 'root_pagination_unconfirmed', 'boundary':
+                    'missing_next_cursor' if next_cursor is None else 'cursor_not_advanced' if next_cursor==cursor else 'no_new_ids'}); break
             cursor = next_cursor
         reply_coverage = []
         for root, total in replies:
@@ -552,12 +564,15 @@ def collect_comments(bvid, *, options=None):
             while got < min(total, scope['reply_limit']) and len(rows) < scope['total_limit']:
                 data = get('/x/v2/reply/reply', {'oid':aid,'type':1,'root':root,'pn':page,
                     'ps':min(20,scope['reply_limit']-got,scope['total_limit']-len(rows))})
+                reply_pages += 1
                 before = len(seen)
                 for item in data.get('replies') or []:
                     if got + len(seen)-before >= min(total,scope['reply_limit']) or len(rows)>=scope['total_limit']:
                         break
                     add(item, root)
                 got += len(seen)-before; page += 1
+                page_observations.append({'kind':'replies','root_comment_id':root,'page':page-1,
+                    'raw_count':len(data.get('replies') or []),'new_ids':len(seen)-before})
                 if len(seen) == before:
                     break
             reply_coverage.append({'root_comment_id':root,'observed_total':total,'returned':got,
@@ -576,6 +591,8 @@ def collect_comments(bvid, *, options=None):
         'comments_metadata':{'pages':pages,'metadata_requests':metadata_requests,
             'requests':pages+metadata_requests,'actual_order':scope['order'],
             'returned_roots':roots,'reply_coverage':reply_coverage,'gaps':gaps,
+            'root_pages':root_pages,'reply_pages':reply_pages,'page_budget':scope['max_pages'],
+            'page_observations':page_observations,
             'next_root_cursor':cursor,'stop_reason':gaps[0]['reason'] if gaps else 'source_exhausted' if source_done else 'requested_window'}}
 
 
