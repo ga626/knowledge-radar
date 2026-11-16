@@ -173,6 +173,17 @@ test('Zhihu routes exact hosts, reuses answer snapshot, and rejects cross-platfo
  assert.ok(manifest.content_scripts.some(c=>c.js.includes('sites/zhihu.js')&&c.matches.includes('https://zhuanlan.zhihu.com/*')));
  assert.ok(!manifest.permissions.includes('debugger')&&!manifest.permissions.includes('cookies'));
 });
+
+test('YouTube transcript adapter is packaged as an explicit visible-ui operation',async()=>{
+ const manifest=JSON.parse(readFileSync(new URL('../browser_link/extension/manifest.json',import.meta.url),'utf8'));
+ const script=readFileSync(new URL('../browser_link/extension/sites/youtube.js',import.meta.url),'utf8');
+ const routes=readFileSync(new URL('../browser_link/extension/sites/routes.js',import.meta.url),'utf8');
+ assert.ok(manifest.content_scripts.some(c=>c.js.includes('sites/youtube.js')&&c.matches.includes('https://www.youtube.com/*')));
+ assert.match(routes,/youtube:/);
+ assert.match(script,/transcript/);
+ assert.match(script,/ytd-transcript-segment-renderer/);
+ assert.doesNotMatch(script,/document\.cookie|fetch\(/);
+});
 test('deadline cancels content and late results are discarded',async()=>{
  const s=await setup();s.command('a');await tick();for(const f of [...s.timers.values()])f();await tick();
  s.result('a');assert.equal(s.sent.filter(m=>m.type==='result').length,1);

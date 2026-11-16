@@ -6,7 +6,7 @@ const pending=new Map(), owned=new Map(), locks=new Set();
 let ownershipReady=Promise.resolve(), persistWrite=Promise.resolve();
 const HOST='com.knowledgeradar.browser_link';
 const SITES=globalThis.KRSiteRoutes;
-const OPS=new Set(['search','detail','comments','login','attention','probe','auth_verify','release','release_login']);
+const OPS=new Set(['search','detail','comments','transcript','login','attention','probe','auth_verify','release','release_login']);
 // Session-only, bounded diagnostics: no page text, query, account or credentials.
 let diagnosticEvents=[],diagnosticWrite=Promise.resolve();
 function record(p,stage,{code='',host=''}={}) {

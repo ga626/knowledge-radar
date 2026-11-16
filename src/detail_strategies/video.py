@@ -46,7 +46,12 @@ class VideoDetailStrategy:
         blocked = (data.get('transcript_metadata') or {}).get('failure_type') in {
             'rate_limited_or_ip_blocked', 'verification_required', 'private_or_authorization_required', 'region_restricted'}
         if blocked:
-            data.update(enhancement_status='partial', failure_type=data['transcript_metadata']['failure_type'])
+            transcript_gap = data['transcript_metadata']['failure_type']
+            data.update(enhancement_status='partial', failure_type=transcript_gap,
+                        capability_status={'metadata': 'available' if data.get('title') else 'unknown',
+                                           'transcript': 'blocked', 'media': 'not_attempted',
+                                           'next_action': (data['transcript_metadata'].get('next_action') or
+                                                           'continue_other_features_or_use_authorized_local_asr')})
             if data['transcript_metadata'].get('automatic_retry') is False:
                 data.update(automatic_retry=False, resume_policy='stop_no_auto_resume')
             return _response(request, data)

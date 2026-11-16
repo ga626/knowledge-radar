@@ -954,9 +954,11 @@ def _manifest_defaults(platform: str) -> Dict[str, Any]:
         "YouTube": {
             "default_route": "official_api",
             "risk_level": "medium",
-            "transport": ["youtube_data_api_v3", "transcript_api", "background_task_queue"],
-            "health_layers": ["api_key", "search", "detail", "media"],
-            "configuration_surface": ["YOUTUBE_API_KEY", "youtube_transcript_api"],
+            "transport": ["youtube_data_api_v3", "transcript_api", "browser_link_visible_transcript", "background_task_queue"],
+            "health_layers": ["api_key", "search", "detail", "transcript", "media"],
+            "configuration_surface": ["YOUTUBE_API_KEY", "youtube_transcript_api", "youtube_browser_fallback"],
+            "feature_independence": "metadata/comments remain usable when transcript or media acquisition is blocked",
+            "media_diagnostics": ["rate_limited", "verification_required", "javascript_runtime_required", "proof_of_origin_required", "ffmpeg_required"],
         },
     }
     return data.get(
@@ -1187,7 +1189,7 @@ def build_capabilities(
             "search_xiaohongshu": {"category": "collector.platform", "platform": "小红书"},
             "get_content_detail": {
                 "category": "detail",
-                "input": "url + optional deep/comment/auto_multimodal/work_scope_id/task_scope_id/research_session_id legacy alias flags",
+                "input": "url + optional deep/comment/auto_multimodal/youtube_browser_fallback/work_scope_id/task_scope_id/research_session_id legacy alias flags",
                 "adds_evidence": True,
                 "external_signature_stable": True,
                 "task_scope_fanin": {
@@ -1217,7 +1219,8 @@ def build_capabilities(
                     "response_field": "direct_media",
                     "schema": "knowledgeradar-direct-media/v1",
                     "bilibili": "auto_multimodal/deep analysis can expose redacted direct URL candidates and reachability without downloading media",
-                    "youtube": "watch_url is exposed as non-direct status; code implemented but current environment may be unable to validate Google/YouTube live paths",
+                    "youtube": "watch_url is exposed as non-direct status; authorized local download reports JS/EJS/PO-token/ffmpeg gaps separately",
+                    "youtube_transcript_fallback": "explicit youtube_browser_fallback uses one visible YouTube transcript-panel read through Browser Link; no automatic retry or background polling",
                     "provider_downloadability": "native_media is allowed only when probe.provider_downloadability.allow_native_media=true",
                     "native_switching": "implemented_p1_3; Bilibili raw CDN candidates remain sampled/derived fallback because provider-side downloads failed in validation",
                 },

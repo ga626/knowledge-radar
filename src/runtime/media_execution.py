@@ -222,6 +222,7 @@ def execute_media_plan(bundle: MediaBundle, plan: MediaActionPlan, *, language=N
                 result['steps'].append({'operation': operation.value, 'status': 'failed',
                     'error_code': getattr(exc, 'error_code', str(exc)),
                     **({'error_message': str(exc)} if getattr(exc, 'error_code', '') == 'unsupported_language' else {}),
+                    **({'diagnostics': exc.diagnostics} if getattr(exc, 'diagnostics', None) else {}),
                     'elapsed_s': round(time.monotonic() - started, 3)})
     check_execution()
     return result

@@ -3,4 +3,5 @@ globalThis.KRSiteRoutes={
   liepin:['www.liepin.com','liepin.com'],
   maimai:['maimai.cn'],
   zhihu:['www.zhihu.com','zhihu.com','zhuanlan.zhihu.com'],
+  youtube:['www.youtube.com','youtube.com','youtu.be'],
 };
