@@ -32,7 +32,7 @@ async function setup({paired=true,profile='paired-id',startupRace=false,create,s
   create:async options=>{created.push(options);const tab=create?await create(options):{id:nextId++,url:options.url,active:false,windowId:1};tabsById.set(tab.id,tab);return tab;},
   get:async id=>{if(!tabsById.has(id))throw Error('not found');return tabsById.get(id);},
   update:async(id,options)=>{updated.push({id,...options});const tab=tabsById.get(id);Object.assign(tab,options);
-   if(options.url){const platform=options.url.includes('liepin')?'liepin':options.url.includes('zhihu.com')?'zhihu':'maimai';runtime.onMessage.emit({kind:'content-ready',url:options.url,platform},{id:'ext',frameId:0,tab:{id}},()=>{});}return tab;},
+   if(options.url){const platform=options.url.includes('liepin')?'liepin':options.url.includes('zhihu.com')?'zhihu':options.url.includes('youtube.com')||options.url.includes('youtu.be')?'youtube':'maimai';runtime.onMessage.emit({kind:'content-ready',url:options.url,platform},{id:'ext',frameId:0,tab:{id}},()=>{});}return tab;},
   remove:async id=>{removed.push(id);tabsById.delete(id);tabs.onRemoved.emit(id);},
   sendMessage:async(id,message)=>{content.push({id,...message});if(sendMessage)return sendMessage(id,message);}};
  // Chrome defaults new groups to the current (user) window, moving tabIds.
@@ -172,6 +172,26 @@ test('Zhihu routes exact hosts, reuses answer snapshot, and rejects cross-platfo
  const manifest=JSON.parse(readFileSync(new URL('../browser_link/extension/manifest.json',import.meta.url),'utf8'));
  assert.ok(manifest.content_scripts.some(c=>c.js.includes('sites/zhihu.js')&&c.matches.includes('https://zhuanlan.zhihu.com/*')));
  assert.ok(!manifest.permissions.includes('debugger')&&!manifest.permissions.includes('cookies'));
+});
+
+test('YouTube transcript adapter is packaged as an explicit visible-ui operation',async()=>{
+ const manifest=JSON.parse(readFileSync(new URL('../browser_link/extension/manifest.json',import.meta.url),'utf8'));
+ const script=readFileSync(new URL('../browser_link/extension/sites/youtube.js',import.meta.url),'utf8');
+ const routes=readFileSync(new URL('../browser_link/extension/sites/routes.js',import.meta.url),'utf8');
+ assert.ok(manifest.content_scripts.some(c=>c.js.includes('sites/youtube.js')&&c.matches.includes('https://www.youtube.com/*')));
+ assert.match(routes,/youtube:/);
+ assert.match(script,/transcript/);
+ assert.match(script,/ytd-transcript-segment-renderer/);
+ assert.doesNotMatch(script,/document\.cookie|fetch\(/);
+});
+test('YouTube transcript operation passes the native bridge admission path',async()=>{
+ const s=await setup();
+ s.command('yt','youtube','transcript',{url:'https://www.youtube.com/watch?v=abc12345678'});await tick();
+ assert.equal(s.created.length,1);
+ assert.equal(s.content.at(-1).platform,'youtube');
+ assert.equal(s.content.at(-1).operation,'transcript');
+ s.result('yt','youtube',{transcript:'字幕'});await tick();
+ assert.equal(s.sent.find(x=>x.request_id==='yt').ok,true);
 });
 test('deadline cancels content and late results are discarded',async()=>{
  const s=await setup();s.command('a');await tick();for(const f of [...s.timers.values()])f();await tick();

@@ -1,8 +1,12 @@
 """媒体获取写口。只下载/校验，不加载模型，也不持有模型租约。"""
 from pathlib import Path
 import hashlib
+import importlib.metadata
+import importlib.util
 import json
+import shutil
 import time
+from urllib.parse import urlsplit
 
 from media_bundle import MediaKind, MediaLocationType, MediaRef
 from runtime.execution_context import check_execution
@@ -12,8 +16,9 @@ from runtime.media_cache import media_cache_subdir, record_media_cache_entry
 
 
 class MediaAccessError(RuntimeError):
-    def __init__(self, code):
+    def __init__(self, code, *, diagnostics=None):
         self.error_code = code
+        self.diagnostics = diagnostics or {}
         super().__init__(code)
 
 
@@ -38,17 +43,59 @@ def acquire_asset_batch(jobs, fetch, *, on_progress=None, max_workers=2):
 def classify_media_error(exc):
     text = str(exc).lower()
     for code, words in (
-        ('verification_required', ('captcha', 'verify you', 'sign in', 'bot', '412')),
+        ('verification_required', ('captcha', 'verify you are not a bot', 'confirm you are not a bot', ' bot', '412')),
         ('rate_limited', ('429', 'too many requests')),
+        ('proof_of_origin_required', ('po token', 'proof of origin')),
+        ('javascript_runtime_required', ('no supported javascript runtime', 'js runtime', 'ejs', 'javascript runtime')),
+        ('ffmpeg_required', ('ffmpeg not found', 'ffmpeg is not installed', 'ffprobe not found')),
         ('private_or_authorization_required', ('private', 'members-only', '403', '401', 'login')),
         ('region_restricted', ('country', 'region', 'geo-restrict')),
-        ('javascript_runtime_required', ('javascript', 'js runtime', 'ejs', 'po token')),
         ('media_not_found', ('404', 'not available', 'removed')),
         ('network_timeout', ('timeout', 'timed out')),
     ):
         if any(word in text for word in words):
             return code
     return 'media_acquisition_failed'
+
+
+def youtube_media_dependency_diagnostics():
+    """Return bounded local capability facts for yt-dlp's optional paths.
+
+    This intentionally does not install or invoke anything.  The result is
+    safe to attach to a failed media step so a 429, JS-runtime gap, PO-token
+    requirement and ffmpeg gap remain distinguishable.
+    """
+    runtimes = {name: shutil.which(name) or '' for name in ('deno', 'node', 'bun')}
+    try:
+        yt_dlp_version = importlib.metadata.version('yt-dlp')
+    except importlib.metadata.PackageNotFoundError:
+        yt_dlp_version = ''
+    try:
+        ejs_available = importlib.util.find_spec('yt_dlp_ejs') is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        ejs_available = False
+    ffmpeg = shutil.which('ffmpeg') or ''
+    ffprobe = shutil.which('ffprobe') or ''
+    js_runtime = os.environ.get('KR_YTDLP_JS_RUNTIME', '') or next((path for path in runtimes.values() if path), '')
+    missing = []
+    if not js_runtime:
+        missing.append('javascript_runtime')
+    if not ejs_available:
+        missing.append('ejs_bundle')
+    if not ffmpeg or not ffprobe:
+        missing.append('ffmpeg')
+    return {
+        'status': 'ok' if not missing else 'degraded',
+        'capability': 'youtube_media_download',
+        'yt_dlp_version': yt_dlp_version,
+        'javascript_runtime': js_runtime,
+        'javascript_runtimes': runtimes,
+        'ejs_bundle_available': ejs_available,
+        'ffmpeg': ffmpeg,
+        'ffprobe': ffprobe,
+        'missing': missing,
+        'checked_at': time.time(),
+    }
 
 
 def acquire_http_asset(kind, url, folder, *, previous=(), headers=None, timeout_s=60):
@@ -157,11 +204,17 @@ def acquire_media_ref(ref: MediaRef):
                 admit_bytes(folder,1024*1024)
                 if int(event.get('downloaded_bytes') or 0)>256*1024*1024:
                     raise MediaAccessError('download_missing_or_exceeds_limit')
+            dependency_diagnostics = youtube_media_dependency_diagnostics() if (urlsplit(ref.uri).hostname or '').lower() in {'youtube.com', 'www.youtube.com', 'youtu.be'} else {}
             options = {'format': 'bestaudio/best' if ref.kind == MediaKind.AUDIO else f'bestvideo[height<={height}]/best[height<={height}]',
                 'outtmpl': str(Path(temporary_dir) / 'source.%(ext)s'), 'noplaylist': True, 'playlist_items': '1',
                 'socket_timeout': 15, 'retries': 0, 'fragment_retries': 0,
-                'max_filesize': 256 * 1024 * 1024, 'quiet': True, 'no_warnings': True,
+                'max_filesize': 256 * 1024 * 1024, 'quiet': True, 'no_warnings': False,
                 'progress_hooks': [progress], 'overwrites': True}
+            from urllib.parse import parse_qs
+            parsed = urlsplit(ref.uri)
+            if parsed.hostname in {'www.bilibili.com', 'bilibili.com'} and 'p' in parse_qs(parsed.query):
+                # yt-dlp按URL的p选择CID；playlist_items=1会覆盖此选择。
+                options.pop('playlist_items', None)
             proxy = get_yt_dlp_proxy()
             if proxy:
                 options['proxy'] = proxy
@@ -177,7 +230,10 @@ def acquire_media_ref(ref: MediaRef):
                 from runtime.execution_context import ExecutionStopped
                 if isinstance(exc, (ExecutionStopped,MediaAccessError)):
                     raise
-                raise MediaAccessError(classify_media_error(exc)) from exc
+                raise MediaAccessError(classify_media_error(exc), diagnostics={
+                    'dependency_diagnostics': dependency_diagnostics,
+                    'exception_type': type(exc).__name__,
+                }) from exc
             check_execution()
             path = Path(candidate or '').resolve()
             if not path.is_relative_to(Path(temporary_dir).resolve()) or not path.is_file() or not 0 < path.stat().st_size <= 256 * 1024 * 1024:
@@ -188,6 +244,8 @@ def acquire_media_ref(ref: MediaRef):
             path = final_path
             data = {'path': str(path), 'sha256': digest, 'kind': ref.kind.value,
                     'download_s': round(time.monotonic() - started, 3), 'source_url': canonical_url(ref.uri)}
+            if dependency_diagnostics:
+                data['dependency_diagnostics'] = dependency_diagnostics
             temporary = receipt.with_suffix('.pending')
             temporary.write_text(json.dumps(data), encoding='utf-8')
             with file_write_lock(receipt):

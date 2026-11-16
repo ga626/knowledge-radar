@@ -1503,12 +1503,14 @@ def request_browser_interaction(
     target_profile_id: str = "",
     trigger_evidence: Optional[list[str]] = None,
     source: str = "",
+    activate: bool = False,
 ) -> Dict:
     """Start a durable human-interaction browser session for a platform."""
     if str(platform).lower().split(":", 1)[0] in BORROWED_BROWSER_PLATFORMS:
         if str(reason or "").lower() in {"unknown", "degraded", "empty_results", "empty_detail", "collector_error"}:
             return {"status": "blocked", "reason_code": "NO_MANUAL_ACTION_EVIDENCE"}
-        return _borrowed_browser_site(platform).request_login()
+        site = _borrowed_browser_site(platform)
+        return site.request_login(activate=True) if activate else site.request_login()
     if str(platform).lower().split(":", 1)[0] in {"xhs", "xiaohongshu"}:
         from runtime.xhs_opencli import request_login
         return request_login()

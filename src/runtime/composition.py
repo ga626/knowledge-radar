@@ -2394,7 +2394,7 @@ def health_check(
             from runtime.xhs_opencli import request_login
             interaction = request_login()
         else:
-            interaction = request_browser_interaction(platform, reason)
+            interaction = request_browser_interaction(platform, reason, activate=True)
         return {
             "schema_version": "knowledgeradar-health-browser-interaction/v1",
             "summary": False,
@@ -2821,6 +2821,7 @@ def get_content_detail(
     task_scope_id: Annotated[str, Field(description="任务范围 ID。普通调用留空；用于等待或聚合同一任务范围的后台任务。")] = "",
     research_task_id: Annotated[str, Field(description="可选的 kr_research 任务 ID；提供后返回 research_receipt。")]= "",
     include_transcript: Annotated[bool | None, Field(description="明确允许或禁止字幕/ASR；未指定时跟随增强开关。允许时由有界持久任务执行。")]= None,
+    youtube_browser_fallback: Annotated[bool, Field(description="YouTube 字幕 API 受限时，明确允许通过借用日常 Chrome 读取一次可见文字记录；不自动登录、不后台轮询。")]= False,
     include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
     include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
     language: Annotated[str | None, Field(description="本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。")] = None,
@@ -2855,6 +2856,7 @@ def get_content_detail(
         auto_multimodal=auto_multimodal, research_session_id=research_session_id,
         work_scope_id=work_scope_id, task_scope_id=task_scope_id, research_task_id=research_task_id,
         include_transcript=include_transcript, include_comments=include_comments,
+        youtube_browser_fallback=youtube_browser_fallback,
         include_ocr=include_ocr, language=language, deadline_s=deadline_s, github=github, xhs=xhs, wechat=wechat, document=document, comments=comments, task_limits=task_limits, media=media,
     )
 

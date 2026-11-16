@@ -13,6 +13,12 @@ ARTICLE = """<html><h1 id="activity-name">芯片研究图解</h1><span id="js_na
 URL = "https://mp.weixin.qq.com/s/test-article"
 
 
+def test_default_tool_route_uses_existing_browser_article_reader():
+    from collectors.platform.wechat import WechatReadOptions
+    assert WechatReadOptions().transport == 'opencli'
+    assert WechatReadOptions(transport='http').transport == 'http'
+
+
 @pytest.fixture
 def isolated(monkeypatch, tmp_path):
     for key, folder in {

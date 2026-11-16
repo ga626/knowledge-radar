@@ -161,12 +161,21 @@ def get_bilibili_info(bvid: str) -> Optional[Dict]:
             stat = d.get("stat", {}) or {}
             return {
                 "title": d.get("title", ""),
-                "desc": d.get("desc", "")[:300],
+                "desc": d.get("desc", ""),
                 "author": d.get("owner", {}).get("name", ""),
                 "duration": d.get("duration", 0),
                 "cover": d.get("pic", ""),
                 "aid": d.get("aid", 0),
                 "cid": d.get("cid", 0),
+                "parts": [{k: row.get(k) for k in ('page', 'cid', 'part', 'duration')}
+                    for row in d.get('pages') or []],
+                "collection": {'id': (d.get('ugc_season') or {}).get('id'),
+                    'title': (d.get('ugc_season') or {}).get('title', ''),
+                    'coverage': 'embedded_episode_manifest_not_exhaustion_claim',
+                    'episodes': [{'bvid': row.get('bvid'), 'title': row.get('title', ''),
+                        'url': 'https://www.bilibili.com/video/' + row['bvid']}
+                        for section in (d.get('ugc_season') or {}).get('sections') or []
+                        for row in section.get('episodes') or [] if row.get('bvid')]},
                 "stats": stat,
                 "video_play_count": stat.get("view", 0),
                 "liked_count": stat.get("like", 0),
@@ -406,10 +415,44 @@ def collect_video_detail(request):
     info = get_bilibili_info(bvid)
     if not info:
         return {'error': 'video_metadata_unavailable', 'failure_type': 'metadata_request_failed'}
+    from dataclasses import replace
+    from urllib.parse import parse_qs, urlsplit
+    pages = info.get('parts') or [{'page': 1, 'cid': info.get('cid'), 'duration': info.get('duration', 0)}]
+    requested = parse_qs(urlsplit(request.url).query, keep_blank_values=True).get('p')
+    if requested and (len(requested) != 1 or not requested[0].isdigit()
+                      or int(requested[0]) not in {row['page'] for row in pages}):
+        return {'error': 'invalid_bilibili_part', 'failure_type': 'invalid_input'}
+    selected = [row for row in pages if not requested or row['page'] == int(requested[0])]
+    scope = {'kind': 'selected_parts' if requested else 'all_parts_of_bvid',
+        'expected_pages': [row['page'] for row in pages], 'selected_pages': [row['page'] for row in selected],
+        'completed_pages': [], 'complete': False, 'collection_included': False}
+    details = []
+    for index, part in enumerate(selected):
+        from runtime.execution_context import check_execution
+        check_execution()
+        # 即使P1也用明确URL；下载、字幕缓存与检查点不再混用整条BVID的身份。
+        url = f'https://www.bilibili.com/video/{bvid}?p={part["page"]}'
+        part_request = replace(request, url=url, options={**request.options,
+            **({'include_comments': False} if index else {})})
+        row = _collect_part_detail(part_request, bvid, {**info, **part, 'parts': [], 'collection': {}})
+        row['part_scope'] = {**scope, 'selected_pages': [part['page']]}
+        details.append(row)
+    if len(details) == 1:
+        if request.options.get('include_transcript') and details[0].get('transcript'):
+            scope = {**scope, 'completed_pages': scope['selected_pages'], 'complete': True}
+        return {**details[0], 'part_scope': scope, 'parts': pages, 'collection': info.get('collection', {})}
+    return {**info, 'content': info.get('desc', ''), 'content_id': bvid, 'content_type': 'video',
+        'url': request.url, 'platform': 'B站', 'transcript': '', 'part_scope': scope,
+        'part_details': details, 'comments': details[0].get('comments', []),
+        'duration': sum(row.get('duration') or 0 for row in selected),
+        'media_manifest': [media for row in details for media in row.get('media_manifest', [])]}
+
+
+def _collect_part_detail(request, bvid, info):
     data = {**info, 'content': info.get('desc', ''), 'content_id': bvid, 'content_type': 'video', 'url': request.url, 'platform': 'B站', 'transcript': ''}
     want_transcript = bool(request.options.get('include_transcript'))
     if want_transcript:
-        subtitle = _probe_bilibili_subtitle(bvid, output_dir=str(media_cache_subdir('subtitles', content_id=bvid)),
+        subtitle = _probe_bilibili_subtitle(bvid, output_dir=str(media_cache_subdir('subtitles', content_id=f'{bvid}-p{info.get("page", 1)}')),
                                            task_id='', language=request.options.get('language'), info=info)
         if subtitle.get('hit'):
             from kr_core.evidence_locators import transcript_locators
@@ -426,7 +469,7 @@ def collect_video_detail(request):
         data['comments'] = []
     data['filtered_comments'] = []  # 语义筛选属于增强阶段，采集阶段先保存全部原始评论。
     headers = {'Referer': 'https://www.bilibili.com/', 'Origin': 'https://www.bilibili.com'}
-    data['media_manifest'] = [{'type': kind, 'url': f'https://www.bilibili.com/video/{bvid}',
+    data['media_manifest'] = [{'type': kind, 'url': request.url,
                                'metadata': {'headers': headers}} for kind in ['audio', 'video']]
     return data
 

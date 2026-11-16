@@ -34,6 +34,15 @@ class XiaohongshuAdapter:
         return runtime_identity()
 
     @staticmethod
+    def resource_ready(resource):
+        if resource != "opencli:xiaohongshu":
+            return None
+        from runtime.browser_channel import browser_site_key
+        from runtime.leases import get_runtime_lease_coordinator
+        return not get_runtime_lease_coordinator().resource_leases(
+            "browser_site", browser_site_key("kr:xiaohongshu"))
+
+    @staticmethod
     def enhance_detail(request, collected):
         from runtime.xhs_opencli import enhance_detail
         from kr_core import DetailResponse

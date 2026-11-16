@@ -24,7 +24,8 @@ PRESENTATION = {"group": "platform", "label": "微信", "site": "微信公众号
 
 class WechatReadOptions(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    transport: Literal["http", "opencli"] = "http"
+    transport: Literal["http", "opencli"] = Field(default="opencli",
+        description="默认借用日常Chrome读取公开文章；http为显式无浏览器路径。验证、登录与付费墙不自动换身份重试。")
     image_indexes: list[Annotated[int, Field(ge=0)]] | None = Field(default=None, max_length=100)
     media_limit: int = Field(default=30, ge=1, le=100)
     include_attachments: bool = False

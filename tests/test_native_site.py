@@ -37,3 +37,31 @@ def test_health_carries_route_and_generation_observation(tmp_path, monkeypatch):
     assert observation['expected_generation']=='expected'
     assert observation['observed_at']>0
     assert observation['profile_id_hash'] and 'private-profile' not in json.dumps(observation)
+
+
+def test_expired_login_recreates_missing_tab_without_replaying_business(tmp_path, monkeypatch):
+    import json
+    from runtime.native_site import NativeSite
+    site = NativeSite('maimai', '脉脉', 'https://maimai.cn', 'https://maimai.cn', lambda _: False)
+    path = tmp_path / 'interaction.json'
+    path.write_text(json.dumps({'expires_at': 1, 'cancelled': False}))
+    monkeypatch.setattr(NativeSite, 'state_path', lambda _: path)
+    calls = []
+    monkeypatch.setattr(NativeSite, 'invoke', lambda _, op, **kw: calls.append(op) or {'ok': True})
+    assert site.request_login()['status'] == 'waiting_for_user'
+    assert calls == ['login']
+    assert site.state()['expires_at'] > 1
+
+
+def test_manual_hold_does_not_hide_failed_verification_phase(tmp_path, monkeypatch):
+    import json
+    from runtime.native_site import NativeSite
+    site = NativeSite('maimai', '脉脉', 'https://maimai.cn', 'https://maimai.cn', lambda _: False)
+    path = tmp_path / 'interaction.json'
+    path.write_text(json.dumps({'expires_at': 1, 'cancelled': False}))
+    monkeypatch.setattr(NativeSite, 'state_path', lambda _: path)
+    monkeypatch.setattr(NativeSite, 'complete_login', lambda _: {'status': 'not_verified', 'failure_type': 'work_tab_unavailable'})
+    result = site.invoke('search', keyword='research')
+    assert result['request_executed'] is False
+    assert result['metadata']['interaction_verification']['failure_type'] == 'work_tab_unavailable'
+    assert result['next_action'] == 'request_explicit_login_handoff'

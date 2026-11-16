@@ -6,6 +6,8 @@ import time
 def cooldown_plan(result, *, operation, attempts=0, now=None):
     if not isinstance(result,dict) or operation not in {'content_detail','academic_fulltext','academic_discovery','research_query','platform_discovery'}:
         return None
+    if result.get('automatic_retry') is False:
+        return None
     def unsafe(value):
         if isinstance(value,dict):
             if value.get('request_executed')=='unknown' or value.get('outcome_unknown') is True:return True
