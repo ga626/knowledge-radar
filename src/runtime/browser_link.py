@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from runtime.execution_context import execution_value
 import json
+import hashlib
 import os
 import time
 import uuid
@@ -155,10 +156,22 @@ class BrowserLink:
             return self._failure("native_host_unavailable", request_id,request_executed=False)
         body = {"request_id": request_id, "platform": platform, "generation": state.get('generation',''), "operation": operation, "payload": payload,
                 'timeout_ms': max(1, min(20000, round(timeout_s * 1000)))}
+        diagnostic = {'generation':state.get('generation',''), 'last_confirmed_stage':'request_prepared',
+            'input_sha256':hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
+            'input_available':False, 'root_cause':'unconfirmed'}
+        def diagnosed(value, exception=None):
+            facts = {**diagnostic, 'command_elapsed_ms':round(max(0,time.monotonic()-request_started)*1000)}
+            if exception is not None:
+                facts['exception_type']=type(exception).__name__
+            # 只追加本地已确认阶段；不覆盖扩展返回的更深阶段或原始类型。
+            value['browser_diagnostics']={**facts, **value.get('browser_diagnostics',{})}
+            return value
         try:
             with self._session() as client:
                 response = client.post(self._url(state, "/command"), headers=self._headers(state),
                                        json=body, timeout=min(timeout_s, 20) + 2)
+            diagnostic.update(last_confirmed_stage='response_received', http_status=response.status_code,
+                response_sha256=hashlib.sha256(response.content).hexdigest())
             if not response.is_success:
                 # The host uses 502 for an extension-level failure; preserve its
                 # typed cause instead of disguising it as a transport outage.
@@ -167,32 +180,36 @@ class BrowserLink:
                 except ValueError:
                     failure = None
                 if isinstance(failure, dict) and failure.get("code"):
-                    return {
+                    return diagnosed({
                         **failure,
                         "ok": False,
                         "request_id": request_id,
                         "failure_type": str(failure["code"]),
                         "status": response.status_code,
-                    }
+                    })
                 code = {409: 'browser_disconnected', 408: 'native_command_timeout'}.get(response.status_code, 'native_host_http_error')
-                return self._failure(code, request_id, status=response.status_code)
+                return diagnosed(self._failure(code, request_id, status=response.status_code))
             result = response.json()
             if not isinstance(result, dict):
-                return self._failure("native_host_invalid_result", request_id)
+                return diagnosed(self._failure("native_host_invalid_result", request_id))
             if result.get('generation') != state.get('generation') or result.get('request_id') != request_id:
-                return self._failure('native_host_invalid_result',request_id)
+                return diagnosed(self._failure('native_host_invalid_result',request_id))
             result.setdefault("request_id", request_id)
-            return result
-        except httpx.ConnectError:
-            return self._failure('native_host_unreachable',request_id,request_executed=False)
+            diagnostic['last_confirmed_stage']='response_validated'
+            return diagnosed(result)
+        except httpx.ConnectError as exc:
+            diagnostic['last_confirmed_stage']='connect_failed'
+            return diagnosed(self._failure('native_host_unreachable',request_id,request_executed=False),exc)
         except httpx.TimeoutException as exc:
             self.cancel(request_id)
-            return self._failure("native_command_timeout", request_id,
+            return diagnosed(self._failure("native_command_timeout", request_id,
                 browser_diagnostics={'last_stage':'native_host_http_wait',
                     'command_elapsed_ms':round(max(0,time.monotonic()-request_started)*1000),
-                    'exception_type':type(exc).__name__, 'root_cause':'unconfirmed'})
-        except (httpx.HTTPError, ValueError):
-            return self._failure("native_host_unreachable", request_id)
+                    'exception_type':type(exc).__name__, 'root_cause':'unconfirmed'}),exc)
+        except ValueError as exc:
+            return diagnosed(self._failure('native_host_invalid_result',request_id),exc)
+        except httpx.HTTPError as exc:
+            return diagnosed(self._failure("native_host_unreachable", request_id),exc)
 
     def cancel(self, request_id: str) -> dict[str, Any]:
         return self._cancel('/cancel', {'request_id': request_id}, request_id)

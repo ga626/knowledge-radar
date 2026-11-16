@@ -330,11 +330,80 @@ def test_docs_only_trigger_is_fail_closed(tmp_path,monkeypatch):
     assert not ci.docs_only_change(tmp_path,'base')
 
 
+def test_lean_scope_is_conservative_and_keeps_nested_and_node_tests():
+    suite = load_suite(ROOT)
+    shared = ci.select_scope(ROOT, suite, ['browser_link/extension/sites/zhihu.js'])
+    assert shared['mode'] == 'affected'
+    assert 'tests/test_browser_link_extension.mjs' in shared['node_tests']
+    assert 'tests/test_zhihu_browser_link.py' in shared['nodes']
+    assert 'tests/evaluation/test_durable_tasks.py' in shared['nodes']
+    assert len(shared['nodes']) > 12
+    assert ci.select_scope(ROOT, suite, ['src/runtime/new_unknown_layer.py'])['mode'] == 'full'
+    assert ci.select_scope(ROOT, suite, None)['mode'] == 'full'
+    assert ci.select_scope(ROOT, suite, [])['mode'] == 'full'
+    assert ci.select_scope(ROOT, suite, ['config/runtime-win-py312.lock'])['mode'] == 'full'
+    assert 'tests/test_github_objects.py' in ci.select_scope(ROOT,suite,['src/platform_adapters/github_adapter.py'])['nodes']
+    assert 'tests/test_bilibili_asr_policy.py' in ci.select_scope(ROOT,suite,['src/detail_strategies/bilibili.py'])['nodes']
+    assert ci.select_scope(ROOT,suite,['src/runtime/browser_components.py'])['mode']=='full'
+
+
+def test_platform_regression_edits_reuse_the_same_coarse_group():
+    suite = load_suite(ROOT)
+    for source, test in (
+        ('src/detail_strategies/bilibili.py', 'tests/test_bilibili_asr_policy.py'),
+        ('browser_link/extension/sites/zhihu.js', 'tests/test_browser_link_extension.mjs'),
+        ('src/platform_adapters/github_adapter.py', 'tests/test_github_objects.py'),
+    ):
+        scope = ci.select_scope(ROOT, suite, [source, test])
+        assert scope['mode'] == 'affected'
+        assert test in scope['nodes'] + scope['node_tests']
+
+
+def test_new_unregistered_test_is_not_lost_in_full_fallback(tmp_path):
+    root, suite, _ = repository(tmp_path)
+    (root/'tests/nested').mkdir(parents=True)
+    path='tests/nested/test_new_regression.py'
+    (root/path).write_text('def test_regression(): assert False',encoding='utf-8')
+    assert path in ci.select_scope(root,suite,[path])['nodes']
+
+
+def test_scope_preserves_unmapped_paths_and_unselected_cases_are_not_green(tmp_path, monkeypatch):
+    root, suite, ledger = repository(tmp_path)
+    (root/'tests').mkdir()
+    for name in ('one', 'two'):
+        (root/f'tests/test_{name}.py').write_text('def test_ok(): pass', encoding='utf-8')
+        suite['cases'].append({**suite['cases'][0], 'case_id': name, 'executor':'pytest',
+            'auto':True, 'layer':'fixture', 'nodes':[f'tests/test_{name}.py']})
+    def fake(root, case, folder):
+        (folder/'junit.xml').write_text('<testsuites><testcase classname="tests.test_one" name="test_ok"/></testsuites>')
+        return {'verdict':'PASS', 'returncode':0}
+    monkeypatch.setattr(ci, '_pytest', fake)
+    scope = {'mode':'affected','nodes':['tests/test_one.py'],'node_tests':[], 'reason':'test'}
+    run, passed = ci.run_ci(root, suite, ledger, scope=scope)
+    assert passed
+    assert next(r for r in run['results'] if r['case_id']=='two')['verdict']=='NOT_RUN'
+    assert run['ci_scope']==scope
+
+
+def test_contract_failure_is_reported_before_any_pytest(tmp_path, monkeypatch):
+    root, suite, ledger = repository(tmp_path)
+    suite['cases'].append({**suite['cases'][0], 'case_id':'surface.broken','executor':'surface',
+        'auto':True, 'layer':'contract','entry':'demo','signature':'wrong'})
+    monkeypatch.setattr(ci, '_pytest', lambda *a: pytest.fail('heavy tests ran after broken contract'))
+    run, passed = ci.run_ci(root, suite, ledger, ['tests/'])
+    assert not passed
+    assert run['ci_pytest']['verdict']=='BLOCKED'
+    assert next(r for r in run['results'] if r['case_id']=='surface.broken')['verdict']=='FAIL'
+
+
 def test_ci_workflow_preserves_checks_and_single_invocation():
     text=(ROOT/'.github/workflows/ci.yml').read_text(encoding='utf-8-sig')
     assert text.count('scripts/kr_evaluate.py --store local/evaluation ci ')==1
     assert 'run: python -m pytest' not in text
-    assert '--extra-node tests/evaluation' in text and '--extra-node tests/test_product_install.py' in text
+    suite = load_suite(ROOT)
+    assert 'tests/evaluation' in suite['ci']['full_nodes']
+    assert 'tests/test_product_install.py' in suite['ci']['full_nodes']
+    assert '--changed-from' in text
     assert 'if: always()' in text and 'path: local/evaluation' in text
     # 新增构建步骤不应让合同依赖步骤总数；所有产品步骤都必须保留文档跳过门禁。
     product_steps = (

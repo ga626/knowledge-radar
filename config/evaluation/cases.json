@@ -2549,5 +2549,213 @@
       ],
       "boundary": "Mapping to existing executable contracts; semantic research gold requires independently reviewed fixed assets."
     }
-  ]
+  ],
+  "ci": {
+    "base_nodes": [
+      "tests/evaluation/test_product_contracts.py",
+      "tests/evaluation/test_durable_tasks.py",
+      "tests/evaluation/test_delivery_identity.py",
+      "tests/evaluation/test_content_contracts.py",
+      "tests/test_mcp_tool_schema_contract.py"
+    ],
+    "full_nodes": [
+      "tests/test_product_install.py",
+      "tests/test_product_console_launcher.py",
+      "tests/test_setup_wizard.py",
+      "tests/test_privacy_boundaries.py",
+      "tests/test_codex_stdio_contract.py",
+      "tests/test_capabilities_runtime_environment.py",
+      "tests/test_recruitment_configuration_gate.py",
+      "tests/test_xhs_cdp_dependency_boundary.py",
+      "tests/test_recruitment_city_registry.py",
+      "tests/test_managed_chrome_resolution.py",
+      "tests/test_release_candidate_contract.py",
+      "tests/test_private_candidate_delivery.py",
+      "tests/test_xhs_task_failover.py",
+      "tests/test_account_alerts.py",
+      "tests/test_mcp_observability.py",
+      "tests/test_boss_search_url.py",
+      "tests/test_academic_provider_profiles.py",
+      "tests/test_xiaohongshu_detail_regressions.py",
+      "tests/test_installed_business_routes.py",
+      "tests/test_browser_recovery_contract.py",
+      "tests/test_manual_browser_lifetime.py",
+      "tests/evaluation",
+      "tests/test_bilibili_asr_policy.py",
+      "tests/test_detail_direct_media.py",
+      "tests/test_runtime_task_fanin.py",
+      "tests/test_completion_paths.py",
+      "tests/test_evidence_assets.py",
+      "tests/test_evidence_export.py",
+      "tests/test_research_workspace.py",
+      "tests/test_research_workspace_integration.py",
+      "tests/test_w1w8_contracts.py",
+      "tests/test_console_access.py",
+      "tests/test_resource_concurrency_leases.py"
+    ],
+    "groups": {
+      "browser": {
+        "sources": [
+          "browser_link/*",
+          "bridge/*",
+          "src/runtime/browser*",
+          "src/runtime/opencli*",
+          "src/runtime/native_site.py",
+          "config/browser*",
+          "src/platform_adapters/boss_adapter.py",
+          "src/detail_strategies/boss.py",
+          "src/platform_adapters/liepin_adapter.py",
+          "src/detail_strategies/liepin.py",
+          "src/platform_adapters/maimai_adapter.py",
+          "src/detail_strategies/maimai.py",
+          "src/platform_adapters/v2ex_adapter.py",
+          "src/detail_strategies/v2ex.py",
+          "src/platform_adapters/wechat_adapter.py",
+          "src/detail_strategies/wechat.py",
+          "src/platform_adapters/xiaohongshu_adapter.py",
+          "src/detail_strategies/xiaohongshu.py",
+          "src/platform_adapters/zhihu_adapter.py",
+          "src/detail_strategies/zhihu.py"
+        ],
+        "tests": [
+          "tests/*browser*.py",
+          "tests/*opencli*.py",
+          "tests/*zhihu*.py",
+          "tests/*xhs*.py",
+          "tests/*xiaohongshu*.py",
+          "tests/*boss*.py",
+          "tests/*recruitment*.py",
+          "tests/*liepin*.py",
+          "tests/*maimai*.py",
+          "tests/*wechat*.py",
+          "tests/*youtube*.py",
+          "tests/*native_site*.py",
+          "tests/*platform*.py",
+          "tests/*manual_browser*.py",
+          "tests/*browser*.mjs",
+          "tests/*opencli*.mjs",
+          "tests/*zhihu*.mjs",
+          "tests/*xhs*.mjs",
+          "tests/*xiaohongshu*.mjs",
+          "tests/*boss*.mjs",
+          "tests/*recruitment*.mjs",
+          "tests/*liepin*.mjs",
+          "tests/*maimai*.mjs",
+          "tests/*wechat*.mjs",
+          "tests/*youtube*.mjs",
+          "tests/*native_site*.mjs",
+          "tests/*platform*.mjs",
+          "tests/*manual_browser*.mjs"
+        ]
+      },
+      "processing": {
+        "sources": [
+          "src/multimodal/*",
+          "src/media_platform/*",
+          "src/generic_web/*",
+          "src/runtime/*media*",
+          "src/runtime/*asr*",
+          "src/runtime/*document*",
+          "src/runtime/*content*",
+          "src/runtime/*acquisition*",
+          "src/platform_adapters/bilibili_adapter.py",
+          "src/platform_adapters/youtube_adapter.py",
+          "src/detail_strategies/bilibili.py",
+          "src/detail_strategies/youtube.py",
+          "src/detail_strategies/video.py"
+        ],
+        "tests": [
+          "tests/*media*.py",
+          "tests/*asr*.py",
+          "tests/*bilibili*.py",
+          "tests/*youtube*.py",
+          "tests/*doc*.py",
+          "tests/*pdf*.py",
+          "tests/*ocr*.py",
+          "tests/*content*.py",
+          "tests/*web*.py",
+          "tests/*transcript*.py",
+          "tests/*acquisition*.py",
+          "tests/*media*.mjs",
+          "tests/*asr*.mjs",
+          "tests/*bilibili*.mjs",
+          "tests/*youtube*.mjs",
+          "tests/*doc*.mjs",
+          "tests/*pdf*.mjs",
+          "tests/*ocr*.mjs",
+          "tests/*content*.mjs",
+          "tests/*web*.mjs",
+          "tests/*transcript*.mjs",
+          "tests/*acquisition*.mjs"
+        ]
+      },
+      "persistence": {
+        "sources": [
+          "src/runtime/research*",
+          "src/runtime/evidence*",
+          "src/runtime/tasks.py",
+          "src/runtime/task_*",
+          "src/runtime/knowledge*",
+          "src/runtime/execution_context.py"
+        ],
+        "tests": [
+          "tests/*research*.py",
+          "tests/*evidence*.py",
+          "tests/*archive*.py",
+          "tests/*project_identity*.py",
+          "tests/*task*.py",
+          "tests/*completion*.py",
+          "tests/*durable*.py",
+          "tests/*storage*.py",
+          "tests/*delivery*.py",
+          "tests/*research*.mjs",
+          "tests/*evidence*.mjs",
+          "tests/*archive*.mjs",
+          "tests/*project_identity*.mjs",
+          "tests/*task*.mjs",
+          "tests/*completion*.mjs",
+          "tests/*durable*.mjs",
+          "tests/*storage*.mjs",
+          "tests/*delivery*.mjs"
+        ]
+      },
+      "console": {
+        "sources": [
+          "src/onboarding/*",
+          "scripts/build_console.mjs"
+        ],
+        "tests": [
+          "tests/*console*.py",
+          "tests/*setup_wizard*.py",
+          "tests/*maintenance_web*.py",
+          "tests/*research_workspace*.py",
+          "tests/*console*.mjs",
+          "tests/*setup_wizard*.mjs",
+          "tests/*maintenance_web*.mjs",
+          "tests/*research_workspace*.mjs"
+        ]
+      },
+      "github": {
+        "sources": [
+          "src/libs/github*",
+          "src/search_providers/github*",
+          "src/platform_adapters/github_adapter.py",
+          "src/detail_strategies/github.py"
+        ],
+        "tests": [
+          "tests/*github*.py",
+          "tests/*github*.mjs"
+        ]
+      }
+    },
+    "full_sources": [
+      "src/runtime/browser_components.py",
+      "src/runtime/component_requirements.py",
+      "src/runtime/browser_identity.py",
+      "src/runtime/profile*",
+      "src/runtime/paths.py",
+      "src/runtime/execution_owner.py",
+      "src/runtime/execution_context.py"
+    ]
+  }
 }

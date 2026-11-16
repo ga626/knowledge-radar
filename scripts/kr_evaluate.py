@@ -55,6 +55,7 @@ def main(argv=None):
     ci_parser = sub.add_parser("ci")
     ci_parser.add_argument("--extra-node", action="append", default=[])
     ci_parser.add_argument("--changed-from")
+    ci_parser.add_argument("--full", action="store_true", help="冻结交付运行完整离线集合")
     review_parser = sub.add_parser("review-candidate")
     review_parser.add_argument("candidate_id")
     review_parser.add_argument("--case")
@@ -161,13 +162,14 @@ def main(argv=None):
                 result = review_candidate(candidate_store, args.candidate_id, case=args.case, reviewer=args.reviewer,
                        reason=args.reason, input_sha256=args.input_sha256, oracle_version=args.oracle_version)
         elif args.command == "ci":
-            from scripts.kr_eval.ci import docs_only_change, run_ci, run_documentation_checks
+            from scripts.kr_eval.ci import changed_paths, docs_only_change, select_scope, run_ci, run_documentation_checks
             if docs_only_change(root, args.changed_from):
                 result = run_documentation_checks(root)
                 exit_code = int(result["status"] != "PASS")
                 write_new(ledger.path / "ci-scope.json", result)
             else:
-                result, passed = run_ci(root, suite, ledger, args.extra_node)
+                scope = select_scope(root, suite, changed_paths(root, args.changed_from), full=args.full)
+                result, passed = run_ci(root, suite, ledger, args.extra_node, scope=scope)
                 exit_code = int(not passed)
         elif args.command == "accept-baseline":
             result = ledger.accept(args.run_id, args.reason)
@@ -199,6 +201,11 @@ def main(argv=None):
             print(f"run_id: {result['run_id']}\n" + json.dumps(result["counts"], ensure_ascii=False))
             for row in result["results"]:
                 print(f"{row['case_id']}: {row['verdict']} " + (f"reused from {row['reused_from']}" if row.get("reused_from") else row.get("summary", "")))
+        elif args.command == 'ci' and 'ci_scope' in result:
+            print(json.dumps({'run_id':result['run_id'], 'scope':{k:v for k,v in result['ci_scope'].items() if k not in {'nodes','node_tests'}},
+                'internal':'PASS' if exit_code==0 else 'BLOCKED', 'counts':result['counts'],
+                'target':result['target'], 'external':'NOT_RUN',
+                'evidence':str(ledger.path/'runs'/result['run_id'])},ensure_ascii=False,indent=2))
         else:
             print(json.dumps(result, ensure_ascii=False, indent=2))
         return exit_code

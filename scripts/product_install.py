@@ -1695,13 +1695,22 @@ def apply_install(
     staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
     product_python = Path(staged["runtime_python"])
     restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
-    model_configuration = migrate_model_configuration(data_root, program_root)
     browser_components={}
     if (program_root/'config/browser-components.json').is_file():
         sys.path.insert(0,str(program_root/'src'))
         for component in ('browser_link','opencli'):
-            try:browser_components[component]=_prepare_bundled_component(program_root,install_root,data_root,component)
-            except ValueError as error:browser_components[component]={'status':'conflict','error':str(error)}
+            try:
+                prepared = _prepare_bundled_component(program_root,install_root,data_root,component)
+            except (OSError, ValueError) as error:
+                raise RuntimeError('component_preparation_failed:'+component) from error
+            if prepared.get('status') != 'prepared':
+                raise RuntimeError('component_preparation_failed:'+component)
+            browser_components[component]=prepared
+    # 已知注册所有权冲突必须在写Codex配置/active之前暴露；不接管别的安装。
+    lifecycle=browser_link_lifecycle()
+    if plan.get('browser_link',{}).get('registration'):
+        lifecycle._assert_owned(lifecycle.read_registration(),install_root)
+    model_configuration = migrate_model_configuration(data_root, program_root)
     active = {
         "schema": ACTIVE_SCHEMA,
         "channel": channel,

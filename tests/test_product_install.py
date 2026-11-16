@@ -72,6 +72,23 @@ def test_installation_prepares_extensions_through_shared_update_boundary(tmp_pat
     assert all(row[:3]==(Path(result['active']['program_root']),tmp_path/'install',tmp_path/'chosen') for row in calls)
 
 
+@pytest.mark.parametrize('failure', ['raise', 'conflict'])
+def test_component_conflict_stops_before_active_or_codex_configuration(tmp_path, monkeypatch, failure):
+    monkeypatch.setenv('CODEX_HOME',str(tmp_path/'codex'))
+    package=package_fixture(tmp_path,'0.3.0')
+    (package/'config/browser-components.json').write_text('{}',encoding='utf-8')
+    archive,receipt=artifact_fixture(tmp_path,package)
+    def prepare(*a):
+        if failure=='raise': raise ValueError('fixture conflict')
+        return {'status':'conflict'}
+    monkeypatch.setattr(installer,'_prepare_bundled_component',prepare)
+    with pytest.raises(RuntimeError,match='component_preparation_failed'):
+        installer.apply_install(package,tmp_path/'install',tmp_path/'chosen',Path(sys.executable),
+            channel='maintainer-main',archive=archive,receipt_path=receipt)
+    assert not (tmp_path/'install/active.json').exists()
+    assert not (tmp_path/'codex/config.toml').exists()
+
+
 def test_component_preparation_preserves_external_host_without_opening_or_draining_it(tmp_path, monkeypatch):
     from runtime import browser_components
     external = tmp_path/'other-install'/'host.json'

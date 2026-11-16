@@ -122,7 +122,7 @@ def load_suite(root, directory="config/evaluation"):
         contract = case.get("receipt_contract")
         if contract and (not contract.get("tool") or not contract.get("assertions") or not contract.get("identity_fields")):
             raise ValueError("external receipt needs reviewed business assertions and identity fields")
-    return {"catalog": catalog, "cases": cases, "caps": cap_map}
+    return {"catalog": catalog, "cases": cases, "caps": cap_map, "ci": definitions.get("ci", {})}
 
 
 def inventory(root, suite):

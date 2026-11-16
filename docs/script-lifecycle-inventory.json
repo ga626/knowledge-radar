@@ -1,13 +1,13 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "32699ef2baeefd738328006b428e0108982d4a4a7857089faada3cd4d8418fa3",
+  "content_hash": "b5a38617f6fbbcb2bb49eb70f91ff5bdfec748e8153a40b8a25f06c084c55810",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
       "path": "scripts/__init__.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 154,
+      "reference_count": 157,
       "action": "may_move_after_targeted_checks"
     },
     {
@@ -203,7 +203,7 @@
       "path": "scripts/private_candidate_delivery.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 7,
+      "reference_count": 8,
       "action": "may_move_after_targeted_checks"
     },
     {
@@ -217,14 +217,14 @@
       "path": "scripts/product_console_launcher.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 41,
+      "reference_count": 42,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
       "path": "scripts/product_install.py",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 108,
+      "reference_count": 109,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {
@@ -259,7 +259,7 @@
       "path": "scripts/setup_wizard.bat",
       "level": "S1",
       "reason": "manifest_watch_path",
-      "reference_count": 59,
+      "reference_count": 61,
       "action": "move_only_with_manifest_and_callsite_updates"
     },
     {

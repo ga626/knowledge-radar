@@ -1,6 +1,6 @@
 {
   "schema": "knowledgeradar-project-structure/v1",
-  "updated_at": "2026-11-13",
+  "updated_at": "2026-11-16",
   "acquisition_limits_contract": {
     "clocks": "Durable v2 jobs separate cumulative active execution, resource queue, user wait and finite overall authorization. Historical v1 jobs retain their recorded deadline semantics.",
     "payloads": "Large sanitized job payloads and committed collection bodies use task-local SHA-256 references; private tokens remain execution-memory-only. Reference paths, byte bounds and identity are validated before use.",
@@ -536,5 +536,10 @@
     "product_source": "Current explicit checkout; do not infer it from cwd or governance-root copies.",
     "runtime_identity": "Installed active manifest and live process identity, verified separately."
   },
-  "single_source_of_truth_scope": "private_governance_only; editable product source is the explicit current checkout, and installed identity is separate"
+  "single_source_of_truth_scope": "private_governance_only; editable product source is the explicit current checkout, and installed identity is separate",
+  "engineering_verification_contract": {
+    "scope": "Existing evaluation cases own base nodes and coarse impact groups. Unmapped or unknown changes expand to the full offline set; unselected cases remain NOT_RUN.",
+    "delivery": "PR runs affected offline checks; main freezes the full offline set and builds one candidate. Candidate business probes use extracted source. Required components must prepare before activation.",
+    "diagnostics": "Existing request receipts retain last confirmed stage and non-secret input/response identities. Missing input and unknown outcome do not authorize replay or external-cause claims."
+  }
 }
