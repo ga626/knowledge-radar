@@ -44,9 +44,10 @@ class VideoDetailStrategy:
                        or _visual_requested(request, data) or request.options.get('include_ocr') or request.enable_comment_filtering)
         # 不能把IP封禁或登录墙换个下载入口继续撞。
         blocked = (data.get('transcript_metadata') or {}).get('failure_type') in {
-            'rate_limited_or_ip_blocked', 'verification_required', 'private_or_authorization_required', 'region_restricted'}
+            'rate_limited_or_ip_blocked', 'verification_required', 'private_or_authorization_required', 'region_restricted'} or (
+                (data.get('transcript_metadata') or {}).get('browser_fallback_attempted') and not data.get('transcript'))
         if blocked:
-            transcript_gap = data['transcript_metadata']['failure_type']
+            transcript_gap = data['transcript_metadata'].get('failure_type') or 'browser_transcript_unavailable'
             data.update(enhancement_status='partial', failure_type=transcript_gap,
                         capability_status={'metadata': 'available' if data.get('title') else 'unknown',
                                            'transcript': 'blocked', 'media': 'not_attempted',

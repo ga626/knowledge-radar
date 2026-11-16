@@ -130,7 +130,7 @@ class BrowserLink:
             return self._failure('native_command_timeout', request_id, request_executed=False)
         request_started = time.monotonic()
         request_deadline = request_started + timeout_s
-        last_health = self.health() if operation in {'search', 'detail', 'comments', 'login', 'auth_verify', 'attention'} else {'ok': True}
+        last_health = self.health() if operation in {'search', 'detail', 'comments', 'transcript', 'login', 'auth_verify', 'attention'} else {'ok': True}
         if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():
@@ -216,7 +216,26 @@ class BrowserLink:
 
     def receipt(self, request_id: str) -> dict[str, Any]:
         """只读原请求结果；未知或Host换代都不触发重放。"""
-        return self._cancel('/receipt', {'request_id': request_id}, request_id)
+        state = _read_state(self.state_file)
+        base = {'status':'unknown', 'request_id':request_id, 'generation':state.get('generation',''), 'automatic_replay':False}
+        if not state.get('port') or not state.get('token'):
+            return {**base, 'reason':'receipt_host_unavailable'}
+        try:
+            with self._session() as client:
+                response = client.post(self._url(state, '/receipt'), headers=self._headers(state),
+                                       json={'request_id':request_id}, timeout=2)
+            if not response.is_success:
+                return {**base, 'reason':'receipt_http_error', 'http_status':response.status_code}
+            result = response.json()
+            if not isinstance(result, dict) or result.get('status') not in {'recorded','pending','unknown'}:
+                raise ValueError('invalid_receipt')
+            return result
+        except httpx.TimeoutException:
+            return {**base, 'reason':'receipt_transport_timeout'}
+        except httpx.HTTPError:
+            return {**base, 'reason':'receipt_transport_error'}
+        except ValueError:
+            return {**base, 'reason':'receipt_invalid_result'}
 
     def cancel_task(self, task_id: str) -> dict[str, Any]:
         return self._cancel('/cancel_task', {'task_id': task_id}, task_id)

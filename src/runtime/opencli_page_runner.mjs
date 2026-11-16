@@ -166,6 +166,21 @@ try {
       }
       if (state.risk) stop('SECURITY_BLOCK');
       if (state.login && !['login','attention'].includes(request.operation)) stop('AUTH_REQUIRED');
+      // 同一次工作页读取内捕获适配器指定的小区域；不弹窗、不抓全屏或其他页。
+      if (request.captureRegionField && state[request.captureRegionField]) {
+        const clip=state[request.captureRegionField];
+        const valid=['x','y','width','height'].every(k=>Number.isFinite(clip[k])) && clip.x>=0 && clip.y>=0
+          && clip.width>0 && clip.width<=2048 && clip.height>0 && clip.height<=512;
+        if(valid){
+          try {
+            const identity=await page.evaluate('location.href');
+            if(identity!==state.url)throw Error('capture_identity_changed');
+            const image=await page.cdp('Page.captureScreenshot',{format:'png',clip:{...clip,scale:1},captureBeyondViewport:false});
+            if(typeof image.data!=='string'||image.data.length>2*1024*1024)throw Error('capture_invalid_result');
+            state[request.captureRegionField+'_image']={data:image.data,mime_type:'image/png',clip,source_url:identity};
+          } catch(error){state[request.captureRegionField+'_error']=error.code || 'region_capture_failed';}
+        } else state[request.captureRegionField+'_error']='invalid_region';
+      }
       if (request.operation === 'auth_verify') {
         // The verification window keeps the extension connected while the old
         // login session is released. Closing it first can tear down Chrome and

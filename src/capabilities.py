@@ -1220,7 +1220,7 @@ def build_capabilities(
                     "schema": "knowledgeradar-direct-media/v1",
                     "bilibili": "auto_multimodal/deep analysis can expose redacted direct URL candidates and reachability without downloading media",
                     "youtube": "watch_url is exposed as non-direct status; authorized local download reports JS/EJS/PO-token/ffmpeg gaps separately",
-                    "youtube_transcript_fallback": "explicit youtube_browser_fallback uses one visible YouTube transcript-panel read through Browser Link; no automatic retry or background polling",
+                    "youtube_transcript_fallback": "requested transcript failures default to one daily-Chrome transcript-panel read; preserve all attempts and 429 switch-node notice; explicit false disables fallback; no proxy mutation or background polling",
                     "provider_downloadability": "native_media is allowed only when probe.provider_downloadability.allow_native_media=true",
                     "native_switching": "implemented_p1_3; Bilibili raw CDN candidates remain sampled/derived fallback because provider-side downloads failed in validation",
                 },

@@ -247,14 +247,23 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                     f'https://arxiv.org/pdf/{identifier}'] + urls
     urls = list(dict.fromkeys(u for u in urls if isinstance(u, str) and u.startswith(('http://', 'https://'))))
     deadline = time.monotonic() + max(0.1, timeout_s)
-    failures = []
+    failures, attempts, rate_limited_origins = [], [], set()
     for url in urls[:12]:
+        from urllib.parse import urlsplit
+        origin=(urlsplit(url).scheme,urlsplit(url).netloc)
+        if origin in rate_limited_origins:
+            attempts.append({'url':redact_url(url),'stage':'fulltext_fetch','status':'not_attempted',
+                             'reason':'same_origin_rate_limited','automatic_retry':False})
+            continue
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
+        attempt={'url':redact_url(url),'stage':'fulltext_fetch','status':'started'}
+        attempts.append(attempt)
         try:
             pdf_processing = {}
             response = guarded_fetch(url, timeout=min(remaining, 30.0), max_bytes=32 * 1024 * 1024)
+            attempt.update(http_status=response.status_code,final_url=redact_url(str(response.url)))
             response.raise_for_status()
             if provider_id in {'arxiv','ar5iv'}:
                 from .identity import arxiv_identifier
@@ -262,6 +271,7 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                 received = arxiv_identifier(str(response.url))
                 if requested and received and requested != received and __import__('re').search(r'v\d+$', requested):
                     failures.append('academic_version_redirect_mismatch')
+                    attempt.update(status='rejected',reason='academic_version_redirect_mismatch')
                     continue
             if response.content.startswith(b'%PDF-'):
                 extracted = process_pdf(response.content, timeout_s=max(.01, deadline-time.monotonic()),
@@ -274,7 +284,10 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                     reason = (extracted.get('ocr_errors') or [{}])[0].get('type', 'pdf_text_unavailable')
                     # A PDF has reached the common OCR processor. Do not replay
                     # model calls by probing alternate copies of the same work.
-                    return _degraded(provider_id, source_url, reason)
+                    attempt.update(status='failed',reason=reason,stage='pdf_processing')
+                    from dataclasses import replace
+                    degraded=_degraded(provider_id, source_url, reason)
+                    return replace(degraded,provenance={**degraded.provenance,'attempts':attempts})
                 mode = 'public_pdf_text_ocr' if extracted.get('ocr_pages') else 'public_pdf_text'
                 count, coverage = extracted['page_count'], extracted.get('coverage', 'partial')
                 locators = extracted.get('locators') or paragraph_locators(text)
@@ -292,11 +305,13 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                     declared = soup.find('article-id', attrs={'pub-id-type':'doi'})
                     if declared and normalize_doi(declared.get_text(strip=True)) != normalize_doi(work.doi):
                         failures.append('academic_document_doi_mismatch')
+                        attempt.update(status='rejected',reason='academic_document_doi_mismatch')
                         continue
                 body = (soup.find('body') if is_xml and soup.find('article') else
                         soup.select_one('.ltx_document, .jats-body, #article-body, .article-body, .fulltext-body, .article-content'))
                 if not body or len(body.get_text(' ', strip=True)) < 500:
                     failures.append('landing_or_abstract_only')
+                    attempt.update(status='rejected',stage='body_extraction',reason='landing_or_abstract_only')
                     continue
                 for unwanted in body.select('script, style, nav, form, .abstract'):
                     unwanted.decompose()
@@ -311,11 +326,13 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                 mode, count, coverage = 'public_xml_text' if is_xml else 'public_html_text', 0, 'partial'
                 if len(text.strip()) < 100:
                     failures.append('html_parse_empty')
+                    attempt.update(status='rejected',stage='body_extraction',reason='html_parse_empty')
                     continue
+            attempt['status']='acquired'
             return AcademicFullTextResult(provider_id, 'PASS', source_url, mode, True,
                 text_length=len(text), text=text, sample=text[:240], page_count=count, coverage=coverage,
                 locators=locators,
-                provenance={'provider_id': provider_id, 'source_url': source_url,
+                provenance={'provider_id': provider_id, 'source_url': source_url, 'attempts':attempts,
                     'resolved_url': redact_url(str(response.url)), 'mode': mode, 'coverage': coverage,
                     'input_sha256':__import__('hashlib').sha256(response.content).hexdigest(),
                     'location':next((location for location in raw.get('locations') or raw.get('oa_locations') or []
@@ -328,9 +345,13 @@ def _extract_public_work(provider_id, source_url, work, *, timeout_s, include_oc
                 raise
             # 不把可能含签名、邮箱和 token 的请求异常原文写进报告。
             status = getattr(getattr(exc, 'response', None), 'status_code', None)
+            attempt.update(status='failed',failure_type='rate_limited' if status==429 else 'access_denied' if status in {401,403} else type(exc).__name__,
+                           http_status=status,automatic_retry=False)
+            if status==429:rate_limited_origins.add(origin)
             failures.append(f'http_{status}' if status else type(exc).__name__)
     result = _degraded(provider_id, source_url, ';'.join(dict.fromkeys(failures)) or 'no_public_text_url')
-    return result
+    from dataclasses import replace
+    return replace(result,provenance={**result.provenance,'attempts':attempts})
 
 
 def _degraded(provider_id: str, source_url: str, reason: str) -> AcademicFullTextResult:

@@ -461,11 +461,13 @@ def test_ci_separates_owned_host_process_without_repeating_offline_tests(tmp_pat
     assert len(run['ci_pytest']['batches'])==2
 
 
-@pytest.mark.parametrize('selection', ['tests/', 'tests/test_product_runtime.py::test_selected'])
+@pytest.mark.parametrize('selection', ['tests/', 'tests/test_product_runtime.py::test_selected',
+                                     'tests/test_browser_link_host.py::test_selected'])
 def test_ci_routes_owner_and_stdio_nodes_without_enabling_external_network(tmp_path, monkeypatch, selection):
     root, suite, ledger = repository(tmp_path)
     (root/'tests').mkdir()
-    for name in ('test_product_console_launcher.py', 'test_product_runtime.py', 'test_codex_stdio_contract.py'):
+    for name in ('test_product_console_launcher.py', 'test_product_runtime.py', 'test_codex_stdio_contract.py',
+                 'test_browser_link_host.py'):
         (root/'tests'/name).write_text('pass', encoding='utf-8')
     calls = []
 

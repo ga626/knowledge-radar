@@ -8,6 +8,7 @@ using System.Threading;
 using System.Web.Script.Serialization;
 using System.Security.Principal;
 using System.Text.RegularExpressions;
+using System.Security.Cryptography;
 
 // Chrome owns this process. No service, debugger, account store or site parser.
 internal static class BrowserLinkHost
@@ -49,6 +50,38 @@ internal static class BrowserLinkHost
     { object result; return value != null && value.TryGetValue(key, out result) ? Convert.ToString(result) : ""; }
     private static Dictionary<string, object> Failure(string code, string id, bool executed)
     { return new Dictionary<string, object> { { "ok", false }, { "code", code }, { "failure_type", code }, { "request_id", id }, { "request_executed", executed }, { "generation", Generation } }; }
+    // 回执与Host进程分离；只保存KR结果，不保存请求头、Cookie或浏览器认证。
+    private static string ReceiptPath(string id)
+    {
+        using (var hash = SHA256.Create()) return Path.Combine(Path.GetDirectoryName(StateFile), "receipts",
+            BitConverter.ToString(hash.ComputeHash(Encoding.UTF8.GetBytes(ProfileId + ":" + id))).Replace("-", "") + ".json");
+    }
+    private static void SaveReceipt(string id, string status, Dictionary<string, object> result)
+    {
+        var record = new Dictionary<string, object> { { "status", status }, { "request_id", id },
+            { "generation", Generation }, { "profile_id", ProfileId }, { "at", DateTimeOffset.UtcNow.ToUnixTimeSeconds() } };
+        if (result != null) record["result"] = result;
+        lock (StateLock) {
+            AtomicJson(ReceiptPath(id), record);
+            var files = new DirectoryInfo(Path.GetDirectoryName(ReceiptPath(id))).GetFiles("*.json");
+            if (files.Length > 256) {
+                Array.Sort(files, (a, b) => a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc));
+                for (int i = 0; i < files.Length - 256; i++) files[i].Delete();
+            }
+        }
+    }
+    private static Dictionary<string, object> LoadReceipt(string id)
+    {
+        string path = ReceiptPath(id);
+        lock (StateLock) {
+            if (!File.Exists(path)) return null;
+            try {
+                if (new FileInfo(path).Length > 1024 * 1024) return null;
+                var record = Serializer().DeserializeObject(File.ReadAllText(path)) as Dictionary<string, object>;
+                return Text(record, "profile_id") == ProfileId && Text(record, "request_id") == id ? record : null;
+            } catch (Exception ex) { Console.Error.WriteLine("receipt: " + ex.GetType().Name); return null; }
+        }
+    }
     private static void Send(object value)
     {
         byte[] bytes = Encoding.UTF8.GetBytes(Serializer().Serialize(value));
@@ -150,7 +183,16 @@ internal static class BrowserLinkHost
                 var body = ReadBody(context); string id = Text(body, "request_id");
                 PendingRequest active; Dictionary<string, object> completed;
                 if (Receipts.TryGetValue(id, out completed)) Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "status", "recorded" }, { "request_id", id }, { "generation", Generation }, { "result", completed } });
-                else Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "status", Pending.TryGetValue(id, out active) ? "pending" : "unknown" }, { "request_id", id }, { "generation", Generation } });
+                else {
+                    var persisted = LoadReceipt(id);
+                    if (persisted != null && Text(persisted, "status") == "recorded") {
+                        persisted["ok"] = true; persisted["current_generation"] = Generation;
+                        Reply(context, 200, persisted);
+                    } else Reply(context, 200, new Dictionary<string, object> { { "ok", true },
+                        { "status", Pending.TryGetValue(id, out active) ? "pending" : "unknown" },
+                        { "reason", persisted == null ? "receipt_missing_or_expired" : "host_interrupted_after_dispatch" },
+                        { "request_id", id }, { "generation", Generation }, { "automatic_replay", false } });
+                }
                 return;
             }
             if (path == "/drain") { lock (AdmissionLock) { Draining = true; Send(new Dictionary<string, object> { { "type", "drain" } }); Reply(context, 200, new Dictionary<string, object> { { "ok", true }, { "pending", Pending.Count } }); } return; }
@@ -178,10 +220,12 @@ internal static class BrowserLinkHost
                 long now = DateTimeOffset.UtcNow.ToUnixTimeSeconds(), removed;
                 foreach (var pair in Seen) if (now - pair.Value > 600) { Seen.TryRemove(pair.Key, out removed); Dictionary<string, object> expired; Receipts.TryRemove(pair.Key, out expired); }
                 foreach (var pair in CancelledTasks) if (now - pair.Value > 600) CancelledTasks.TryRemove(pair.Key, out removed);
-                if (requestId == "" || Seen.ContainsKey(requestId)) { Reply(context, 409, Failure("duplicate_request", requestId, false)); return; }
+                if (requestId == "" || Seen.ContainsKey(requestId) || LoadReceipt(requestId) != null) { Reply(context, 409, Failure("duplicate_request", requestId, false)); return; }
                 if (Pending.Count >= 2) { Reply(context, 409, Failure("browser_busy", requestId, false)); return; }
                 foreach (var pair in Pending) if (pair.Value.Platform == platform) { Reply(context, 409, Failure("browser_busy", requestId, false)); return; }
                 if (request.TaskId != "" && CancelledTasks.ContainsKey(request.TaskId)) { Reply(context, 409, Failure("cancelled", requestId, false)); return; }
+                try { SaveReceipt(requestId, "dispatched", null); } // 首次发送前必须持久化。
+                catch (Exception ex) { Console.Error.WriteLine("receipt-before-send: " + ex.GetType().Name); Reply(context, 503, Failure("receipt_persistence_failed", requestId, false)); return; }
                 Seen[requestId] = now; Pending[requestId] = request;
             }
             try {
@@ -193,6 +237,11 @@ internal static class BrowserLinkHost
                 if (!request.Done.Wait(timeout + 300)) Cancel(requestId, "native_command_timeout");
                 var result = request.Result ?? Failure("native_command_timeout", requestId, true);
                 Receipts[requestId] = result;
+                try { SaveReceipt(requestId, "recorded", result); }
+                catch (Exception ex) { // 已执行结果不能因磁盘故障改成“未执行”，内存回执仍可查询。
+                    Console.Error.WriteLine("receipt-after-execution: " + ex.GetType().Name);
+                    result["receipt_persistence"] = "failed";
+                }
                 if (Receipts.Count > 80) foreach (var pair in Receipts) { if (pair.Key != requestId) { Dictionary<string, object> expired; Receipts.TryRemove(pair.Key, out expired); break; } }
                 bool ok = result.ContainsKey("ok") && Convert.ToBoolean(result["ok"]);
                 Reply(context, ok ? 200 : 502, result);

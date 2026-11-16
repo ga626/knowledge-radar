@@ -39,7 +39,7 @@ def request_content_detail(
     url, *, infer_platform, execute_sync, enable_deep_analysis=False,
     enable_comment_filtering=False, auto_multimodal=False, research_session_id="",
     work_scope_id="", task_scope_id="", research_task_id="", include_transcript=None,
-    include_comments=None, include_ocr=None, language=None, youtube_browser_fallback=False, deadline_s=600, github=None, xhs=None, wechat=None, document=None, comments=None, task_limits=None, media=None,
+    include_comments=None, include_ocr=None, language=None, youtube_browser_fallback=True, deadline_s=600, github=None, xhs=None, wechat=None, document=None, comments=None, task_limits=None, media=None,
 ):
     """接收详情请求并选择短调用或持久任务；平台采集和任务调度各守原边界。"""
     from runtime.redaction import redact_url

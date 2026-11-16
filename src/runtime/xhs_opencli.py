@@ -264,7 +264,7 @@ def _run(operation, **kwargs):
         ready = _ensure_daemon(root, node)
         if ready:
             return _failure(ready, executed=False)
-    if operation in {'search', 'detail', 'comments', 'session_probe', 'resume'} and not connection_status().get('connected'):
+    if operation in {'search', 'detail', 'comments', 'session_probe', 'resume', 'login'} and not connection_status().get('connected'):
         from runtime.browser_channel import ensure_borrowed_browser
         # 固定扩展1.0.26的重连退避上限15秒+0.5秒抖动；不因原8秒窗口误报。
         ready = ensure_borrowed_browser(lambda: bool(connection_status().get('connected')), timeout_s=18)
@@ -520,7 +520,9 @@ def _read_options(options):
             raise ValueError('xiaohongshu_comments_max_50_roots_200_total')
         value.update(comment_limit=common.get('root_limit',value.get('comment_limit',10)),
                      comment_budget=common.get('total_limit',value.get('comment_budget',100)))
-    return XhsReadOptions.model_validate(value).model_dump()
+    result = XhsReadOptions.model_validate(value).model_dump()
+    result['comment_reply_limit'] = common.get('reply_limit',10)
+    return result
 
 
 def _normalize_manifest(items, note_id):
@@ -692,14 +694,27 @@ def _normalize_comments(data, scope):
     observation = data.get('comments_observation') or {}
     full_observed = (total is not None and len(raw) == total and observation.get('skipped_empty') == 0
         and observation.get('expanders_remaining') == 0 and not budget_hit)
-    window = observed_zero or full_observed or (root_count >= scope['comment_limit'] and not budget_hit)
+    # 根评论够数不代表回复窗口满足；仍有展开按钮时不可报完整。
+    reply_limit = scope.get('comment_reply_limit', 10)
+    reply_counts = {root:sum(bool(row.get('is_reply')) and row.get('root_comment_id')==root for row in normalized) for root in roots}
+    observed_replies = {root:sum(bool(row.get('is_reply')) and row.get('root_index')==index for row in raw)
+                        for index,root in enumerate(roots)}
+    reply_complete = (reply_limit == 0 or bool(roots) and all(
+        count>=reply_limit or observation.get('expanders_remaining')==0 and count>=observed_replies[root]
+        for root,count in reply_counts.items()))
+    if full_observed or observed_zero:reply_complete = True
+    window = observed_zero or full_observed or (root_count >= scope['comment_limit'] and reply_complete
+        and observation.get('skipped_empty',0)==0)
     # 未满窗口不能从昵称、点赞数或页面总数臆断已穷尽。
     data['comments_complete'] = window
     data['comments_coverage'] = 'observed_zero_comments' if observed_zero else 'bounded_top_level_with_replies'
     data['comments_metadata'] = {'schema':'knowledgeradar-comments/v1','requested_roots':scope['comment_limit'],
         'total_budget':scope['comment_budget'],'returned_roots':root_count,'returned_comments':len(normalized),
         'observed_total':total,'complete_source':observed_zero or full_observed,'request_window_complete':window,
-        'stop_reason':'total_budget' if budget_hit else 'observed_total' if full_observed else 'root_window' if window else 'upstream_bounded_no_exhaustion_proof',
+        'reply_window_complete':reply_complete,
+        'total_budget_reached':bool(budget_hit),
+        'returned_replies_by_root':reply_counts,
+        'stop_reason':'observed_total' if full_observed else 'root_window' if window else 'total_budget' if budget_hit else 'upstream_bounded_no_exhaustion_proof',
         'has_more':False if observed_zero or full_observed else None,'comment_images_ocr':'not_requested'}
 
 
@@ -709,7 +724,7 @@ def _detail_checkpoint(request):
     options = request.options
     scope = _read_options(options)
     identity = runtime_identity()
-    identity['collection_contract'] = 3
+    identity['collection_contract'] = 4
     identity.pop('auth_revision', None)
     # 加工范围、模型版本和语言由SHA加工缓存管理，不作浏览器采集身份。
     return OperationCheckpoint(state_dir() / 'checkpoints',
@@ -764,7 +779,8 @@ def detail(request):
     if options.get('include_comments') and data.get('comments_metadata'):
         observation=data.get('comments_observation') or {}
         data['comments_metadata']['pagination_unit']='bounded_dom_scroll_rounds; not_api_pages'
-        if observation.get('expanders_remaining') or observation.get('skipped_empty'):
+        if observation.get('skipped_empty') or (observation.get('expanders_remaining')
+                and not data['comments_metadata'].get('reply_window_complete')):
             data['comments_complete']=False
             data['comments_metadata'].update(request_window_complete=False,stop_reason='unexpanded_or_unread_comments')
     data['collection_version'] = hashlib.sha256(json.dumps({k:data.get(k) for k in

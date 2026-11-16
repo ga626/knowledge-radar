@@ -8,6 +8,8 @@
     "safety": "Fees, unknown-result replay locks, account risk, user-file ownership, parser memory and transport protocol bounds remain enforced. Agent owns semantic sufficiency."
   },
   "research_capability_contract": {
+    "context_disclosure": "Default tool results retain current execution facts, fixed evidence references and continuation; static strategy dictionaries and unrelated browser history are available through explicit capability or diagnostic reads. Skill maintenance and host snapshot details are loaded from conditional references.",
+    "plugin_identity": "Source deployment and package installation share a deterministic content fingerprint over all Skill resources and manifest metadata, excluding only the derived manifest version. Vendor caches and MCP configuration are not rewritten by a Skill-only sync.",
     "ownership": "Codex owns research framing, source selection, sufficiency and recommendations. Official host search requires no KR route admission; KR supplies special acquisition, durable execution and fixed evidence.",
     "skill": "The capability entry is concise; recruitment, customer evidence and media references are loaded on demand, not mandatory forms or platform quotas.",
     "handoff": "Host results may be submitted after search with real references and an explicit query. Empty payload, zero matches and declared provenance stay distinct; validation and idempotency precede projection.",

@@ -124,103 +124,114 @@ def search_youtube(keyword: str, limit: int = 10, page_token: str = '') -> Dict:
         return _youtube_error('YouTube rejected the page token; select a fresh continuation' if error_type == 'invalid_page_token' else str(exc), error_type=error_type)
 
 
+def _transcript_attempt(result: Dict, path: str) -> Dict:
+    # 正文只保留一份；尝试账保留原失败和所有已确认阶段，不含签名URL。
+    return {**{key: value for key, value in result.items()
+               if key not in {'text', 'timestamped_segments', 'locators', 'segments', 'attempts'}},
+            'path': path, 'text_chars': len(result.get('text') or '')}
+
+
+def _resolve_youtube_transcript(video_id: str, *, include: bool, language: str | None, browser_fallback: bool) -> Dict:
+    if not include:
+        return {'status': 'skipped', 'text': '', 'reason': 'explicitly_disabled', 'attempts': []}
+    from runtime.asr_policy import AsrPolicy
+    from runtime.execution_context import check_execution, ExecutionStopped
+    check_execution()
+    requested = AsrPolicy.for_request(language).language
+    primary = fetch_youtube_transcript(video_id, preferred_languages=[requested] if requested else None)
+    if primary.get('failure_type') == 'rate_limited_or_ip_blocked':
+        primary.setdefault('failure_class', 'http_429_or_provider_block')
+        primary.setdefault('retryable', False)
+        primary.setdefault('next_action', 'use_independent_transcript_path_or_continue_other_features')
+    attempts = [_transcript_attempt(primary, 'subtitle_api')]
+    notices = list(primary.get('notices') or [])
+    if primary.get('observed_http_status') == 429 or any(row.get('http_status') == 429 for row in primary.get('requests', [])):
+        primary = {**primary, 'observed_http_status': 429}
+        attempts[0]['observed_http_status'] = 429
+        notices.append({'code': 'youtube_http_429', 'http_status': 429, 'user_action': 'switch_proxy_node',
+                        'message': 'YouTube 字幕主路返回 HTTP 429；请切换节点。默认尝试日常 Chrome 备用通道，备用仍可能受同一出口限制。'})
+        log.warning('YouTube subtitle HTTP 429; user_action=switch_proxy_node; browser_fallback=%s', browser_fallback)
+    elif primary.get('failure_type') == 'rate_limited_or_ip_blocked':
+        notices.append({'code': 'youtube_access_restricted', 'user_action': 'switch_proxy_node',
+                        'message': 'YouTube 字幕库报告访问受限，未确认具体 HTTP 状态；可切换代理节点，默认尝试日常 Chrome 备用通道。'})
+    selected = primary
+    eligible = (browser_fallback and primary.get('status') in {'failed', 'timeout', 'unavailable'}
+                and primary.get('failure_type') not in {'transcript_unavailable', 'verification_required',
+                    'private_or_authorization_required', 'region_restricted', 'cancelled'}
+                and primary.get('result_known') is not False)
+    if eligible:
+        check_execution()
+        from runtime.youtube_browser import fetch_browser_transcript
+        try:
+            browser = fetch_browser_transcript(video_id, language=language)
+        except ExecutionStopped:
+            raise
+        except Exception as exc:
+            browser = {'status': 'failed', 'text': '', 'failure_type': 'browser_transcript_failed',
+                       'error_code': type(exc).__name__, 'failure_phase': 'browser_request',
+                       'automatic_retry': False}
+        attempts.append(_transcript_attempt(browser, 'daily_chrome'))
+        if browser.get('status') == 'ok' and browser.get('text'):
+            selected = {**browser, 'fallback_from': primary.get('failure_type') or primary.get('status')}
+        else:
+            selected = {**primary, 'automatic_retry': False, 'retryable': False,
+                        'next_action': 'inspect_browser_attempt_or_use_authorized_local_asr'}
+    return {**selected, 'attempts': attempts, 'notices': notices, 'browser_fallback_attempted': bool(eligible)}
+
+
 def get_youtube_detail(video_id_or_url: str, *, include_transcript: bool = True,
-                       language: str | None = None, browser_fallback: bool = False) -> Dict:
+                       language: str | None = None, browser_fallback: bool = True) -> Dict:
     video_id = extract_youtube_video_id(video_id_or_url)
     if not video_id:
         return {"platform": "YouTube", "url": video_id_or_url, "error": "无法从 URL 提取 YouTube video_id"}
     api_key = youtube_api_key()
-    if not api_key:
-        transcript = fetch_youtube_transcript(video_id) if include_transcript else {
-            "text": "", "status": "skipped", "reason": "explicitly_disabled"
-        }
-        if browser_fallback and transcript.get('status') != 'ok' and transcript.get('failure_type') not in {'transcript_unavailable'}:
-            from runtime.youtube_browser import fetch_browser_transcript
-            browser = fetch_browser_transcript(video_id, language=language)
-            if browser.get('status') == 'ok':
-                transcript = {**browser, 'fallback_from': transcript.get('failure_type', 'not_configured')}
-        return {
-            'platform': 'YouTube', 'url': canonical_youtube_url(video_id), 'video_id': video_id,
-            'content_type': 'video', 'title': '', 'desc': '', 'transcript': transcript.get('text', ''),
-            'transcript_metadata': transcript,
-            'captions': {'status': 'authorization_required', 'reason': 'captions.list_requires_owner_oauth', 'tracks': []},
-            'feature_status': {'metadata': 'not_configured', 'comments': 'available_via_data_api',
-                               'transcript': 'available' if transcript.get('status') == 'ok' else 'blocked',
-                               'media': 'available_via_authorized_local_download'},
-            'error': {'type': 'not_configured', 'message': 'YOUTUBE_API_KEY is not configured',
-                      'metadata_independent_transcript': True},
-        }
-    try:
-        data = _run_with_timeout(
-            lambda: _youtube_get(
-                "videos",
-                {
-                    "part": "snippet,contentDetails,statistics",
-                    "id": video_id,
-                    "key": api_key,
-                },
-            ),
-            timeout_s=_youtube_operation_timeout_s(),
-        )
-        items = data.get("items") or []
-        if not items:
-            return {"platform": "YouTube", "url": canonical_youtube_url(video_id), "error": "YouTube video not found"}
-        item = items[0]
-        snippet = item.get("snippet") or {}
-        stats = item.get("statistics") or {}
-        detail = {
-            "platform": "YouTube",
-            "title": snippet.get("title", ""),
-            "desc": snippet.get("description", ""),
-            "author": snippet.get("channelTitle", ""),
-            "channel_id": snippet.get("channelId", ""),
-            "published_at": snippet.get("publishedAt", ""),
-            "duration_original": (item.get("contentDetails") or {}).get("duration", ""),
-            "stats": stats,
-            "video_play_count": _int_or_zero(stats.get("viewCount")),
-            "liked_count": _int_or_zero(stats.get("likeCount")),
-            "video_comment": _int_or_zero(stats.get("commentCount")),
-            "cover": _best_thumbnail(snippet.get("thumbnails") or {}),
-            "url": canonical_youtube_url(video_id),
-            "video_id": video_id,
-            "content_type": "video",
-            "metadata": {
-                "video_id": video_id,
-                "source": "youtube_videos_list",
-                "strategy": "http_api",
-            },
-            "feature_status": {
-                "metadata": "available",
-                "comments": "available_via_data_api",
-                "transcript": "pending",
-                "media": "available_via_authorized_local_download",
-            },
-        }
-        from kr_core.content_contracts import duration_seconds
-        detail["duration"] = duration_seconds(detail["duration_original"])
-        detail["duration_unit"] = "seconds"
-        captions = list_youtube_captions(video_id) if include_transcript else {"status": "skipped", "reason": "explicitly_disabled"}
-        detail["captions"] = captions
-        from runtime.asr_policy import AsrPolicy
-        requested_language = AsrPolicy.for_request(language).language
-        languages = [requested_language] if requested_language else None
-        transcript = fetch_youtube_transcript(video_id, preferred_languages=languages) if include_transcript else {"text": "", "status": "skipped", "reason": "explicitly_disabled"}
-        if browser_fallback and transcript.get('status') != 'ok' and transcript.get('failure_type') not in {'transcript_unavailable'}:
-            from runtime.youtube_browser import fetch_browser_transcript
-            browser = fetch_browser_transcript(video_id, language=language)
-            if browser.get('status') == 'ok':
-                transcript = {**browser, 'fallback_from': transcript.get('failure_type', 'transcript_failed')}
-        detail["transcript"] = transcript.get("text", "")
-        detail["transcript_metadata"] = transcript
-        detail['feature_status']['transcript'] = 'available' if transcript.get('status') == 'ok' else (
-            'skipped' if transcript.get('status') == 'skipped' else 'blocked')
-        if transcript.get('failure_type') == 'rate_limited_or_ip_blocked':
-            transcript.setdefault('failure_class', 'http_429_or_provider_block')
-            transcript.setdefault('retryable', False)
-            transcript.setdefault('next_action', 'use_independent_transcript_path_or_continue_other_features')
-        return detail
-    except Exception as exc:
-        return _youtube_error(str(exc), error_type=_youtube_error_type(exc), url=canonical_youtube_url(video_id))
+    detail = {'platform': 'YouTube', 'url': canonical_youtube_url(video_id), 'video_id': video_id,
+              'content_type': 'video', 'title': '', 'desc': '',
+              'feature_status': {'metadata': 'not_configured' if not api_key else 'blocked',
+                                 'comments': 'available_via_data_api' if api_key else 'not_configured',
+                                 'transcript': 'pending', 'media': 'available_via_authorized_local_download'}}
+    metadata_error = {'type': 'not_configured', 'message': 'YOUTUBE_API_KEY is not configured'} if not api_key else None
+    if api_key:
+        from runtime.execution_context import ExecutionStopped
+        try:
+            data = _run_with_timeout(lambda: _youtube_get("videos", {
+                "part": "snippet,contentDetails,statistics", "id": video_id, "key": api_key}),
+                timeout_s=_youtube_operation_timeout_s())
+            items = data.get("items") or []
+            if not items:
+                metadata_error = {'type': 'video_metadata_unavailable', 'message': 'YouTube metadata returned no video'}
+            else:
+                item = items[0]
+                snippet, stats = item.get("snippet") or {}, item.get("statistics") or {}
+                detail.update(title=snippet.get("title", ""), desc=snippet.get("description", ""),
+                    author=snippet.get("channelTitle", ""), channel_id=snippet.get("channelId", ""),
+                    published_at=snippet.get("publishedAt", ""), stats=stats,
+                    duration_original=(item.get("contentDetails") or {}).get("duration", ""),
+                    video_play_count=_int_or_zero(stats.get("viewCount")), liked_count=_int_or_zero(stats.get("likeCount")),
+                    video_comment=_int_or_zero(stats.get("commentCount")), cover=_best_thumbnail(snippet.get("thumbnails") or {}),
+                    metadata={"video_id": video_id, "source": "youtube_videos_list", "strategy": "http_api"})
+                from kr_core.content_contracts import duration_seconds
+                detail["duration"] = duration_seconds(detail["duration_original"])
+                detail["duration_unit"] = "seconds"
+                detail['feature_status']['metadata'] = 'available'
+        except ExecutionStopped:
+            raise
+        except Exception as exc:
+            metadata_error = {'type': _youtube_error_type(exc), 'error_code': type(exc).__name__,
+                              'message': 'YouTube metadata request failed'}
+    transcript = _resolve_youtube_transcript(video_id, include=include_transcript,
+                                             language=language, browser_fallback=browser_fallback)
+    detail.update(transcript=transcript.get('text', ''), transcript_metadata=transcript,
+                  transcript_notices=transcript.get('notices', []),
+                  captions=list_youtube_captions(video_id) if include_transcript else
+                           {'status': 'skipped', 'reason': 'explicitly_disabled'})
+    detail['feature_status']['transcript'] = ('available' if transcript.get('status') == 'ok' else
+                                              'skipped' if transcript.get('status') == 'skipped' else 'blocked')
+    if metadata_error:
+        detail['metadata_error'] = {**metadata_error, 'metadata_independent_transcript': True}
+        if not detail['transcript']:
+            detail['error'] = detail['metadata_error']
+    return detail
 
 
 def list_youtube_captions(video_id: str) -> Dict:
@@ -469,7 +480,7 @@ def _youtube_error(message: str, *, error_type: str = "request_failed", url: str
 def collect_video_detail(request):
     detail = get_youtube_detail(request.url, include_transcript=bool(request.options.get('include_transcript')),
                                 language=request.options.get('language'),
-                                browser_fallback=bool(request.options.get('youtube_browser_fallback')))
+                                browser_fallback=bool(request.options.get('youtube_browser_fallback', True)))
     # A missing Data API key is a metadata capability gap, not permission to
     # discard an independently acquired transcript.
     if detail.get('error') and not detail.get('feature_status'):

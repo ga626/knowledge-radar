@@ -11,10 +11,20 @@ globalThis.KRSites.liepin = {
  const login=!authenticated_ui&&(/扫码登录|验证码登录|请先登录/.test(wall)||/passport|login/.test(location.hostname+' '+location.pathname));
  const seen=new Set();const items=[...document.querySelectorAll('a[href*="/job/"],a[href*="/a/"]')].filter(visible).flatMap(a=>{
   const u=new URL(a.href,location.href);if(!/(^|\.)liepin\.com$/.test(u.hostname)||!/^\/(job|a)\/\d+(\.shtml)?/.test(u.pathname)||seen.has(u.href))return [];
-  seen.add(u.href);const card=a.closest('.job-card-pc-container,[class*="job-card"],li')||a;
+  seen.add(u.href);const card=a.closest('.job-card-pc-container')||a.closest('[class*="job-card"],li')||a;
+  const desc=card.innerText.trim();const lines=desc.split('\n').map(s=>s.trim()).filter(Boolean);
+  const salaryDom=take(card,['.job-salary','[class*="salary"]']);
+  const salaryLine=lines.find(s=>/^(?:\d+(?:\.\d+)?[-~]\d+(?:\.\d+)?\s*(?:k|K|万|元)(?:[·•]\d+薪)?|面议)$/.test(s))||'';
+  const areaDom=take(card,['.job-dq','[class*="job-dq"]','[class*="location"]']);
+  const bracket=desc.match(/【\s*([^【】\n]+)\s*】/);
+  const areaText=bracket?bracket[1].trim():'';
+  const experience=lines.find(s=>/^(?:\d+(?:[-~]\d+)?年以上?|经验不限|应届生)$/.test(s))||'';
   return [{title:take(card,['.job-title','[class*="job-title"]','h3'])||a.innerText.trim().split('\n')[0],url:u.href,
-   salary:take(card,['.job-salary','[class*="salary"]']),company:take(card,['.company-name','[class*="company-name"]']),
-   area:take(card,['.job-dq','[class*="job-dq"]','[class*="location"]']),desc:card.innerText.trim(),platform:'猎聘',
+   salary:salaryDom||salaryLine,company:take(card,['.company-name','[class*="company-name"]']),
+   area:areaDom||areaText,experience,desc,platform:'猎聘',
+   field_sources:{salary:salaryDom?'visible_salary_element':salaryLine?'visible_card_salary_line':'missing',
+     area:areaDom?'visible_location_element':areaText?'visible_card_bracketed_location':'missing',
+     experience:experience?'visible_card_experience_line':'missing'},
    content_type:'recruitment_job_candidate',source:'liepin_dom'}];
  });
  let job={};for(const e of document.querySelectorAll('script[type="application/ld+json"]')){

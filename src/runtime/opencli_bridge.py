@@ -40,7 +40,7 @@ def connection_config():
 
 def invoke_page(*, session, operation, expression="", url="", wait_selector="", login_expression="", idle_timeout_s=None,
                 capture_pattern="", network_expression="", wait_text="", steps=None, manual_wait=False,
-                passive_manual_login=False, isolated_work=False):
+                passive_manual_login=False, isolated_work=False, capture_region_field=''):
     from runtime.browser_channel import BorrowedBrowser, browser_site_key, _HELD_SITES
     from contextlib import nullcontext
     from runtime.process import silent_subprocess_run
@@ -57,7 +57,7 @@ def invoke_page(*, session, operation, expression="", url="", wait_selector="", 
         failure = ensure_daemon(root, node, state_root=config["state_root"])
         if failure:
             return {"ok": False, "code": failure}
-        if operation in {'search','detail','comments','auth_verify'}:
+        if operation in {'search','detail','comments','auth_verify','login'}:
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():
                 import httpx
@@ -79,6 +79,7 @@ def invoke_page(*, session, operation, expression="", url="", wait_selector="", 
             "capturePattern": capture_pattern, "networkExpression": network_expression, "waitText": wait_text,
             "steps": steps or [], "manualWait": manual_wait, "passiveManualLogin": passive_manual_login,
             "isolatedWork": isolated_work}
+        payload['captureRegionField'] = capture_region_field
         # Reuse the same execution context's outer site lease; other tasks still contend.
         run_id = 'kr-' + uuid.uuid4().hex
         payload['runId'] = run_id

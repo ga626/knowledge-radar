@@ -61,7 +61,8 @@ class BossOpenCLI:
         expression = '(async()=>{const site=' + source + ';return await site.extract(' + json.dumps(operation) + ');})()'
         return invoke_page(session='kr:boss', operation=operation, url=url, expression=expression,
             wait_selector='.job-card-wrapper,.job-sec-text,.sign-dialog,.sign-form,.geetest_panel,.verify-wrap,.job-empty-wrapper',
-            passive_manual_login=True, isolated_work=True)
+            passive_manual_login=True, isolated_work=True,
+            capture_region_field='salary_capture' if operation == 'detail' else '')
 
     def health(self):
         from runtime.xhs_opencli import connection_status
@@ -167,6 +168,7 @@ def _map_response(response: dict, *, operation: str):
         return result
     if any('\ue000' <= c <= '\uf8ff' for c in str(data.get('salary') or '')):
         data = {**data, 'salary_raw': data['salary'], 'salary': '', 'salary_status': 'obfuscated_dom'}
+    data = _salary_ocr(data)
     return {
         **data,
         "status": "ok", "platform": "BOSS直聘", "content_type": "recruitment_job_detail",
@@ -175,6 +177,69 @@ def _map_response(response: dict, *, operation: str):
         'missing_fields': [key for key in ('title', 'company', 'salary') if not data.get(key)],
         "metadata": {"transport": "opencli", "source": "dom", "observed_url": data.get("url", "")},
     }
+
+
+def _salary_ocr(data):
+    """只把同页薪资小区域交给统一OCR；正文成功不掩盖薪资失败。"""
+    import base64
+    import io
+    import re
+    from PIL import Image
+    data = dict(data)
+    image = data.pop('salary_capture_image', None)
+    if data.get('salary_status') != 'obfuscated_dom':
+        return data
+    raw = str(data.get('salary_raw') or data.get('salary') or '')
+    data.update(salary='',salary_raw=raw,salary_claim_allowed=False,salary_status='ocr_unavailable')
+    evidence = {'method':'rendered_region_ocr','ocr_confidence':'not_reported',
+                'source_url':data.get('url',''), 'reason':'salary_capture_unavailable'}
+    data['salary_evidence'] = evidence
+    if not isinstance(image, dict):
+        evidence['reason'] = data.get('salary_capture_error') or evidence['reason']
+        return data
+    if image.get('source_url') != data.get('url'):
+        evidence['reason']='salary_capture_identity_mismatch';return data
+    try:
+        encoded=image.get('data','')
+        if not isinstance(encoded,str) or len(encoded)>2*1024*1024:raise ValueError('salary_capture_too_large')
+        content=base64.b64decode(encoded,validate=True)
+        with Image.open(io.BytesIO(content)) as im:
+            if im.format!='PNG' or not 0<im.width<=2048 or not 0<im.height<=512:raise ValueError('salary_capture_invalid_image')
+            im.verify()
+        digest=hashlib.sha256(content).hexdigest()
+        from runtime.media_cache import media_cache_subdir
+        from runtime.optional_media import run_optional
+        from runtime.model_roles import CLOUD_OCR_COMPONENT
+        folder=Path(media_cache_subdir('boss_salary'));folder.mkdir(parents=True,exist_ok=True)
+        target=folder/(digest+'.png')
+        from runtime.file_write_lock import file_write_lock
+        with file_write_lock(target):
+            if not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest()!=digest:
+                import uuid
+                temporary=target.with_suffix('.'+uuid.uuid4().hex+'.pending')
+                try:
+                    temporary.write_bytes(content);temporary.replace(target)
+                finally:temporary.unlink(missing_ok=True)
+        result=run_optional({'input_path':str(target),'approved_input_root':str(folder),
+            'input_sha256':digest,'component':CLOUD_OCR_COMPONENT,'timeout_s':180})
+        text=str(result.get('text') or '').strip()
+        evidence.update(input_sha256=digest,clip=image.get('clip'),component=CLOUD_OCR_COMPONENT,
+                        evidence_assets=result.get('evidence_assets',[]),ocr_text=text,
+                        quality_warnings=result.get('quality_warnings',[]))
+        # 独立小区域且整段符合薪资语法才作为OCR观察值，绝不按乱码猜数字。
+        normalized=re.sub(r'\s+','',text).replace('－','-').replace('—','-').replace('：',':')
+        pattern=r'(?:\d+(?:\.\d+)?(?:[-~至]\d+(?:\.\d+)?)?(?:[kK]|千|万|元)(?:[·•×*]\d{1,2}薪|/(?:月|年|天|时))?|面议)'
+        if re.fullmatch(pattern,normalized) and result.get('status') not in {'failed','partial'}:
+            data.update(salary=normalized,salary_status='ocr_observed',salary_source='rendered_region_ocr',salary_claim_allowed=True)
+            evidence['reason']='recognized_salary_syntax; not_independently_verified'
+        else:
+            data['salary_status']='ocr_unverified';evidence['reason']='ocr_not_single_salary_value'
+    except Exception as exc:
+        from runtime.execution_context import ExecutionStopped
+        if isinstance(exc,ExecutionStopped):raise
+        evidence['reason']=getattr(exc,'error_code','salary_ocr_'+type(exc).__name__)
+        evidence['automatic_retry']=False
+    return data
 
 
 def _search(keyword: str, city: str = "", limit: int = 10):

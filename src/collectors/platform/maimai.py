@@ -218,10 +218,19 @@ def _comments(url,limit):
     if not response.get('ok'):return response
     if urlsplit(response['data'].get('url','')).path!=urlsplit(url).path:return _failure('page_identity_changed','评论工作页已变更，停止。')
     comments=[];seen=set()
-    for row in response['data'].get('comments',[]):
-        if row.get('content') and row['content'] not in seen:comments.append(row);seen.add(row['content'])
+    for index,row in enumerate(response['data'].get('comments',[])):
+        identity = str(row.get('id') or row.get('comment_id') or 'snapshot:'+str(index))
+        if row.get('content') and identity not in seen:comments.append(row);seen.add(identity)
     data=response['data']; empty=bool(data.get('comments_empty_confirmed'))
-    return {'status':'ok','comments':comments[:limit],'comments_collected':bool(comments) or empty,'comments_complete':empty,
+    window = empty or len(comments)>=limit
+    return {'status':'ok','comments':comments[:limit],'comments_collected':bool(comments) or empty,'comments_complete':window,
+        'comments_exhausted':empty,'comments_empty_confirmed':empty,
+        'comments_metadata':{'request_window_complete':window,'complete_source':empty,
+            'requested_roots':limit,'returned_roots':min(limit,len(comments)),
+            'stop_reason':'observed_zero_comments' if empty else 'root_window' if window else 'visible_dom_window_unverified',
+            'reply_window_complete':False,'observation':data.get('comments_observation') or {
+                'stage':'dom_snapshot','scope_found':data.get('comments_scope_found'),'loading':data.get('comments_loading')},
+            'automatic_retry':False},
         'comments_status':'visible_comments_partial' if comments else 'empty_confirmed' if empty else
             'comments_loading_incomplete' if data.get('comments_loading') else 'comments_unavailable_or_schema_changed',
         'comments_note':'仅本人可见且已展开评论；滚动触发懒加载，最多两次继续展开，不把未识别当作零评论。','metadata':response.get('metadata',{})}

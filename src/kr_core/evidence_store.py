@@ -140,6 +140,15 @@ class EvidenceStore:
                         metadata['provenance'] = dict(response['provenance'])
                         if response['provenance'].get('processing_key'):
                             metadata['evidence_identity'] = ':'.join(filter(None, (metadata.get('evidence_identity', ''), response['provenance']['processing_key'])))
+                    observed = {key:response[key] for key in ('quality_warnings','asr_boundary_diagnostics') if response.get(key)}
+                    if isinstance(response.get('salary_evidence'), dict):
+                        observed['salary_ocr'] = response['salary_evidence']
+                    if observed:
+                        metadata['provenance'] = {**metadata.get('provenance', {}), **observed}
+                        # 正文相同但加工观察已变化时另存版本，不覆盖/复用缺少来源的旧资产。
+                        import hashlib
+                        observation_sha = hashlib.sha256(json.dumps(observed,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+                        metadata['evidence_identity'] = metadata.get('evidence_identity','')+':observed/v1:'+observation_sha
                     if processing.get('ocr_status'):
                         metadata['provenance'] = {**metadata.get('provenance', {}), 'pdf_processing':{k:processing.get(k) for k in
                             ('processing_method','ocr_status','ocr_pages','missing_text_pages','ocr_errors','ocr_model')}}
@@ -208,6 +217,7 @@ class EvidenceStore:
                     response.setdefault('evidence_storage_gaps', []).append({'part': part, 'reason': str(exc)})
         response["evidence_assets"] = refs
         response.setdefault("content_coverage", content_coverage(response))
+        response['acquisition_summary'] = response['content_coverage'].get('summary','')
         self.append(EvidenceRecord("detail", platform, url, _with_trace(_compact_detail(response), _current_trace())))
 
     def record_detail(self, *, platform: str, url: str, response: Dict[str, Any]) -> None:
@@ -330,6 +340,7 @@ def _compact_detail(response: Dict[str, Any]) -> Dict[str, Any]:
         "evidence_assets",
         "content_coverage",
         "evidence_storage_gaps",
+        "acquisition_summary",
     }
     data = {key: response.get(key) for key in keep if key in response}
     if isinstance(data.get("content"), str):

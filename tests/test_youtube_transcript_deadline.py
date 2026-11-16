@@ -60,3 +60,21 @@ def test_transcript_block_explains_boundary_and_permitted_next_paths(monkeypatch
     assert result['failure_phase'] == 'track_discovery'
     assert result['permitted_alternatives'] == ['author_transcript', 'authorized_local_media_asr', 'owner_oauth_captions']
     assert 'private proxy' not in str(result)
+
+
+def test_actual_http_429_is_preserved_without_signed_url(monkeypatch):
+    class IpBlocked(Exception): pass
+    monkeypatch.setattr(requests.Session, 'request', lambda *a, **kw:
+        SimpleNamespace(status_code=429, headers={'Retry-After': '30'}))
+    monkeypatch.setattr(youtube, 'get_httpx_proxy', lambda: None)
+    class Api:
+        def __init__(self, http_client): self.client = http_client
+        def list(self, *a):
+            self.client.get('https://www.youtube.com/watch?v=video&secret=never-persist')
+            raise IpBlocked('blocked')
+    monkeypatch.setattr(youtube_transcript_api, 'YouTubeTranscriptApi', Api)
+    result = youtube.fetch_youtube_transcript('video')
+    assert result['observed_http_status'] == 429
+    assert result['retry_after'] == '30'
+    assert result['requests'][0]['http_status'] == 429
+    assert 'never-persist' not in str(result)

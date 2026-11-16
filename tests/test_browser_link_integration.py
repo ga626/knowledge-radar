@@ -11,6 +11,21 @@ from conftest import patch_native
 ROOT=Path(__file__).resolve().parents[1]
 
 
+def test_transcript_enters_normal_borrowed_browser_startup(tmp_path, monkeypatch):
+    from runtime.browser_link import BrowserLink
+    from runtime import browser_channel
+    state = tmp_path / 'host.json'
+    calls = []
+    monkeypatch.setattr(BrowserLink, 'health', lambda self: {'ok': False, 'code': 'browser_disconnected'})
+    monkeypatch.setattr(browser_channel, 'ensure_borrowed_browser', lambda connected, **kw: (
+        calls.append('ensure') or {'ok': False, 'code': 'browser_channel_not_connected'}))
+    result = BrowserLink(state_file=state)._request('transcript', {'url': 'https://www.youtube.com/watch?v=abc12345678'},
+                                                  platform='youtube', timeout_s=2)
+    assert calls == ['ensure']
+    assert result['code'] == 'browser_channel_not_connected'
+    assert result['request_executed'] is False
+
+
 @pytest.mark.parametrize('mode,stage', [('invalid_json','response_received'), ('timeout','request_prepared')])
 def test_bridge_failure_preserves_stage_identity_without_payload(tmp_path, monkeypatch, mode, stage):
     from runtime.browser_link import BrowserLink

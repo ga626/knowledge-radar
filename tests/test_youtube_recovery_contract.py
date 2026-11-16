@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import pytest
 
 
 def test_media_error_classification_keeps_independent_download_boundaries():
@@ -49,7 +50,7 @@ def test_youtube_detail_keeps_metadata_when_transcript_path_is_blocked(monkeypat
         'status': 'failed', 'failure_type': 'rate_limited_or_ip_blocked', 'text': '',
         'automatic_retry': False, 'failure_phase': 'track_discovery'
     })
-    result = youtube.get_youtube_detail('https://www.youtube.com/watch?v=abc12345678')
+    result = youtube.get_youtube_detail('https://www.youtube.com/watch?v=abc12345678', browser_fallback=False)
     assert result['title'] == '标题'
     assert result['feature_status']['metadata'] == 'available'
     assert result['feature_status']['transcript'] == 'blocked'
@@ -95,4 +96,125 @@ def test_content_detail_exposes_explicit_browser_fallback_switch():
     from runtime.composition import get_content_detail
 
     parameter = inspect.signature(get_content_detail).parameters['youtube_browser_fallback']
-    assert parameter.default is False
+    assert parameter.default is True
+
+
+@pytest.mark.parametrize('api_key', ['', 'fixture'])
+def test_default_fallback_preserves_both_attempts_and_429_notice(monkeypatch, api_key):
+    from collectors.platform import youtube
+    from runtime import youtube_browser
+    monkeypatch.setenv('YOUTUBE_API_KEY', api_key)
+    monkeypatch.setattr(youtube, '_youtube_get', lambda *a, **kw: {'items': [{
+        'snippet': {'title': '标题'}, 'contentDetails': {}, 'statistics': {}}]})
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {
+        'status': 'failed', 'failure_type': 'rate_limited_or_ip_blocked', 'text': '',
+        'observed_http_status': 429, 'failure_phase': 'caption_download',
+        'requests': [{'stage': '/api/timedtext', 'http_status': 429, 'retry_after': '60'}]})
+    calls = []
+    monkeypatch.setattr(youtube_browser, 'fetch_browser_transcript', lambda *a, **kw: (
+        calls.append(kw) or {'status': 'ok', 'text': '备用正文', 'source': 'browser_link_youtube_dom',
+                             'language': 'en', 'completeness': 'unverified'}))
+    result = youtube.get_youtube_detail('abc12345678')
+    assert len(calls) == 1
+    assert result['transcript'] == '备用正文'
+    meta = result['transcript_metadata']
+    assert meta['attempts'][0]['observed_http_status'] == 429
+    assert meta['attempts'][0]['requests'][0]['retry_after'] == '60'
+    assert meta['attempts'][1]['status'] == 'ok'
+    assert any('429' in n['message'] and '切换节点' in n['message'] for n in meta['notices'])
+
+
+def test_failed_fallback_keeps_deep_diagnostics(monkeypatch):
+    from collectors.platform import youtube
+    from runtime import youtube_browser
+    monkeypatch.setenv('YOUTUBE_API_KEY', '')
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {
+        'status': 'failed', 'text': '', 'failure_type': 'network_timeout', 'failure_phase': 'track_discovery'})
+    monkeypatch.setattr(youtube_browser, 'fetch_browser_transcript', lambda *a, **kw: {
+        'status': 'unavailable', 'text': '', 'failure_type': 'transcript_not_exposed',
+        'failure_phase': 'transcript_panel_requested', 'transcript_diagnostics': {'button_present': False}})
+    result = youtube.get_youtube_detail('abc12345678')
+    meta = result['transcript_metadata']
+    assert meta['status'] != 'ok'
+    assert meta['attempts'][0]['failure_phase'] == 'track_discovery'
+    assert meta['attempts'][1]['transcript_diagnostics']['button_present'] is False
+    assert meta['failure_type'] == 'network_timeout'
+
+
+@pytest.mark.parametrize('include,fallback,status', [(False, True, 'skipped'), (True, False, 'failed'), (True, True, 'ok')])
+def test_no_browser_when_not_needed_or_disabled(monkeypatch, include, fallback, status):
+    from collectors.platform import youtube
+    from runtime import youtube_browser
+    monkeypatch.setenv('YOUTUBE_API_KEY', '')
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {'status': status, 'text': '正文' if status == 'ok' else ''})
+    monkeypatch.setattr(youtube_browser, 'fetch_browser_transcript', lambda *a, **kw: pytest.fail('unexpected browser'))
+    result = youtube.get_youtube_detail('abc12345678', include_transcript=include, browser_fallback=fallback)
+    assert result['transcript_metadata']['status'] == status
+
+
+def test_browser_adapter_does_not_preflight_and_keeps_dom_failure(monkeypatch):
+    from runtime import youtube_browser
+    monkeypatch.setattr(youtube_browser.BrowserLink, 'health', lambda self: pytest.fail('preflight blocks startup'))
+    monkeypatch.setattr(youtube_browser.BrowserLink, 'request', lambda *a, **kw: {
+        'ok': True, 'request_id': 'req-1', 'request_executed': True,
+        'data': {'failure_type': 'transcript_not_exposed', 'transcript_diagnostics': {'panel_present': False},
+                 'browser_diagnostics': {'last_stage': 'transcript_panel_requested'}}})
+    result = youtube_browser.fetch_browser_transcript('abc12345678', language='zh')
+    assert result['failure_type'] == 'transcript_not_exposed'
+    assert result['failure_phase'] == 'transcript_panel_requested'
+    assert result['request_id'] == 'req-1'
+    assert result['transcript_diagnostics']['panel_present'] is False
+
+
+def test_browser_does_not_forge_actual_language(monkeypatch):
+    from runtime import youtube_browser
+    monkeypatch.setattr(youtube_browser.BrowserLink, 'health', lambda self: {'ok': True})
+    monkeypatch.setattr(youtube_browser.BrowserLink, 'request', lambda *a, **kw: {
+        'ok': True, 'data': {'transcript': 'English body', 'completeness': 'unverified'}})
+    result = youtube_browser.fetch_browser_transcript('abc12345678', language='zh')
+    assert result['language'] == ''
+    assert result['completeness'] == 'unverified'
+
+
+def test_metadata_api_failure_cannot_prevent_independent_transcript(monkeypatch):
+    from collectors.platform import youtube
+    monkeypatch.setenv('YOUTUBE_API_KEY', 'fixture')
+    monkeypatch.setattr(youtube, '_youtube_get', lambda *a, **kw: (_ for _ in ()).throw(RuntimeError('quota exceeded')))
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {
+        'status': 'ok', 'text': '独立字幕', 'source': 'youtube_transcript_api'})
+    result = youtube.get_youtube_detail('abc12345678')
+    assert result['transcript'] == '独立字幕'
+    assert result['feature_status']['transcript'] == 'available'
+
+
+def test_library_block_without_http_status_does_not_invent_429(monkeypatch):
+    from collectors.platform import youtube
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {
+        'status': 'failed', 'text': '', 'failure_type': 'rate_limited_or_ip_blocked'})
+    result = youtube._resolve_youtube_transcript('abc12345678', include=True, language=None, browser_fallback=False)
+    assert result['notices'][0]['code'] == 'youtube_access_restricted'
+    assert 'observed_http_status' not in result
+
+
+def test_unknown_primary_result_is_not_replayed_in_browser(monkeypatch):
+    from collectors.platform import youtube
+    from runtime import youtube_browser
+    monkeypatch.setattr(youtube, 'fetch_youtube_transcript', lambda *a, **kw: {
+        'status': 'timeout', 'text': '', 'result_known': False})
+    monkeypatch.setattr(youtube_browser, 'fetch_browser_transcript', lambda *a, **kw: pytest.fail('unknown replay'))
+    result = youtube._resolve_youtube_transcript('abc12345678', include=True, language=None, browser_fallback=True)
+    assert result['browser_fallback_attempted'] is False
+
+
+def test_browser_fallback_and_429_survive_media_read_and_evidence(monkeypatch):
+    from detail_strategies.video import enhance_video_detail
+    from kr_core import DetailRequest
+    meta = {'source': 'browser_link_youtube_dom', 'language': 'en', 'completeness': 'unverified',
+            'notices': [{'code': 'youtube_http_429', 'http_status': 429}],
+            'attempts': [{'path': 'subtitle_api', 'observed_http_status': 429}, {'path': 'daily_chrome', 'status': 'ok'}]}
+    request = DetailRequest(platform='YouTube', url='https://www.youtube.com/watch?v=abc12345678',
+                            options={'include_transcript': True})
+    response = enhance_video_detail(request, {'title': '标题', 'transcript': '备用正文',
+        'content_id': 'abc12345678', 'transcript_metadata': meta})
+    assert response.data['transcript_metadata'] == meta
+    assert '429' in str(response.evidence)

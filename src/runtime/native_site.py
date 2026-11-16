@@ -114,6 +114,7 @@ class NativeSite:
                         'unknown_outcome': bool(current.get('unknown_outcome') or uncertain), 'reason': code,
                         'operation_id': response.get('request_id', '') if uncertain else current.get('operation_id', ''),
                         'operation': operation if uncertain else current.get('operation', ''),
+                        'operation_generation': response.get('generation','') if uncertain else current.get('operation_generation',''),
                         'at': time.time(), 'retry_at': max(time.time()+60, float(current.get('retry_at') or 0))})
             result = self.failure('outcome_latched' if uncertain else code,
                 request_executed=response.get('request_executed'), operation_id=response.get('request_id', ''))
@@ -143,6 +144,7 @@ class NativeSite:
         receipt = (lookup(original) if original != 'legacy-unidentified' and callable(lookup) else
                    {'status':'unknown','reason':'original_receipt_unavailable'})
         result = {**receipt, 'operation_id':original, 'automatic_replay':False,
+                  'operation_generation':state.get('operation_generation',''),
                   'next_action':'inspect_original_result_or_explicitly_abandon_operation'}
         if not resolution:
             return result
