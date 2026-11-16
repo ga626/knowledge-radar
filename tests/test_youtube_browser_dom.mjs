@@ -11,7 +11,7 @@ test('YouTube expands description, waits for rows, and does not forge completene
  const row=text=>({...visible,innerText:text,querySelector:()=>null});
  const document={readyState:'complete',body:{innerText:'video'},title:'Video',
    querySelector:s=>s.includes('#expand')?more:null,
-   querySelectorAll:s=>s.includes('ytd-transcript-segment-renderer')?(requested?[row('00:01 First'),...(waits>1?[row('00:02 Second')]:[])]:[]):expanded?[button]:[]};
+   querySelectorAll:s=>s.includes('ytd-transcript-segment-renderer')?(requested?[row('00:01 First'),...(waits>3?[row('00:02 Second')]:[])]:[]):expanded&&waits>=2?[button]:[]};
  const context={document,location:{href:'https://www.youtube.com/watch?v=abc12345678'},URL,KRSites:{},
    KRWaitForChange:async()=>{waits++;}};
  context.globalThis=context;

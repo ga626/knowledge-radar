@@ -19,14 +19,21 @@
     signal.throwIfAborted();
     const current = target(location.href), wanted = target(payload.url);
     if (!current || !wanted || current.id !== wanted.id) return {...state(), failure_type: 'page_identity_changed'};
+    const deadline = Date.now() + 5000;
     let button = transcriptButton();
     if (!button) {
       const expand = document.querySelector('#description-inline-expander #expand, ytd-text-inline-expander #expand');
       if (visible(expand)) { expand.click(); progress('description_expanded'); await globalThis.KRWaitForChange(signal, 250); }
       button = transcriptButton();
     }
+    // 描述展开与按钮挂载是两个异步步骤；沿同一请求期限等待入口。
+    while (!button && !document.querySelector('ytd-transcript-segment-renderer') && Date.now() < deadline) {
+      signal.throwIfAborted();
+      if (target(location.href)?.id !== wanted.id) return {...state(), failure_type: 'page_identity_changed'};
+      await globalThis.KRWaitForChange(signal, 250);
+      button = transcriptButton();
+    }
     if (button) { button.click(); progress('transcript_panel_requested'); }
-    const deadline = Date.now() + 5000;
     let rows = [], previous = '', quiet = 0;
     while (Date.now() < deadline) {
       signal.throwIfAborted();

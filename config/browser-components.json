@@ -18,14 +18,14 @@
         "sites/maimai.js": "c82137c6db8a63e0177f0d6cc07bc12413c4bfebab7055bcdfed544db44e3301",
         "sites/registry.js": "d5c69c45ce3340fa06b04f3b37e75a8feaea6fd760cbf4187eaafcb679d5373f",
         "sites/routes.js": "d2cc1759ae59a8b0e110a153126acf9574c8dc16a9a9d62cae92a7063200b074",
-        "sites/youtube.js": "dab6ed0d90e856c4854dc19e98b8f8f3b6772b4bee5744c1a837f3a1e611a2af",
+        "sites/youtube.js": "ebd2db27ff3fcbc4da8c1447229e25096a3859254a063157ccb68553565e5be3",
         "sites/zhihu.js": "e10fe07f54d29f97b83999b18fd1e476b7058f683db45b8a34d1d60540c9a868",
         "status.css": "585e5ae1ed03b28f93e2c5e20f6f91e4c72fb4dc5a06aa531cc6447eeaad9a01",
         "status.html": "861b960a14818771d10ba2e26690fc88738ff014faf93114af3774a02d8c5636",
         "status.js": "f384022a0e4bb0153b82ac3bff09507dfd0f320ff448b9d6447f6baf977d7c2d",
         "visibility.js": "74f631c6bf737cd65c0320d7638a74cd821a1a9d50939ba1d0e92159f6c0c227"
       },
-      "tree_sha256": "d8a77244705f344c971a510ba6ed51868ace77b33966cb87ab9ee5dd37dcd5ff",
+      "tree_sha256": "091bc21003bcd51fbb5f518dff7e1419e41bded0c172dc550fa2f45de901e54e",
       "distribution": "bundled_unpacked"
     },
     "opencli": {
