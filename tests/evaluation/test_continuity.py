@@ -347,6 +347,18 @@ def test_lean_scope_is_conservative_and_keeps_nested_and_node_tests():
     assert ci.select_scope(ROOT,suite,['src/runtime/browser_components.py'])['mode']=='full'
 
 
+def test_platform_regression_edits_reuse_the_same_coarse_group():
+    suite = load_suite(ROOT)
+    for source, test in (
+        ('src/detail_strategies/bilibili.py', 'tests/test_bilibili_asr_policy.py'),
+        ('browser_link/extension/sites/zhihu.js', 'tests/test_browser_link_extension.mjs'),
+        ('src/platform_adapters/github_adapter.py', 'tests/test_github_objects.py'),
+    ):
+        scope = ci.select_scope(ROOT, suite, [source, test])
+        assert scope['mode'] == 'affected'
+        assert test in scope['nodes'] + scope['node_tests']
+
+
 def test_new_unregistered_test_is_not_lost_in_full_fallback(tmp_path):
     root, suite, _ = repository(tmp_path)
     (root/'tests/nested').mkdir(parents=True)

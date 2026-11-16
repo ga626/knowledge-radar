@@ -56,7 +56,8 @@ def select_scope(root, suite, paths, *, full=False):
         if path.startswith('docs/') or (path.endswith('.md') and '/' not in path):
             continue
         matches = [name for name, group in policy['groups'].items()
-                   if any(fnmatch.fnmatchcase(path, p) for p in group['sources'])]
+                   if any(fnmatch.fnmatchcase(path, p) for p in
+                          (group['tests'] if path.startswith('tests/') else group['sources']))]
         if not matches:
             return full_scope
         groups.update(matches)
