@@ -13,7 +13,7 @@
         "icons/radar-32.png": "e197bbea7e9f89096905b4c758fcdceb4c6f6d0099b8c466b88c326039b373d8",
         "icons/radar-48.png": "4454cd66fa16719ee98cb29bdf91419d3bc95db69db18d65048be6d2aeb9c554",
         "icons/radar.svg": "23dc90c31a63ae9cfd2e128d41b714a69bb9986501dd3c449e473a332bd3882b",
-        "manifest.json": "f8535f03adefff4cb9f0802a7406799626d040fc66998a869f43c0a6ce9e92ba",
+        "manifest.json": "e362b4adb67bd31ab8632b379132fdc870ee23ac8cab4a8666f221b613556873",
         "sites/liepin.js": "8a5dab0a63ca2f48c59369fb7394827259eee898d79a90d7cbc87d2fd579c82b",
         "sites/maimai.js": "c82137c6db8a63e0177f0d6cc07bc12413c4bfebab7055bcdfed544db44e3301",
         "sites/registry.js": "d5c69c45ce3340fa06b04f3b37e75a8feaea6fd760cbf4187eaafcb679d5373f",
@@ -25,7 +25,7 @@
         "status.js": "f384022a0e4bb0153b82ac3bff09507dfd0f320ff448b9d6447f6baf977d7c2d",
         "visibility.js": "74f631c6bf737cd65c0320d7638a74cd821a1a9d50939ba1d0e92159f6c0c227"
       },
-      "tree_sha256": "091bc21003bcd51fbb5f518dff7e1419e41bded0c172dc550fa2f45de901e54e",
+      "tree_sha256": "cc8a7d5cc7661cf6190dc1a631bcb1c0ff13de12a61359f8c3f0bff48c130c84",
       "distribution": "bundled_unpacked"
     },
     "opencli": {

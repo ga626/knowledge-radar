@@ -10,7 +10,7 @@ from .core import SCHEMA, dependencies, environment, file_hash, inventory, now, 
 from .runner import _pytest, comparison_identity, execute, isolated_env
 
 HOST_NODE = 'tests/test_product_console_launcher.py::test_real_dev_supervisor_starts_restarts_and_stops_without_touching_stable'
-HOST_NODES = (HOST_NODE, 'tests/test_product_runtime.py',
+HOST_NODES = (HOST_NODE, 'tests/test_product_runtime.py', 'tests/test_browser_link_host.py',
               'tests/test_codex_stdio_contract.py::test_direct_stdio_probe_exposes_research_surface')
 SCALE_NODES = ('tests/test_research_archive.py::test_ten_thousand_versions_frozen_membership',)
 

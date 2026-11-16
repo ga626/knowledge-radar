@@ -13,7 +13,7 @@ def test_bilibili_metadata_does_not_spend_comment_page(monkeypatch):
         data = {'aid': 123} if url.endswith('/view') else {
             'replies': [{'rpid': 1, 'content': {'message': 'root'}}],
             'cursor': {'is_end': True}}
-        return type('Response', (), {'raise_for_status': lambda self: None,
+        return type('Response', (), {'status_code': 200, 'raise_for_status': lambda self: None,
             'json': lambda self: {'code': 0, 'data': data}})()
     monkeypatch.setattr(bilibili.httpx, 'get', get)
     result = bilibili.collect_comments('BVfixture', options={
@@ -33,7 +33,7 @@ def test_bilibili_comment_page_budget_still_bounds_requests(monkeypatch):
         data = {'aid': 123} if url.endswith('/view') else {
             'replies': [{'rpid': 1, 'content': {'message': 'root'}}],
             'cursor': {'is_end': False, 'next': 2}}
-        return type('Response', (), {'raise_for_status': lambda self: None,
+        return type('Response', (), {'status_code': 200, 'raise_for_status': lambda self: None,
             'json': lambda self: {'code': 0, 'data': data}})()
     monkeypatch.setattr(bilibili.httpx, 'get', get)
     result = bilibili.collect_comments('BVfixture', options={
