@@ -88,3 +88,11 @@ def test_youtube_search_uses_provider_page_capacity_without_raising_local_cap(mo
     monkeypatch.setattr(youtube, '_youtube_get', get)
     youtube.search_youtube('agent', limit=50)
     assert seen['maxResults'] == 50
+
+
+def test_content_detail_exposes_explicit_browser_fallback_switch():
+    import inspect
+    from runtime.composition import get_content_detail
+
+    parameter = inspect.signature(get_content_detail).parameters['youtube_browser_fallback']
+    assert parameter.default is False
