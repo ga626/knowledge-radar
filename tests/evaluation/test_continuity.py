@@ -342,6 +342,9 @@ def test_lean_scope_is_conservative_and_keeps_nested_and_node_tests():
     assert ci.select_scope(ROOT, suite, None)['mode'] == 'full'
     assert ci.select_scope(ROOT, suite, [])['mode'] == 'full'
     assert ci.select_scope(ROOT, suite, ['config/runtime-win-py312.lock'])['mode'] == 'full'
+    assert 'tests/test_github_objects.py' in ci.select_scope(ROOT,suite,['src/platform_adapters/github_adapter.py'])['nodes']
+    assert 'tests/test_bilibili_asr_policy.py' in ci.select_scope(ROOT,suite,['src/detail_strategies/bilibili.py'])['nodes']
+    assert ci.select_scope(ROOT,suite,['src/runtime/browser_components.py'])['mode']=='full'
 
 
 def test_new_unregistered_test_is_not_lost_in_full_fallback(tmp_path):

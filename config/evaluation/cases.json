@@ -2601,11 +2601,21 @@
           "src/runtime/browser*",
           "src/runtime/opencli*",
           "src/runtime/native_site.py",
-          "src/collectors/*",
-          "src/platform_adapters/*",
-          "src/detail_strategies/*",
-          "src/tools/*",
-          "config/browser*"
+          "config/browser*",
+          "src/platform_adapters/boss_adapter.py",
+          "src/detail_strategies/boss.py",
+          "src/platform_adapters/liepin_adapter.py",
+          "src/detail_strategies/liepin.py",
+          "src/platform_adapters/maimai_adapter.py",
+          "src/detail_strategies/maimai.py",
+          "src/platform_adapters/v2ex_adapter.py",
+          "src/detail_strategies/v2ex.py",
+          "src/platform_adapters/wechat_adapter.py",
+          "src/detail_strategies/wechat.py",
+          "src/platform_adapters/xiaohongshu_adapter.py",
+          "src/detail_strategies/xiaohongshu.py",
+          "src/platform_adapters/zhihu_adapter.py",
+          "src/detail_strategies/zhihu.py"
         ],
         "tests": [
           "tests/*browser*.py",
@@ -2647,7 +2657,12 @@
           "src/runtime/*asr*",
           "src/runtime/*document*",
           "src/runtime/*content*",
-          "src/runtime/*acquisition*"
+          "src/runtime/*acquisition*",
+          "src/platform_adapters/bilibili_adapter.py",
+          "src/platform_adapters/youtube_adapter.py",
+          "src/detail_strategies/bilibili.py",
+          "src/detail_strategies/youtube.py",
+          "src/detail_strategies/video.py"
         ],
         "tests": [
           "tests/*media*.py",
@@ -2723,13 +2738,24 @@
       "github": {
         "sources": [
           "src/libs/github*",
-          "src/search_providers/github*"
+          "src/search_providers/github*",
+          "src/platform_adapters/github_adapter.py",
+          "src/detail_strategies/github.py"
         ],
         "tests": [
           "tests/*github*.py",
           "tests/*github*.mjs"
         ]
       }
-    }
+    },
+    "full_sources": [
+      "src/runtime/browser_components.py",
+      "src/runtime/component_requirements.py",
+      "src/runtime/browser_identity.py",
+      "src/runtime/profile*",
+      "src/runtime/paths.py",
+      "src/runtime/execution_owner.py",
+      "src/runtime/execution_context.py"
+    ]
   }
 }

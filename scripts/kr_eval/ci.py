@@ -48,7 +48,8 @@ def select_scope(root, suite, paths, *, full=False):
     all_node_tests = sorted(p.relative_to(root).as_posix() for p in (root/'tests').rglob('test_*.mjs'))
     full_scope = {'mode':'full', 'reason':'explicit_or_unmapped', 'changed_paths':paths,
                   'nodes':all_nodes, 'node_tests':all_node_tests}
-    if full or not paths or not policy:
+    if full or not paths or not policy or any(fnmatch.fnmatchcase(path,p)
+            for path in paths or [] for p in policy.get('full_sources',[])):
         return full_scope
     groups = set()
     for path in paths:
