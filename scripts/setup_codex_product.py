@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 from datetime import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -112,10 +113,18 @@ def _backup(paths: list[Path], backup_dir: Path) -> None:
 def _plugin_version_with_skill_fingerprint(destination: Path) -> str:
     manifest_path = destination / ".codex-plugin" / "plugin.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    skill_hash = _sha256(destination / PLUGIN_SKILL_RELATIVE)[:12]
+    skill_hash = _plugin_bundle_sha256(destination)[:12]
     version = str(manifest.get("version") or "0.0.0")
     build_prefix = version.split("+", 1)[0]
     return f"{build_prefix}+codex.{skill_hash}"
+
+
+def _plugin_bundle_sha256(destination: Path) -> str:
+    # Use the package installer contract without changing MCP registration.
+    spec = importlib.util.spec_from_file_location('kr_plugin_identity', Path(__file__).with_name('product_install.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.plugin_bundle_sha256(destination)
 
 
 def _copy_plugin(destination: Path) -> dict[str, str]:
@@ -139,6 +148,7 @@ def _copy_plugin(destination: Path) -> dict[str, str]:
     return {
         "version": str(manifest["version"]),
         "skill_sha256": _sha256(destination / PLUGIN_SKILL_RELATIVE),
+        "bundle_sha256": _plugin_bundle_sha256(destination),
         "manifest_sha256": _sha256(manifest_path),
     }
 
@@ -183,6 +193,7 @@ def _receipt(plugin_destination: Path, source_dirty: bool, plugin_identity: dict
         "config_contract": "src/server.py + KR_MCP_TRANSPORT=stdio",
         "plugin_manifest_sha256": _sha256(plugin_manifest),
         "plugin_skill_sha256": plugin_identity["skill_sha256"],
+        "plugin_bundle_sha256": plugin_identity["bundle_sha256"],
         "plugin_version": plugin_identity["version"],
         "plugin_source": str(plugin_destination),
         "marketplace_path": str(marketplace),
@@ -233,6 +244,7 @@ def install(*, apply: bool, config_path: Path, plugin_destination: Path, backup_
         "receipt": str(receipt_path),
         "plugin_version": plugin_identity["version"],
         "plugin_skill_sha256": plugin_identity["skill_sha256"],
+        "plugin_bundle_sha256": plugin_identity["bundle_sha256"],
         "source_dirty": dirty,
     }
 

@@ -264,7 +264,7 @@ def _run(operation, **kwargs):
         ready = _ensure_daemon(root, node)
         if ready:
             return _failure(ready, executed=False)
-    if operation in {'search', 'detail', 'comments', 'session_probe', 'resume'} and not connection_status().get('connected'):
+    if operation in {'search', 'detail', 'comments', 'session_probe', 'resume', 'login'} and not connection_status().get('connected'):
         from runtime.browser_channel import ensure_borrowed_browser
         # 固定扩展1.0.26的重连退避上限15秒+0.5秒抖动；不因原8秒窗口误报。
         ready = ensure_borrowed_browser(lambda: bool(connection_status().get('connected')), timeout_s=18)

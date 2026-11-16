@@ -1896,7 +1896,7 @@
       "success": "历史完整性、受控导入、错误身份拒绝、CI节点映射、候选脱敏去重、只读投影和退化阻断。"
     },
     {
-      "version": 3,
+      "version": 4,
       "oracle_version": 3,
       "capabilities": [
         "mcp.process_local_evidence"
@@ -1911,11 +1911,11 @@
       "case_id": "surface.process_local_evidence",
       "executor": "surface",
       "entry": "process_local_evidence",
-      "signature": "arguments(posonlyargs=[], args=[arg(arg='input_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。'))])], ctx=Load()), ctx=Load())), arg(arg='approved_input_root', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。'))])], ctx=Load()), ctx=Load())), arg(arg='input_sha256', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。')), keyword(arg='pattern', value=Constant(value='^$|^[a-f0-9]{64}$'))])], ctx=Load()), ctx=Load())), arg(arg='component', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 qwen3-asr-0.6b。云失败明确报错，不转本地 OCR。'))])], ctx=Load()), ctx=Load())), arg(arg='language', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='语言代码或 auto。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='所属 kr_research 任务；不创建新研究生命周期。'))])], ctx=Load()), ctx=Load())), arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='已有后台任务 ID；提供时只读取该任务结果，不重复执行。'))])], ctx=Load()), ctx=Load())), arg(arg='document', annotation=BinOp(left=Name(id='DocumentReadOptions', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='timeout_s', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=3600))])], ctx=Load()), ctx=Load())), arg(arg='task_limits', annotation=BinOp(left=Name(id='TaskLimitOptions', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='auto'), Constant(value='auto'), Constant(value=''), Constant(value=''), Constant(value=None), Constant(value=600), Constant(value=None)])",
+      "signature": "arguments(posonlyargs=[], args=[arg(arg='input_path', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。'))])], ctx=Load()), ctx=Load())), arg(arg='approved_input_root', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。'))])], ctx=Load()), ctx=Load())), arg(arg='input_sha256', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。')), keyword(arg='pattern', value=Constant(value='^$|^[a-f0-9]{64}$'))])], ctx=Load()), ctx=Load())), arg(arg='component', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 sherpa-onnx ASR。云失败明确报错，不转本地 OCR。'))])], ctx=Load()), ctx=Load())), arg(arg='language', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='语言代码或 auto。'))])], ctx=Load()), ctx=Load())), arg(arg='research_task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='所属 kr_research 任务；不创建新研究生命周期。'))])], ctx=Load()), ctx=Load())), arg(arg='task_id', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='str', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='description', value=Constant(value='已有后台任务 ID；提供时只读取该任务结果，不重复执行。'))])], ctx=Load()), ctx=Load())), arg(arg='document', annotation=BinOp(left=Name(id='DocumentReadOptions', ctx=Load()), op=BitOr(), right=Constant(value=None))), arg(arg='timeout_s', annotation=Subscript(value=Name(id='Annotated', ctx=Load()), slice=Tuple(elts=[Name(id='float', ctx=Load()), Call(func=Name(id='Field', ctx=Load()), args=[], keywords=[keyword(arg='ge', value=Constant(value=1)), keyword(arg='le', value=Constant(value=3600))])], ctx=Load()), ctx=Load())), arg(arg='task_limits', annotation=BinOp(left=Name(id='TaskLimitOptions', ctx=Load()), op=BitOr(), right=Constant(value=None)))], kwonlyargs=[], kw_defaults=[], defaults=[Constant(value=''), Constant(value=''), Constant(value=''), Constant(value='auto'), Constant(value='auto'), Constant(value=''), Constant(value=''), Constant(value=None), Constant(value=600), Constant(value=None)])",
       "layer": "contract",
       "auto": true,
       "success": "注册签名与显式本地文件授权合同一致；不证明真实模型质量。",
-      "change_reason": "2026-11-13: 有意更新分页、媒体工作集、分段任务期限及恢复预算语义；历史试次不重新赋通过。"
+      "change_reason": "2026-11-14: 仅修正ASR后端说明；参数及执行行为不变，旧试次不重新赋通过。"
     },
     {
       "case_id": "model.cloud_omni",
@@ -2004,8 +2004,8 @@
     },
     {
       "case_id": "knowledge.agent_delivery",
-      "version": 13,
-      "oracle_version": 13,
+      "version": 14,
+      "oracle_version": 14,
       "capabilities": [
         "mcp.get_capabilities",
         "mcp.get_task_status",
@@ -2032,7 +2032,8 @@
         "tests/test_agent_capability_disclosure.py",
         "tests/test_calendar_evidence_reconciliation.py",
         "tests/test_host_visible_evidence.py",
-        "tests/test_legacy_evidence_import.py"
+        "tests/test_legacy_evidence_import.py",
+        "tests/test_agent_context_disclosure.py"
       ],
       "layer": "contract",
       "auto": true,
@@ -2103,10 +2104,14 @@
         "src/runtime/optional_media_worker.py",
         "tests/test_calendar_evidence_reconciliation.py",
         "tests/test_host_visible_evidence.py",
-        "tests/test_legacy_evidence_import.py"
+        "tests/test_legacy_evidence_import.py",
+        "tests/test_agent_context_disclosure.py",
+        "scripts/product_install.py",
+        "config/codex-product/plugin/knowledgeradar-research/skills/research/references/official-evidence.md",
+        "config/codex-product/plugin/knowledgeradar-research/skills/research/references/maintenance.md"
       ],
-      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。 2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 仅隔离源码合同验证；不代表正式安装或真实账号与桌面验收。 宿主URL/ref错配拒绝固定，合法声明重定向保留且不升级原生核验；旧批次原版本不变。",
-      "change_reason": "2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 2026-11-12：后置宿主候选、显式固定证据复用、精确预览续读、媒体失败进度及终态；不代表真实研究质量改善。 2026-11-12：日历年/月/日/时间目录、受保护迁移与原地登记、宿主可见快照、历史固定ID导入。 2026-11-13：补回A04宿主来源身份核对，缺字段保持未核验，不覆盖旧证据。"
+      "success": "候选实际MCP协议固定报告登记/检索/展开/授权/交付回读，跨进程、占用、崩溃、撤销与人改保护；不代表安装、真实Vault或云同步。 稳定项目身份、精确报告路径、全文流式分卷、双端幂等、移动/删除保护、备份恢复停用副作用。 默认state/logs分离及显式任务库路径均归档和备份，缺失任务结果拒绝成功，旧快照可恢复且重绑定结果路径。 来源目录、策略树与工具合同同源校验，暂停语义及输出校验、生成物反向破坏与时间无关生成检查通过。 显式旧Vault布局迁移、固定正文与报告版本、人改保护及中断续接。 关键命题/替代/撤证及报告hash绑定、中文审阅表实际同版交付、来源换版失效及语义挑战的声明传递；不宣称程序语义判真。 2026-11-11：稳定项目身份及旧scope/目录owner兼容；Vault要求继承、local_only与双端收据；未绑定任务/有界孤儿发现、分页与只读界面缺口投影。 仅隔离源码合同验证；不代表正式安装或真实账号与桌面验收。 宿主URL/ref错配拒绝固定，合法声明重定向保留且不升级原生核验；旧批次原版本不变。 默认上下文投影不读无关浏览器历史，静态目录可展开，真实错误/固定证据/续读不丢；引用文件单独变化进入插件身份，两套部署结果一致。",
+      "change_reason": "2026-11-14: 合并上下文默认投影及完整Skill指纹回归，不新增并行题库，不重写历史试次。"
     },
     {
       "case_id": "surface.read_knowledge",

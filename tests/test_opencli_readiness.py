@@ -28,7 +28,7 @@ catch(error){console.log(JSON.stringify({error:error.code,calls}));}
     assert sum(isinstance(c, dict) for c in data['calls']) == (1 if mode in {'presented', 'stuck'} else 0)
 
 
-@pytest.mark.parametrize('operation',['search','detail','comments','auth_verify'])
+@pytest.mark.parametrize('operation',['search','detail','comments','auth_verify','login'])
 def test_python_bridge_checks_bound_browser_before_dispatch(monkeypatch,tmp_path,operation):
     from runtime import opencli_bridge, browser_channel, process
     (tmp_path/'package.json').write_text('{"version":"2.0.2"}',encoding='utf-8')
@@ -51,6 +51,41 @@ def test_python_bridge_checks_bound_browser_before_dispatch(monkeypatch,tmp_path
     result=opencli_bridge.invoke_page(session='wechat',operation=operation)
     assert result['code']=='browser_channel_not_connected'
     assert observed[0]['params']=={'contextId':'approved-context'}
+
+
+def test_xhs_explicit_login_prepares_cold_daily_browser_before_dispatch(monkeypatch, tmp_path):
+    """扫码交接也须走正常冷启动，不能要求用户先手动打开Chrome。"""
+    import hashlib
+    from runtime import xhs_opencli, browser_channel
+    (tmp_path / 'package.json').write_text('{"version":"2.0.2"}', encoding='utf-8')
+    digest = hashlib.sha256()
+    for name in ('search', 'note', 'comments', 'download', 'risk-control', 'note-helpers'):
+        relative = 'clis/xiaohongshu/' + name + '.js'
+        path = tmp_path / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b'fixture')
+        digest.update(relative.encode())
+        digest.update(path.read_bytes())
+    settings = {'KR_XHS_OPENCLI_ROOT': str(tmp_path),
+                'KR_XHS_OPENCLI_ADAPTER_SHA256': digest.hexdigest(),
+                'KR_XHS_OPENCLI_CONTEXT_ID': 'approved-context'}
+    monkeypatch.setattr(xhs_opencli, 'setting', lambda name: settings.get(name, ''))
+    monkeypatch.setenv('KR_NODE_EXE', 'unused-node')
+    monkeypatch.setattr(xhs_opencli, '_ensure_daemon', lambda *a: '')
+    monkeypatch.setattr(xhs_opencli, 'connection_status', lambda: {'connected': False})
+    calls = []
+    def prepare(connected, **kwargs):
+        assert connected() is False and kwargs['timeout_s'] == 18
+        calls.append('prepare')
+        return {'ok': False, 'code': 'browser_channel_not_connected',
+                'request_executed': False, 'diagnostics': {'quiet_launch_attempted': True}}
+    monkeypatch.setattr(browser_channel, 'ensure_borrowed_browser', prepare)
+    monkeypatch.setattr(xhs_opencli, 'silent_subprocess_run',
+                        lambda *a, **k: pytest.fail('must prepare before login dispatch'))
+    result = xhs_opencli._run('login')
+    assert calls == ['prepare']
+    assert result['request_executed'] is False
+    assert result['browser_readiness']['diagnostics']['quiet_launch_attempted'] is True
 
 @pytest.mark.parametrize('mode,code',[('reconnect',''),('offline','browser_disconnected'),('wrong-version','opencli_daemon_identity_mismatch')])
 def test_native_wait_handles_reconnect_without_dispatch(mode,code):

@@ -52,6 +52,22 @@ def compact_evidence(value):
     refs=value.get('evidence_assets') or []
     by_kind={x.get('kind'):x for x in refs if isinstance(x,dict)}
     result=dict(value)
+    metadata = result.get('metadata')
+    if isinstance(metadata, dict):
+        strategy = metadata.get('strategy')
+        if (isinstance(strategy, dict) and strategy.get('id') in {'generic_web_extraction', 'web_search'}
+                and isinstance(strategy.get('nodes'), list)
+                and isinstance(strategy.get('error_taxonomy'), dict)):
+            # Fold catalog descriptions, never this request's attempts/errors.
+            metadata = dict(metadata)
+            if metadata.get('failure_taxonomy') == strategy['error_taxonomy']:
+                metadata.pop('failure_taxonomy', None)
+            metadata['strategy'] = {k: v for k, v in strategy.items()
+                                    if k not in {'nodes', 'error_taxonomy', 'evidence_fields'}}
+            metadata['strategy_details'] = {
+                'read_tool': 'get_capabilities', 'request': {'summary': False},
+                'view': 'strategy_trees', 'projection_only': True}
+            result['metadata'] = metadata
     acquired = result.get('acquired_items')
     association = (result.get('research_receipt') or {}).get('candidate_association') or {}
     if isinstance(acquired, list) and association.get('association') == 'discovery_candidates':

@@ -62,7 +62,8 @@ try {
     }
     if(!['release','inventory','inspect'].includes(request.operation)){
       windowControl=await officialWindowController(load,page,request.pythonExecutable,
-        {initialBackground:!['login','attention'].includes(request.operation)});
+        // 登录确认先核验原页面并回收；能否最小化不能挡住认证事实。
+        {initialBackground:!['login','attention','resume'].includes(request.operation)});
       attention=attentionController(page,windowControl);
     }
     const signalJs = `(() => {

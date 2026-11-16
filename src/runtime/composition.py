@@ -1279,7 +1279,7 @@ def kr_research(
             parent_event_id=family["parent_event_id"],
             metadata={"mode": clean_mode, "budget": clean_budget, "gap_id": family["gap_id"]},
         )
-    completion_rule = "Use finalize_research_task after autonomous research. Every considered ecology requires an explicit outcome. The optional console reads this same ledger; no webpage, claim, lease or reservation is required."
+    completion_rule = "可用 finalize_research_task 记录已用来源和已知缺口，未登记保持未知；不是停止或交付许可。成果须另经绑定、submit_report 和投递回读。"
     result: Dict = {
         "schema": "knowledgeradar-research-perception/v1",
         "status": "ok",
@@ -1325,6 +1325,17 @@ def kr_research(
             "report_artifacts": ["Evidence Register", "claim evidence chains", "roadmap", "fallback/bypass record"],
             "manual_boundaries": "Login, captcha, account risk, paid walls and high-cost media detail require explicit Agent/user decision.",
         }
+    if clean_budget != 'diagnostic' and clean_mode != 'deep_route':
+        # The ledger/route receipt retains the full plan; avoid reprinting the
+        # capability catalog in ordinary task creation responses.
+        result['route_plan'] = {key: plan[key] for key in
+            ('schema', 'mode', 'budget', 'selected_source_ecologies', 'query_families') if key in plan}
+        result['route_plan']['considered_source_ecologies'] = [
+            {key: card[key] for key in ('source_ecology', 'status', 'relevance_signals') if key in card}
+            for card in plan.get('considered_source_ecologies', [])]
+        result['route_plan']['details'] = {
+            'read_tool': 'get_capabilities', 'request': {'summary': False},
+            'meaning': '完整能力和来源说明按需读取；路线仅为建议，不限制其他来源。'}
     return result
 
 
@@ -1654,7 +1665,7 @@ def process_local_evidence(
     input_path: Annotated[str, Field(description='新建处理时必填：用户明确提供的本地文件路径；不扫描目录。')]='',
     approved_input_root: Annotated[str, Field(description='新建处理时必填：用户授权读取的本地目录，输入必须位于其内。')]='',
     input_sha256: Annotated[str, Field(description='新建处理时必填：输入文件 SHA-256，绑定本次解析身份。', pattern='^$|^[a-f0-9]{64}$')]='',
-    component: Annotated[str, Field(description='auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 qwen3-asr-0.6b。云失败明确报错，不转本地 OCR。')]='auto',
+    component: Annotated[str, Field(description='auto：文字 PDF 本地解析，Office 用 docling，扫描/图片上传硅基流动 PaddleOCR-VL 1.5（需 SILICONFLOW_API_KEY），音频用本地 sherpa-onnx ASR。云失败明确报错，不转本地 OCR。')]='auto',
     language: Annotated[str, Field(description='语言代码或 auto。')]='auto',
     research_task_id: Annotated[str, Field(description='所属 kr_research 任务；不创建新研究生命周期。')]='',
     task_id: Annotated[str, Field(description='已有后台任务 ID；提供时只读取该任务结果，不重复执行。')]='',
@@ -2367,10 +2378,10 @@ def health_check(
             "schema_version": "knowledgeradar-health-browser-auth-probe/v1",
             "summary": False,
             "status": interaction.get("status", "unknown"),
+            "platform": platform,
+            "diagnostics": {"read_tool": "health_check", "request": {"mode": "browser_sessions"}},
             "checks": {
                 "browser_auth_probe": interaction,
-                "browser_sessions": browser_sessions_summary(limit=20),
-                "chrome_runtime": _compact_chrome_runtime_summary(chrome_runtime_summary()),
             },
         }
     if normalized_mode.startswith("request_browser_interaction:"):
@@ -2399,10 +2410,10 @@ def health_check(
             "schema_version": "knowledgeradar-health-browser-interaction/v1",
             "summary": False,
             "status": interaction.get("status", "unknown"),
+            "platform": platform,
+            "diagnostics": {"read_tool": "health_check", "request": {"mode": "browser_sessions"}},
             "checks": {
                 "browser_interaction": interaction,
-                "browser_sessions": browser_sessions_summary(limit=20),
-                "chrome_runtime": _compact_chrome_runtime_summary(chrome_runtime_summary()),
             },
         }
     if normalized_mode.startswith("complete_browser_interaction:"):
@@ -2430,10 +2441,10 @@ def health_check(
             "schema_version": "knowledgeradar-health-browser-interaction/v1",
             "summary": False,
             "status": interaction.get("status", "unknown"),
+            "platform": platform,
+            "diagnostics": {"read_tool": "health_check", "request": {"mode": "browser_sessions"}},
             "checks": {
                 "browser_interaction": interaction,
-                "browser_sessions": browser_sessions_summary(limit=20),
-                "chrome_runtime": _compact_chrome_runtime_summary(chrome_runtime_summary()),
             },
         }
     if normalized_mode.startswith("cancel_browser_interaction:"):
@@ -2455,10 +2466,10 @@ def health_check(
             "schema_version": "knowledgeradar-health-browser-interaction/v1",
             "summary": False,
             "status": interaction.get("status", "unknown"),
+            "platform": platform,
+            "diagnostics": {"read_tool": "health_check", "request": {"mode": "browser_sessions"}},
             "checks": {
                 "browser_interaction": interaction,
-                "browser_sessions": browser_sessions_summary(limit=20),
-                "chrome_runtime": _compact_chrome_runtime_summary(chrome_runtime_summary()),
             },
         }
     if normalized_mode in {
@@ -2925,7 +2936,7 @@ from runtime.research_index import ResearchRequest
 
 @application_tool(group="research")
 def update_research(request: ResearchRequest) -> Dict:
-    """记录问题、需求/尝试/覆盖、动作/探索及关键命题。action=evaluation记录评测题卡、影子提案、候选处置、可逆合并和用户反馈补偿；request_id幂等、expected_revision防并发，语义判断由Agent负责。先task_purpose声明同任务目标，再claim声明语义判断与固定依赖；按read_knowledge research/review与withdrawal_scenarios处置替代及默认撤证，report_review绑定报告正文SHA256与当前baseline。submit_report仅在有关键结论记录或显式include_review时附中文审阅表。旧记录未声明保持未审；程序核身份、定位、版本和缺口，不判真假或饱和。"""
+    """按需维护研究记录或评测，不是搜索或交付许可。选择claim/审阅动作时才需声明同任务task_purpose及固定依赖；report_review绑定正文SHA256和baseline。action=evaluation维护现有题库。request_id幂等、expected_revision防并发；程序核身份与缺口，语义判断由Agent负责。"""
     from runtime.research_index import ResearchIndex
     return ResearchIndex().annotate(request)
 
