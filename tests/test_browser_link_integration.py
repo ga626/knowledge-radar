@@ -11,7 +11,7 @@ from conftest import patch_native
 ROOT=Path(__file__).resolve().parents[1]
 
 
-@pytest.mark.parametrize('mode,stage', [('invalid_json','response_received'), ('timeout','command_sent')])
+@pytest.mark.parametrize('mode,stage', [('invalid_json','response_received'), ('timeout','request_prepared')])
 def test_bridge_failure_preserves_stage_identity_without_payload(tmp_path, monkeypatch, mode, stage):
     from runtime.browser_link import BrowserLink
     state=tmp_path/'host.json'

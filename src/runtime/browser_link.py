@@ -156,7 +156,7 @@ class BrowserLink:
             return self._failure("native_host_unavailable", request_id,request_executed=False)
         body = {"request_id": request_id, "platform": platform, "generation": state.get('generation',''), "operation": operation, "payload": payload,
                 'timeout_ms': max(1, min(20000, round(timeout_s * 1000)))}
-        diagnostic = {'generation':state.get('generation',''), 'last_confirmed_stage':'command_sent',
+        diagnostic = {'generation':state.get('generation',''), 'last_confirmed_stage':'request_prepared',
             'input_sha256':hashlib.sha256(json.dumps(payload,sort_keys=True,ensure_ascii=False).encode()).hexdigest(),
             'input_available':False, 'root_cause':'unconfirmed'}
         def diagnosed(value, exception=None):

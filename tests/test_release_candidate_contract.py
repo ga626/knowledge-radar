@@ -28,6 +28,13 @@ def test_package_business_probe_rejects_a_package_with_broken_archive_module(tmp
         verifier.business_probe(tmp_path)
 
 
+def test_package_business_probe_cannot_borrow_modules_from_source_checkout(tmp_path):
+    import pytest
+    (tmp_path/'src').mkdir()
+    with pytest.raises(RuntimeError, match='candidate business probe failed'):
+        verifier.business_probe(tmp_path)
+
+
 def test_ci_receipt_identity_is_explicit_and_local_build_is_not_a_ci_run(monkeypatch):
     import pytest
     monkeypatch.delenv('GITHUB_ACTIONS', raising=False)

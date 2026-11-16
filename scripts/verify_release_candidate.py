@@ -91,6 +91,11 @@ from runtime.research_archive import ResearchArchive, BindContext, SubmitReport
 from runtime.knowledge_delivery import DeliveryStore, Authorize
 from runtime import research_ledger as ledger
 from kr_core.evidence_assets import EvidenceAssets
+def packaged_modules_only():
+    source=(Path.cwd()/'src').resolve()
+    assert all(Path(m.__file__).resolve().is_relative_to(source) for name,m in sys.modules.items()
+        if name.split('.')[0] in {'runtime','kr_core'} and getattr(m,'__file__',None)), 'business module escaped extracted package'
+packaged_modules_only()
 state=Path(sys.argv[1]); state.mkdir(exist_ok=True)
 assets=EvidenceAssets(state/'evidence_assets')
 store=DeliveryStore(state,assets); engine=ResearchArchive(store)
@@ -107,6 +112,7 @@ engine.submit(SubmitReport(action='submit_report',task_id='candidate-probe',proj
 assert (local/'report.md').read_text(encoding='utf-8')==report
 assert any(p.read_text(encoding='utf-8')==report for p in vault.rglob('*.md'))
 assert any(text in p.read_text(encoding='utf-8') for p in vault.rglob('*.md'))
+packaged_modules_only()
 print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True}))
 '''
     with tempfile.TemporaryDirectory(prefix='kr-candidate-business-') as temp:
