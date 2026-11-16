@@ -19,9 +19,12 @@ def isolated_env(root, folder):
     env = {k: v for k, v in os.environ.items() if k.upper() in {"SYSTEMROOT", "WINDIR", "PATH", "PATHEXT", "TEMP", "TMP", "COMSPEC"}}
     data = folder / "sandbox"
     data.mkdir(exist_ok=True)
+    local_appdata, roaming_appdata = data/'AppData'/'Local', data/'AppData'/'Roaming'
+    for directory in (local_appdata, roaming_appdata):
+        directory.mkdir(parents=True, exist_ok=True)
     env.update({"PYTHONIOENCODING": "utf-8", "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
                 "PYTHONPATH": os.pathsep.join([str(root), str(root / "src")]), "PYTHONDONTWRITEBYTECODE": "1",
-                "HOME": str(data), "USERPROFILE": str(data), "LOCALAPPDATA": str(data), "APPDATA": str(data),
+                "HOME": str(data), "USERPROFILE": str(data), "LOCALAPPDATA": str(local_appdata), "APPDATA": str(roaming_appdata),
                 "KR_PROJECT_ROOT": str(root), "KR_STATE_DIR": str(data / "state"), "KR_LOG_DIR": str(data / "logs"),
                 "KR_DATA_ROOT": str(data), "KR_USER_DATA_DIR": str(data), "KR_BROWSER_DATA_DIR": str(data / "browser"),
                 "KR_PROFILE_REGISTRY_PATH": str(data / "profiles.json"), "KR_PROFILE_STATE_PATH": str(data / "profiles-state.json"),
