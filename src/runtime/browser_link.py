@@ -93,11 +93,6 @@ class BrowserLink:
         pending = self.distribution_status()
         if pending:
             return self._failure(pending, str(payload.get('request_id') or ''), request_executed=False)
-        if not self.explicit_state:
-            current=_read_state(self.state_file)
-            expected=json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8')).get('extension_version')
-            if current.get('extension_version') and current['extension_version']!=expected:
-                return self._failure('browser_extension_reload_required',str(payload.get('request_id') or ''),request_executed=False)
         from runtime.browser_channel import BorrowedBrowser, browser_site_key, _HELD_SITES
         if browser_site_key(platform) in _HELD_SITES.get():
             return self._request(operation,payload,platform=platform,timeout_s=timeout_s)
@@ -131,6 +126,10 @@ class BrowserLink:
         request_started = time.monotonic()
         request_deadline = request_started + timeout_s
         last_health = self.health() if operation in {'search', 'detail', 'comments', 'transcript', 'login', 'auth_verify', 'attention'} else {'ok': True}
+        # 磁盘状态可能来自已退出的旧 Host；只信在线握手的版本，不能挡住正常冷启动。
+        if last_health.get('code') == 'browser_extension_reload_required' and last_health.get('connected'):
+            return self._failure('browser_extension_reload_required',request_id,request_executed=False,
+                                 browser_readiness={'connection_reason':'browser_extension_reload_required'})
         if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():

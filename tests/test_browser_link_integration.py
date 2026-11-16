@@ -11,6 +11,23 @@ from conftest import patch_native
 ROOT=Path(__file__).resolve().parents[1]
 
 
+def test_stale_host_version_does_not_block_normal_cold_start(tmp_path, monkeypatch):
+    from runtime.browser_link import BrowserLink
+    from runtime import browser_channel
+    state = tmp_path/'host.json'
+    state.write_text(json.dumps({'extension_version':'0.0.0','port':1234,'token':'fixture'}))
+    bridge=BrowserLink(state_file=state)
+    bridge.explicit_state=False
+    monkeypatch.setattr(bridge,'distribution_status',lambda:None)
+    monkeypatch.setattr(bridge,'health',lambda:{'ok':False,'code':'native_host_unreachable'})
+    calls=[]
+    monkeypatch.setattr(browser_channel,'ensure_borrowed_browser',lambda *a,**kw:
+        calls.append('cold_start') or {'ok':False,'code':'browser_channel_not_connected'})
+    result=bridge.request('transcript',{},platform='youtube')
+    assert calls==['cold_start']
+    assert result['browser_readiness']['connection_reason']=='native_host_unreachable'
+
+
 def test_transcript_enters_normal_borrowed_browser_startup(tmp_path, monkeypatch):
     from runtime.browser_link import BrowserLink
     from runtime import browser_channel
@@ -23,6 +40,17 @@ def test_transcript_enters_normal_borrowed_browser_startup(tmp_path, monkeypatch
                                                   platform='youtube', timeout_s=2)
     assert calls == ['ensure']
     assert result['code'] == 'browser_channel_not_connected'
+    assert result['request_executed'] is False
+
+
+def test_live_old_extension_remains_protected_without_relaunch(tmp_path, monkeypatch):
+    from runtime.browser_link import BrowserLink
+    from runtime import browser_channel
+    bridge=BrowserLink(state_file=tmp_path/'host.json')
+    monkeypatch.setattr(bridge,'health',lambda:{'ok':False,'connected':True,'code':'browser_extension_reload_required'})
+    monkeypatch.setattr(browser_channel,'ensure_borrowed_browser',lambda *a,**kw:pytest.fail('must not relaunch live browser'))
+    result=bridge.request('transcript',{},platform='youtube')
+    assert result['code']=='browser_extension_reload_required'
     assert result['request_executed'] is False
 
 

@@ -94,3 +94,11 @@ def test_terminated_probe_reclaims_its_regular_child(tmp_path):
             if kernel.WaitForSingleObject(child_handle, 0) != 0:
                 kernel.TerminateProcess(child_handle, 1)
             kernel.CloseHandle(child_handle)
+def test_sandbox_preserves_windows_appdata_layout(tmp_path):
+    from scripts.kr_eval.runner import isolated_env
+    from pathlib import Path
+    env=isolated_env(tmp_path,tmp_path)
+    profile=Path(env['USERPROFILE'])
+    assert Path(env['LOCALAPPDATA'])==profile/'AppData'/'Local'
+    assert Path(env['APPDATA'])==profile/'AppData'/'Roaming'
+    assert Path(env['LOCALAPPDATA']).is_dir() and Path(env['APPDATA']).is_dir()
