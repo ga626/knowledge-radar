@@ -319,7 +319,7 @@
       }
     },
     {
-      "version": 9,
+      "version": 10,
       "oracle_version": 4,
       "capabilities": [
         "mcp.get_content_detail"
@@ -356,7 +356,7 @@
       "layer": "contract",
       "auto": true,
       "success": "注册名、签名、文档一致；不证明平台连通。",
-      "change_reason": "2026-11-13: 有意更新分页、媒体工作集、分段任务期限及恢复预算语义；历史试次不重新赋通过。"
+      "change_reason": "2026-11-16: 显式接受 YouTube 浏览器文字记录兜底参数；同步签名合同，不改变判定器或历史结果。"
     },
     {
       "version": 2,
