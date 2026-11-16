@@ -105,6 +105,12 @@ def build_detail_evidence(url: str, platform: str, result: Dict[str, Any], *, no
             "transcript_chars": len(str(result.get("transcript") or "")),
             "comment_count": len(result.get("comments") or []) if isinstance(result.get("comments"), list) else 0,
             "has_routing": bool(result.get("routing")),
+            **({"transcript_acquisition": {
+                key: value for key, value in result['transcript_metadata'].items()
+                if key in {'source', 'completeness', 'failure_type', 'failure_phase',
+                           'observed_http_status', 'notices', 'attempts', 'browser_fallback_attempted'}
+            }} if isinstance(result.get('transcript_metadata'), dict) and
+                  (result['transcript_metadata'].get('attempts') or result['transcript_metadata'].get('notices')) else {}),
         },
     )
 

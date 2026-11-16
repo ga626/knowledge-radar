@@ -434,6 +434,8 @@ def processing_description(row, meta):
     if method:return str(method).replace('\n',' ')[:160]
     if kind=='transcript':
         source=str(meta.get('transcript_source') or meta.get('source_kind') or meta.get('extractor') or '')
+        if source == 'browser_link_youtube_dom':
+            return '日常 Chrome 页面文字记录（完整性未核实）'
         if source in {'bilibili_subtitle','youtube_transcript_api','youtube_transcript_api_fallback','youtube_captions'}:
             return '读取平台字幕（'+source+'）'
         if any(word in source.lower() for word in ('asr','sherpa','whisper','qwen3')):

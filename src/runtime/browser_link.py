@@ -130,7 +130,7 @@ class BrowserLink:
             return self._failure('native_command_timeout', request_id, request_executed=False)
         request_started = time.monotonic()
         request_deadline = request_started + timeout_s
-        last_health = self.health() if operation in {'search', 'detail', 'comments', 'login', 'auth_verify', 'attention'} else {'ok': True}
+        last_health = self.health() if operation in {'search', 'detail', 'comments', 'transcript', 'login', 'auth_verify', 'attention'} else {'ok': True}
         if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():

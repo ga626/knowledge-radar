@@ -2821,7 +2821,7 @@ def get_content_detail(
     task_scope_id: Annotated[str, Field(description="任务范围 ID。普通调用留空；用于等待或聚合同一任务范围的后台任务。")] = "",
     research_task_id: Annotated[str, Field(description="可选的 kr_research 任务 ID；提供后返回 research_receipt。")]= "",
     include_transcript: Annotated[bool | None, Field(description="明确允许或禁止字幕/ASR；未指定时跟随增强开关。允许时由有界持久任务执行。")]= None,
-    youtube_browser_fallback: Annotated[bool, Field(description="YouTube 字幕 API 受限时，明确允许通过借用日常 Chrome 读取一次可见文字记录；不自动登录、不后台轮询。")]= False,
+    youtube_browser_fallback: Annotated[bool, Field(description="请求 YouTube 字幕失败时默认借用日常 Chrome 读取一次文字记录；429保留并提示切换节点。false关闭备用，不自动登录、换代理或后台轮询。")]= True,
     include_comments: Annotated[bool | None, Field(description="明确允许或禁止评论采集；未指定时跟随评论分析开关。")]= None,
     include_ocr: Annotated[bool | None, Field(description="明确允许或禁止图片OCR；未指定时跟随多模态开关。")]= None,
     language: Annotated[str | None, Field(description="本次字幕/ASR语言，ISO639如zh/en或auto；不修改进程默认语言。")] = None,
