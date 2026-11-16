@@ -3,7 +3,7 @@
 来源：入口中立的类型化应用合同。禁止手改；MCP可能包result，表中是解包后的业务合同。
 错误信封独立列出；CLI按需暴露同源能力。
 
-合同指纹：`956fefabc257dbb9c6fbac967e3ffaf4e14c03450f2d2a6774a0bbba595c6118`
+合同指纹：`f399842af0c30317d89467f142a3a86f82fa31fa4e2a219ff337134b06e6e983`
 
 ## advance_research_candidate
 
@@ -2671,6 +2671,12 @@
         ],
         "default": null,
         "description": "小红书请求窗口：OCR默认全部内容图片，image_indexes可选原始零基索引；执行上限导致未完成时返回缺口。评论按根窗口和总条数预算读取。只要正文请显式关闭OCR和转写，不下载媒体。"
+      },
+      "youtube_browser_fallback": {
+        "default": false,
+        "description": "YouTube 字幕 API 受限时，明确允许通过借用日常 Chrome 读取一次可见文字记录；不自动登录、不后台轮询。",
+        "title": "Youtube Browser Fallback",
+        "type": "boolean"
       }
     },
     "required": [
