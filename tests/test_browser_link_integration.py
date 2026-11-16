@@ -11,6 +11,29 @@ from conftest import patch_native
 ROOT=Path(__file__).resolve().parents[1]
 
 
+@pytest.mark.parametrize('mode,stage', [('invalid_json','response_received'), ('timeout','command_sent')])
+def test_bridge_failure_preserves_stage_identity_without_payload(tmp_path, monkeypatch, mode, stage):
+    from runtime.browser_link import BrowserLink
+    state=tmp_path/'host.json'
+    state.write_text(json.dumps({'port':1234,'token':'private-token','generation':'gen-test'}))
+    monkeypatch.setattr(BrowserLink, 'health', lambda self: {'ok':True})
+    def respond(request):
+        if request.url.path == '/cancel': return httpx.Response(200, json={'ok':True})
+        if mode == 'timeout': raise httpx.ReadTimeout('private-url-and-cookie')
+        return httpx.Response(200, text='private-invalid-body')
+    with httpx.Client(transport=httpx.MockTransport(respond)) as client:
+        result=BrowserLink(state_file=state,client=client).request('detail',
+            {'request_id':'safe-id','url':'https://example.org/?token=private-input'},platform='zhihu')
+    diagnostic=result['browser_diagnostics']
+    assert diagnostic['last_confirmed_stage']==stage
+    assert diagnostic['generation']=='gen-test'
+    assert diagnostic['root_cause']=='unconfirmed'
+    assert diagnostic['input_sha256']
+    if mode=='invalid_json': assert diagnostic['response_sha256']
+    assert 'private-' not in json.dumps(result)
+    assert result['retryable'] is False
+
+
 def test_borrowed_browser_launches_once_and_reuses_shared_connection(monkeypatch, tmp_path):
     from runtime import browser_channel as channel
     calls = []

@@ -17,7 +17,7 @@
 | 原生回执 | `prepare-native-receipt <Codex会话jsonl> --call-id <实际宿主ID> --case <ID> --expected-target <身份JSON> --output <空目录>`，再 `import-receipt <receipt.json> --expected-target <身份JSON>` |
 | 日常故障 | 工具完成时被动收集低敏候选；`--candidate-store <数据库> candidates`；旧trace可用同一参数加 `collect-trace <jsonl>` 有界回填 |
 | 候选审查 | `review-candidate <ID> --case <已有ID> --reviewer <审查者> --reason <依据> --input-sha256 <已核对输入身份> --oracle-version <版本>`；无可重现输入不能宣称已重放；有缺口先在本目录增量补合同 |
-| CI | `ci --extra-node <已有测试节点>`：离线用例合批一次pytest；需要真实子进程的控制台、执行内核和 stdio 探针单独在临时端口/数据/互斥名执行一次；仍禁止外网和日常浏览器，stdio 探针退出时收回自身临时内核，均留JUnit并映射case；manual保持NOT_RUN，治理测试失败也阻断 |
+| CI | `ci --changed-from <base>`：底线＋粗分组；未知改动或 `--full` 运行完整离线集合。节点与组仅在本目录 cases.json 的 ci 中维护，含嵌套/Node；不截断12项。先验入口合同，失败阻断依赖批次；未选完整的case留NOT_RUN。pytest去重合批，owned-host隔离，失败证据留账本 |
 | 前台 | 执行/导入后自动更新摘要；`publish-summary`可只更新投影。网站“设置与帮助→持续评测”只读，源码变化或摘要过期提示更新，不自动跑平台 |
 | 只写报告 | 文档最小检查；不调用全量产品、账号或付费评测 |
 
@@ -64,4 +64,6 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 历史固定材料可用同一 `quality-trial` 加 `diagnostic_only=true`、`profile=knowledge_reuse` 记录温态回顾。必须引用本题库已有case及其version、固定输入/答案/判定资料；不新建或激活题卡，结果强制NOT_SCORED并保留逐项FAIL/UNKNOWN/PASS及理由。同上下文审阅没有独立校准，不能用于宣称修复提升或正式环境通过。
 
-PR前先plan和定向测试，CI沿既有`ci`合批节点跑维护合同；安装后仅按同制品身份重验受影响的read/update、观察采集、片段读取和纠错持久化。新MCP schema必须完整预检，正式宿主刷新后才赋原生PASS。
+本地只跑受影响用例；PR运行底线与粗组，main以`--full`冻结完整离线结果并构建唯一候选。包检查从解包源码回读固定证据、交付临时本地/Vault；安装后只核身份、原生及受影响真实路径。失败在同一PR归拢修复；判据或实现改变只重验受影响证据，不新建跨SHA缓存。新MCP schema必须完整预检，宿主刷新后才赋原生PASS。
+
+故障定位：同输入、同依赖/配置下旧实现过而新实现失败，才确认内部回归；新输入两版都失败只说明未支持该形态，不能据此判平台改版。认证/限流是响应分类，不是根因。回执先保留最后确认阶段、请求/组件身份与可用固定输入引用；缺输入或未知结果不自动重放，不记录Cookie/请求正文。

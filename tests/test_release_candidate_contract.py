@@ -20,6 +20,14 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_package_business_probe_rejects_a_package_with_broken_archive_module(tmp_path):
+    import pytest
+    (tmp_path/'src/runtime').mkdir(parents=True)
+    (tmp_path/'src/runtime/research_archive.py').write_text('raise RuntimeError("broken packaged archive")')
+    with pytest.raises(RuntimeError, match='candidate business probe failed'):
+        verifier.business_probe(tmp_path)
+
+
 def test_ci_receipt_identity_is_explicit_and_local_build_is_not_a_ci_run(monkeypatch):
     import pytest
     monkeypatch.delenv('GITHUB_ACTIONS', raising=False)
