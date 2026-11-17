@@ -71,7 +71,7 @@ def _covers(parent, child):
 def docs_only_change(root, base):
     if not base:
         return False
-    proc = subprocess.run(['git','diff','--name-only',base,'HEAD'],cwd=root,capture_output=True,text=True,timeout=15)
+    proc = subprocess.run(['git','diff','--name-only',base,'HEAD'],cwd=root,capture_output=True,text=True,encoding='utf-8',timeout=15)
     if proc.returncode:
         return False  # 浅克隆/未知身份保守执行，不能默默免检。
     paths = proc.stdout.splitlines()
@@ -93,7 +93,7 @@ def changed_paths(root, base):
     if not base:
         return None
     result = subprocess.run(['git', '-c', 'core.quotePath=false', 'diff', '--name-only', base, 'HEAD'],
-                            cwd=root, capture_output=True, text=True, timeout=15)
+                            cwd=root, capture_output=True, text=True, encoding='utf-8', timeout=15)
     return result.stdout.splitlines() if result.returncode == 0 else None
 
 

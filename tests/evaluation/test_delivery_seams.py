@@ -112,3 +112,12 @@ def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout()
     assert '--consumer-only' in str(consumer)
     assert 'consumer' in workflow['jobs']['test']['needs']
     assert 'test' in workflow['jobs']['deliver']['needs']
+
+
+def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    def git(*args, **kwargs):
+        assert kwargs.get('encoding') == 'utf-8'
+        return SimpleNamespace(returncode=0,stdout='docs/脚本清单.md\n')
+    monkeypatch.setattr(ci.subprocess,'run',git)
+    assert ci.changed_paths(tmp_path,'base') == ['docs/脚本清单.md']
