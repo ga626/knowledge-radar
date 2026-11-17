@@ -1,13 +1,13 @@
 {
   "schema": "knowledgeradar-script-lifecycle-inventory/v1",
-  "content_hash": "70021460b5ed975c5713ac45b89f09e7d6dba81190242d5a7c6161158f9e188d",
+  "content_hash": "3878f46af95c34833e146b353106505910494b62fa3ee1fa2a4e97fba0f4ee5e",
   "generator": "scripts/generate_script_lifecycle_inventory.py",
   "entries": [
     {
       "path": "scripts/__init__.py",
       "level": "S2",
       "reason": "referenced_reusable_script",
-      "reference_count": 160,
+      "reference_count": 161,
       "action": "may_move_after_targeted_checks"
     },
     {

@@ -1,6 +1,8 @@
 """内核退出、熔断及薄MCP目录的回归；不触碰正式安装。"""
 import asyncio
 import json
+import hashlib
+import shutil
 import os
 from pathlib import Path
 import sys
@@ -17,15 +19,26 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_mcp_catalog_does_not_launch_kernel(tmp_path, monkeypatch, active):
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    env = dict(os.environ, KR_MCP_TRANSPORT='stdio', KR_OWNER_ROOT=str(tmp_path/'owner'),
+    env = dict(os.environ, KR_MCP_TRANSPORT='stdio', KR_OWNER_ROOT=str(tmp_path/'data/state/execution_owner'),
                KR_DATA_ROOT=str(tmp_path/'data'), KR_STATE_DIR=str(tmp_path/'state'),
                KR_LOG_DIR=str(tmp_path/'logs'), KR_RUNTIME_ENV_PATH=str(tmp_path/'absent.env'),
                KR_ACTIVE_INSTALL_ROOT=str(tmp_path/'missing-install'),
                KR_DESKTOP_NOTIFICATIONS_DISABLED='1', KR_DISABLE_MODEL_PREWARM='1')
     if active:
         install = tmp_path/'missing-install'
-        install.mkdir()
-        (install/'active.json').write_text(json.dumps({'program_root': str(ROOT), 'data_root': str(tmp_path/'data')}))
+        program = install/'app'/'fixture'
+        shutil.copytree(ROOT/'src', program/'src', ignore=shutil.ignore_patterns('__pycache__', 'data'))
+        for relative in ('config/codex-product/tool-contracts.json', 'config/project-structure.manifest.json'):
+            target = program/relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(ROOT/relative, target)
+        files = [{'path': p.relative_to(program).as_posix(), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                 for p in program.rglob('*') if p.is_file()]
+        raw = json.dumps({'source_dirty': False, 'source_commit': 'a'*40, 'files': files}).encode()
+        (program/'package-provenance.json').write_bytes(raw)
+        (install/'active.json').write_text(json.dumps({'installation_id': 'fixture',
+            'program_root': str(program), 'data_root': str(tmp_path/'data'), 'source_commit': 'a'*40,
+            'package_provenance_sha256': hashlib.sha256(raw).hexdigest()}), encoding='utf-8')
 
     async def scenario():
         params = StdioServerParameters(command=sys.executable,
@@ -48,7 +61,7 @@ def test_mcp_catalog_does_not_launch_kernel(tmp_path, monkeypatch, active):
                 assert result.isError
                 assert ('execution_owner_unavailable' if active else 'inactive_installation_client') in str(result)
     asyncio.run(asyncio.wait_for(scenario(), timeout=20))
-    assert not (tmp_path/'owner/owner.json').exists()
+    assert not (tmp_path/'data/state/execution_owner/owner.json').exists()
 
 
 class Child:

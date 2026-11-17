@@ -5,6 +5,14 @@ from scripts.kr_eval import ci
 from scripts.kr_eval.core import Ledger, snapshot
 
 
+def test_full_scope_keeps_all_real_host_seams_without_changed_test_file():
+    from pathlib import Path
+    from scripts.kr_eval.core import load_suite
+    root = Path(__file__).resolve().parents[2]
+    scope = ci.select_scope(root, load_suite(root), None, full=True)
+    assert 'tests/test_browser_link_host.py' in scope['nodes']
+
+
 def test_interrupted_run_does_not_hide_complete_history(tmp_path):
     ledger = Ledger(tmp_path)
     run_id, _ = ledger.begin()

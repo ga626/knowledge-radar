@@ -87,6 +87,8 @@ def business_probe(package_root: Path) -> dict[str, object]:
 import json, sys
 from pathlib import Path
 sys.path[:] = [str(Path.cwd()/'src')] + [p for p in sys.path if p and 'public-repos' not in p]
+from runtime.browser_components import verify_component
+components=[name for name in ('browser_link','opencli') if verify_component(name,program=Path.cwd())]
 from runtime.research_archive import ResearchArchive, BindContext, SubmitReport
 from runtime.knowledge_delivery import DeliveryStore, Authorize
 from runtime import research_ledger as ledger
@@ -113,7 +115,7 @@ assert (local/'report.md').read_text(encoding='utf-8')==report
 assert any(p.read_text(encoding='utf-8')==report for p in vault.rglob('*.md'))
 assert any(text in p.read_text(encoding='utf-8') for p in vault.rglob('*.md'))
 packaged_modules_only()
-print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True}))
+print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True,'bundled_components_verified':components}))
 '''
     with tempfile.TemporaryDirectory(prefix='kr-candidate-business-') as temp:
         state=Path(temp)
