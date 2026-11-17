@@ -112,6 +112,8 @@ def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout()
     assert '--consumer-only' in str(consumer)
     assert 'consumer' in workflow['jobs']['test']['needs']
     assert 'test' in workflow['jobs']['deliver']['needs']
+    aggregate = next(s['run'] for s in workflow['jobs']['test']['steps'] if s.get('name') == 'Assemble required evidence')
+    assert aggregate.splitlines()[1].strip() == 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
 
 
 def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):

@@ -157,6 +157,7 @@ jobs:
           KR_SCOPE_RESULT: ${{ needs.scope.result }}
         run: |
           python -c "import os; assert os.environ['KR_SCOPE_RESULT']=='success'; assert os.environ['KR_CONSUMER_REQUIRED']=='false' or os.environ['KR_CONSUMER_RESULT']=='success', 'mandatory artifact runtime did not pass'"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $env:KR_CI_NEEDS = python -c "import os,json; print(json.dumps({g:os.environ['KR_CHECK_RESULT'] for g in ('offline','host','node')}))"
           python -m scripts.kr_eval.ci aggregate --folder local/ci-jobs
       - uses: actions/upload-artifact@v7
