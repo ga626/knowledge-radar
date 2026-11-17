@@ -428,6 +428,9 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
     assert 'if: always()' in text and 'path: local/evaluation' in text
     import yaml
     workflow = yaml.safe_load(text)
+    python_install = next(step for step in workflow['jobs']['checks']['steps']
+                          if step.get('name') == 'Install Python tools for Python groups')
+    assert 'PyYAML' in python_install['run']
     assert workflow['jobs']['checks']['strategy']['fail-fast'] is False
     assert workflow['jobs']['checks']['strategy']['matrix']['group'] == ['offline', 'host', 'node']
     assert workflow['jobs']['test']['if'] == 'always()'

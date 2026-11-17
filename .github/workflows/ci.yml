@@ -34,7 +34,7 @@ jobs:
           node-version: '24'
       - name: Install Python tools for Python groups
         if: matrix.group != 'node'
-        run: python -m pip install -e . pytest
+        run: python -m pip install -e . pytest PyYAML
       - name: Reuse only a trusted complete matching batch
         id: reuse
         env:
