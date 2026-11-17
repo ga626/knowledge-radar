@@ -1,8 +1,9 @@
 {
   "delivery_seams_contract": {
     "evaluation": "Existing evaluator partitions offline, owned Host/scale and Node; complete trusted matching batches alone may be reused. Skipped and interrupted are not PASS.",
-    "installation": "Read-only shared plan precedes maintenance. Activation checks plan freshness and restores only its owned writes on failure; no implicit task repair.",
-    "mcp": "Existing forwarding client may follow verified active packages only under exact tool/IPC compatibility; owner source and generation remain strict. Unknown calls are not replayed."
+    "installation": "Read-only shared plan precedes maintenance. Activation checks plan freshness and restores only its owned writes on failure; no implicit task repair. Rollback restores owned bundled extension payloads through the same component preparation boundary before committing active identity.",
+    "mcp": "Existing forwarding client may follow verified active packages only under exact tool/IPC compatibility; owner source and generation remain strict. Unknown calls are not replayed. Portable compatibility versions are projected into the existing packaged tool contract, never read from this development manifest at runtime.",
+    "candidate_validation": "The extracted package must boot and stop its real isolated execution owner as well as expose its MCP catalog. Read-only installation plans do not write Python bytecode and exclude incidental interpreter caches from payload size."
   },
   "schema": "knowledgeradar-project-structure/v1",
   "updated_at": "2026-11-16",

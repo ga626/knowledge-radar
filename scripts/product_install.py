@@ -38,12 +38,16 @@ MODEL_CAPABILITIES = {
 }
 
 
-def browser_link_lifecycle():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('kr_browser_link_install', Path(__file__).with_name('browser_link_install.py'))
+def _read_helper(name, path):
+    """纯检查不让 import loader 往候选目录写入字节码。"""
+    spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
     return module
+
+
+def browser_link_lifecycle():
+    return _read_helper('kr_browser_link_install', Path(__file__).with_name('browser_link_install.py'))
 
 
 def browser_host_plan(install_root):
@@ -54,11 +58,7 @@ def browser_host_plan(install_root):
 
 
 def cli_lifecycle():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location('kr_product_cli', Path(__file__).with_name('product_cli_launcher.py'))
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return _read_helper('kr_product_cli', Path(__file__).with_name('product_cli_launcher.py'))
 
 
 def installation_maintenance(function):
@@ -1554,7 +1554,8 @@ def build_plan(package_root: Path, install_root: Path, data_root: Path, python_e
     installation_id = version + "-" + identity
     program_root = install_root / "app" / installation_id
     runtime_root = install_root / "runtime" / installation_id
-    total_bytes = sum(path.stat().st_size for path in package_root.rglob("*") if path.is_file())
+    total_bytes = sum(path.stat().st_size for path in package_root.rglob("*")
+        if path.is_file() and '__pycache__' not in path.relative_to(package_root).parts and path.suffix != '.pyc')
     return {
         "schema": "knowledgeradar-product-install-plan/v1",
         "package_root": str(package_root.resolve()),
@@ -1621,14 +1622,12 @@ def client_handoff_plan(active, package_root):
     try:
         # 仅加载本安装器自己的纯 helper；不会运行旧包或候选中的启动代码。
         path = PACKAGE_ROOT/'src/runtime/client_contract.py'
-        spec = importlib.util.spec_from_file_location('kr_install_client_contract', path)
-        helper = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(helper)
+        helper = _read_helper('kr_install_client_contract', path)
         old = helper.forwarding_contract(previous)
         new = helper.forwarding_contract(package_root)
         compatible = (previous/'src/runtime/client_contract.py').is_file() and old == new
-        old_data = json.loads((previous/'config/project-structure.manifest.json').read_text(encoding='utf-8')).get('runtime_lifecycle_contract', {}).get('data_compatibility_version')
-        new_data = json.loads((Path(package_root)/'config/project-structure.manifest.json').read_text(encoding='utf-8')).get('runtime_lifecycle_contract', {}).get('data_compatibility_version')
+        old_data = helper.compatibility_versions(previous)['data_compatibility_version']
+        new_data = helper.compatibility_versions(package_root)['data_compatibility_version']
         return {'requires_host_refresh': not compatible, 'previous_contract':old,
                 'candidate_contract':new, 'data_rollback_compatible':bool(old_data and old_data == new_data),
                 'reason':'compatible_forwarding' if compatible else 'client_contract_changed'}
@@ -2035,6 +2034,7 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         *(install_root / name for name in ["console_product.py", "console.cmd", "configure.cmd", "cli_product.py", "knowledgeradar.cmd"]),
     ]
     browser_link = None
+    browser_components = {}
     snapshots = {p: p.read_bytes() if p.is_file() else None for p in files}
     with tempfile.TemporaryDirectory(prefix="kr-rollback-") as temp:
         backup_plugin = Path(temp) / "plugin"
@@ -2042,6 +2042,16 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
         if had_plugin:
             shutil.copytree(plugin, backup_plugin)
         try:
+            program = Path(previous['program_root'])
+            if (program/'config/browser-components.json').is_file():
+                for component in ('browser_link', 'opencli'):
+                    try:
+                        prepared = _prepare_bundled_component(program, install_root, Path(previous['data_root']), component)
+                    except (OSError, ValueError) as error:
+                        raise RuntimeError('component_preparation_failed:'+component) from error
+                    if prepared.get('status') != 'prepared':
+                        raise RuntimeError('component_preparation_failed:'+component)
+                    browser_components[component] = prepared
             copy_plugin(Path(previous["program_root"]), codex_home)
             config.parent.mkdir(parents=True, exist_ok=True)
             config.write_text(
@@ -2062,6 +2072,8 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
             if not browser_link.get('registration') and current.get('browser_link', {}).get('status') == 'registered':
                 lifecycle=browser_link_lifecycle()
                 browser_link=lifecycle.uninstall(install_root)
+            if browser_components:
+                previous['browser_components'] = browser_components
             write_json_atomic(install_root / "active.json", previous)
         except Exception:
             if browser_link is not None:
@@ -2078,7 +2090,7 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
                 shutil.copytree(backup_plugin, plugin)
             raise
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher),
-            "model_configuration": model_configuration}
+            "model_configuration": model_configuration, "browser_components": browser_components}
 
 
 def set_developer_view(install_root: Path, enabled: bool) -> dict[str, Any]:

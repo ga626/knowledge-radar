@@ -20,6 +20,18 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_package_business_probe_boots_real_owner_without_governance_manifest(tmp_path):
+    import shutil
+    manifest = json.loads((ROOT/'config/package-manifest.product-lite.json').read_text(encoding='utf-8'))
+    files, _, _ = builder.collect_files(manifest)
+    for source in files:
+        target = tmp_path/source.relative_to(ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    assert not (tmp_path/'config/project-structure.manifest.json').exists()
+    assert verifier.business_probe(tmp_path)['execution_owner_ready'] is True
+
+
 def test_package_business_probe_rejects_broken_bundled_component_catalog(tmp_path):
     import shutil
     import pytest

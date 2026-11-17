@@ -84,7 +84,7 @@ def stdio_probe(package_root: Path) -> list[str]:
 def business_probe(package_root: Path) -> dict[str, object]:
     """从解包源码验证固定证据→双端归档；只写临时目录，不联网或连接正式库。"""
     code = r'''
-import json, sys
+import json, sys, subprocess
 from pathlib import Path
 sys.path[:] = [str(Path.cwd()/'src')] + [p for p in sys.path if p and 'public-repos' not in p]
 from runtime.browser_components import verify_component
@@ -115,7 +115,24 @@ assert (local/'report.md').read_text(encoding='utf-8')==report
 assert any(p.read_text(encoding='utf-8')==report for p in vault.rglob('*.md'))
 assert any(text in p.read_text(encoding='utf-8') for p in vault.rglob('*.md'))
 packaged_modules_only()
-print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True,'bundled_components_verified':components}))
+from runtime.execution_owner import OwnerClient
+owner = OwnerClient()
+try:
+    ready = owner.start(managed=True, timeout=20)
+    assert ready['status'] == 'ready', ready
+    assert owner.status()['status'] == 'ready'
+finally:
+    owner._stop()
+    child = getattr(owner, 'child', None)
+    if child is not None:
+        try:
+            child.wait(timeout=8)
+        except subprocess.TimeoutExpired:
+            child.terminate()
+            child.wait(timeout=5)
+            raise RuntimeError('candidate owner did not stop normally')
+packaged_modules_only()
+print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True,'bundled_components_verified':components,'execution_owner_ready':True}))
 '''
     with tempfile.TemporaryDirectory(prefix='kr-candidate-business-') as temp:
         state=Path(temp)
@@ -124,6 +141,7 @@ print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_deli
         env.update(PYTHONPATH=str(package_root/'src'), PYTHONUTF8='1', PYTHONDONTWRITEBYTECODE='1',
             HOME=temp, USERPROFILE=temp, APPDATA=temp, LOCALAPPDATA=temp, CODEX_HOME=str(state/'codex'),
             KR_PROJECT_ROOT=str(package_root), KR_STATE_DIR=str(state/'state'), KR_LOG_DIR=str(state/'logs'),
+            KR_OWNER_ROOT=str(state/'state/execution_owner'),
             KR_DATA_ROOT=str(state), KR_EVIDENCE_ROOT=str(state/'state/evidence_assets'),
             KR_EVALUATION_OFFLINE='1')
         try:

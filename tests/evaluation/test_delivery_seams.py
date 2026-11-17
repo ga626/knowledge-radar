@@ -5,6 +5,18 @@ from scripts.kr_eval import ci
 from scripts.kr_eval.core import Ledger, snapshot
 
 
+def test_forwarding_contract_uses_portable_contract_without_development_manifest(tmp_path):
+    from pathlib import Path
+    from runtime.client_contract import forwarding_contract
+    root = Path(__file__).resolve().parents[2]
+    data = json.loads((root/'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))
+    data['runtime_lifecycle_contract'] = {'client_compatibility_version': 1, 'data_compatibility_version': 1}
+    contract = tmp_path/'config/codex-product/tool-contracts.json'
+    contract.parent.mkdir(parents=True)
+    contract.write_text(json.dumps(data), encoding='utf-8')
+    assert len(forwarding_contract(tmp_path)) == 64
+
+
 def test_full_scope_keeps_all_real_host_seams_without_changed_test_file():
     from pathlib import Path
     from scripts.kr_eval.core import load_suite
