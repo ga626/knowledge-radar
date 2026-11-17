@@ -2556,6 +2556,13 @@
     }
   ],
   "ci": {
+    "private_governance_tests": {
+      "tests/test_codex_research_turn_evaluation.py": "scripts/build_codex_thread_trace.py",
+      "tests/test_delivery_profile.py": "scripts/kr_delivery_profile.py",
+      "tests/test_research_preflight.py": "scripts/research_preflight.py",
+      "tests/test_research_quality_check.py": "scripts/check_research_quality.py",
+      "tests/test_research_quality_questioner.py": "scripts/check_research_quality.py"
+    },
     "base_nodes": [
       "tests/evaluation/test_product_contracts.py",
       "tests/evaluation/test_durable_tasks.py",

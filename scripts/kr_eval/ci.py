@@ -41,13 +41,17 @@ def changed_paths(root, base):
 def select_scope(root, suite, paths, *, full=False):
     """少量粗组；未映射/空变更/未知基线一律完整检查，不依赖建议器截断。"""
     policy = suite.get('ci', {})
+    # 旧私密治理测试仍可留档；其实现未投影到产品时不由粗组误收集。
+    private_only = {node for node, dependency in policy.get('private_governance_tests', {}).items()
+                    if not (root/dependency).is_file()}
     registered = [n for c in suite['cases'] if c['auto'] and c['executor']=='pytest' for n in c['nodes']]
     changed_tests = [p for p in paths or [] if p.startswith('tests/') and p.endswith('.py')
                      and (root/p).is_file()]
-    all_nodes = list(dict.fromkeys([*registered, *policy.get('full_nodes', []), *changed_tests]))
+    all_nodes = [n for n in dict.fromkeys([*registered, *policy.get('full_nodes', []), *changed_tests])
+                 if n.split('::')[0] not in private_only]
     all_node_tests = sorted(p.relative_to(root).as_posix() for p in (root/'tests').rglob('test_*.mjs'))
     full_scope = {'mode':'full', 'reason':'explicit_or_unmapped', 'changed_paths':paths,
-                  'nodes':all_nodes, 'node_tests':all_node_tests}
+                  'nodes':all_nodes, 'node_tests':all_node_tests, 'excluded_private_tests':sorted(private_only)}
     if full or not paths or not policy or any(fnmatch.fnmatchcase(path,p)
             for path in paths or [] for p in policy.get('full_sources',[])):
         return full_scope
@@ -67,12 +71,14 @@ def select_scope(root, suite, paths, *, full=False):
     candidates = sorted(set(all_nodes + [p.relative_to(root).as_posix()
         for p in (root/'tests').rglob('test_*.py')]))
     patterns = [p for name in groups for p in policy['groups'][name]['tests']]
-    selected = [n for n in candidates if any(fnmatch.fnmatchcase(n.split('::')[0], p) for p in patterns)]
+    selected = [n for n in candidates if n.split('::')[0] not in private_only
+                and any(fnmatch.fnmatchcase(n.split('::')[0], p) for p in patterns)]
     node_tests = [n for n in all_node_tests if any(fnmatch.fnmatchcase(n,p) for p in patterns)]
     if not selected and not node_tests:
         return full_scope
     return {'mode':'affected', 'reason':'coarse_groups', 'groups':sorted(groups), 'changed_paths':paths,
-            'nodes':list(dict.fromkeys([*policy['base_nodes'], *selected])), 'node_tests':node_tests}
+            'nodes':list(dict.fromkeys([*policy['base_nodes'], *selected])), 'node_tests':node_tests,
+            'excluded_private_tests':sorted(private_only)}
 
 
 def _node_tests(root, nodes, folder):
