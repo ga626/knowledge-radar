@@ -119,6 +119,12 @@ def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout()
     assert upload['with']['path'] == '${{ steps.build.outputs.candidate }}'
     build = next(s for s in build_steps if s.get('id') == 'build')
     assert 'GITHUB_OUTPUT' in build['run']
+    delivery = workflow['jobs']['deliver']['steps']
+    bootstrap = next((s for s in delivery if s.get('name') == 'Install private delivery dependency'), None)
+    assert bootstrap is not None, 'delivery job must not inherit Python dependencies from another runner'
+    assert 'httpx==0.28.1' in bootstrap['run']
+    assert 'private_candidate_delivery.py --help' in bootstrap['run']
+    assert delivery.index(bootstrap) < next(i for i,s in enumerate(delivery) if s.get('name') == 'Deliver only a passing runtime identity')
 
 
 def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):
