@@ -2024,24 +2024,11 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
     if not previous_runtime.is_file():
         raise RuntimeError("previous product runtime is unavailable")
     verify_product_package(Path(previous["program_root"]))
-    # active最后提交。失败时恢复被覆盖的配置与plugin，不留下半切换身份。
-    plugin = codex_home / "plugins" / PLUGIN_NAME
-    marketplace = codex_home / ".agents/plugins/marketplace.json"
-    files = [
-        config,
-        marketplace,
-        model_env,
-        *(install_root / name for name in ["console_product.py", "console.cmd", "configure.cmd", "cli_product.py", "knowledgeradar.cmd"]),
-    ]
-    browser_link = None
+    # Same inventory and compare-before-restore protection as activation.
+    recovery = _ActivationRecovery(install_root.resolve(), Path(current['data_root']).resolve(), scheduled_task_snapshot())
     browser_components = {}
-    snapshots = {p: p.read_bytes() if p.is_file() else None for p in files}
-    with tempfile.TemporaryDirectory(prefix="kr-rollback-") as temp:
-        backup_plugin = Path(temp) / "plugin"
-        had_plugin = plugin.is_dir()
-        if had_plugin:
-            shutil.copytree(plugin, backup_plugin)
-        try:
+    try:
+        with recovery.step():
             program = Path(previous['program_root'])
             if (program/'config/browser-components.json').is_file():
                 for component in ('browser_link', 'opencli'):
@@ -2069,26 +2056,18 @@ def rollback(install_root: Path, python_exe: Path) -> dict[str, Any]:
                 Path(current["data_root"]), current.get("model_configuration", {})
             )
             browser_link = browser_link_lifecycle().apply(Path(previous["program_root"]), install_root, Path(previous["data_root"]))
+            recovery.browser_link = browser_link
             if not browser_link.get('registration') and current.get('browser_link', {}).get('status') == 'registered':
                 lifecycle=browser_link_lifecycle()
                 browser_link=lifecycle.uninstall(install_root)
             if browser_components:
                 previous['browser_components'] = browser_components
+            write_runtime_autostart(install_root, previous_runtime)
+            recovery.browser_link = browser_link
             write_json_atomic(install_root / "active.json", previous)
-        except Exception:
-            if browser_link is not None:
-                browser_link_lifecycle().restore(browser_link, install_root)
-            for path, content in snapshots.items():
-                if content is None:
-                    path.unlink(missing_ok=True)
-                else:
-                    path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_bytes(content)
-            if plugin.exists():
-                shutil.rmtree(plugin)
-            if had_plugin:
-                shutil.copytree(backup_plugin, plugin)
-            raise
+    except Exception:
+        recovery.restore()
+        raise
     return {"status": "ROLLED_BACK", "active": previous, "wizard_launcher": str(wizard_launcher),
             "model_configuration": model_configuration, "browser_components": browser_components}
 

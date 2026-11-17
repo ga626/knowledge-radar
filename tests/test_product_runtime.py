@@ -88,9 +88,9 @@ def test_one_initialized_stdio_client_follows_verified_a_b_a(tmp_path):
     for name in ('A', 'B'):
         program = install/'app'/name
         shutil.copytree(ROOT/'src', program/'src', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
-        (program/'config/codex-product').mkdir(parents=True)
-        for relative in ('config/codex-product/tool-contracts.json', 'config/project-structure.manifest.json', 'pyproject.toml'):
-            shutil.copyfile(ROOT/relative, program/relative)
+        shutil.copytree(ROOT/'config', program/'config', ignore=shutil.ignore_patterns('project-structure.manifest.json','profile_registry.json'))
+        shutil.copyfile(ROOT/'pyproject.toml', program/'pyproject.toml')
+        assert not (program/'config/project-structure.manifest.json').exists()
         (program/'src/runtime/fixture_revision.py').write_text(f'REVISION={name!r}\n', encoding='utf-8')
         rows = [{'path': p.relative_to(program).as_posix(), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
                 for p in program.rglob('*') if p.is_file()]
@@ -110,9 +110,9 @@ def test_one_initialized_stdio_client_follows_verified_a_b_a(tmp_path):
         active = programs[name]
         (install/'active.json').write_text(json.dumps(active), encoding='utf-8')
         program = Path(active['program_root'])
-        script = f'import sys,runpy; sys.path.insert(0,{str(program/"src")!r}); runpy.run_path({str(ROOT/"tests/runtime_owner_fixture.py")!r},run_name="__main__")'
+        script = f'import sys,runpy; sys.path.insert(0,{str(program/"src")!r}); runpy.run_module("runtime.owner_bootstrap",run_name="__main__")'
         log = (tmp_path/f'owner-{len(children)}.log').open('ab')
-        child = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', script], cwd=program, env=env, stdout=log, stderr=log)
+        child = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', script], cwd=program, env={**env,'KR_RUNTIME_ROLE':'owner'}, stdout=log, stderr=log)
         log.close()
         children.append(child)
         return until(lambda: json.loads((root/'owner.json').read_text()) if (root/'owner.json').exists() else None,

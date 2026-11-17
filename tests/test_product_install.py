@@ -308,6 +308,10 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('CODEX_HOME', str(tmp_path/'isolated-codex'))
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path/'isolated-local'))
     monkeypatch.setenv('APPDATA', str(tmp_path/'isolated-roaming'))
+    monkeypatch.setenv('HOME', str(tmp_path/'isolated-home'))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path/'isolated-home'))
+    for key in ('KR_DATA_ROOT','KR_STATE_DIR','KR_OWNER_ROOT','KR_EVIDENCE_ROOT'):
+        monkeypatch.setenv(key, str(tmp_path/'isolated-state'/key))
     def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
         executable = installer.runtime_python(install_root / "runtime" / version)
         executable.parent.mkdir(parents=True, exist_ok=True)
@@ -322,6 +326,43 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer, 'write_runtime_autostart', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(installer, 'settle_terminal_recording_conflicts', lambda *a: [], raising=False)
     monkeypatch.setattr(installer, 'scheduled_task_snapshot', lambda: None, raising=False)
+
+
+def test_rollback_failure_restores_same_managed_extension_inventory(tmp_path, monkeypatch):
+    install, data = tmp_path/'install', tmp_path/'data'
+    monkeypatch.setattr(installer, '_prepare_bundled_component', lambda *a: {'status':'prepared'})
+    for index in (0, 1):
+        package = package_fixture(tmp_path/str(index), '0.1.'+str(index))
+        (package/'config/browser-components.json').write_text('{}')
+        archive, receipt = artifact_fixture(tmp_path/str(index), package)
+        installer.apply_install(package, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    previous = json.loads((install/'backup/active.previous.json').read_text())
+    loaded = install/'components/extensions/browser_link/loaded/background.js'
+    loaded.parent.mkdir(parents=True, exist_ok=True)
+    loaded.write_text('current-working-component')
+    def prepare(*args):
+        loaded.write_text('partly-restored-old-component')
+        return {'status':'prepared'}
+    monkeypatch.setattr(installer, '_prepare_bundled_component', prepare)
+    monkeypatch.setattr(installer, 'copy_plugin', lambda *a: (_ for _ in ()).throw(RuntimeError('mid-rollback')))
+    before = installer._activation_files(install, data)
+    with pytest.raises(RuntimeError, match='mid-rollback'):
+        installer.rollback(install, Path(sys.executable))
+    assert installer._activation_files(install, data) == before
+
+
+def test_managed_recovery_preserves_concurrent_extension_edit(tmp_path):
+    install, data = tmp_path/'install', tmp_path/'data'
+    loaded = install/'components/extensions/opencli/loaded/a.js'
+    loaded.parent.mkdir(parents=True)
+    loaded.write_text('before')
+    recovery=installer._ActivationRecovery(install, data, None)
+    with recovery.step():
+        loaded.write_text('installer')
+    loaded.write_text('user-concurrent-edit')
+    with pytest.raises(RuntimeError, match='conflict_preserved'):
+        recovery.restore()
+    assert loaded.read_text() == 'user-concurrent-edit'
 
 
 def test_standalone_installer_tests_have_private_user_environment(tmp_path):

@@ -72,10 +72,16 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 PR→main只复用本仓库维护者 `codex/` 分支的明确成功 run/attempt 中的完整整批：Git 树、实际源字节（含 .gitattributes）、判据/执行器、Python/Node/Git/C# 编译器、依赖和 runner image 必须一致，附件逐个核哈希。只读 artifact 数据，不执行其脚本；fork、缺件、局部绿灯、未知环境均回到正常执行。不是任意跨 SHA 缓存，制包/解包验证不复用。首次修改此流程仍完整执行；CI线上分组耗时/复用命中需运行后观察，不能预报节省分钟数。
 
-每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage pr|merge|activate|ready` 只读核现有证据；加 `--action pr|merge|install|publish` 检查当前批明确授权记录。这防误操作，不是凭据权限锁，也不判断报告语义。pr/merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；pr只核本地必需项及当前授权；云端CI在merge到期，不能让建PR依赖尚未发生的CI。缺失、陈旧、零收集和必需失败均阻断。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
+每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage pr|merge|activate|ready` 只读核现有证据；远端操作必须加 `--action pr|merge|install|publish` 检查当前批明确授权记录；建 PR 后把编号和 OPEN 状态登记到 authorization，已消耗创建授权不得续开。这防误操作，不是凭据权限锁，也不判断报告语义。pr/merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；pr只核本地必需项及当前授权；云端CI在merge到期，不能让建PR依赖尚未发生的CI。缺失、陈旧、零收集和必需失败均阻断。安装型 preflight 标 `kind=installable`，activate/ready 必需 `artifact-runtime` 回执：锁定运行时、真实 owner、带代际的 MCP 正文回读、临时双端归档、正常退出和包内导入均须为真，且 ZIP/源码相符，顶层 PASS 不替代这些事实。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
 
 安装器 `plan --archive <ZIP> --receipt <JSON>` 共用 apply 校验，且不整理旧任务、不初始化数据、不停内核。将 stdout JSON保存后，`apply --prepared-plan <JSON>` 重核状态；变动报 stale。plan会在切换前列出客户端是否需刷新；明确接受后用 `--allow-host-refresh`，不会自动重启 Desktop。旧版有五分钟内、同 active 的 ready 回执且同数据合同，新 owner 内部就绪失败才自动恢复已写配置/插件/注册/启动项/active；外部429不触发回退。用户并发编辑保留并报冲突；旧 owner/宿主无法重验则明确报待确认，不承诺分布式原子事务。
 
 MCP沿现有薄转发：工具输入/输出/错误外壳、回执、IPC及显式兼容版本一致，才允许已初始化旧客户端跟随已核 active。owner 的严格源码/代际/认证不减，未知结果不重发。语义不兼容须递增 `runtime_lifecycle_contract.client_compatibility_version`；新 schema/客户端自身变化可能仍需刷新。首次迁入此改造仍要刷新一次，受控 stdio成功不代替 Desktop确认。Browser Link另校活 Host 构建SHA、扩展build_id/操作集合；OpenCLI按原兼容合同，不要求与主程序版本号相同。
 
 故障定位：同输入、同依赖/配置下旧实现过而新实现失败，才确认内部回归；新输入两版都失败只说明未支持该形态，不能据此判平台改版。认证/限流是响应分类，不是根因。回执先保留最后确认阶段、请求/组件身份与可用固定输入引用；缺输入或未知结果不自动重放，不记录Cookie/请求正文。
+
+## 制品使用者检查
+
+公共运行边界（runtime/MCP、包/安装、Host/扩展）命中 `requires_artifact_runtime()` 后，PR 用实际打包规则产临时 ZIP；它不进入正式交付。main 仅产一个候选。构建侧 `verify_release_candidate.py --content-only` 核私密内容、清单、锁；consumer job 不 checkout、不 editable 安装，只下载原 ZIP、同源 stdlib 控制脚本，执行 `--consumer-only --output consumer-verification.json`。控制脚本调用包内安装器、离线 wheelhouse 创建正式 Python，启动真实 owner，通过 stdio 回读固定证据并核执行回执后退出；原包和临时双端归档不依赖开发 manifest。此结果是 required check 的一部分，main 同原包通过后才私有上传。普通解析/文案改动不跑 PR 制品样本，main 可安装包仍必验。
+
+激活与 rollback 共用 `_activation_files` / `_ActivationRecovery`：受管配置、plugin、Host 注册、扩展 loaded、启动项与 active。失败恢复只撤回自己的写入，保留并发修改；账号库和个人资料不入快照。磁盘恢复不等于 Chrome 已加载，也不等于 Desktop 已刷新。持续客户端 A→B→A 用真实 owner 验兼容，外部任务/注册入口仍在单测中显式隔离。

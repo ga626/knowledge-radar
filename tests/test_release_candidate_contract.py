@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 from pathlib import Path
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,6 +21,29 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+@pytest.mark.parametrize('fault', ['from pathlib import Path; Path("not-shipped-required-file").read_text()',
+                                  'import dependency_not_shipped_in_product'])
+def test_ready_owner_does_not_hide_broken_real_mcp_request(tmp_path, fault):
+    import shutil
+    manifest=json.loads((ROOT/'config/package-manifest.product-lite.json').read_text(encoding='utf-8'))
+    files,_,_=builder.collect_files(manifest)
+    for source in files:
+        target=tmp_path/source.relative_to(ROOT)
+        target.parent.mkdir(parents=True,exist_ok=True)
+        shutil.copyfile(source,target)
+    server=tmp_path/'src/server.py'
+    # The owner can still become ready; only the actual stdio path is broken.
+    server.write_text(server.read_text(encoding='utf-8')+'\n',encoding='utf-8')
+    source=server.read_text(encoding='utf-8')
+    import ast
+    tree=ast.parse(source)
+    insert_after=next((n.end_lineno for n in tree.body if isinstance(n,ast.ImportFrom) and n.module=='__future__'),0)
+    lines=source.splitlines(True); lines.insert(insert_after, fault+'\n')
+    server.write_text(''.join(lines),encoding='utf-8')
+    with pytest.raises(RuntimeError,match='candidate business probe failed'):
+        verifier.business_probe(tmp_path)
+
+
 def test_package_business_probe_boots_real_owner_without_governance_manifest(tmp_path):
     import shutil
     manifest = json.loads((ROOT/'config/package-manifest.product-lite.json').read_text(encoding='utf-8'))
@@ -29,7 +53,33 @@ def test_package_business_probe_boots_real_owner_without_governance_manifest(tmp
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
     assert not (tmp_path/'config/project-structure.manifest.json').exists()
-    assert verifier.business_probe(tmp_path)['execution_owner_ready'] is True
+    result = verifier.business_probe(tmp_path)
+    assert result['execution_owner_ready'] is True
+    assert result['mcp_fixed_evidence_readback'] is True
+    assert result['execution_receipt']['request_id']
+    assert result['execution_receipt']['generation'] == result['owner']['generation']
+    assert result['normal_shutdown'] is True
+
+
+def test_consumer_environment_cannot_inherit_development_or_user_settings(tmp_path, monkeypatch):
+    monkeypatch.setenv('PYTHONPATH', 'development-only')
+    monkeypatch.setenv('KR_ACTIVE_INSTALL_ROOT', 'real-install')
+    monkeypatch.setenv('CODEX_HOME', 'real-user')
+    env = verifier.consumer_environment(tmp_path, tmp_path/'package')
+    assert env['CODEX_HOME'] == str(tmp_path/'codex')
+    assert 'KR_ACTIVE_INSTALL_ROOT' not in env
+    assert env['PYTHONPATH'] == str(tmp_path/'package/src')
+    assert all(str(tmp_path) in env[key] for key in ('HOME','USERPROFILE','APPDATA','LOCALAPPDATA','KR_OWNER_ROOT'))
+
+
+def test_consumer_uses_packaged_runtime_preparation_not_verifier_interpreter(tmp_path, monkeypatch):
+    import sys
+    import pytest
+    package = tmp_path/'package'
+    (package/'scripts').mkdir(parents=True)
+    (package/'scripts/product_install.py').write_text('raise RuntimeError("packaged-runtime-preparation-reached")')
+    with pytest.raises(RuntimeError, match='packaged-runtime-preparation-reached'):
+        verifier.prepare_consumer_runtime(package, tmp_path/'isolated', sys.executable)
 
 
 def test_package_business_probe_rejects_broken_bundled_component_catalog(tmp_path):

@@ -97,3 +97,18 @@ def test_node_executor_distinguishes_skipped_tests_from_pass(tmp_path):
     folder = tmp_path/'result'
     folder.mkdir()
     assert ci._node_tests(tmp_path, ['test_skip.mjs'], folder)['verdict']=='SKIPPED'
+def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout():
+    import yaml
+    from pathlib import Path
+    from scripts.kr_eval.ci import requires_artifact_runtime
+    assert requires_artifact_runtime(['browser_link/host/BrowserLinkHost.cs'])
+    assert requires_artifact_runtime(['src/runtime/client_contract.py'])
+    assert requires_artifact_runtime(None)
+    assert not requires_artifact_runtime(['docs/example.md'])
+    assert not requires_artifact_runtime(['src/adapters/example_parser.py'])
+    workflow = yaml.safe_load((Path(__file__).resolve().parents[2]/'.github/workflows/ci.yml').read_text(encoding='utf-8'))
+    consumer = workflow['jobs']['consumer']
+    assert not any('checkout' in s.get('uses','') for s in consumer['steps'])
+    assert '--consumer-only' in str(consumer)
+    assert 'consumer' in workflow['jobs']['test']['needs']
+    assert 'test' in workflow['jobs']['deliver']['needs']
