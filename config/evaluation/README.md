@@ -72,7 +72,7 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 PR→main只复用本仓库维护者 `codex/` 分支的明确成功 run/attempt 中的完整整批：Git 树、实际源字节（含 .gitattributes）、判据/执行器、Python/Node/Git/C# 编译器、依赖和 runner image 必须一致，附件逐个核哈希。只读 artifact 数据，不执行其脚本；fork、缺件、局部绿灯、未知环境均回到正常执行。不是任意跨 SHA 缓存，制包/解包验证不复用。首次修改此流程仍完整执行；CI线上分组耗时/复用命中需运行后观察，不能预报节省分钟数。
 
-每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage merge|activate|ready` 只读核现有证据；加 `--action pr|merge|install|publish` 检查当前批明确授权记录。这防误操作，不是凭据权限锁，也不判断报告语义。merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；缺失、陈旧、零收集和必需失败均阻断。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
+每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage pr|merge|activate|ready` 只读核现有证据；加 `--action pr|merge|install|publish` 检查当前批明确授权记录。这防误操作，不是凭据权限锁，也不判断报告语义。pr/merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；pr只核本地必需项及当前授权；云端CI在merge到期，不能让建PR依赖尚未发生的CI。缺失、陈旧、零收集和必需失败均阻断。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
 
 安装器 `plan --archive <ZIP> --receipt <JSON>` 共用 apply 校验，且不整理旧任务、不初始化数据、不停内核。将 stdout JSON保存后，`apply --prepared-plan <JSON>` 重核状态；变动报 stale。plan会在切换前列出客户端是否需刷新；明确接受后用 `--allow-host-refresh`，不会自动重启 Desktop。旧版有五分钟内、同 active 的 ready 回执且同数据合同，新 owner 内部就绪失败才自动恢复已写配置/插件/注册/启动项/active；外部429不触发回退。用户并发编辑保留并报冲突；旧 owner/宿主无法重验则明确报待确认，不承诺分布式原子事务。
 
