@@ -114,6 +114,11 @@ def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout()
     assert 'test' in workflow['jobs']['deliver']['needs']
     aggregate = next(s['run'] for s in workflow['jobs']['test']['steps'] if s.get('name') == 'Assemble required evidence')
     assert aggregate.splitlines()[1].strip() == 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+    build_steps = workflow['jobs']['candidate']['steps']
+    upload = next(s for s in build_steps if 'upload-artifact' in s.get('uses',''))
+    assert upload['with']['path'] == '${{ steps.build.outputs.candidate }}'
+    build = next(s for s in build_steps if s.get('id') == 'build')
+    assert 'GITHUB_OUTPUT' in build['run']
 
 
 def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):

@@ -105,6 +105,7 @@ jobs:
           python -m pip download --only-binary=:all: --require-hashes -r config/runtime-win-py312.lock -d local/runtime-wheelhouse
           python -c "import hashlib,json,pathlib; r=pathlib.Path('.'); m=json.loads((r/'config/runtime-artifacts.json').read_text(encoding='utf-8')); assert all((p:=r/'local/runtime-wheelhouse'/x['file']).is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256'] for x in m['wheels']), 'frozen runtime wheel mismatch'"
       - name: Build immutable candidate or PR-only sample
+        id: build
         run: |
           python scripts/build_product_lite_package.py --candidate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -112,10 +113,11 @@ jobs:
           python scripts/verify_release_candidate.py --candidate-dir $candidate --content-only --output "$candidate/content-verification.json"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Copy-Item scripts/verify_release_candidate.py "$candidate/verify_release_candidate.py"
+          "candidate=$candidate" >> $env:GITHUB_OUTPUT
       - uses: actions/upload-artifact@v7
         with:
           name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: release/candidates/v*-${{ github.sha }}/*
+          path: ${{ steps.build.outputs.candidate }}
           if-no-files-found: error
   consumer:
     name: Run artifact without checkout
