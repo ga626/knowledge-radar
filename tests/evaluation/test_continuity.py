@@ -426,21 +426,21 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
     assert 'tests/test_product_install.py' in suite['ci']['full_nodes']
     assert '--changed-from' in text
     assert 'if: always()' in text and 'path: local/evaluation' in text
-    # 新增构建步骤不应让合同依赖步骤总数；所有产品步骤都必须保留文档跳过门禁。
-    product_steps = (
-        'Install package and test tools', 'Compile public source',
-        'Set up console build runtime', 'Check console source and reconnect behavior',
-        'Verify public package plan', 'Prepare hash-locked offline runtime',
-        'Build immutable release candidate', 'Verify the generated candidate',
-        'Deliver experimental candidate to owner-only private storage',
-    )
-    for name in product_steps:
-        step = next(block for block in text.split('      - name: ') if block.startswith(name + '\n'))
-        assert "if: steps.scope.outputs.docs_only != 'true'" in step, name
-    delivery = next(block for block in text.split('      - name: ') if block.startswith('Deliver experimental candidate to owner-only private storage\n'))
-    assert "github.ref == 'refs/heads/main'" in delivery
-    assert 'scripts/private_candidate_delivery.py' in delivery
-    assert 'KR_PRIVATE_DELIVERY_REPOSITORY' in delivery
+    import yaml
+    workflow = yaml.safe_load(text)
+    python_install = next(step for step in workflow['jobs']['checks']['steps']
+                          if step.get('name') == 'Install Python tools for Python groups')
+    assert 'PyYAML' in python_install['run']
+    assert workflow['jobs']['checks']['strategy']['fail-fast'] is False
+    assert workflow['jobs']['checks']['strategy']['matrix']['group'] == ['offline', 'host', 'node']
+    assert workflow['jobs']['test']['if'] == 'always()'
+    assert workflow['jobs']['test']['needs'] == 'checks'
+    assert workflow['jobs']['candidate']['needs'] == 'test'
+    assert "github.ref == 'refs/heads/main'" in workflow['jobs']['candidate']['if']
+    candidate_steps = workflow['jobs']['candidate']['steps']
+    assert sum('build_product_lite_package.py --candidate' in step.get('run', '') for step in candidate_steps) == 1
+    assert any('scripts/private_candidate_delivery.py' in step.get('run', '') for step in candidate_steps)
+    assert any('verify_release_candidate.py' in step.get('run', '') for step in candidate_steps)
 
 
 def test_extra_governance_failure_blocks_summary_compare_and_survives_import(tmp_path, monkeypatch):

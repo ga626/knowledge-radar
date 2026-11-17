@@ -26,7 +26,7 @@ from runtime.paths import runtime_state_dir
 from runtime.process_identity import process_identity
 from runtime.process import background_python_executable, silent_subprocess_popen, silent_subprocess_run
 
-PROTOCOL = 1
+from runtime.client_contract import PROTOCOL, forwarding_contract
 MAX_REQUEST = 2 * 1024 * 1024
 
 
@@ -143,11 +143,79 @@ def failure(code, *, started=False, request_id='', layer='runtime_transport'):
 
 
 class OwnerClient:
-    def __init__(self, *, root=None, timeout=900):
+    def __init__(self, *, root=None, timeout=900, forward=False):
         self.root = Path(root) if root else owner_root()
         self.timeout = timeout
         self.last_receipt = None
         self.child = None
+        self.forward = forward
+        self.pending_owners = {}
+
+    def active_target(self):
+        install = os.environ.get('KR_ACTIVE_INSTALL_ROOT')
+        if not self.forward or not install:
+            return {}
+        try:
+            install = Path(install).resolve()
+            if (install/'backup/data-move-pending.json').exists():
+                return {}
+            active = _read_json(install/'active.json')
+            program, data = Path(active['program_root']).resolve(), Path(active['data_root']).resolve()
+            if (program != install/'app'/active['installation_id'] or not os.environ.get('KR_DATA_ROOT')
+                    or data != Path(os.environ['KR_DATA_ROOT']).resolve() or not self.root.resolve().is_relative_to(data)):
+                return {}
+            path = program/'package-provenance.json'
+            raw = path.read_bytes()
+            if hashlib.sha256(raw).hexdigest() != active.get('package_provenance_sha256'):
+                return {}
+            provenance = json.loads(raw)
+            if provenance.get('source_dirty') is not False or provenance.get('source_commit') != active['source_commit']:
+                return {}
+            hashes = {}
+            listed_sources = set()
+            for row in provenance['files']:
+                relative = Path(row['path'])
+                target = (program/relative).resolve()
+                if not target.is_relative_to(program):
+                    return {}
+                critical = relative.parts[0] == 'src' or relative.as_posix() in {
+                    'config/codex-product/tool-contracts.json', 'config/project-structure.manifest.json'}
+                # 安装已验整个包；每次请求只核执行/合同文件，不重新哈希模型和 wheelhouse。
+                if critical and (not target.is_file() or hashlib.sha256(target.read_bytes()).hexdigest() != row['sha256']):
+                    return {}
+                if relative.parts[0] == 'src' and relative.suffix in {'.py', '.js', '.mjs'}:
+                    listed_sources.add(target)
+                    hashes[Path(*relative.parts[1:]).as_posix()] = row['sha256']
+            if not hashes:
+                return {}
+            actual_sources = {p.resolve() for p in (program/'src').rglob('*') if p.is_file()
+                and p.suffix in {'.py', '.js', '.mjs'} and not any(part in p.parts for part in {'__pycache__', 'data'})}
+            if listed_sources != actual_sources:
+                return {}
+            digest = hashlib.sha256(json.dumps(hashes, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+            contract = forwarding_contract(program)
+            if contract != forwarding_contract():
+                return {}
+            return {'program_root': str(program), 'data_root': str(data), 'source_identity': digest,
+                    'forwarding_contract': contract}
+        except (OSError, ValueError, KeyError, TypeError):
+            return {}
+
+    def is_active(self):
+        if self.forward and os.environ.get('KR_ACTIVE_INSTALL_ROOT'):
+            return bool(self.active_target())
+        return active_client()
+
+    def runtime_source_identity(self):
+        return self.active_target().get('source_identity', source_identity()) if self.forward else source_identity()
+
+    def compatible(self, descriptor):
+        if descriptor.get('protocol') != PROTOCOL:
+            return False
+        if self.forward and os.environ.get('KR_ACTIVE_INSTALL_ROOT'):
+            target = self.active_target()
+            return bool(target) and all(descriptor.get(k) == v for k, v in target.items())
+        return descriptor.get('source_identity') == source_identity()
 
     def descriptor(self):
         try:
@@ -164,11 +232,14 @@ class OwnerClient:
         port = descriptor.get('port')
         if type(port) is not int or not 0 < port < 65536:
             raise ValueError('invalid_owner_descriptor')
-        with httpx.Client(trust_env=False, timeout=timeout or self.timeout) as client:
+        # 此入口只拼固定 127.0.0.1 的纯 HTTP，且不跟随重定向；不加载外网 TLS 根证书。
+        with httpx.Client(trust_env=False, verify=False, timeout=timeout or self.timeout) as client:
             response = client.post(f'http://127.0.0.1:{port}/{path}',
                 headers={'Authorization': 'Bearer ' + str(descriptor.get('token', ''))},
                 json={**(payload or {}), 'generation': descriptor.get('generation'),
-                      'source_identity': descriptor.get('source_identity') if management else source_identity(), 'protocol': PROTOCOL})
+                      'source_identity': descriptor.get('source_identity') if management or self.forward else source_identity(),
+                      'client_source_identity': source_identity(),
+                      'client_contract': descriptor.get('forwarding_contract') if self.forward else None, 'protocol': PROTOCOL})
             response.raise_for_status()
             return response.json()
 
@@ -178,7 +249,7 @@ class OwnerClient:
         if not descriptor:
             return {'status': 'unavailable', 'layer': 'execution_owner', 'next_action': 'runtime start',
                     'supervision': supervision_snapshot(self.root)}
-        if descriptor.get('source_identity') != source_identity() or descriptor.get('protocol') != PROTOCOL:
+        if not self.compatible(descriptor):
             return {'status': 'incompatible', 'layer': 'execution_owner',
                     'pid': descriptor['pid'], 'protocol': descriptor.get('protocol'),
                     'source_identity': descriptor.get('source_identity'),
@@ -193,7 +264,7 @@ class OwnerClient:
 
     def start(self, *, timeout=30, managed=False):
         """显式启动；竞争客户端只选主，不杀死或覆盖不同身份的有效owner。"""
-        if not active_client():
+        if not self.is_active():
             return {'status':'incompatible','layer':'product_identity','next_action':'Reconnect using the active installation.'}
         # 正式入口只唤醒已有的用户会话任务，不尝试从宿主受限Job逃逸。
         # 源码/隔离显式启动保留原合同；只读status和MCP绝不进入此路径。
@@ -223,6 +294,8 @@ class OwnerClient:
             raise TimeoutError('runtime_user_task_start_timeout_inspect_supervision')
         private_owner_directory(self.root)
         with file_write_lock(self.root / 'launch'):
+            if self.forward and not active_client():
+                return {'status': 'incompatible', 'reason': 'old_client_must_start_active_user_task'}
             if not active_client():
                 return {'status':'incompatible','layer':'product_identity','next_action':'Reconnect using the active installation.'}
             current = self.status()
@@ -276,15 +349,18 @@ class OwnerClient:
     def _call(self, name, arguments, *, request_id=None):
         request_id = request_id or uuid.uuid4().hex
         self.last_receipt = {'request_id': request_id, 'operation': name, 'execution_state': 'not_started'}
-        if not active_client():
+        if not self.is_active():
             return failure('inactive_installation_client', request_id=request_id, layer='product_identity')
         descriptor = self.descriptor()
         if not descriptor:
             value = failure('execution_owner_unavailable', request_id=request_id)
             value['execution_owner'] = self.status()
             return value
-        if descriptor.get('source_identity') != source_identity() or descriptor.get('protocol') != PROTOCOL:
+        if not self.compatible(descriptor):
             return failure('execution_owner_identity_mismatch', request_id=request_id)
+        self.pending_owners[request_id] = descriptor
+        if len(self.pending_owners) > 128:
+            self.pending_owners.pop(next(iter(self.pending_owners)))
         try:
             reply = self._request(descriptor, 'call', {'name': name,
                 'arguments': to_jsonable_python(arguments), 'request_id': request_id, 'include_receipt': True})
@@ -302,9 +378,15 @@ class OwnerClient:
         return attach_runtime_failure(self, self._receipt(request_id))
 
     def _receipt(self, request_id):
-        descriptor = self.descriptor()
+        pending = self.pending_owners.get(request_id)
+        descriptor = pending or self.descriptor()
+        if descriptor and process_identity(descriptor.get('pid')) != descriptor.get('process_identity'):
+            pending = None
+            descriptor = self.descriptor()
         if not descriptor:
             return failure('execution_owner_unavailable', request_id=request_id)
+        if self.forward and pending is None and not self.compatible(descriptor):
+            return failure('execution_owner_identity_mismatch', request_id=request_id)
         try:
             return self._request(descriptor, 'receipt', {'request_id': request_id}, timeout=3)
         except (httpx.HTTPError, ValueError):
@@ -318,6 +400,8 @@ class OwnerClient:
         descriptor = self.descriptor()
         if not descriptor:
             return failure('execution_owner_unavailable')
+        if self.forward and not self.compatible(descriptor):
+            return failure('execution_owner_identity_mismatch')
         try:
             return self._request(descriptor, 'receipts', {'limit': limit}, timeout=3)
         except (httpx.HTTPError, ValueError):
@@ -334,6 +418,8 @@ class OwnerClient:
             return {'status': 'unavailable'}
         if descriptor.get('protocol') != PROTOCOL:
             return failure('execution_owner_protocol_mismatch')
+        if self.forward and not self.compatible(descriptor):
+            return failure('execution_owner_identity_mismatch')
         try:
             return self._request(descriptor, 'stop', timeout=5, management=True)
         except (httpx.HTTPError, ValueError):
@@ -710,6 +796,9 @@ def _serve(*, root=None, bootstrap=None):
         descriptor = {'schema': 'kr-execution-owner/v1', 'protocol': PROTOCOL,
                       'pid': os.getpid(), 'process_identity': process_identity(),
                       'generation': generation, 'source_identity': source_identity(),
+                      'program_root': str(Path(__file__).resolve().parents[2]),
+                      'data_root': str(Path(os.environ.get('KR_DATA_ROOT', root.parent)).resolve()),
+                      'forwarding_contract': forwarding_contract(),
                       'contract_hash': catalog()['contract_hash'], 'token': secrets.token_urlsafe(32)}
         receipts = RequestReceipts(root, generation)
         admission = threading.RLock()
@@ -744,7 +833,8 @@ def _serve(*, root=None, bootstrap=None):
                     if not isinstance(body, dict):
                         raise ValueError('object_required')
                     if (body.get('protocol') != PROTOCOL or body.get('generation') != generation
-                            or body.get('source_identity') != descriptor['source_identity']):
+                            or body.get('source_identity') != descriptor['source_identity']
+                            or (body.get('client_contract') is not None and body['client_contract'] != descriptor['forwarding_contract'])):
                         self.send_json(failure('execution_owner_identity_mismatch'))
                         return
                     self.handle_request(body)

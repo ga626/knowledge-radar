@@ -67,7 +67,7 @@ def attach_operation(mcp, operation):
     async def dispatch(*args, **kwargs):
         if getattr(mcp, '_kr_forward_owner', False) or os.environ.get('KR_RUNTIME_ROLE') == 'client':
             from runtime.execution_owner import OwnerClient
-            client = OwnerClient()
+            client = OwnerClient(forward=True)
             request_id = kwargs.pop('request_id', '') or None
             value = await asyncio.to_thread(client.call, fn.__name__, kwargs, request_id=request_id)
             _RECEIPT.set(client.last_receipt)

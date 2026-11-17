@@ -2571,6 +2571,7 @@
       "tests/test_mcp_tool_schema_contract.py"
     ],
     "full_nodes": [
+      "tests/test_browser_link_host.py",
       "tests/test_product_install.py",
       "tests/test_product_console_launcher.py",
       "tests/test_setup_wizard.py",

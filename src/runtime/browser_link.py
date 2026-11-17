@@ -84,9 +84,20 @@ class BrowserLink:
                 raise ValueError('invalid_health_result')
             if not self.explicit_state and payload.get('extension_version')!=json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8')).get('extension_version'):
                 return {**payload,'ok':False,'code':'browser_extension_reload_required','observation':observation}
+            if not self.explicit_state:
+                contract = json.loads((Path(__file__).resolve().parents[2]/'config/browser-link.json').read_text(encoding='utf-8'))
+                required = set(contract.get('required_operations', []))
+                if (payload.get('extension_contract') != contract.get('contract_version')
+                        or payload.get('extension_build') != contract.get('build_id')
+                        or not required.issubset(payload.get('extension_operations', []))
+                        or not required.issubset(payload.get('host_operations', []))):
+                    return {**payload,'ok':False,'code':'browser_link_capability_mismatch','request_executed':False,'observation':observation}
+                host_path = Path(state.get('host_path', ''))
+                if not host_path.is_file() or hashlib.sha256(host_path.read_bytes()).hexdigest() != payload.get('host_build'):
+                    return {**payload,'ok':False,'code':'browser_host_build_mismatch','request_executed':False,'observation':observation}
             return {**payload, 'observation':observation, "ok": response.is_success and bool(payload.get("connected")) and payload.get("protocol") == 1
                     and not payload.get('draining') and payload.get('generation') == state.get('generation')}
-        except (httpx.HTTPError, ValueError):
+        except (httpx.HTTPError, ValueError, OSError):
             return {"ok": False, "code": "native_host_unreachable", "connected": False, 'observation':observation}
 
     def request(self, operation: str, payload: dict[str, Any], *, platform: str, timeout_s: float = 30.0) -> dict[str, Any]:
@@ -127,9 +138,10 @@ class BrowserLink:
         request_deadline = request_started + timeout_s
         last_health = self.health() if operation in {'search', 'detail', 'comments', 'transcript', 'login', 'auth_verify', 'attention'} else {'ok': True}
         # 磁盘状态可能来自已退出的旧 Host；只信在线握手的版本，不能挡住正常冷启动。
-        if last_health.get('code') == 'browser_extension_reload_required' and last_health.get('connected'):
-            return self._failure('browser_extension_reload_required',request_id,request_executed=False,
-                                 browser_readiness={'connection_reason':'browser_extension_reload_required'})
+        if last_health.get('code') in {'browser_extension_reload_required', 'browser_link_capability_mismatch',
+                'browser_host_build_mismatch'} and last_health.get('connected'):
+            return self._failure(last_health['code'],request_id,request_executed=False,
+                                 browser_readiness={'connection_reason':last_health['code']})
         if not last_health.get('ok'):
             from runtime.browser_channel import ensure_borrowed_browser
             def connected():

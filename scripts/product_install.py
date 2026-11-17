@@ -8,7 +8,7 @@ overwrites user configuration.  Source-checkout installation remains in
 from __future__ import annotations
 
 import argparse
-from contextlib import nullcontext
+from contextlib import nullcontext, contextmanager
 from functools import wraps
 import inspect
 import importlib.util
@@ -69,10 +69,7 @@ def installation_maintenance(function):
         active = load_active(install_root) if (install_root/'active.json').is_file() else None
         result = None
         handoff_error = None
-        recording_conflicts = []
         try:
-            if active:
-                recording_conflicts = settle_terminal_recording_conflicts(active)
             with runtime_handoff(active, install_root):
                 with cli_lifecycle().maintenance(active, package_root=PACKAGE_ROOT) if active else nullcontext():
                     result = function(*args, **kwargs)
@@ -81,8 +78,6 @@ def installation_maintenance(function):
                 raise
             handoff_error = type(exc).__name__
         current = load_active(install_root) if (install_root/'active.json').is_file() else result.get('active')
-        if recording_conflicts:
-            result['maintenance_recording_conflicts'] = recording_conflicts
         if current:
             readiness = ({'status': 'unavailable', 'reason': 'runtime_user_session_handoff_failed',
                           'error_type': handoff_error} if handoff_error else complete_runtime_handoff(install_root, current))
@@ -90,8 +85,10 @@ def installation_maintenance(function):
             result['native_host_binding'] = {'status': 'pending_host_refresh' if active != current else 'not_revalidated'}
             if readiness.get('status') != 'ready' and result.get('status') in {'APPLIED', 'ROLLED_BACK'}:
                 result['status'] += '_RUNTIME_NOT_READY'
-            if function.__name__ == 'apply_install':
-                write_json_atomic(Path(current['data_root'])/'receipts/activation.json', result)
+            if function.__name__ in {'apply_install', '_apply_install'}:
+                recovery = values.get('recovery')
+                with recovery.step() if recovery else nullcontext():
+                    write_json_atomic(Path(current['data_root'])/'receipts/activation.json', result)
         return result
     return guarded
 
@@ -1577,6 +1574,163 @@ def build_plan(package_root: Path, install_root: Path, data_root: Path, python_e
     }
 
 
+def scheduled_task_snapshot():
+    """只读导出本产品的单个启动任务；失败不能当作任务不存在。"""
+    if os.name != 'nt':
+        return None
+    result = subprocess.run(['powershell.exe', '-NoProfile', '-NonInteractive', '-Command',
+        "$ErrorActionPreference='Stop'; $t=Get-ScheduledTask -TaskName 'KnowledgeRadar Stable Local Console' -ErrorAction SilentlyContinue; if($t){Export-ScheduledTask -InputObject $t}"],
+        capture_output=True, text=True, encoding='utf-8', timeout=10,
+        creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        raise RuntimeError('startup_task_snapshot_failed')
+    return result.stdout.strip() or None
+
+
+def _activation_files(install_root, data_root):
+    home = Path(os.environ.get('CODEX_HOME', Path.home()/'.codex')).resolve()
+    files = [home/'config.toml', home/'.agents/plugins/marketplace.json',
+             data_root/'config/runtime.env', data_root/'config/profile_registry.json',
+             data_root/'receipts/activation.json', data_root/'receipts/codex-config.before.toml',
+             data_root/'receipts/model-roles-migration.json', console_autostart_path(),
+             *(install_root/name for name in ('active.json', 'backup/active.previous.json', 'console_product.py',
+                'console.cmd', 'configure.cmd', 'cli_product.py', 'knowledgeradar.cmd',
+                'console-autostart.task', 'runtime-autostart.task'))]
+    trees = [home/'plugins'/PLUGIN_NAME, data_root/'state/browser_components',
+             *(install_root/'components/extensions'/name/'loaded' for name in ('browser_link', 'opencli'))]
+    for tree in trees:
+        if tree.exists():
+            files.extend(p for p in tree.rglob('*') if p.is_file())
+    for path in files:
+        if any(p.is_symlink() or p.is_junction() for p in (path, *path.parents)):
+            raise RuntimeError('activation_mutable_path_link_rejected')
+    return {p: p.read_bytes() if p.is_file() else None for p in files}
+
+
+def _installation_state(install_root, data_root, browser_link):
+    files = _activation_files(install_root, data_root)
+    registration = browser_link_lifecycle().read_registration() if browser_link.get('registration') else None
+    return {'files': {str(p): hashlib.sha256(b).hexdigest() if b is not None else None for p, b in files.items()},
+            'registration': registration, 'startup_task': scheduled_task_snapshot()}
+
+
+def client_handoff_plan(active, package_root):
+    if not active:
+        return {'requires_host_refresh': False, 'reason': 'first_install'}
+    previous = Path(active['program_root'])
+    try:
+        # 仅加载本安装器自己的纯 helper；不会运行旧包或候选中的启动代码。
+        path = PACKAGE_ROOT/'src/runtime/client_contract.py'
+        spec = importlib.util.spec_from_file_location('kr_install_client_contract', path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        old = helper.forwarding_contract(previous)
+        new = helper.forwarding_contract(package_root)
+        compatible = (previous/'src/runtime/client_contract.py').is_file() and old == new
+        old_data = json.loads((previous/'config/project-structure.manifest.json').read_text(encoding='utf-8')).get('runtime_lifecycle_contract', {}).get('data_compatibility_version')
+        new_data = json.loads((Path(package_root)/'config/project-structure.manifest.json').read_text(encoding='utf-8')).get('runtime_lifecycle_contract', {}).get('data_compatibility_version')
+        return {'requires_host_refresh': not compatible, 'previous_contract':old,
+                'candidate_contract':new, 'data_rollback_compatible':bool(old_data and old_data == new_data),
+                'reason':'compatible_forwarding' if compatible else 'client_contract_changed'}
+    except (OSError, ValueError, KeyError, TypeError):
+        return {'requires_host_refresh': True, 'reason':'legacy_or_unknown_client_contract'}
+
+
+def installation_plan(package_root, install_root, data_root, python_exe, *, archive, receipt_path):
+    """与 apply 共用校验，完全不初始化数据、不暂停内核、不修历史任务。"""
+    install_root, data_root = install_root.resolve(), data_root.resolve()
+    receipt = verify_artifact_receipt(package_root, archive, receipt_path)
+    plan = build_plan(package_root, install_root, data_root, python_exe)
+    if not (package_root/'src/server.py').is_file() or not python_exe.is_file():
+        raise RuntimeError('installation_source_or_python_missing')
+    if any(data_root.is_relative_to(install_root/name) for name in ('app', 'runtime')):
+        raise RuntimeError('data root must not be inside immutable app or runtime directory')
+    active = load_active(install_root) if (install_root/'active.json').is_file() else None
+    if active and Path(active['data_root']).resolve() != data_root:
+        raise RuntimeError('upgrade cannot change selected data root; use data-move-plan and data-move-apply')
+    state = _installation_state(install_root, data_root, plan.get('browser_link', {}))
+    if plan.get('browser_link', {}).get('registration'):
+        browser_link_lifecycle()._assert_owned(state['registration'], install_root)
+    payload = {**plan, 'artifact': receipt, 'before': state,
+               'read_only': True, 'data_migration': 'not_permitted', 'active_before': active,
+               'client_handoff': client_handoff_plan(active, package_root)}
+    payload['fingerprint'] = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
+    return payload
+
+
+def activation_checkpoint(stage):
+    """有界故障注入接缝；正常执行不做额外操作。"""
+
+
+class _ActivationRecovery:
+    """仅本次安装会写的对象；不快照账号库或整个数据目录。"""
+    def __init__(self, install_root, data_root, task_before):
+        self.install_root, self.data_root = install_root, data_root
+        self.before = self.after = _activation_files(install_root, data_root)
+        self.task_before = self.task_after = task_before
+        self.browser_link = None
+
+    @contextmanager
+    def step(self):
+        if _activation_files(self.install_root, self.data_root) != self.after:
+            raise RuntimeError('activation_state_changed_preserved')
+        try:
+            yield
+        finally:
+            self.after = _activation_files(self.install_root, self.data_root)
+            self.task_after = scheduled_task_snapshot()
+
+    def restore(self):
+        conflicts = []
+        if self.browser_link is not None:
+            try:
+                browser_link_lifecycle().restore(self.browser_link, self.install_root)
+            except (OSError, RuntimeError, ValueError) as exc:
+                conflicts.append('browser_link_restore:' + type(exc).__name__)
+        current = _activation_files(self.install_root, self.data_root)
+        for path in self.before.keys() | self.after.keys():
+            old, written = self.before.get(path), self.after.get(path)
+            if old == written:
+                continue
+            if current.get(path) != written:
+                conflicts.append(str(path))
+                continue
+            if old is None:
+                path.unlink(missing_ok=True)
+            else:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(old)
+        # 仅移除本次创建且已空的插件目录；有用户新增内容则自然保留。
+        plugin = Path(os.environ.get('CODEX_HOME', Path.home()/'.codex'))/'plugins'/PLUGIN_NAME
+        if not any(p.is_relative_to(plugin) and b is not None for p, b in self.before.items()) and plugin.is_dir():
+            for directory in sorted([*plugin.rglob('*'), plugin], key=lambda p: len(p.parts), reverse=True):
+                if directory.is_dir():
+                    try:
+                        directory.rmdir()
+                    except OSError:
+                        pass
+        if self.task_before != self.task_after:
+            if scheduled_task_snapshot() != self.task_after:
+                conflicts.append('scheduled_task_changed_preserved')
+            else:
+                restore_scheduled_task(self.task_before)
+        if conflicts:
+            raise RuntimeError('activation_recovery_conflict_preserved:' + ','.join(conflicts))
+
+
+def restore_scheduled_task(xml):
+    if os.name != 'nt':
+        return
+    with tempfile.TemporaryDirectory(prefix='kr-task-restore-') as folder:
+        path = Path(folder)/'task.xml'
+        if xml:
+            path.write_text(xml, encoding='utf-16')
+            command = ['schtasks.exe', '/Create', '/TN', 'KnowledgeRadar Stable Local Console', '/XML', str(path), '/F']
+        else:
+            command = ['schtasks.exe', '/Delete', '/TN', 'KnowledgeRadar Stable Local Console', '/F']
+        subprocess.run(command, check=True, capture_output=True, timeout=15, creationflags=subprocess.CREATE_NO_WINDOW)
+
+
 def verify_product_package(package_root: Path) -> dict[str, Any]:
     if (package_root / ".git").exists():
         raise RuntimeError("product installer refuses a source checkout; use a generated product package")
@@ -1663,7 +1817,6 @@ def stage_verified_package(
         finally:
             shutil.rmtree(staging, ignore_errors=True)
     runtime = ensure_runtime(program, install_root, plan["installation_id"], python_exe)
-    initialize_data(data_root, package_root)
     result = {
         "status": "STAGED",
         "version": plan["version"],
@@ -1680,7 +1833,6 @@ def stage_verified_package(
     return result
 
 
-@installation_maintenance
 def apply_install(
     package_root: Path,
     install_root: Path,
@@ -1691,12 +1843,67 @@ def apply_install(
     archive: Path | None = None,
     receipt_path: Path | None = None,
     enable_console_autostart: bool = False,
+    prepared_plan: dict | None = None,
+    allow_host_refresh: bool = False,
 ) -> dict[str, Any]:
+    if archive is None or receipt_path is None:
+        raise RuntimeError('apply requires --archive and --receipt; use plan to inspect without changes')
+    # 过期拒绝发生在任何 maintenance/数据写入之前。
+    if prepared_plan is not None:
+        current_state = _installation_state(install_root.resolve(), data_root.resolve(), prepared_plan.get('browser_link', {}))
+        if current_state != prepared_plan.get('before'):
+            raise RuntimeError('installation_plan_stale')
+    plan = installation_plan(package_root, install_root, data_root, python_exe, archive=archive, receipt_path=receipt_path)
+    if prepared_plan is not None and plan['fingerprint'] != prepared_plan.get('fingerprint'):
+        raise RuntimeError('installation_plan_stale')
+    if plan['client_handoff']['requires_host_refresh'] and not allow_host_refresh:
+        raise RuntimeError('host_refresh_required_before_activation: inspect plan and use --allow-host-refresh')
+    recovery = _ActivationRecovery(install_root.resolve(), data_root.resolve(), plan['before']['startup_task'])
+    started, clock = time.time(), time.monotonic()
+    try:
+        result = _apply_install(package_root, install_root, data_root, python_exe, channel=channel,
+            archive=archive, receipt_path=receipt_path, enable_console_autostart=enable_console_autostart,
+            recovery=recovery, prepared_plan=plan)
+        # 只在同一数据合同且上一组合有 ready 回执时自动恢复；外部429不在此判断。
+        if result.get('runtime_readiness', {}).get('status') != 'ready' and plan.get('active_before'):
+            before_receipt = recovery.before.get(data_root.resolve()/'receipts/activation.json')
+            prior = json.loads(before_receipt) if before_receipt else {}
+            recent = 0 <= started - prior.get('timing', {}).get('finished_at_epoch', 0) <= 300
+            if (plan['client_handoff'].get('data_rollback_compatible') and recent
+                    and prior.get('runtime_readiness', {}).get('status') == 'ready' and prior.get('active') == plan['active_before']):
+                raise RuntimeError('candidate_internal_readiness_failed')
+        result['timing'] = {'started_at_epoch': started, 'finished_at_epoch': time.time(),
+                            'elapsed_s': time.monotonic()-clock}
+        result['completion'] = 'pending_native_confirmation'
+        result['client_handoff'] = plan['client_handoff']
+        with recovery.step():
+            write_json_atomic(data_root/'receipts/activation.json', result)
+        return result
+    except Exception as exc:
+        current = load_active(install_root) if (install_root/'active.json').is_file() else None
+        owned = recovery.after.get(install_root.resolve()/'active.json')
+        if current and current != plan.get('active_before') and (install_root/'active.json').read_bytes() == owned:
+            # 先排空已知新 owner，再恢复绑定；不能只改 active 把新进程留在后台。
+            with runtime_handoff(current, install_root):
+                with cli_lifecycle().maintenance(current, package_root=PACKAGE_ROOT):
+                    recovery.restore()
+        else:
+            recovery.restore()
+        previous = plan.get('active_before')
+        if previous:
+            readiness = complete_runtime_handoff(install_root, previous)
+            exc.add_note('previous_runtime=' + readiness.get('status', 'unknown') + '; desktop_binding_not_revalidated')
+        raise
+
+
+@installation_maintenance
+def _apply_install(package_root, install_root, data_root, python_exe, *, channel, archive,
+                   receipt_path, enable_console_autostart=False, recovery, prepared_plan):
     if (install_root/'active.json').is_file():
         current=load_active(install_root)
         if Path(current['data_root']).resolve()!=data_root.resolve():
             raise RuntimeError('upgrade cannot change selected data root; use data-move-plan and data-move-apply')
-    plan = build_plan(package_root, install_root, data_root, python_exe)
+    plan = prepared_plan
     provenance = verify_product_package(package_root)
     if archive is None or receipt_path is None:
         raise RuntimeError("apply requires --archive and --receipt; use plan to inspect without changes")
@@ -1712,25 +1919,28 @@ def apply_install(
         raise RuntimeError("data root must not be inside the immutable app directory")
     program_root = Path(plan["program_root"])
     app_root.mkdir(parents=True, exist_ok=True)
-    staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
-    product_python = Path(staged["runtime_python"])
-    restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
-    browser_components={}
-    if (program_root/'config/browser-components.json').is_file():
-        sys.path.insert(0,str(program_root/'src'))
-        for component in ('browser_link','opencli'):
-            try:
-                prepared = _prepare_bundled_component(program_root,install_root,data_root,component)
-            except (OSError, ValueError) as error:
-                raise RuntimeError('component_preparation_failed:'+component) from error
-            if prepared.get('status') != 'prepared':
-                raise RuntimeError('component_preparation_failed:'+component)
-            browser_components[component]=prepared
+    with recovery.step():
+        initialize_data(data_root, package_root)
+        staged = stage_verified_package(package_root, install_root, data_root, python_exe, archive, receipt_path)
+        product_python = Path(staged["runtime_python"])
+        restored_components = restore_selected_runtime_components(program_root, product_python, data_root)
+        browser_components={}
+        if (program_root/'config/browser-components.json').is_file():
+            sys.path.insert(0,str(program_root/'src'))
+            for component in ('browser_link','opencli'):
+                try:
+                    prepared = _prepare_bundled_component(program_root,install_root,data_root,component)
+                except (OSError, ValueError) as error:
+                    raise RuntimeError('component_preparation_failed:'+component) from error
+                if prepared.get('status') != 'prepared':
+                    raise RuntimeError('component_preparation_failed:'+component)
+                browser_components[component]=prepared
     # 已知注册所有权冲突必须在写Codex配置/active之前暴露；不接管别的安装。
     lifecycle=browser_link_lifecycle()
     if plan.get('browser_link',{}).get('registration'):
         lifecycle._assert_owned(lifecycle.read_registration(),install_root)
-    model_configuration = migrate_model_configuration(data_root, program_root)
+    with recovery.step():
+        model_configuration = migrate_model_configuration(data_root, program_root)
     active = {
         "schema": ACTIVE_SCHEMA,
         "channel": channel,
@@ -1741,44 +1951,46 @@ def apply_install(
         "program_root_hash": path_hash(program_root),
         "data_root_hash": path_hash(data_root),
         "archive_sha256": str(artifact_receipt["archive_sha256"]),
+        "package_provenance_sha256": sha256_file(package_root/"package-provenance.json"),
         "source_commit": provenance["source_commit"],
         "model_configuration": model_configuration,
         "browser_components": browser_components,
     }
-    active_path = install_root / "active.json"
-    if active_path.is_file():
-        backup_dir = install_root / "backup"
-        backup_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(active_path, backup_dir / "active.previous.json")
-    codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
-    config = codex_home / "config.toml"
-    config.parent.mkdir(parents=True, exist_ok=True)
-    backup = data_root / "receipts" / "codex-config.before.toml"
-    if config.is_file():
-        shutil.copyfile(config, backup)
-    plugin = copy_plugin(program_root, codex_home)
-    config.write_text(
-        ensure_mcp_catalog_wait(
-            replace_mcp_block(
-                config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)
-            )
-        ),
-        encoding="utf-8",
-    )
-    browser_link = browser_link_lifecycle().apply(program_root, install_root, data_root)
-    active['browser_link'] = browser_link
-    try:
+    with recovery.step():
+        active_path = install_root / "active.json"
+        if active_path.is_file():
+            backup_dir = install_root / "backup"
+            backup_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(active_path, backup_dir / "active.previous.json")
+        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex")).resolve()
+        config = codex_home / "config.toml"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        backup = data_root / "receipts" / "codex-config.before.toml"
+        if config.is_file():
+            shutil.copyfile(config, backup)
+        plugin = copy_plugin(program_root, codex_home)
+        config.write_text(
+            ensure_mcp_catalog_wait(
+                replace_mcp_block(
+                    config.read_text(encoding="utf-8") if config.is_file() else "", active_mcp_block(active, product_python)
+                )
+            ),
+            encoding="utf-8",
+        )
+        browser_link = browser_link_lifecycle().apply(program_root, install_root, data_root)
+        active['browser_link'] = browser_link
+        recovery.browser_link = browser_link
+        activation_checkpoint('registration')
         write_json_atomic(active_path, active)
-    except Exception:
-        browser_link_lifecycle().restore(browser_link, install_root)
-        raise
-    wizard_launcher = write_product_wizard_launcher(active, product_python)
-    autostart = (
-        write_console_autostart(install_root, product_python)
-        if enable_console_autostart
-        else refresh_console_autostart(install_root, product_python)
-    )
-    runtime_autostart = write_runtime_autostart(install_root, product_python)
+        activation_checkpoint('active')
+        wizard_launcher = write_product_wizard_launcher(active, product_python)
+        autostart = (
+            write_console_autostart(install_root, product_python)
+            if enable_console_autostart
+            else refresh_console_autostart(install_root, product_python)
+        )
+        runtime_autostart = write_runtime_autostart(install_root, product_python)
+        activation_checkpoint('startup')
     receipt = {
         "schema": "knowledgeradar-activation-receipt/v1",
         "status": "APPLIED",
@@ -1793,7 +2005,8 @@ def apply_install(
         "restored_runtime_components": restored_components,
         "model_configuration": model_configuration,
     }
-    write_json_atomic(data_root / "receipts" / "activation.json", receipt)
+    with recovery.step():
+        write_json_atomic(data_root / "receipts" / "activation.json", receipt)
     return receipt
 
 
@@ -1879,6 +2092,7 @@ def set_developer_view(install_root: Path, enabled: bool) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    started, clock = time.time(), time.monotonic()
     parser = argparse.ArgumentParser(description="Manage a local KnowledgeRadar product installation.")
     parser.add_argument(
         "command",
@@ -1909,6 +2123,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--channel", choices=("stable", "maintainer-main"), default="stable")
     parser.add_argument("--archive", default="", help="downloaded candidate/release ZIP")
     parser.add_argument("--receipt", default="", help="candidate/release receipt JSON matching --archive")
+    parser.add_argument('--prepared-plan', default='', help='read-only plan JSON; reject changes before mutation')
+    parser.add_argument('--allow-host-refresh', action='store_true', help='acknowledge the pre-activation client refresh requirement; does not restart Desktop')
     parser.add_argument(
         "--legacy-root", default="", help="existing private development/runtime root; read only for migration"
     )
@@ -1971,7 +2187,9 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "data-move-rollback":
             result = data_root_move_rollback(install_root)
         elif args.command == "plan":
-            result = build_plan(package_root, install_root, data_root, python_exe)
+            result = (installation_plan(package_root, install_root, data_root, python_exe,
+                archive=Path(args.archive), receipt_path=Path(args.receipt)) if args.archive and args.receipt
+                else {**build_plan(package_root, install_root, data_root, python_exe), 'artifact_verified': False})
         elif args.command == "verify-install":
             if not args.archive or not args.receipt:
                 raise RuntimeError("verify-install requires --archive and --receipt")
@@ -1988,6 +2206,8 @@ def main(argv: list[str] | None = None) -> int:
                 archive=Path(args.archive).resolve() if args.archive else None,
                 receipt_path=Path(args.receipt).resolve() if args.receipt else None,
                 enable_console_autostart=not args.no_console_autostart,
+                prepared_plan=json.loads(Path(args.prepared_plan).read_text(encoding='utf-8-sig')) if args.prepared_plan else None,
+                allow_host_refresh=args.allow_host_refresh,
             )
         elif args.command == "status":
             result = {"status": "ACTIVE", "active": load_active(install_root)}
@@ -2003,6 +2223,8 @@ def main(argv: list[str] | None = None) -> int:
         tomllib.TOMLDecodeError,
     ) as exc:
         result = {"status": "FAIL", "error": str(exc)}
+    result.setdefault('timing', {'started_at_epoch':started, 'finished_at_epoch':time.time(),
+                                 'elapsed_s':time.monotonic()-clock})
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 1 if result.get('status') == 'FAIL' or str(result.get('status', '')).endswith('_RUNTIME_NOT_READY') else 0
 

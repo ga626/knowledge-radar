@@ -7,6 +7,7 @@ let ownershipReady=Promise.resolve(), persistWrite=Promise.resolve();
 const HOST='com.knowledgeradar.browser_link';
 const SITES=globalThis.KRSiteRoutes;
 const OPS=new Set(['search','detail','comments','transcript','login','attention','probe','auth_verify','release','release_login']);
+const BUILD_ID='link-capabilities-20261117-1';
 // Session-only, bounded diagnostics: no page text, query, account or credentials.
 let diagnosticEvents=[],diagnosticWrite=Promise.resolve();
 function record(p,stage,{code='',host=''}={}) {
@@ -181,7 +182,8 @@ async function connect(){
       if(message.type==='cancel'){const p=pending.get(message.request_id);if(p)finish(p,false,{},'cancelled');return;}
       if(message.type==='command')void execute(message,port);
     });
-    post(port,{type:'hello',protocol:1,profile_id:profileId,extension_version:chrome.runtime.getManifest().version});
+    post(port,{type:'hello',protocol:1,profile_id:profileId,extension_version:chrome.runtime.getManifest().version,
+      contract_version:1,build_id:BUILD_ID,operations:[...OPS]});
   }catch(error){native=null;setStatus('disconnected',error.message);reconnect();}
 }
 async function dispatch(p) {

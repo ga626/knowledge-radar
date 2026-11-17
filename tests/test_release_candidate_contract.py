@@ -20,6 +20,23 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_package_business_probe_rejects_broken_bundled_component_catalog(tmp_path):
+    import shutil
+    import pytest
+    manifest = json.loads((ROOT/'config/package-manifest.product-lite.json').read_text(encoding='utf-8'))
+    files, _, _ = builder.collect_files(manifest)
+    for source in files:
+        target = tmp_path/source.relative_to(ROOT)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+    catalog = tmp_path/'config/browser-components.json'
+    value = json.loads(catalog.read_text(encoding='utf-8'))
+    value['components']['browser_link']['tree_sha256'] = 'broken'
+    catalog.write_text(json.dumps(value), encoding='utf-8')
+    with pytest.raises(RuntimeError, match='component_catalog_tree_mismatch'):
+        verifier.business_probe(tmp_path)
+
+
 def test_package_business_probe_rejects_a_package_with_broken_archive_module(tmp_path):
     import pytest
     (tmp_path/'src/runtime').mkdir(parents=True)

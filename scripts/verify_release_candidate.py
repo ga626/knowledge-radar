@@ -87,6 +87,8 @@ def business_probe(package_root: Path) -> dict[str, object]:
 import json, sys
 from pathlib import Path
 sys.path[:] = [str(Path.cwd()/'src')] + [p for p in sys.path if p and 'public-repos' not in p]
+from runtime.browser_components import verify_component
+components=[name for name in ('browser_link','opencli') if verify_component(name,program=Path.cwd())]
 from runtime.research_archive import ResearchArchive, BindContext, SubmitReport
 from runtime.knowledge_delivery import DeliveryStore, Authorize
 from runtime import research_ledger as ledger
@@ -113,7 +115,7 @@ assert (local/'report.md').read_text(encoding='utf-8')==report
 assert any(p.read_text(encoding='utf-8')==report for p in vault.rglob('*.md'))
 assert any(text in p.read_text(encoding='utf-8') for p in vault.rglob('*.md'))
 packaged_modules_only()
-print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True}))
+print(json.dumps({'status':'PASS','evidence_readback':True,'local_and_vault_delivery':True,'bundled_components_verified':components}))
 '''
     with tempfile.TemporaryDirectory(prefix='kr-candidate-business-') as temp:
         state=Path(temp)
@@ -163,6 +165,9 @@ def verify(candidate_dir: Path) -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import time
+    from datetime import datetime, timezone
+    started_at, clock = datetime.now(timezone.utc).isoformat(), time.monotonic()
     parser = argparse.ArgumentParser(description="Verify a KnowledgeRadar release candidate.")
     parser.add_argument("--candidate-dir", required=True)
     parser.add_argument("--json", action="store_true")
@@ -171,6 +176,7 @@ def main(argv: list[str] | None = None) -> int:
         result = verify(Path(args.candidate_dir).resolve())
     except (ImportError, OSError, RuntimeError, KeyError, TypeError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         result = {"status": "FAIL", "error": str(exc)}
+    result['timing'] = {'started_at':started_at, 'finished_at':datetime.now(timezone.utc).isoformat(), 'elapsed_s':time.monotonic()-clock}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "PASS" else 1
 

@@ -6,7 +6,7 @@
       "extension_id": "gjpefddhmkinebmgfblaidofllfckhbi",
       "version": "0.3.20",
       "files": {
-        "background.js": "619378cd884ed78599c313bfc99a7f173b57deadb84b8d6a0f468dca4a535392",
+        "background.js": "86b8a4cb4fec46a75c9878607ad52567208cf4a3c2aaff285dc2d7ea06ff09b3",
         "content.js": "d4a45ff0ffcfaa48855ac16bef23bcfe06d7ae0e18bb62fce17aa7d29ae9ffa9",
         "icons/radar-128.png": "4e47be2c2e3315370136cbe020ee3237dffe05427819b241d824f4860ac23317",
         "icons/radar-16.png": "ee9b8a6e27fdfe4090bcc9da3ecf4d9c0d6f024a3b50c60053300a3953f92ee5",
@@ -25,7 +25,7 @@
         "status.js": "f384022a0e4bb0153b82ac3bff09507dfd0f320ff448b9d6447f6baf977d7c2d",
         "visibility.js": "74f631c6bf737cd65c0320d7638a74cd821a1a9d50939ba1d0e92159f6c0c227"
       },
-      "tree_sha256": "cc8a7d5cc7661cf6190dc1a631bcb1c0ff13de12a61359f8c3f0bff48c130c84",
+      "tree_sha256": "46e7863cb6cde6d927690dc0cdbbc7c27fa83afb5b6f4972697c160af237753d",
       "distribution": "bundled_unpacked"
     },
     "opencli": {

@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import tomllib
 import zipfile
 from datetime import UTC, datetime
@@ -186,6 +187,7 @@ def deterministic_zip(package_dir: Path, archive: Path, timestamp: int) -> None:
 
 
 def build(manifest_path: Path, output: Path, *, dry_run: bool, candidate: bool) -> int:
+    started_at, clock = datetime.now(UTC).isoformat(), time.monotonic()
     manifest_path = manifest_path.resolve()
     output = ensure_safe_output(output)
     manifest = load_json(manifest_path)
@@ -236,6 +238,7 @@ def build(manifest_path: Path, output: Path, *, dry_run: bool, candidate: bool) 
         "package_provenance_sha256": sha256_file(output / "package-provenance.json"),
         "sbom_sha256": sha256_file(output / "SBOM.json"),
         "package_file_count": len(records),
+        "timing": {"started_at":started_at, "finished_at":datetime.now(UTC).isoformat(), "elapsed_s":time.monotonic()-clock},
     }
     ci = ci_build_identity()
     if ci is not None:

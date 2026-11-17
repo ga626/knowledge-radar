@@ -17,6 +17,131 @@ from kr_core.evidence_assets import EvidenceAssets
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_loopback_owner_transport_never_loads_tls_certificates(monkeypatch):
+    import ssl
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    class Reply(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers['Content-Length']))
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b'{"status":"ready"}')
+        def log_message(self, *args):
+            pass
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Reply)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    monkeypatch.setattr(ssl, 'create_default_context', lambda *a, **k: pytest.fail('loopback HTTP loaded TLS certificates'))
+    try:
+        assert OwnerClient()._request({'port':server.server_port, 'token':'fixture-token'}, 'status')['status'] == 'ready'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_compatible_forwarding_requires_verified_active_package_and_contract(tmp_path, monkeypatch):
+    from runtime import execution_owner as owner
+    import hashlib
+    install, data = tmp_path/'install', tmp_path/'data'
+    program = install/'app/B'
+    (program/'src').mkdir(parents=True)
+    (program/'config/codex-product').mkdir(parents=True)
+    (program/'src/sample.py').write_text('version="B"', encoding='utf-8')
+    contract = ROOT/'config/codex-product/tool-contracts.json'
+    (program/'config/codex-product/tool-contracts.json').write_bytes(contract.read_bytes())
+    (program/'config/project-structure.manifest.json').write_bytes((ROOT/'config/project-structure.manifest.json').read_bytes())
+    def seal():
+        rows = [{'path': p.relative_to(program).as_posix(), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                for p in program.rglob('*') if p.is_file() and p.name != 'package-provenance.json']
+        raw = json.dumps({'source_commit': 'B', 'source_dirty': False, 'files': rows}).encode()
+        (program/'package-provenance.json').write_bytes(raw)
+        active = {'installation_id': 'B', 'program_root': str(program), 'data_root': str(data), 'source_commit': 'B',
+                  'package_provenance_sha256': hashlib.sha256(raw).hexdigest()}
+        (install/'active.json').write_text(json.dumps(active), encoding='utf-8')
+    seal()
+    monkeypatch.setenv('KR_ACTIVE_INSTALL_ROOT', str(install))
+    monkeypatch.setenv('KR_DATA_ROOT', str(data))
+    client = owner.OwnerClient(root=data/'state/execution_owner', forward=True)
+    target = client.active_target()
+    descriptor = {**target, 'protocol': owner.PROTOCOL}
+    assert client.compatible(descriptor)
+    assert not owner.OwnerClient(root=client.root).compatible(descriptor)  # owner/CLI 仍严格
+    assert not client.compatible({**descriptor, 'source_identity': 'forged'})
+    monkeypatch.setenv('KR_DATA_ROOT', str(tmp_path/'other-data'))
+    assert not client.compatible(descriptor)
+
+    monkeypatch.setenv('KR_DATA_ROOT', str(data))
+    (program/'src/sample.py').write_text('tampered=True', encoding='utf-8')
+    assert not client.compatible(descriptor)
+
+
+def test_one_initialized_stdio_client_follows_verified_a_b_a(tmp_path):
+    """真实 stdio→HTTP owner→固定证据；不用 Desktop/Chrome，不改变正式 active。"""
+    import hashlib
+    import shutil
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+    install, data = tmp_path/'install', tmp_path/'data'
+    programs = {}
+    for name in ('A', 'B'):
+        program = install/'app'/name
+        shutil.copytree(ROOT/'src', program/'src', ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
+        (program/'config/codex-product').mkdir(parents=True)
+        for relative in ('config/codex-product/tool-contracts.json', 'config/project-structure.manifest.json', 'pyproject.toml'):
+            shutil.copyfile(ROOT/relative, program/relative)
+        (program/'src/runtime/fixture_revision.py').write_text(f'REVISION={name!r}\n', encoding='utf-8')
+        rows = [{'path': p.relative_to(program).as_posix(), 'sha256': hashlib.sha256(p.read_bytes()).hexdigest()}
+                for p in program.rglob('*') if p.is_file()]
+        raw = json.dumps({'source_commit': name, 'source_dirty': False, 'files': rows}).encode()
+        (program/'package-provenance.json').write_bytes(raw)
+        programs[name] = {'installation_id': name, 'program_root': str(program), 'data_root': str(data),
+                          'source_commit': name, 'package_provenance_sha256': hashlib.sha256(raw).hexdigest()}
+    root = data/'state/execution_owner'
+    env = {**os.environ, 'KR_ACTIVE_INSTALL_ROOT': str(install), 'KR_DATA_ROOT': str(data),
+           'KR_STATE_DIR': str(data/'state'), 'KR_OWNER_ROOT': str(root), 'KR_LOG_DIR': str(data/'logs'),
+           'KR_EVIDENCE_ROOT': str(tmp_path/'assets'), 'KR_RUNTIME_ENV_PATH': str(tmp_path/'absent.env'),
+           'KR_DESKTOP_NOTIFICATIONS_DISABLED': '1', 'KR_DISABLE_MODEL_PREWARM': '1',
+           'KR_PROFILE_REGISTRY_PATH': str(tmp_path/'profiles.json'), 'KR_MCP_TRANSPORT': 'stdio'}
+    ref = EvidenceAssets(tmp_path/'assets').put('https://example.test/compatibility', '持续会话证据 A B A')
+    children = []
+    def activate(name):
+        active = programs[name]
+        (install/'active.json').write_text(json.dumps(active), encoding='utf-8')
+        program = Path(active['program_root'])
+        script = f'import sys,runpy; sys.path.insert(0,{str(program/"src")!r}); runpy.run_path({str(ROOT/"tests/runtime_owner_fixture.py")!r},run_name="__main__")'
+        log = (tmp_path/f'owner-{len(children)}.log').open('ab')
+        child = subprocess.Popen([sys.executable, '-X', 'utf8', '-c', script], cwd=program, env=env, stdout=log, stderr=log)
+        log.close()
+        children.append(child)
+        return until(lambda: json.loads((root/'owner.json').read_text()) if (root/'owner.json').exists() else None,
+                     lambda d: d is not None and d['pid'] == child.pid, timeout=30)
+    control = OwnerClient(root=root)
+    async def exercise():
+        activate('A')
+        params = StdioServerParameters(command=sys.executable, args=['-X', 'utf8', str(Path(programs['A']['program_root'])/'src/server.py')],
+                                       cwd=programs['A']['program_root'], env=env)
+        async with stdio_client(params) as (reader, writer):
+            async with ClientSession(reader, writer) as session:
+                await session.initialize()
+                for name in ('A', 'B', 'A'):
+                    if name != 'A' or len(children) > 1:
+                        activate(name)
+                    reply = await session.call_tool('read_knowledge', {'request': {'action': 'fetch', 'version_id': ref['version_id']}})
+                    assert not reply.isError, reply
+                    assert '持续会话证据' in str(reply)
+                    assert control.stop()['status'] == 'stopping'
+                    until(control.descriptor, lambda d: d is None)
+    try:
+        asyncio.run(exercise())
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.terminate()
+            child.wait(timeout=10)
+
+
 @pytest.mark.skipif(os.name != 'nt', reason='Windows正式venv拓扑')
 def test_supervisor_retains_actual_venv_owner_exit_handle(isolated, monkeypatch):
     from runtime import execution_owner as owner

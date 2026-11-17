@@ -361,6 +361,9 @@ def test_mcp_dispatch_preserves_research_intent(research, monkeypatch, forward_o
     class Client:
         last_receipt = {'execution_state': 'completed'}
 
+        def __init__(self, *, forward=False):
+            assert forward is True
+
         def call(self, name, arguments, *, request_id=None):
             assert name == 'intent_probe'
             assert request_id == 'intent-request'

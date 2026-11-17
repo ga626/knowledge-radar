@@ -26,6 +26,15 @@ internal static class BrowserLinkHost
     private static int Port;
     private static volatile bool Connected, Draining;
     private static string ProfileId = "", ExtensionVersion = "";
+    private static int ExtensionContract;
+    private static string ExtensionBuild = "";
+    private static readonly HashSet<string> ExtensionOperations = new HashSet<string>();
+    private static readonly string HostBuild = BuildIdentity();
+    private static string BuildIdentity()
+    {
+        using (var hash = SHA256.Create()) using (var file = File.OpenRead(System.Reflection.Assembly.GetExecutingAssembly().Location))
+            return BitConverter.ToString(hash.ComputeHash(file)).Replace("-", "").ToLowerInvariant();
+    }
     private static string StateLocation()
     {
         string explicitPath = Environment.GetEnvironmentVariable("KR_BROWSER_LINK_STATE_FILE");
@@ -130,7 +139,13 @@ internal static class BrowserLinkHost
         }
         if (code != "") { Send(new Dictionary<string, object> { { "type", "hello_rejected" }, { "code", code } }); return false; }
         if (!File.Exists(pairFile)) AtomicJson(pairFile, new Dictionary<string, object> { { "profile_id", candidate } });
-        ProfileId = candidate; ExtensionVersion = Text(message, "extension_version"); Connected = true;
+        ProfileId = candidate; ExtensionVersion = Text(message, "extension_version");
+        Int32.TryParse(Text(message, "contract_version"), out ExtensionContract);
+        ExtensionBuild = Text(message, "build_id");
+        object declared;
+        if (message.TryGetValue("operations", out declared) && declared is object[])
+            foreach (object op in (object[])declared) ExtensionOperations.Add(Convert.ToString(op));
+        Connected = true;
         WriteState(); Send(new Dictionary<string, object> { { "type", "hello_ack" }, { "protocol", Protocol }, { "generation", Generation }, { "host_version", "0.2.0" } });
         return true;
     }
@@ -176,7 +191,9 @@ internal static class BrowserLinkHost
             if (context.Request.Headers["X-KR-Native-Token"] != Token || context.Request.Headers["Origin"] != null) { context.Response.StatusCode = 401; context.Response.Close(); return; }
             string path = context.Request.Url.AbsolutePath;
             if (path == "/health" && context.Request.HttpMethod == "GET") {
-                Reply(context, 200, new Dictionary<string, object> { { "ok", Connected }, { "connected", Connected }, { "protocol", Protocol }, { "generation", Generation }, { "profile_id", ProfileId }, { "pending", Pending.Count }, { "draining", Draining }, { "extension_version", ExtensionVersion } }); return;
+                Reply(context, 200, new Dictionary<string, object> { { "ok", Connected }, { "connected", Connected }, { "protocol", Protocol }, { "generation", Generation }, { "profile_id", ProfileId }, { "pending", Pending.Count }, { "draining", Draining }, { "extension_version", ExtensionVersion },
+                    { "host_build", HostBuild }, { "host_operations", Operations }, { "extension_contract", ExtensionContract },
+                    { "extension_build", ExtensionBuild }, { "extension_operations", ExtensionOperations } }); return;
             }
             if (context.Request.HttpMethod != "POST") { context.Response.StatusCode = 405; context.Response.Close(); return; }
             if (path == "/receipt") {
@@ -213,6 +230,7 @@ internal static class BrowserLinkHost
             if (Draining) { Reply(context, 409, Failure("channel_draining", requestId, false)); return; }
             if (Text(command, "generation") != Generation) { Reply(context, 409, Failure("stale_generation", requestId, false)); return; }
             if (!Regex.IsMatch(platform, "^[a-z][a-z0-9_]{0,31}$") || !Operations.Contains(operation)) { Reply(context, 400, Failure("unsupported_operation", requestId, false)); return; }
+            if (ExtensionContract > 0 && !ExtensionOperations.Contains(operation)) { Reply(context, 409, Failure("extension_operation_unavailable", requestId, false)); return; }
             var payload = command.ContainsKey("payload") ? command["payload"] as Dictionary<string, object> : null;
             var request = new PendingRequest { TaskId = Text(payload, "task_id"), Platform = platform };
             lock (AdmissionLock) {

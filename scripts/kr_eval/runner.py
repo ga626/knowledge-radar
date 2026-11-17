@@ -40,18 +40,22 @@ def _pytest(root, case, folder):
     command = [sys.executable, str(root / "scripts/kr_eval/pytest_entry.py"), "-vv", "--durations=20", "-o", f"faulthandler_timeout={case.get('faulthandler_timeout', 90)}", "-p", "scripts.kr_eval.offline_guard", "-p", "no:cacheprovider",
                f"--junitxml={junit}", *(["--kr-owned-host-process"] if case.get("owned_host_process") else []),
                *[f"--deselect={node}" for node in case.get("deselect", [])], *nodes]
-    started = time.monotonic()
+    started_at, started = now(), time.monotonic()
     with (folder / "stdout.txt").open("x", encoding="utf-8") as out, (folder / "stderr.txt").open("x", encoding="utf-8") as err:
         try:
             proc = subprocess.run(command, cwd=root, env=isolated_env(root, folder), stdout=out, stderr=err,
                                   text=True, encoding="utf-8", timeout=case.get("timeout_seconds", 120))
         except subprocess.TimeoutExpired:
             return {"verdict": "ERROR", "summary": "executor_timeout", "returncode": None, "command": command,
-                    "elapsed_s": time.monotonic() - started}
-    details = {"returncode": proc.returncode, "command": command}
+                    "started_at":started_at, "finished_at":now(), "elapsed_s": time.monotonic() - started}
+    details = {"returncode": proc.returncode, "command": command, "started_at":started_at,
+               "finished_at":now(), "elapsed_s": time.monotonic() - started}
     if not junit.is_file():
         return {**details, "verdict": "ERROR", "summary": "missing_junit"}
-    tree = ET.parse(junit)
+    try:
+        tree = ET.parse(junit)
+    except ET.ParseError:
+        return {**details, "verdict":"ERROR", "summary":"invalid_junit"}
     tests = list(tree.iter("testcase"))
     counts = {"tests": len(tests), "failures": len(list(tree.iter("failure"))), "errors": len(list(tree.iter("error"))),
               "skipped": len(list(tree.iter("skipped")))}

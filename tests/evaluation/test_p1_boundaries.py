@@ -13,6 +13,8 @@ from understanding.evidence import build_detail_evidence, freshness_for_platform
 @pytest.fixture(autouse=True)
 def isolated_proxy(monkeypatch):
     monkeypatch.setattr("runtime.proxy_config.get_httpx_proxy", lambda: None)
+    # 当前发送链改用 httpx_options；显式 proxy 会绕开 MockTransport 的默认路由。
+    monkeypatch.setattr("runtime.proxy_config.httpx_options", lambda *a, **k: {"trust_env": False})
 
 
 def test_fake_ip_requires_independent_public_resolution(monkeypatch):

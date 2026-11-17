@@ -53,6 +53,7 @@ def main(argv=None):
     capture_parser.add_argument("--expected-target", type=Path, required=True)
     capture_parser.add_argument("--output", type=Path, required=True)
     ci_parser = sub.add_parser("ci")
+    ci_parser.add_argument('--group', choices=('all', 'offline', 'host', 'node'), default='all')
     ci_parser.add_argument("--extra-node", action="append", default=[])
     ci_parser.add_argument("--changed-from")
     ci_parser.add_argument("--full", action="store_true", help="冻结交付运行完整离线集合")
@@ -167,10 +168,23 @@ def main(argv=None):
                 result = run_documentation_checks(root)
                 exit_code = int(result["status"] != "PASS")
                 write_new(ledger.path / "ci-scope.json", result)
+                if args.group != 'all':
+                    from scripts.kr_eval.core import _git, environment, snapshot
+                    write_new(ledger.path/'ci-outcome.json', {'schema': 'kr-ci-job/v1', 'status': result['status'],
+                        'source_snapshot': snapshot(root)['content_hash'],
+                        'group': args.group, 'scope': {'mode': 'docs'}, 'tree': _git(root, ['rev-parse', 'HEAD^{tree}']),
+                        'environment': environment(), 'business_tests': 'NOT_RUN'})
             else:
                 scope = select_scope(root, suite, changed_paths(root, args.changed_from), full=args.full)
-                result, passed = run_ci(root, suite, ledger, args.extra_node, scope=scope)
+                result, passed = run_ci(root, suite, ledger, args.extra_node, scope=scope, group=args.group)
                 exit_code = int(not passed)
+                if args.group != 'all':
+                    from scripts.kr_eval.core import _git, environment
+                    write_new(ledger.path / 'ci-outcome.json', {'schema': 'kr-ci-job/v1',
+                        'source_snapshot':result['snapshot']['content_hash'],
+                        'status': 'PASS' if passed else 'FAIL', 'group': args.group,
+                        'scope': scope, 'tree': _git(root, ['rev-parse', 'HEAD^{tree}']),
+                        'environment': environment(), 'run_id': result['run_id']})
         elif args.command == "accept-baseline":
             result = ledger.accept(args.run_id, args.reason)
         elif args.command == "demo":

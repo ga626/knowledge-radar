@@ -1,4 +1,9 @@
 {
+  "delivery_seams_contract": {
+    "evaluation": "Existing evaluator partitions offline, owned Host/scale and Node; complete trusted matching batches alone may be reused. Skipped and interrupted are not PASS.",
+    "installation": "Read-only shared plan precedes maintenance. Activation checks plan freshness and restores only its owned writes on failure; no implicit task repair.",
+    "mcp": "Existing forwarding client may follow verified active packages only under exact tool/IPC compatibility; owner source and generation remain strict. Unknown calls are not replayed."
+  },
   "schema": "knowledgeradar-project-structure/v1",
   "updated_at": "2026-11-16",
   "acquisition_limits_contract": {
@@ -19,7 +24,9 @@
   "runtime_lifecycle_contract": {
     "transport": "MCP initialization and tools/list never start the kernel; unavailable execution is an explicit not_started error.",
     "management": "The existing OS user-session supervisor owns the kernel independently of console pages, retaining process handles, exit codes and generations. Recovery is bounded and never replays requests.",
-    "handoff": "Installation drains the current kernel before switching active identity, stops the old manager and starts the registered user-session task after releasing maintenance. Activation, runtime readiness and native host binding are distinct receipts."
+    "handoff": "Installation drains the current kernel before switching active identity, stops the old manager and starts the registered user-session task after releasing maintenance. Activation, runtime readiness and native host binding are distinct receipts.",
+    "client_compatibility_version": 1,
+    "data_compatibility_version": 1
   },
   "evaluation_maintenance_contract": {
     "storage": "Extend the existing evaluation-candidates.sqlite3 and immutable evaluation run ledger; no parallel question bank or background Agent.",

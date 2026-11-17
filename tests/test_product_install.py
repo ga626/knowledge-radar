@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -283,6 +284,10 @@ def test_failed_selected_component_handoff_preserves_active_and_mcp_registration
 
 @pytest.fixture(autouse=True)
 def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # 即使单独 pytest 此文件，缺少显式目录的新增用例也不能碰真实用户配置。
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'isolated-codex'))
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path/'isolated-local'))
+    monkeypatch.setenv('APPDATA', str(tmp_path/'isolated-roaming'))
     def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
         executable = installer.runtime_python(install_root / "runtime" / version)
         executable.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +301,13 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *a, **k: {'status': 'ready', 'scope': 'fixture_only'}, raising=False)
     monkeypatch.setattr(installer, 'write_runtime_autostart', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(installer, 'settle_terminal_recording_conflicts', lambda *a: [], raising=False)
+    monkeypatch.setattr(installer, 'scheduled_task_snapshot', lambda: None, raising=False)
+
+
+def test_standalone_installer_tests_have_private_user_environment(tmp_path):
+    assert Path(os.environ['CODEX_HOME']) == tmp_path/'isolated-codex'
+    assert Path(os.environ['LOCALAPPDATA']) == tmp_path/'isolated-local'
+    assert Path(os.environ['APPDATA']) == tmp_path/'isolated-roaming'
 
 
 def test_activation_handoff_restarts_after_maintenance_and_records_separate_readiness(tmp_path, monkeypatch):
@@ -324,8 +336,8 @@ def test_activation_handoff_restarts_after_maintenance_and_records_separate_read
         events.append('active-applied')
         return {'status': 'APPLIED', 'active': active}
     result = operation(tmp_path)
-    assert events == ['conflicts-classified', 'manager-paused', 'locked', 'active-applied', 'unlocked', 'manager-resumed', 'ready-checked']
-    assert result['maintenance_recording_conflicts'] == ['old-conflict']
+    assert events == ['manager-paused', 'locked', 'active-applied', 'unlocked', 'manager-resumed', 'ready-checked']
+    assert 'maintenance_recording_conflicts' not in result
     assert result['runtime_readiness']['status'] == 'ready'
     assert result['native_host_binding']['status'] == 'not_revalidated'
 
@@ -418,11 +430,15 @@ def package_fixture(tmp_path: Path, version: str) -> Path:
     (package / "src" / "server.py").write_text("print('fixture')\n", encoding="utf-8")
     (package / "src/runtime").mkdir()
     shutil.copyfile(ROOT / "src/runtime/model_roles.py", package / "src/runtime/model_roles.py")
+    shutil.copyfile(ROOT / 'src/runtime/client_contract.py', package / 'src/runtime/client_contract.py')
     (package / ".env.example").write_text("TAVILY_API_KEY=\n", encoding="utf-8")
     (package / "pyproject.toml").write_text(f"[project]\nname='knowledgeradar'\nversion='{version}'\n", encoding="utf-8")
     registry = package / "config" / "profile_registry.example.json"
     registry.parent.mkdir(parents=True)
     registry.write_text('{"profiles": []}\n', encoding="utf-8")
+    (package/'config/codex-product').mkdir(exist_ok=True)
+    shutil.copyfile(ROOT/'config/codex-product/tool-contracts.json', package/'config/codex-product/tool-contracts.json')
+    shutil.copyfile(ROOT/'config/project-structure.manifest.json', package/'config/project-structure.manifest.json')
     shutil.copyfile(ROOT / "config" / "storage-ownership.manifest.json", package / "config" / "storage-ownership.manifest.json")
     (package / "scripts").mkdir()
     shutil.copyfile(ROOT / "scripts" / "setup_product_wizard.py", package / "scripts" / "setup_product_wizard.py")
@@ -446,6 +462,80 @@ def artifact_fixture(tmp_path: Path, package: Path) -> tuple[Path, Path]:
     receipt = tmp_path / f"{package.name}.receipt.json"
     receipt.write_text(json.dumps({"source_commit": payload["source_commit"], "archive_sha256": installer.sha256_file(archive), "package_provenance_sha256": installer.sha256_file(provenance), "sbom_sha256": installer.sha256_file(package / "SBOM.json")}), encoding="utf-8")
     return archive, receipt
+
+
+def test_handoff_plan_distinguishes_legacy_and_changed_client_contract(tmp_path):
+    candidate = package_fixture(tmp_path, '0.8.1')
+    previous = package_fixture(tmp_path, '0.8.0')
+    old = {'program_root':str(previous)}
+    assert installer.client_handoff_plan(old, candidate)['requires_host_refresh'] is False
+    (previous/'src/runtime/client_contract.py').unlink()
+    assert installer.client_handoff_plan(old, candidate)['requires_host_refresh'] is True
+
+
+def test_activation_recovery_keeps_concurrent_user_edit(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    config = tmp_path/'codex/config.toml'
+    config.parent.mkdir()
+    config.write_text('before', encoding='utf-8')
+    recovery = installer._ActivationRecovery(tmp_path/'install', tmp_path/'data', None)
+    with recovery.step():
+        config.write_text('installer', encoding='utf-8')
+    config.write_text('user edit', encoding='utf-8')
+    with pytest.raises(RuntimeError, match='conflict_preserved'):
+        recovery.restore()
+    assert config.read_text(encoding='utf-8') == 'user edit'
+
+
+def test_failed_new_owner_restores_recent_ready_combination(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    install, data = tmp_path/'install', tmp_path/'data'
+    first = package_fixture(tmp_path/'first', '0.8.0')
+    archive, receipt = artifact_fixture(tmp_path/'first', first)
+    installer.apply_install(first, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    original = {p:p.read_bytes() for p in (install/'active.json', data/'receipts/activation.json', tmp_path/'codex/config.toml')}
+    second = package_fixture(tmp_path/'second', '0.8.1')
+    archive, receipt = artifact_fixture(tmp_path/'second', second)
+    monkeypatch.setattr(installer, 'complete_runtime_handoff', lambda *a: {'status':'unavailable'})
+    with pytest.raises(RuntimeError, match='candidate_internal_readiness_failed'):
+        installer.apply_install(second, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    assert all(p.read_bytes() == raw for p,raw in original.items())
+
+
+def test_install_plan_is_pure_and_apply_rejects_stale_plan_before_maintenance(tmp_path, monkeypatch):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    package = package_fixture(tmp_path, '0.7.0')
+    archive, receipt = artifact_fixture(tmp_path, package)
+    install, data = tmp_path/'install', tmp_path/'data'
+    before = {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    plan = installer.installation_plan(package, install, data, Path(sys.executable), archive=archive, receipt_path=receipt)
+    assert before == {p: p.read_bytes() for p in tmp_path.rglob('*') if p.is_file()}
+    install.mkdir()
+    (install/'active.json').write_text('{}', encoding='utf-8')
+    monkeypatch.setattr(installer, 'runtime_handoff', lambda *a: pytest.fail('stale plan entered maintenance'))
+    with pytest.raises(RuntimeError, match='installation_plan_stale'):
+        installer.apply_install(package, install, data, Path(sys.executable), channel='stable',
+                                archive=archive, receipt_path=receipt, prepared_plan=plan)
+
+
+@pytest.mark.parametrize('point', ['registration', 'active', 'startup'])
+def test_activation_failure_restores_existing_configuration_and_binding(tmp_path, monkeypatch, point):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    package = package_fixture(tmp_path, '0.7.1')
+    archive, receipt = artifact_fixture(tmp_path, package)
+    install, data = tmp_path/'install', tmp_path/'data'
+    config = tmp_path/'codex/config.toml'
+    config.parent.mkdir()
+    config.write_text('# preserve user settings\n', encoding='utf-8')
+    def checkpoint(stage):
+        if stage == point:
+            raise RuntimeError('injected_' + point)
+    monkeypatch.setattr(installer, 'activation_checkpoint', checkpoint, raising=False)
+    with pytest.raises(RuntimeError, match='injected_'):
+        installer.apply_install(package, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    assert config.read_text(encoding='utf-8') == '# preserve user settings\n'
+    assert not (install/'active.json').exists()
+    assert not (tmp_path/'codex/plugins/knowledgeradar-research').exists()
 
 
 def test_apply_uses_one_active_program_and_preserves_data(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -121,6 +121,9 @@ def deliver(candidate, *, client, repository, owner, source_commit):
 
 
 def main():
+    import time
+    from datetime import datetime, timezone
+    started_at, clock = datetime.now(timezone.utc).isoformat(), time.monotonic()
     parser = argparse.ArgumentParser()
     parser.add_argument("--candidate", type=Path, required=True)
     args = parser.parse_args()
@@ -138,6 +141,7 @@ def main():
     with httpx.Client(headers={"Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28"}, follow_redirects=False, timeout=120) as client:
         result = deliver(args.candidate, client=client, repository=repository, owner=owner, source_commit=os.environ.get("GITHUB_SHA", ""))
+    result['timing'] = {'started_at':started_at, 'finished_at':datetime.now(timezone.utc).isoformat(), 'elapsed_s':time.monotonic()-clock}
     print(json.dumps(result, ensure_ascii=False))
 
 
