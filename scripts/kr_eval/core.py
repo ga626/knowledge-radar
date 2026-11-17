@@ -164,9 +164,10 @@ def _git(root, args):
 def snapshot(root):
     listed = _git(root, ["ls-files", "-c", "-o", "--exclude-standard", "-z"])
     names = listed.split("\0") if listed else [p.relative_to(root).as_posix() for prefix in SCOPES for p in (root / prefix).rglob("*") if p.is_file()]
+    names = [*names, '.gitattributes']
     files = {}
     for name in sorted(set(names)):
-        if not (name.startswith(SCOPES) or name in {"pyproject.toml", "uv.lock", "requirements.txt", "requirements.lock"}):
+        if not (name.startswith(SCOPES) or name in {".gitattributes", "pyproject.toml", "uv.lock", "requirements.txt", "requirements.lock"}):
             continue
         if any(x in Path(name).parts for x in {"__pycache__", "node_modules", ".pytest_cache", "data", "local", ".git"}):
             continue
@@ -180,6 +181,22 @@ def snapshot(root):
 
 
 def environment():
+    import os
+    import shutil
+    import subprocess
+    tools = {}
+    for name in ('node', 'git'):
+        executable = shutil.which(name)
+        if executable:
+            try:
+                result = subprocess.run([executable, '--version'], capture_output=True, timeout=5)
+                tools[name] = {'version': result.stdout.decode('utf-8', errors='replace').strip(),
+                               'sha256': file_hash(Path(executable))}
+            except (OSError, subprocess.TimeoutExpired):
+                tools[name] = {'status': 'unmeasured'}
+    compiler = Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Microsoft.NET/Framework64/v4.0.30319/csc.exe'
+    tools['python'] = file_hash(Path(sys.executable))
+    tools['csc'] = file_hash(compiler) if compiler.is_file() else 'unavailable'
     packages = {}
     for dist in importlib.metadata.distributions():
         name = dist.metadata.get("Name")
@@ -187,7 +204,8 @@ def environment():
             packages[name.lower()] = dist.version
     facts = {"python": platform.python_version(), "implementation": platform.python_implementation(),
              "platform": platform.platform(), "machine": platform.machine(), "packages": dict(sorted(packages.items())),
-             "execution_policy": "offline_no_credentials_v1", "models": "not_used", "network": "disabled"}
+             "execution_policy": "offline_no_credentials_v1", "models": "not_used", "network": "disabled",
+             "toolchain": tools, 'runner_image': {k: os.environ.get(k, '') for k in ('ImageOS', 'ImageVersion', 'RUNNER_OS', 'RUNNER_ARCH')}}
     return {"facts": facts, "fingerprint": digest(facts), "python_executable": sys.executable}
 
 
@@ -315,7 +333,13 @@ class Ledger:
         rows = []
         for folder in sorted((self.path / "runs").glob("*")):
             if not (folder / "run.json").is_file():
-                raise ValueError(f"incomplete run requires investigation: {folder.name}")
+                started = read_json(folder / 'started.json')
+                rows.append({**started, 'finished_at': None, 'counts': {'INCOMPLETE': 1},
+                             'results': [], 'target': {'kind': 'interrupted'},
+                             'snapshot': {'content_hash': 'unknown', 'files': {}},
+                             'environment': {'fingerprint': 'unknown:interrupted'},
+                             'status': 'INCOMPLETE'})
+                continue
             rows.append(self.read(folder.name))
         return sorted(rows, key=lambda row: (row["started_at"], row["run_id"]))
 

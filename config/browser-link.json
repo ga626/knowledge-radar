@@ -9,5 +9,19 @@
   "distribution": "bundled_unpacked",
   "max_inflight": 2,
   "per_site_inflight": 1,
-  "extension_version": "0.3.20"
+  "extension_version": "0.3.20",
+  "contract_version": 1,
+  "build_id": "link-capabilities-20261117-1",
+  "required_operations": [
+    "search",
+    "detail",
+    "comments",
+    "transcript",
+    "login",
+    "attention",
+    "probe",
+    "auth_verify",
+    "release",
+    "release_login"
+  ]
 }

@@ -38,6 +38,20 @@ def test_transcript_crosses_real_host_and_returns_browser_result(peer):
     assert response.json()['request_executed'] is True
 
 
+def test_python_bridge_preserves_transcript_across_real_host(peer):
+    from runtime.browser_link import BrowserLink
+    bridge = BrowserLink(state_file=peer.path)
+    with ThreadPoolExecutor() as pool:
+        result = pool.submit(bridge._request, 'transcript',
+            {'url':'https://www.youtube.com/watch?v=sobPBztQTtU','language':'en'}, platform='youtube')
+        command = peer.next()
+        assert command['operation'] == 'transcript'
+        peer.result(command, data={'transcript':'controlled native peer body','completeness':'unverified'})
+        value = result.result(timeout=10)
+    assert value['ok'] and value['data']['transcript'] == 'controlled native peer body'
+    assert value['request_id'] == command['request_id']
+
+
 @pytest.mark.parametrize('observe,operation,expected', [('1','search',False), ('','search',False), ('1','probe',False)])
 def test_routine_work_ignores_stale_observe_environment(monkeypatch,tmp_path,observe,operation,expected):
     from runtime.browser_link import BrowserLink
@@ -118,6 +132,28 @@ def test_host_negotiates_protocol_and_does_not_leak_token_in_health(peer):
     health=peer.http('health').json()
     assert health['connected'] and health['protocol']==1 and health['extension_version']=='0.2.0'
     assert 'token' not in health
+
+
+def test_live_host_exposes_build_and_actual_extension_operations(peer, executable):
+    import hashlib
+    health = peer.http('health').json()
+    assert health['host_build'] == hashlib.sha256(executable.read_bytes()).hexdigest()
+    assert 'transcript' in health['host_operations']
+    assert health['extension_contract'] == 0  # 旧扩展未声明能力，不能伪装已支持。
+    assert health['extension_operations'] == []
+
+
+def test_new_extension_missing_operation_is_rejected_before_dispatch(executable, tmp_path):
+    item = Peer(executable, tmp_path/'host.json')
+    try:
+        item.send({'type':'hello','protocol':1,'profile_id':item.profile,'extension_version':'0.3.20',
+                   'contract_version':1,'build_id':'fixture-build','operations':['detail']})
+        assert item.next()['type'] == 'hello_ack'
+        reply = item.command('missing-transcript','youtube',operation='transcript').json()
+        assert reply['code'] == 'extension_operation_unavailable'
+        assert reply['request_executed'] is False and item.messages.empty()
+    finally:
+        item.close()
 
 
 def test_original_operation_receipt_is_read_only_and_does_not_replay(peer):

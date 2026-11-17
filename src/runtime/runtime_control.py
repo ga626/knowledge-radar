@@ -48,14 +48,14 @@ def _runtime_snapshot(client):
     descriptor, descriptor_observation = read_record(client.root/'owner.json')
     status = client.status()
     supervision = status.get('supervision') or raw
-    source_matches = not raw or raw.get('source_identity') == _identity()
+    source_matches = not raw or raw.get('source_identity') == getattr(client, 'runtime_source_identity', _identity)()
     supervisor_available = bool(source_matches and raw.get('supervisor_pid') and raw.get('process_identity') and
         process_identity(raw['supervisor_pid']) == raw['process_identity'])
     supervisor = {'status': 'available' if supervisor_available else 'unavailable' if raw else 'unknown',
                   'state': supervision.get('state'), 'event_at': raw.get('time')}
     state = 'unknown'
     owner_status = status.get('status')
-    if owner_status == 'incompatible' or not active_client() or not source_matches:
+    if owner_status == 'incompatible' or not getattr(client, 'is_active', active_client)() or not source_matches:
         state = 'blocked'
     elif owner_status == 'ready':
         state = 'ready'
@@ -65,7 +65,7 @@ def _runtime_snapshot(client):
         state = {'starting': 'recovering', 'retrying': 'recovering',
                  'circuit_open': 'circuit_open', 'stopped': 'stopped', 'blocked': 'blocked',
                  'unresponsive': 'unresponsive'}.get(raw.get('state'), 'unknown')
-    if state == 'unknown' and not supervisor_available and raw.get('source_identity') == _identity() and raw.get('state') in {'circuit_open', 'stopped', 'blocked'} and owner_status == 'unavailable':
+    if state == 'unknown' and not supervisor_available and raw.get('source_identity') == getattr(client, 'runtime_source_identity', _identity)() and raw.get('state') in {'circuit_open', 'stopped', 'blocked'} and owner_status == 'unavailable':
         state = raw['state']
     if observation in {'invalid', 'unreadable'} or descriptor_observation in {'invalid', 'unreadable'}:
         state = 'unknown'
@@ -84,7 +84,7 @@ def _runtime_snapshot(client):
     if type(maximum) is not int or type(failures) is not int:
         maximum, failures, state, next_action = 3, 0, 'unknown', 'await_user_decision'
     result = {'schema': 'kr-runtime-state/v1', 'state': state, 'observed_at': time.time(),
-              'source_identity': _identity(), 'generation': status.get('generation') or raw.get('generation'),
+              'source_identity': getattr(client, 'runtime_source_identity', _identity)(), 'generation': status.get('generation') or raw.get('generation'),
               'supervisor': supervisor, 'observations': {'supervision': observation, 'owner': descriptor_observation},
               'recovery': {'automatic_failures': failures, 'maximum_restarts': maximum,
                            'remaining_restarts': max(0, maximum-failures+int(raw.get('state') == 'retrying')),
@@ -93,7 +93,7 @@ def _runtime_snapshot(client):
                            'request_id': raw.get('recovery_request_id'), 'result': raw.get('recovery_result')},
               'last_failure': last_failure, 'incident_id': raw.get('incident_id'),
               'next_action': next_action, 'automatic_replay': False,
-              'manual_recovery_allowed': state in {'circuit_open', 'stopped', 'blocked'} and active_client() and source_matches and owner_status != 'incompatible' and raw.get('recovery_result') != 'unknown' or
+              'manual_recovery_allowed': state in {'circuit_open', 'stopped', 'blocked'} and getattr(client, 'is_active', active_client)() and source_matches and owner_status != 'incompatible' and raw.get('recovery_result') != 'unknown' or
                   (state == 'unknown' and observation == 'missing' and descriptor_observation == 'missing'),
               'warnings': ['supervisor_unavailable'] if state == 'ready' and not supervisor_available else []}
     return result
@@ -181,7 +181,7 @@ def request_recovery(client=None, *, request_id, expected_source, expected_incid
     if action not in {'recover_once', 'rearm_auto_recovery'}:
         raise ValueError('unknown_runtime_recovery_action')
     fingerprint = {'action': action, 'source_identity': expected_source, 'incident_id': expected_incident}
-    if expected_source != _identity() or not owner.active_client() or _maintenance(client):
+    if expected_source != getattr(client, 'runtime_source_identity', _identity)() or not getattr(client, 'is_active', owner.active_client)() or _maintenance(client):
         return {'status': 'rejected', 'reason': 'installation_changed_or_maintenance', 'automatic_replay': False}
     if os.environ.get('KR_CONSOLE_READ_ONLY') == '1' or os.environ.get('KR_CONSOLE_ROLE') == 'dev':
         return {'status': 'rejected', 'reason': 'preview_is_read_only', 'automatic_replay': False}
@@ -205,7 +205,7 @@ def request_recovery(client=None, *, request_id, expected_source, expected_incid
                 'coalesced': True, 'runtime': state}
     owner.private_owner_directory(client.root)
     with file_write_lock(client.root/'recovery-control'):
-        if not owner.active_client() or _maintenance(client):
+        if not getattr(client, 'is_active', owner.active_client)() or _maintenance(client):
             return {'status': 'rejected', 'reason': 'installation_changed_or_maintenance'}
         old, observation = read_record(path)
         if observation == 'ok':

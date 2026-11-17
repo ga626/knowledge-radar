@@ -117,8 +117,8 @@ def test_executed_test_node_binds_oracle_even_without_duplicate_dependency(tmp_p
 def test_incomplete_run_and_untrusted_history_fail_closed(tmp_path):
     root, suite, ledger = fixture_repo(tmp_path)
     ledger.begin()
-    with pytest.raises(ValueError, match="incomplete run"):
-        status(root, suite, ledger)
+    assert status(root, suite, ledger)['gate'] == 'INCOMPLETE'
+    assert ledger.history()[0]['counts'] == {'INCOMPLETE': 1}
 
 
 def test_no_automatic_baseline_promotion(tmp_path):

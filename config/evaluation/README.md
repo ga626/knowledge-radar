@@ -23,7 +23,7 @@
 
 所有全局参数放在子命令之前。真实回执必须有具体 `receipt_contract`；health v2/capabilities目录摘要绑定当前execution_owner，其余业务按各case的 `receipt_requirements` 和success增量核对响应合同，未核对前不得赋PASS。旧exec包装call_id标为 `codex_exec_wrapper`，带namespace的直接function_call标为 `codex_function_call`，都不是服务端自己生成的调用ID。仅接受可配对的单一原生分发；重复配对、混合脚本、截断输出、错工具/namespace、错身份、缺输入关联均拒绝。优先保留响应中的runtime.generated_at；没有该字段的目录摘要使用原始宿主输出记录timestamp，并显式记observation_time_source，不能使用导入时间。
 
-Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 owned-host 批次和 stdio 候选探针允许执行内核显式脱离该 Job，退出时仍按临时身份停止内核。产品若遭遇禁止脱离的 Job，明确返回 `execution_owner_job_breakaway_denied_start_from_user_terminal`，不能退回依附短命宿主。CI 离线批次硬期限为 1200 秒、owned-host 为 240 秒；保留逐例输出、最慢 20 项及 90 秒堆栈，超时仍阻断，延长期限不代表测试通过。
+Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 owned-host 批次和 stdio 候选探针允许执行内核显式脱离该 Job，退出时仍按临时身份停止内核。产品若遭遇禁止脱离的 Job，明确返回 `execution_owner_job_breakaway_denied_start_from_user_terminal`，不能退回依附短命宿主。CI 离线批次硬期限为 1200 秒；owned-host 取被选合同预算，最低 240 秒。保留逐例输出、最慢 20 项及 90 秒堆栈，超时仍阻断，延长期限不代表测试通过。
 
 两条轻量摘要的expected-target除source_commit/artifact_sha256外，还必须有runtime_identity（owner进程身份）、owner_generation、runtime_source_identity、contract_hash、tool_count、tool_names。源码/ZIP来自已核验安装回执，工具集合/指纹来自同一制品生成合同，owner来自同一观察窗口；不能从待判响应抄出“预期值”完成自证。完整集合与数量分别核验，不把当前工具数写死成永久常量。判据变更递增oracle_version，历史run保留原判据，不自动接受新baseline。
 
@@ -64,6 +64,18 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 历史固定材料可用同一 `quality-trial` 加 `diagnostic_only=true`、`profile=knowledge_reuse` 记录温态回顾。必须引用本题库已有case及其version、固定输入/答案/判定资料；不新建或激活题卡，结果强制NOT_SCORED并保留逐项FAIL/UNKNOWN/PASS及理由。同上下文审阅没有独立校准，不能用于宣称修复提升或正式环境通过。
 
-本地只跑受影响用例；PR运行底线与粗组，main以`--full`冻结完整离线结果并构建唯一候选。包检查从解包源码回读固定证据、交付临时本地/Vault；安装后只核身份、原生及受影响真实路径。失败在同一PR归拢修复；判据或实现改变只重验受影响证据，不新建跨SHA缓存。新MCP schema必须完整预检，宿主刷新后才赋原生PASS。
+本地定向；PR底线＋粗组，未知改动完整执行。CI复用同一选测结果拆为 offline、host、node，汇总保留 required check 名称；main仅在可信整批复用不成立时重跑完整离线，再独立构建、解包验证唯一候选。包检查回读固定证据并交付临时本地/Vault；安装后只核身份、原生及受影响真实路径，不把离线通过叫业务就绪。失败先在当前获准 PR 归拢修复，不自动另开 PR。
+
+## 轻量交付接缝
+
+`ci --group offline|host|node` 沿同一粗组选测，不另维护依赖图。offline 排除真实 Host/规模节点，host 单独跑这些节点，Node 不安装 Python 产品依赖。GitHub 用 **Re-run failed jobs** 保留成功 job；改代码后重新选测。所有组留退出码、日志、JUnit、耗时和实际源码字节身份；零收集、跳过、中断不能满足必需 PASS。没适用项明确 `applicable=false`。started 无 run.json 的历史显示 INCOMPLETE，其他完整结果仍可查询。
+
+PR→main只复用本仓库维护者 `codex/` 分支的明确成功 run/attempt 中的完整整批：Git 树、实际源字节（含 .gitattributes）、判据/执行器、Python/Node/Git/C# 编译器、依赖和 runner image 必须一致，附件逐个核哈希。只读 artifact 数据，不执行其脚本；fork、缺件、局部绿灯、未知环境均回到正常执行。不是任意跨 SHA 缓存，制包/解包验证不复用。首次修改此流程仍完整执行；CI线上分组耗时/复用命中需运行后观察，不能预报节省分钟数。
+
+每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage merge|activate|ready` 只读核现有证据；加 `--action pr|merge|install|publish` 检查当前批明确授权记录。这防误操作，不是凭据权限锁，也不判断报告语义。merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；缺失、陈旧、零收集和必需失败均阻断。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
+
+安装器 `plan --archive <ZIP> --receipt <JSON>` 共用 apply 校验，且不整理旧任务、不初始化数据、不停内核。将 stdout JSON保存后，`apply --prepared-plan <JSON>` 重核状态；变动报 stale。plan会在切换前列出客户端是否需刷新；明确接受后用 `--allow-host-refresh`，不会自动重启 Desktop。旧版有五分钟内、同 active 的 ready 回执且同数据合同，新 owner 内部就绪失败才自动恢复已写配置/插件/注册/启动项/active；外部429不触发回退。用户并发编辑保留并报冲突；旧 owner/宿主无法重验则明确报待确认，不承诺分布式原子事务。
+
+MCP沿现有薄转发：工具输入/输出/错误外壳、回执、IPC及显式兼容版本一致，才允许已初始化旧客户端跟随已核 active。owner 的严格源码/代际/认证不减，未知结果不重发。语义不兼容须递增 `runtime_lifecycle_contract.client_compatibility_version`；新 schema/客户端自身变化可能仍需刷新。首次迁入此改造仍要刷新一次，受控 stdio成功不代替 Desktop确认。Browser Link另校活 Host 构建SHA、扩展build_id/操作集合；OpenCLI按原兼容合同，不要求与主程序版本号相同。
 
 故障定位：同输入、同依赖/配置下旧实现过而新实现失败，才确认内部回归；新输入两版都失败只说明未支持该形态，不能据此判平台改版。认证/限流是响应分类，不是根因。回执先保留最后确认阶段、请求/组件身份与可用固定输入引用；缺输入或未知结果不自动重放，不记录Cookie/请求正文。

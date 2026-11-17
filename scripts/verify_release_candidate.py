@@ -163,6 +163,9 @@ def verify(candidate_dir: Path) -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    import time
+    from datetime import datetime, timezone
+    started_at, clock = datetime.now(timezone.utc).isoformat(), time.monotonic()
     parser = argparse.ArgumentParser(description="Verify a KnowledgeRadar release candidate.")
     parser.add_argument("--candidate-dir", required=True)
     parser.add_argument("--json", action="store_true")
@@ -171,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         result = verify(Path(args.candidate_dir).resolve())
     except (ImportError, OSError, RuntimeError, KeyError, TypeError, zipfile.BadZipFile, json.JSONDecodeError) as exc:
         result = {"status": "FAIL", "error": str(exc)}
+    result['timing'] = {'started_at':started_at, 'finished_at':datetime.now(timezone.utc).isoformat(), 'elapsed_s':time.monotonic()-clock}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "PASS" else 1
 
