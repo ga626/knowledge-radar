@@ -58,14 +58,17 @@ def test_queue_wait_does_not_consume_execution_budget(service, monkeypatch):
     import runtime.task_service as module
     calls = []
     monkeypatch.setattr(module._MONITORS, 'submit', lambda fn, *args: calls.append((fn, args)))
-    row = service.submit('fixture_echo', {'value': 'after queue'}, timeout_s=1,
+    # Keep simulated queue time above the execution budget without requiring
+    # real disk/worker initialization to finish within one second on CI.
+    row = service.submit('fixture_echo', {'value': 'after queue'}, timeout_s=10,
                          overall_timeout_s=120, queue_timeout_s=60)
     fn, args = calls.pop()
-    args[0]['submitted_at'] -= 5  # elapsed queue time, without a real sleep
+    args[0]['submitted_at'] -= 30  # elapsed queue time, without a real sleep
+    assert args[0]['submitted_at'] + args[0]['timeout_s'] < time.time()
     fn(*args)
     assert service.result(row['task_id'])['status'] == 'completed'
     timing = service.result(row['task_id'])['limits']
-    assert timing['execution_budget_s'] == 1
+    assert timing['execution_budget_s'] == 10
     assert timing['overall_deadline_at'] > timing['submitted_at']
 
 

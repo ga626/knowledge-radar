@@ -367,6 +367,27 @@ def test_new_unregistered_test_is_not_lost_in_full_fallback(tmp_path):
     assert path in ci.select_scope(root,suite,[path])['nodes']
 
 
+def test_product_scope_does_not_collect_private_governance_tests():
+    suite = load_suite(ROOT)
+    private = {'tests/test_codex_research_turn_evaluation.py', 'tests/test_delivery_profile.py',
+               'tests/test_research_preflight.py', 'tests/test_research_quality_check.py',
+               'tests/test_research_quality_questioner.py'}
+    for full in (False, True):
+        scope = ci.select_scope(ROOT, suite, ['tests/evaluation/test_durable_tasks.py'], full=full)
+        assert not private.intersection(scope['nodes'])
+        assert 'tests/evaluation/test_durable_tasks.py' in scope['nodes'] or 'tests/evaluation' in scope['nodes']
+
+
+def test_private_test_is_selected_when_its_implementation_is_available(tmp_path):
+    node = 'tests/test_private.py'
+    suite = {'cases': [], 'ci': {'full_nodes': [node],
+             'private_governance_tests': {node: 'scripts/private.py'}}}
+    assert node not in ci.select_scope(tmp_path, suite, [], full=True)['nodes']
+    (tmp_path/'scripts').mkdir()
+    (tmp_path/'scripts/private.py').write_text('available = True', encoding='utf-8')
+    assert node in ci.select_scope(tmp_path, suite, [], full=True)['nodes']
+
+
 def test_scope_preserves_unmapped_paths_and_unselected_cases_are_not_green(tmp_path, monkeypatch):
     root, suite, ledger = repository(tmp_path)
     (root/'tests').mkdir()
