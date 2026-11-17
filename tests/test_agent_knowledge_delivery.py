@@ -406,6 +406,14 @@ def test_generated_contract_is_independent_of_runtime_skill_bytes(tmp_path, monk
     from runtime import application
     (tmp_path/'config/codex-product').mkdir(parents=True)
     (tmp_path/'docs').mkdir()
+    # This is an authoring fixture; the manifest is projected into the portable
+    # contract at build time, never read from an installed runtime.
+    (tmp_path/'config/project-structure.manifest.json').write_text(json.dumps({
+        'runtime_lifecycle_contract': {
+            'client_compatibility_version': 1,
+            'data_compatibility_version': 1,
+        },
+    }), encoding='utf-8')
     monkeypatch.setattr(manual, 'ROOT', tmp_path)
     monkeypatch.setattr(application, 'research_workflow_identity', lambda: {'skill_sha256':'a'*64, 'host_loaded_skill':'unverified'})
     manual.generate()

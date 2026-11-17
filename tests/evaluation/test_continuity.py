@@ -434,12 +434,12 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
     assert workflow['jobs']['checks']['strategy']['fail-fast'] is False
     assert workflow['jobs']['checks']['strategy']['matrix']['group'] == ['offline', 'host', 'node']
     assert workflow['jobs']['test']['if'] == 'always()'
-    assert workflow['jobs']['test']['needs'] == 'checks'
-    assert workflow['jobs']['candidate']['needs'] == 'test'
-    assert "github.ref == 'refs/heads/main'" in workflow['jobs']['candidate']['if']
+    assert set(workflow['jobs']['test']['needs']) == {'checks','scope','candidate','consumer'}
+    assert set(workflow['jobs']['candidate']['needs']) == {'checks','scope'}
+    assert "github.ref == 'refs/heads/main'" in workflow['jobs']['deliver']['if']
     candidate_steps = workflow['jobs']['candidate']['steps']
     assert sum('build_product_lite_package.py --candidate' in step.get('run', '') for step in candidate_steps) == 1
-    assert any('scripts/private_candidate_delivery.py' in step.get('run', '') for step in candidate_steps)
+    assert any('scripts/private_candidate_delivery.py' in step.get('run', '') for step in workflow['jobs']['deliver']['steps'])
     assert any('verify_release_candidate.py' in step.get('run', '') for step in candidate_steps)
 
 

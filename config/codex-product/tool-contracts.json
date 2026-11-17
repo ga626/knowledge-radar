@@ -7,6 +7,10 @@
     },
     "tool": "get_capabilities"
   },
+  "runtime_lifecycle_contract": {
+    "client_compatibility_version": 1,
+    "data_compatibility_version": 1
+  },
   "schema": "kr-tool-catalog/v1",
   "tool_count": 27,
   "tools": [

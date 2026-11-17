@@ -42,6 +42,9 @@ def generate(check=False):
     data = catalog(full=True)
     # Runtime artifact identity is observed from installed bytes, not a portable schema.
     data.pop("research_workflow", None)
+    lifecycle = json.loads((ROOT/'config/project-structure.manifest.json').read_text(encoding='utf-8'))['runtime_lifecycle_contract']
+    data['runtime_lifecycle_contract'] = {key: lifecycle[key] for key in
+        ('client_compatibility_version', 'data_compatibility_version')}
     base = ROOT / 'config/codex-product'
     artifacts = {base / 'tool-contracts.json': json.dumps(data, ensure_ascii=False, sort_keys=True, indent=2) + '\n',
                  base / 'TOOL_REFERENCE.md': render_manual(data),

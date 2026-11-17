@@ -29,6 +29,26 @@ def _load():
 installer = _load()
 
 
+def test_install_plan_size_is_not_changed_by_interpreter_cache(tmp_path):
+    package = package_fixture(tmp_path, '0.1.0')
+    before = installer.build_plan(package, tmp_path/'install', tmp_path/'data', Path(sys.executable))
+    cache = package/'src/__pycache__'
+    cache.mkdir()
+    (cache/'server.cpython-312.pyc').write_bytes(b'incidental cache')
+    after = installer.build_plan(package, tmp_path/'install', tmp_path/'data', Path(sys.executable))
+    assert before['package_bytes'] == after['package_bytes']
+
+
+def test_handoff_plan_does_not_cache_candidate_helper(tmp_path, monkeypatch):
+    package = package_fixture(tmp_path, '0.1.0')
+    target = package/'src/runtime/client_contract.py'
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(ROOT/'src/runtime/client_contract.py', target)
+    monkeypatch.setattr(installer, 'PACKAGE_ROOT', package)
+    installer.client_handoff_plan({'program_root':str(package)}, package)
+    assert not list(package.rglob('*.pyc'))
+
+
 def test_bootstrap_failure_is_volatile_but_recovery_history_is_not():
     assert installer._owner_ephemeral(Path('state/execution_owner/bootstrap-failure.json'))
     assert not installer._owner_ephemeral(Path('state/execution_owner/recovery_requests/past.json'))
@@ -288,6 +308,10 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv('CODEX_HOME', str(tmp_path/'isolated-codex'))
     monkeypatch.setenv('LOCALAPPDATA', str(tmp_path/'isolated-local'))
     monkeypatch.setenv('APPDATA', str(tmp_path/'isolated-roaming'))
+    monkeypatch.setenv('HOME', str(tmp_path/'isolated-home'))
+    monkeypatch.setenv('USERPROFILE', str(tmp_path/'isolated-home'))
+    for key in ('KR_DATA_ROOT','KR_STATE_DIR','KR_OWNER_ROOT','KR_EVIDENCE_ROOT'):
+        monkeypatch.setenv(key, str(tmp_path/'isolated-state'/key))
     def fake_runtime(program_root: Path, install_root: Path, version: str, base_python: Path) -> Path:
         executable = installer.runtime_python(install_root / "runtime" / version)
         executable.parent.mkdir(parents=True, exist_ok=True)
@@ -302,6 +326,43 @@ def isolated_runtime(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(installer, 'write_runtime_autostart', lambda *a, **k: None, raising=False)
     monkeypatch.setattr(installer, 'settle_terminal_recording_conflicts', lambda *a: [], raising=False)
     monkeypatch.setattr(installer, 'scheduled_task_snapshot', lambda: None, raising=False)
+
+
+def test_rollback_failure_restores_same_managed_extension_inventory(tmp_path, monkeypatch):
+    install, data = tmp_path/'install', tmp_path/'data'
+    monkeypatch.setattr(installer, '_prepare_bundled_component', lambda *a: {'status':'prepared'})
+    for index in (0, 1):
+        package = package_fixture(tmp_path/str(index), '0.1.'+str(index))
+        (package/'config/browser-components.json').write_text('{}')
+        archive, receipt = artifact_fixture(tmp_path/str(index), package)
+        installer.apply_install(package, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    previous = json.loads((install/'backup/active.previous.json').read_text())
+    loaded = install/'components/extensions/browser_link/loaded/background.js'
+    loaded.parent.mkdir(parents=True, exist_ok=True)
+    loaded.write_text('current-working-component')
+    def prepare(*args):
+        loaded.write_text('partly-restored-old-component')
+        return {'status':'prepared'}
+    monkeypatch.setattr(installer, '_prepare_bundled_component', prepare)
+    monkeypatch.setattr(installer, 'copy_plugin', lambda *a: (_ for _ in ()).throw(RuntimeError('mid-rollback')))
+    before = installer._activation_files(install, data)
+    with pytest.raises(RuntimeError, match='mid-rollback'):
+        installer.rollback(install, Path(sys.executable))
+    assert installer._activation_files(install, data) == before
+
+
+def test_managed_recovery_preserves_concurrent_extension_edit(tmp_path):
+    install, data = tmp_path/'install', tmp_path/'data'
+    loaded = install/'components/extensions/opencli/loaded/a.js'
+    loaded.parent.mkdir(parents=True)
+    loaded.write_text('before')
+    recovery=installer._ActivationRecovery(install, data, None)
+    with recovery.step():
+        loaded.write_text('installer')
+    loaded.write_text('user-concurrent-edit')
+    with pytest.raises(RuntimeError, match='conflict_preserved'):
+        recovery.restore()
+    assert loaded.read_text() == 'user-concurrent-edit'
 
 
 def test_standalone_installer_tests_have_private_user_environment(tmp_path):
@@ -597,6 +658,36 @@ def test_rollback_restores_previous_active_without_deleting_data(tmp_path: Path,
     assert installer.load_active(install_root)["version"] == "0.1.0"
     assert (data_root / "config" / "runtime.env").read_text(encoding="utf-8") == "EXA_API_KEY=private\n"
     assert "console_product.py" in (install_root / "configure.cmd").read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize('fail_component', [False, True])
+def test_rollback_restores_bundled_components_before_switching_active(tmp_path, monkeypatch, fail_component):
+    monkeypatch.setenv('CODEX_HOME', str(tmp_path/'codex'))
+    install, data = tmp_path/'install', tmp_path/'data'
+    monkeypatch.setattr(installer, '_prepare_bundled_component', lambda *a: {'status':'prepared'})
+    for version in ('0.1.0', '0.2.0'):
+        package = package_fixture(tmp_path, version)
+        (package/'config/browser-components.json').write_text('{}', encoding='utf-8')
+        archive, receipt = artifact_fixture(tmp_path, package)
+        installer.apply_install(package, install, data, Path(sys.executable), channel='stable', archive=archive, receipt_path=receipt)
+    current = installer.load_active(install)
+    previous = json.loads((install/'backup/active.previous.json').read_text(encoding='utf-8'))
+    calls = []
+    def prepare(program, root, data_root, component):
+        assert installer.load_active(install)['installation_id'] == current['installation_id']
+        calls.append((program, root, data_root, component))
+        return {'status':'conflict' if fail_component else 'prepared'}
+    monkeypatch.setattr(installer, '_prepare_bundled_component', prepare)
+    if fail_component:
+        with pytest.raises(RuntimeError, match='component_preparation_failed'):
+            installer.rollback(install, Path(sys.executable))
+        assert installer.load_active(install) == current
+    else:
+        result = installer.rollback(install, Path(sys.executable))
+        assert [row[3] for row in calls] == ['browser_link', 'opencli']
+        assert all(row[:3] == (Path(previous['program_root']), install, data) for row in calls)
+        assert result['browser_components']['browser_link']['status'] == 'prepared'
+        assert installer.load_active(install)['installation_id'] == previous['installation_id']
 
 
 def test_consecutive_main_packages_same_version_keep_distinct_identity(tmp_path, monkeypatch):

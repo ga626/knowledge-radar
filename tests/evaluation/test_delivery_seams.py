@@ -5,6 +5,18 @@ from scripts.kr_eval import ci
 from scripts.kr_eval.core import Ledger, snapshot
 
 
+def test_forwarding_contract_uses_portable_contract_without_development_manifest(tmp_path):
+    from pathlib import Path
+    from runtime.client_contract import forwarding_contract
+    root = Path(__file__).resolve().parents[2]
+    data = json.loads((root/'config/codex-product/tool-contracts.json').read_text(encoding='utf-8'))
+    data['runtime_lifecycle_contract'] = {'client_compatibility_version': 1, 'data_compatibility_version': 1}
+    contract = tmp_path/'config/codex-product/tool-contracts.json'
+    contract.parent.mkdir(parents=True)
+    contract.write_text(json.dumps(data), encoding='utf-8')
+    assert len(forwarding_contract(tmp_path)) == 64
+
+
 def test_full_scope_keeps_all_real_host_seams_without_changed_test_file():
     from pathlib import Path
     from scripts.kr_eval.core import load_suite
@@ -85,3 +97,34 @@ def test_node_executor_distinguishes_skipped_tests_from_pass(tmp_path):
     folder = tmp_path/'result'
     folder.mkdir()
     assert ci._node_tests(tmp_path, ['test_skip.mjs'], folder)['verdict']=='SKIPPED'
+def test_artifact_consumer_is_required_for_shared_boundary_and_has_no_checkout():
+    import yaml
+    from pathlib import Path
+    from scripts.kr_eval.ci import requires_artifact_runtime
+    assert requires_artifact_runtime(['browser_link/host/BrowserLinkHost.cs'])
+    assert requires_artifact_runtime(['src/runtime/client_contract.py'])
+    assert requires_artifact_runtime(None)
+    assert not requires_artifact_runtime(['docs/example.md'])
+    assert not requires_artifact_runtime(['src/adapters/example_parser.py'])
+    workflow = yaml.safe_load((Path(__file__).resolve().parents[2]/'.github/workflows/ci.yml').read_text(encoding='utf-8'))
+    consumer = workflow['jobs']['consumer']
+    assert not any('checkout' in s.get('uses','') for s in consumer['steps'])
+    assert '--consumer-only' in str(consumer)
+    assert 'consumer' in workflow['jobs']['test']['needs']
+    assert 'test' in workflow['jobs']['deliver']['needs']
+    aggregate = next(s['run'] for s in workflow['jobs']['test']['steps'] if s.get('name') == 'Assemble required evidence')
+    assert aggregate.splitlines()[1].strip() == 'if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }'
+    build_steps = workflow['jobs']['candidate']['steps']
+    upload = next(s for s in build_steps if 'upload-artifact' in s.get('uses',''))
+    assert upload['with']['path'] == '${{ steps.build.outputs.candidate }}'
+    build = next(s for s in build_steps if s.get('id') == 'build')
+    assert 'GITHUB_OUTPUT' in build['run']
+
+
+def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    def git(*args, **kwargs):
+        assert kwargs.get('encoding') == 'utf-8'
+        return SimpleNamespace(returncode=0,stdout='docs/脚本清单.md\n')
+    monkeypatch.setattr(ci.subprocess,'run',git)
+    assert ci.changed_paths(tmp_path,'base') == ['docs/脚本清单.md']
