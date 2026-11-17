@@ -21,7 +21,7 @@ internal static class BrowserLinkHost
     private static readonly ConcurrentDictionary<string, long> CancelledTasks = new ConcurrentDictionary<string, long>();
     private static readonly ConcurrentDictionary<string, long> Seen = new ConcurrentDictionary<string, long>();
     private static readonly ConcurrentDictionary<string, Dictionary<string, object>> Receipts = new ConcurrentDictionary<string, Dictionary<string, object>>();
-    private static readonly HashSet<string> Operations = new HashSet<string> { "search", "detail", "comments", "login", "attention", "probe", "auth_verify", "release", "release_login" };
+    private static readonly HashSet<string> Operations = new HashSet<string> { "search", "detail", "comments", "transcript", "login", "attention", "probe", "auth_verify", "release", "release_login" };
     private static HttpListener Listener;
     private static int Port;
     private static volatile bool Connected, Draining;

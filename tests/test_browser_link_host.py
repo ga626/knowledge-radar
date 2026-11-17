@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import struct
 import subprocess
 import threading
@@ -14,6 +15,27 @@ import httpx
 import pytest
 
 ROOT=Path(__file__).resolve().parents[1]
+
+
+def test_host_and_extension_operation_contracts_agree():
+    host=(ROOT/'browser_link/host/BrowserLinkHost.cs').read_text(encoding='utf-8')
+    extension=(ROOT/'browser_link/extension/background.js').read_text(encoding='utf-8')
+    host_ops=set(re.findall(r'"([a-z_]+)"', re.search(r'Operations = new HashSet<string> \{([^}]+)\}',host)[1]))
+    extension_ops=set(re.findall(r"'([a-z_]+)'", re.search(r'const OPS=new Set\(\[([^]]+)\]\)',extension)[1]))
+    assert host_ops==extension_ops
+
+
+def test_transcript_crosses_real_host_and_returns_browser_result(peer):
+    payload={'url':'https://www.youtube.com/watch?v=sobPBztQTtU','language':'en'}
+    with ThreadPoolExecutor() as pool:
+        future=pool.submit(peer.command,'youtube-transcript','youtube',operation='transcript',payload=payload)
+        command=peer.next()
+        assert command['operation']=='transcript' and command['payload']==payload
+        peer.result(command,data={'transcript':'fixture transcript','completeness':'unverified'},request_executed=True)
+        response=future.result()
+    assert response.status_code==200
+    assert response.json()['data']['transcript']=='fixture transcript'
+    assert response.json()['request_executed'] is True
 
 
 @pytest.mark.parametrize('observe,operation,expected', [('1','search',False), ('','search',False), ('1','probe',False)])
