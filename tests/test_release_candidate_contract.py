@@ -21,6 +21,29 @@ builder = _load("build_product_lite_package")
 verifier = _load("verify_release_candidate")
 
 
+def test_verifier_rejects_receipt_from_a_different_source(tmp_path):
+    import zipfile
+
+    root = tmp_path / "KnowledgeRadar"
+    for name in verifier.REQUIRED:
+        file = root / name
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("fixture", encoding="utf-8")
+    (root / "package-provenance.json").write_text(json.dumps({
+        "source_commit": "a" * 40, "source_dirty": False,
+    }), encoding="utf-8")
+    archive = tmp_path / "KnowledgeRadar.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for file in root.rglob("*"):
+            if file.is_file():
+                bundle.write(file, file.relative_to(tmp_path))
+    (tmp_path / "candidate-receipt.json").write_text(json.dumps({
+        "source_commit": "b" * 40, "source_dirty": False, "archive_sha256": verifier.sha256_file(archive),
+    }), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="different source"):
+        verifier.verify(tmp_path, content_only=True)
+
+
 @pytest.mark.parametrize('fault', ['from pathlib import Path; Path("not-shipped-required-file").read_text()',
                                   'import dependency_not_shipped_in_product'])
 def test_ready_owner_does_not_hide_broken_real_mcp_request(tmp_path, fault):

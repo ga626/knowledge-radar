@@ -85,7 +85,10 @@ def requires_artifact_runtime(paths):
         'src/server.py', 'pyproject.toml', 'scripts/product_install.py',
         'scripts/verify_release_candidate.py', 'scripts/build_product_lite_package.py',
         'config/project-structure.manifest.json', 'config/package-manifest.product-lite.json',
-        'config/runtime-win-py312.lock', 'config/runtime-artifacts.json', '.github/workflows/ci.yml'}
+        'config/runtime-win-py312.lock', 'config/runtime-artifacts.json', 'config/browser-components.json',
+        'config/browser-link.json', 'config/storage-ownership.manifest.json', 'scripts/browser_link_install.py',
+        'scripts/kr_opencli.py', 'scripts/kr_mcp_continuity.py', 'scripts/product_cli_launcher.py',
+        'scripts/product_console_launcher.py', 'scripts/setup_codex_product.py', '.github/workflows/ci.yml'}
         for p in paths)
 
 

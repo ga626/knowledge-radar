@@ -7,10 +7,10 @@ python scripts\build_product_lite_package.py --candidate
 python scripts\verify_release_candidate.py --candidate-dir release\candidates\v<版本>-<完整提交 SHA>
 ```
 
-候选目录包含同一份 `KnowledgeRadar.zip` 与 `candidate-receipt.json`。收据绑定源码提交、归档 SHA-256、包清单与 SBOM 内容清单；CI构建另外绑定repository/run_id/run_attempt/event/ref。PR只作包清单预检；main完整离线通过后构建一次候选。验证从解包源码在隔离临时状态执行 MCP `initialize`、`notifications/initialized` 和完整 `tools/list` 合同比对；并执行固定证据回读与临时本地/Vault双端交付；不读取、迁移或写入用户认证或Codex配置，也不证明实际宿主已经重载。
+候选目录包含 `KnowledgeRadar.zip` 与 `candidate-receipt.json`，绑定源码提交、归档 SHA-256、包清单、SBOM 和生产 run/attempt。公开 PR 对公共运行边界变更并行打临时样本，在 checkout 外以锁定运行时启动 owner、读回固定证据、验临时双端交付和退出；只留脱敏诊断，不上传 ZIP。合并不自动制包。
 
-公开Actions只保留评测证据，不上传内部安装ZIP。非纯文档main CI验包后，向核实为仅本人可访问的 `ga626/knowledge-radar-internal-builds` 私有仓库交付。内部tag为 `internal-v<version>-r<run_id>.<run_attempt>`；先建草稿、上传ZIP/原始receipt及 `KnowledgeRadar-<version>-SHA256SUMS.txt`，核验远端摘要后才发布私有prerelease。同构建相同资产可恢复；不同字节或已发布却缺附件则拒绝覆盖。旧experiment-SHA构建保留历史身份。
+确需安装时，先核 `ga626/knowledge-radar-internal-builds` 仅本人可访问，再用其 `Private KR candidate` workflow 指定已合并的当前产品 main 完整 SHA 和成功 PR run。私有 runner 制包一次；无 checkout 的消费 job 按生产制品 ID 取原包，在隔离环境复验并生成安装交接回执。消费者重试仍用原生产 attempt；不靠重打包处理传输失败。只下载同时有成功交接和匹配摘要的原包；保留本地已验原包用于回退，私有 Actions 临时留存不当长期仓库。早期私有 tag 保留历史身份，不再作日用交付入口。
 
-内部交付不自动安装或激活。下载者先核源码、run/attempt、ZIP/receipt摘要，再使用现有安装器的maintainer-main渠道；安装回读、原生双摘要和业务测试分别记录。正式公开须获针对该制品的明确认可，提升同一ZIP/原始receipt，公开下载后再次核SHA-256，不重建。
+内部交付不自动激活。核源码、制品 ID、生产 run/attempt、ZIP 与安装交接回执后，用现有安装器的 `maintainer-main` 渠道。安装回读、原生双摘要和受影响业务分别记录。正式公开须针对同一已验 ZIP 明确批准，公开下载后再核 SHA-256。
 
 激活前先验同包身份、所选组件及注册所有权；准备冲突即停止，不切active或写Codex配置。旧制品、数据目录和回滚记录保留；切回旧程序不等于撤销数据迁移。激活后核真实运行身份、原生双摘要及本次受影响的真实边界，不重跑全部离线或大考。

@@ -70,7 +70,7 @@ Windows 隔离批次使用自己创建的嵌套 Job 回收普通子进程；仅 
 
 `ci --group offline|host|node` 沿同一粗组选测，不另维护依赖图。offline 排除真实 Host/规模节点，host 单独跑这些节点，Node 不安装 Python 产品依赖。GitHub 用 **Re-run failed jobs** 保留成功 job；改代码后重新选测。所有组留退出码、日志、JUnit、耗时和实际源码字节身份；零收集、跳过、中断不能满足必需 PASS。没适用项明确 `applicable=false`。started 无 run.json 的历史显示 INCOMPLETE，其他完整结果仍可查询。
 
-PR→main只复用本仓库维护者 `codex/` 分支的明确成功 run/attempt 中的完整整批：Git 树、实际源字节（含 .gitattributes）、判据/执行器、Python/Node/Git/C# 编译器、依赖和 runner image 必须一致，附件逐个核哈希。只读 artifact 数据，不执行其脚本；fork、缺件、局部绿灯、未知环境均回到正常执行。不是任意跨 SHA 缓存，制包/解包验证不复用。首次修改此流程仍完整执行；CI线上分组耗时/复用命中需运行后观察，不能预报节省分钟数。
+受保护 PR 汇总门禁负责源码和受影响接缝；合并不重跑完整套件或自动制包。确需安装时，私有工作流绑定成功 PR 的已合并源码，只为正式原包实测，不搬运公开 PR 包；未覆盖、源树或判据改变时补足对应验证。
 
 每批用已有 `.preflight.json` 写目标、candidate、requirements（id/stage/expected/receipt/sha256/verdict_path/identity_paths/count_path）、unresolved_internal_blockers、authorization（本批ID、动作、用户消息引用）。治理根 `scripts/kr_closeout_router.py --check <文件> --stage pr|merge|activate|ready` 只读核现有证据；远端操作必须加 `--action pr|merge|install|publish` 检查当前批明确授权记录；建 PR 后把编号和 OPEN 状态登记到 authorization，已消耗创建授权不得续开。这防误操作，不是凭据权限锁，也不判断报告语义。pr/merge项只绑定源码，activate/ready项绑定当时最终源码/ZIP；pr只核本地必需项及当前授权；云端CI在merge到期，不能让建PR依赖尚未发生的CI。缺失、陈旧、零收集和必需失败均阻断。安装型 preflight 标 `kind=installable`，activate/ready 必需 `artifact-runtime` 回执：锁定运行时、真实 owner、带代际的 MCP 正文回读、临时双端归档、正常退出和包内导入均须为真，且 ZIP/源码相符，顶层 PASS 不替代这些事实。安装结果只能记 pending_native_confirmation；ready 仍需本批实际结果，用户验收另外记。
 
@@ -82,6 +82,6 @@ MCP沿现有薄转发：工具输入/输出/错误外壳、回执、IPC及显式
 
 ## 制品使用者检查
 
-公共运行边界（runtime/MCP、包/安装、Host/扩展）命中 `requires_artifact_runtime()` 后，PR 用实际打包规则产临时 ZIP；它不进入正式交付。main 仅产一个候选。构建侧 `verify_release_candidate.py --content-only` 核私密内容、清单、锁；consumer job 不 checkout、不 editable 安装，只下载原 ZIP、同源 stdlib 控制脚本，执行 `--consumer-only --output consumer-verification.json`。控制脚本调用包内安装器、离线 wheelhouse 创建正式 Python，启动真实 owner，通过 stdio 回读固定证据并核执行回执后退出；原包和临时双端归档不依赖开发 manifest。此结果是 required check 的一部分，main 同原包通过后才私有上传。普通解析/文案改动不跑 PR 制品样本，main 可安装包仍必验。
+公共运行边界变更时，PR 临时 ZIP 和源码检查并行；在 checkout 外从包构造隔离运行时，公开只留诊断。正式候选走私有 workflow：构建侧核内容，消费 job 不 checkout，按生产制品 ID 取同一 ZIP，运行 `--consumer-only`。用锁定运行时冷启动 owner，经 stdio 实读固定证据，另验临时双端归档及退出。合并门禁和正式原包回执不能互相替代；生产 attempt 与消费 attempt 分别保存。
 
 激活与 rollback 共用 `_activation_files` / `_ActivationRecovery`：受管配置、plugin、Host 注册、扩展 loaded、启动项与 active。失败恢复只撤回自己的写入，保留并发修改；账号库和个人资料不入快照。磁盘恢复不等于 Chrome 已加载，也不等于 Desktop 已刷新。持续客户端 A→B→A 用真实 owner 验兼容，外部任务/注册入口仍在单测中显式隔离。

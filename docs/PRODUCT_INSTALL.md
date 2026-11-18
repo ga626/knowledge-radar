@@ -16,7 +16,7 @@ python scripts\product_install.py status
 
 配置、任务、归档授权、组件准备回执和浏览器绑定均在所选数据根；外部 Obsidian 库保持原位置。`active.json` 是安装根中的单一定位指针，程序文件与用户状态隔离。`apply` 需要本机可用的 Python 3.12：先核验 ZIP/回执、复制程序、准备版本化运行时并预检；成功后创建缺失模板、维护唯一 Codex MCP block。运行时准备失败不会激活新版本。
 
-main 的 CI 实验包仅交付到已核实仅本人可访问的私有仓库，公开 Actions 不上传实验安装包；缺配置或权限无法核实时停止交付。只有用户针对拟发布制品明确说“可以公开发布”才可提升同一包为 stable，普通用户此前继续获得上一正式版。维护者只能为已验证的 `maintainer-main` 制品执行 `apply --channel maintainer-main`；普通用户使用 stable Release。两者任一时刻只会由 `active.json` 指向一个运行版本。若新版本无法工作，`rollback` 恢复先前 active 指针和 MCP block，不删除数据：
+需要安装时，由仅本人可访问的私有 CI 从已合并的产品 main 按需构建、验证并交付；公开 Actions 不上传内部安装包。维护者只对通过验证的原包执行 `apply --channel maintainer-main`；普通用户使用 stable Release。公开发布须针对该已验包明确批准。`active.json` 只指向一个运行版本；回退须核数据兼容、受管组件和真实宿主调用，不删除数据：
 
 ```bat
 python scripts\product_install.py rollback
