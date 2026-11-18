@@ -98,6 +98,7 @@ jobs:
       - name: Prepare hash-locked offline runtime
         run: |
           python -m pip download --only-binary=:all: --require-hashes -r config/runtime-win-py312.lock -d local/runtime-wheelhouse
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c "import hashlib,json,pathlib; r=pathlib.Path('.'); m=json.loads((r/'config/runtime-artifacts.json').read_text(encoding='utf-8')); assert all((p:=r/'local/runtime-wheelhouse'/x['file']).is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256'] for x in m['wheels']), 'frozen runtime wheel mismatch'"
       - name: Consume temporary package outside checkout
         run: |
@@ -105,12 +106,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $candidate = (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
           if (-not $candidate) { throw 'Temporary candidate not found' }
+          python scripts/verify_release_candidate.py --candidate-dir $candidate --content-only
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $sample = Join-Path $env:RUNNER_TEMP 'kr-pr-sample'
           Move-Item -LiteralPath $candidate -Destination $sample
           Copy-Item scripts/verify_release_candidate.py "$sample/verify_release_candidate.py"
           Push-Location -LiteralPath $sample
           try {
-            python verify_release_candidate.py --candidate-dir . --output "$env:RUNNER_TEMP/consumer-verification.json"
+            python verify_release_candidate.py --candidate-dir . --consumer-only --output "$env:RUNNER_TEMP/consumer-verification.json"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           } finally { Pop-Location }
       - name: Retain diagnostic result only

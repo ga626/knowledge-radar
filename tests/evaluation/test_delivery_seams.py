@@ -114,8 +114,8 @@ def test_public_pr_runs_shared_boundary_without_uploading_installable_package():
     assert 'candidate' in jobs['test']['needs']
     assert 'deliver' not in jobs
     run = next(s['run'] for s in candidate['steps'] if 'Consume temporary' in s.get('name', ''))
-    assert 'Push-Location -LiteralPath $sample' in run
-    assert 'python verify_release_candidate.py --candidate-dir .' in run
+    assert run.index('--content-only') < run.index('Push-Location -LiteralPath $sample') < run.index('--consumer-only')
+    assert 'python verify_release_candidate.py --candidate-dir . --consumer-only' in run
     uploads = [s['with']['path'] for s in candidate['steps'] if 'upload-artifact' in s.get('uses','')]
     assert uploads == ['${{ runner.temp }}/consumer-verification.json']
 
