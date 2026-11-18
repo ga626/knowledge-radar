@@ -1,11 +1,8 @@
 name: CI
 on:
   pull_request:
-  push:
-    branches: [main]
 permissions:
   contents: read
-  actions: read
 env:
   PYTHONUTF8: '1'
 concurrency:
@@ -37,25 +34,24 @@ jobs:
       - name: Install Python tools for Python groups
         if: matrix.group != 'node'
         run: python -m pip install -e . pytest PyYAML
-      - name: Reuse only a trusted complete matching batch
-        id: reuse
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python -m scripts.kr_eval.ci reuse --group ${{ matrix.group }} --folder local/evaluation
       - name: Check source and package plan
-        if: matrix.group == 'offline' && steps.reuse.outputs.reused != 'true'
+        if: matrix.group == 'offline'
         run: |
           python -m compileall -q src
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python scripts/build_product_lite_package.py --dry-run
       - name: Run selected Python boundary
-        if: matrix.group != 'node' && steps.reuse.outputs.reused != 'true'
-        run: python scripts/kr_evaluate.py --store local/evaluation ci --group ${{ matrix.group }} --changed-from "${{ env.KR_EVAL_BASE }}" ${{ github.event_name == 'push' && '--full' || '' }}
+        if: matrix.group != 'node'
+        run: python scripts/kr_evaluate.py --store local/evaluation ci --group ${{ matrix.group }} --changed-from "${{ env.KR_EVAL_BASE }}"
       - name: Check console and selected Node tests
-        if: matrix.group == 'node' && steps.reuse.outputs.reused != 'true'
+        if: matrix.group == 'node'
         run: |
           node scripts/build_console.mjs --check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check src/onboarding/static/console.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           node --check src/onboarding/static/research_workspace.js
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m scripts.kr_eval.ci node --folder local/evaluation
       - name: Upload logs even on failure
         if: always()
@@ -67,7 +63,6 @@ jobs:
   scope:
     runs-on: windows-latest
     outputs:
-      build: ${{ steps.scope.outputs.build }}
       runtime: ${{ steps.scope.outputs.runtime }}
     steps:
       - uses: actions/checkout@v7
@@ -78,10 +73,10 @@ jobs:
         env:
           KR_EVAL_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
-          python -c "import os,pathlib; from scripts.kr_eval.ci import docs_only_change,changed_paths,requires_artifact_runtime; r=pathlib.Path.cwd(); b=os.environ.get('KR_EVAL_BASE'); build=not docs_only_change(r,b); runtime=build and (os.environ.get('GITHUB_EVENT_NAME')=='push' or requires_artifact_runtime(changed_paths(r,b))); open(os.environ['GITHUB_OUTPUT'],'a').write('build='+str(build).lower()+'\nruntime='+str(runtime).lower()+'\n')"
+          python -c "import os,pathlib; from scripts.kr_eval.ci import docs_only_change,changed_paths,requires_artifact_runtime; r=pathlib.Path.cwd(); b=os.environ.get('KR_EVAL_BASE'); runtime=not docs_only_change(r,b) and requires_artifact_runtime(changed_paths(r,b)); open(os.environ['GITHUB_OUTPUT'],'a').write('runtime='+str(runtime).lower()+'\n')"
   candidate:
-    name: Build one artifact
-    needs: [checks, scope]
+    name: Run temporary product package
+    needs: scope
     if: needs.scope.outputs.runtime == 'true'
     runs-on: windows-latest
     timeout-minutes: 25
@@ -103,47 +98,35 @@ jobs:
       - name: Prepare hash-locked offline runtime
         run: |
           python -m pip download --only-binary=:all: --require-hashes -r config/runtime-win-py312.lock -d local/runtime-wheelhouse
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -c "import hashlib,json,pathlib; r=pathlib.Path('.'); m=json.loads((r/'config/runtime-artifacts.json').read_text(encoding='utf-8')); assert all((p:=r/'local/runtime-wheelhouse'/x['file']).is_file() and hashlib.sha256(p.read_bytes()).hexdigest()==x['sha256'] for x in m['wheels']), 'frozen runtime wheel mismatch'"
-      - name: Build immutable candidate or PR-only sample
-        id: build
+      - name: Consume temporary package outside checkout
         run: |
           python scripts/build_product_lite_package.py --candidate
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $candidate = (Get-ChildItem release/candidates -Directory | Where-Object Name -Like "v*-${{ github.sha }}" | Select-Object -First 1).FullName
-          python scripts/verify_release_candidate.py --candidate-dir $candidate --content-only --output "$candidate/content-verification.json"
+          if (-not $candidate) { throw 'Temporary candidate not found' }
+          python scripts/verify_release_candidate.py --candidate-dir $candidate --content-only
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          Copy-Item scripts/verify_release_candidate.py "$candidate/verify_release_candidate.py"
-          "candidate=$candidate" >> $env:GITHUB_OUTPUT
-      - uses: actions/upload-artifact@v7
-        with:
-          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ steps.build.outputs.candidate }}
-          if-no-files-found: error
-  consumer:
-    name: Run artifact without checkout
-    needs: candidate
-    runs-on: windows-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - uses: actions/download-artifact@v8
-        with:
-          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - name: Cold owner and actual MCP evidence request in locked runtime
-        run: python candidate/verify_release_candidate.py --candidate-dir candidate --consumer-only --output consumer-verification.json
-      - uses: actions/upload-artifact@v7
+          $sample = Join-Path $env:RUNNER_TEMP 'kr-pr-sample'
+          Move-Item -LiteralPath $candidate -Destination $sample
+          Copy-Item scripts/verify_release_candidate.py "$sample/verify_release_candidate.py"
+          Push-Location -LiteralPath $sample
+          try {
+            python verify_release_candidate.py --candidate-dir . --consumer-only --output "$env:RUNNER_TEMP/consumer-verification.json"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally { Pop-Location }
+      - name: Retain diagnostic result only
+        uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: consumer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: consumer-verification.json
-          if-no-files-found: error
+          name: pr-runtime-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/consumer-verification.json
+          if-no-files-found: ignore
   test:
     name: Python 3.12 / Windows
     if: always()
-    needs: [checks, scope, candidate, consumer]
+    needs: [checks, scope, candidate]
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v7
@@ -155,7 +138,7 @@ jobs:
         env:
           KR_CHECK_RESULT: ${{ needs.checks.result }}
           KR_CONSUMER_REQUIRED: ${{ needs.scope.outputs.runtime }}
-          KR_CONSUMER_RESULT: ${{ needs.consumer.result }}
+          KR_CONSUMER_RESULT: ${{ needs.candidate.result }}
           KR_SCOPE_RESULT: ${{ needs.scope.result }}
         run: |
           python -c "import os; assert os.environ['KR_SCOPE_RESULT']=='success'; assert os.environ['KR_CONSUMER_REQUIRED']=='false' or os.environ['KR_CONSUMER_RESULT']=='success', 'mandatory artifact runtime did not pass'"
@@ -168,30 +151,3 @@ jobs:
           name: ci-batch-${{ github.run_id }}-${{ github.run_attempt }}
           path: local/ci-jobs
           if-no-files-found: error
-  deliver:
-    name: Deliver the same verified main artifact
-    needs: [test, candidate, consumer]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: '3.12'
-      - uses: actions/download-artifact@v8
-        with:
-          name: candidate-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - uses: actions/download-artifact@v8
-        with:
-          name: consumer-${{ github.run_id }}-${{ github.run_attempt }}
-          path: candidate
-      - name: Deliver only a passing runtime identity
-        env:
-          KR_DELIVERY_OWNER: ${{ github.repository_owner }}
-          KR_PRIVATE_DELIVERY_REPOSITORY: ${{ vars.KR_PRIVATE_DELIVERY_REPOSITORY }}
-          KR_PRIVATE_DELIVERY_TOKEN: ${{ secrets.KR_PRIVATE_DELIVERY_TOKEN }}
-        run: |
-          python -c "import json,pathlib; r=pathlib.Path('candidate'); v=json.loads((r/'consumer-verification.json').read_text()); c=json.loads((r/'candidate-receipt.json').read_text()); assert v['status']=='PASS' and v['archive_sha256']==c['archive_sha256'] and v['source_commit']==c['source_commit']"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python scripts/private_candidate_delivery.py --candidate candidate

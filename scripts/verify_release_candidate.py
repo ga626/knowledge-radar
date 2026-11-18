@@ -220,6 +220,8 @@ def verify(candidate_dir: Path, *, consumer_only: bool = False, content_only: bo
         if missing:
             raise RuntimeError(f"candidate is missing required files: {', '.join(missing)}")
         provenance = json.loads((package_root / "package-provenance.json").read_text(encoding="utf-8"))
+        if receipt.get("source_commit") != provenance.get("source_commit"):
+            raise RuntimeError("candidate receipt has a different source from the archive")
         if provenance.get("source_dirty") is not False or "source_root" in provenance:
             raise RuntimeError("candidate provenance exposes source state or local path")
         issues = [] if consumer_only else package_content_issues(package_root)
