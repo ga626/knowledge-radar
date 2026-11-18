@@ -433,14 +433,21 @@ def test_ci_workflow_preserves_checks_and_single_invocation():
     assert 'PyYAML' in python_install['run']
     assert workflow['jobs']['checks']['strategy']['fail-fast'] is False
     assert workflow['jobs']['checks']['strategy']['matrix']['group'] == ['offline', 'host', 'node']
-    assert workflow['jobs']['test']['if'] == 'always()'
-    assert set(workflow['jobs']['test']['needs']) == {'checks','scope','candidate','consumer'}
-    assert set(workflow['jobs']['candidate']['needs']) == {'checks','scope'}
-    assert "github.ref == 'refs/heads/main'" in workflow['jobs']['deliver']['if']
-    candidate_steps = workflow['jobs']['candidate']['steps']
+    jobs = workflow['jobs']
+    assert set(workflow[True]) == {'pull_request'}
+    assert jobs['test']['name'] == 'Python 3.12 / Windows'
+    assert jobs['test']['if'] == 'always()'
+    assert set(jobs['test']['needs']) == {'checks', 'scope', 'candidate'}
+    assert jobs['candidate']['needs'] == 'scope'
+    assert 'deliver' not in jobs
+    candidate_steps = jobs['candidate']['steps']
     assert sum('build_product_lite_package.py --candidate' in step.get('run', '') for step in candidate_steps) == 1
-    assert any('scripts/private_candidate_delivery.py' in step.get('run', '') for step in workflow['jobs']['deliver']['steps'])
-    assert any('verify_release_candidate.py' in step.get('run', '') for step in candidate_steps)
+    consume = next(s['run'] for s in candidate_steps if 'Consume temporary' in s.get('name', ''))
+    assert consume.index('--content-only') < consume.index('Push-Location -LiteralPath $sample') < consume.index('--consumer-only')
+    assert 'python verify_release_candidate.py --candidate-dir . --consumer-only' in consume
+    uploads = {s['with']['path'] for job in jobs.values() for s in job['steps']
+               if 'upload-artifact' in s.get('uses', '')}
+    assert uploads == {'local/evaluation', 'local/ci-jobs', '${{ runner.temp }}/consumer-verification.json'}
 
 
 def test_extra_governance_failure_blocks_summary_compare_and_survives_import(tmp_path, monkeypatch):

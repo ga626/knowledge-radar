@@ -97,27 +97,15 @@ def test_node_executor_distinguishes_skipped_tests_from_pass(tmp_path):
     folder = tmp_path/'result'
     folder.mkdir()
     assert ci._node_tests(tmp_path, ['test_skip.mjs'], folder)['verdict']=='SKIPPED'
-def test_public_pr_runs_shared_boundary_without_uploading_installable_package():
-    import yaml
-    from pathlib import Path
+
+
+def test_shared_boundary_selects_temporary_package():
     for path in ('browser_link/host/BrowserLinkHost.cs', 'src/runtime/client_contract.py',
                  'config/browser-components.json', 'scripts/browser_link_install.py'):
         assert ci.requires_artifact_runtime([path]), path
     assert ci.requires_artifact_runtime(None)
     assert not ci.requires_artifact_runtime(['docs/example.md'])
     assert not ci.requires_artifact_runtime(['src/adapters/example_parser.py'])
-    workflow = yaml.safe_load((Path(__file__).resolve().parents[2]/'.github/workflows/ci.yml').read_text(encoding='utf-8'))
-    jobs = workflow['jobs']
-    assert set(workflow[True]) == {'pull_request'}
-    candidate = jobs['candidate']
-    assert candidate['needs'] == 'scope'
-    assert 'candidate' in jobs['test']['needs']
-    assert 'deliver' not in jobs
-    run = next(s['run'] for s in candidate['steps'] if 'Consume temporary' in s.get('name', ''))
-    assert run.index('--content-only') < run.index('Push-Location -LiteralPath $sample') < run.index('--consumer-only')
-    assert 'python verify_release_candidate.py --candidate-dir . --consumer-only' in run
-    uploads = [s['with']['path'] for s in candidate['steps'] if 'upload-artifact' in s.get('uses','')]
-    assert uploads == ['${{ runner.temp }}/consumer-verification.json']
 
 
 def test_changed_paths_explicitly_decodes_git_utf8_on_non_utf8_windows(monkeypatch, tmp_path):
